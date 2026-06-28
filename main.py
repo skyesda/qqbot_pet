@@ -49,7 +49,14 @@ KNOWN_COMMANDS = {
     "宠物菜单",
     "宠物指令",
     "宠物帮助",
+    "我的信息",
+    "个人信息",
     "查看说明",
+    # 管理员：增减货币
+    "加金币",
+    "减金币",
+    "加积分",
+    "减积分",
     # 商城
     "宠物商城",
     "道具商城",
@@ -250,6 +257,10 @@ class PetParkPlugin(Star):
             group["cross"] = cmd.startswith("开启")
             return f"本群宠物跨群功能已{'开启' if group['cross'] else '关闭'}。"
 
+        # ---- 管理员：增减指定用户金币 / 积分 ----
+        if cmd in ("加金币", "减金币", "加积分", "减积分"):
+            return self._admin_adjust(event, cmd, tokens)
+
         # 群未开启则不响应任何宠物指令
         if not group.get("enabled", True):
             return None
@@ -270,6 +281,10 @@ class PetParkPlugin(Star):
         player = self.store.get_player(qq)
         if group_id and group_id != "private":
             player["group"] = group_id
+
+        # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
+        if cmd in ("我的信息", "个人信息"):
+            return self._my_info(player, group_id)
 
         # ---- 获取宠物 ----
         if cmd == "砸蛋":
@@ -465,6 +480,43 @@ class PetParkPlugin(Star):
             return f"未找到『{name}』的说明。"
         return None
 
+    def _my_info(self, player: dict, group_id: str) -> str:
+        gid = group_id if group_id and group_id != "private" else "私聊"
+        return "\n".join(
+            [
+                "📇 我的信息",
+                "-" * 16,
+                f"用户ID：{player['qq']}",
+                f"群ID：{gid}",
+                f"金币：{player.get('coin', 0)}",
+                f"积分：{player.get('jifen', 0)}",
+            ]
+        )
+
+    def _admin_adjust(self, event, cmd: str, tokens: list[str]) -> str:
+        if not self._is_admin(event):
+            return "仅管理员可增减用户金币/积分。"
+        currency = "金币" if "金币" in cmd else "积分"
+        sign = 1 if cmd.startswith("加") else -1
+        at = self._at_target(event)
+        if at:
+            target = at
+            nums = [t for t in tokens[1:] if t.lstrip("-").isdigit()]
+            amount = int(nums[0]) if nums else None
+        else:
+            if len(tokens) < 3 or not tokens[1].isdigit() or not tokens[2].lstrip("-").isdigit():
+                return f"用法：{cmd} QQ号 数量（或 {cmd} @对方 数量）"
+            target = tokens[1]
+            amount = int(tokens[2])
+        if amount is None or amount <= 0:
+            return f"用法：{cmd} QQ号 数量（数量需为正整数）"
+        tp = self.store.get_player(target)
+        before = self.store.get_currency(tp, currency)
+        self.store.add_currency(tp, currency, sign * amount)
+        after = self.store.get_currency(tp, currency)
+        verb = "增加" if sign > 0 else "减少"
+        return f"已为用户 {target} {verb}{currency} {amount}（{before} → {after}）。"
+
     def _menu_text(self) -> str:
         return "\n".join(
             [
@@ -479,8 +531,9 @@ class PetParkPlugin(Star):
                 "【对战/排行】宠物攻击 @｜跨群挑战宠物 [群号 QQ]｜宠物排行｜宠物神榜｜领取神榜奖励",
                 "【副本/任务】宠物副本｜进入副本 名称｜宠物剧情任务｜领取任务 名称｜提交任务 名称｜我的剧情任务｜取消剧情任务",
                 "【姻缘】宠物追求 @｜同意追求 @｜宠物求婚 @｜同意求婚 @｜宠物分手｜宠物离婚｜宠物恋情",
+                "【个人】我的信息（查看 用户ID/群ID/金币/积分）",
                 "【图鉴查询】宠物种类｜属性｜状态｜神器｜秘技｜仙丹｜天赋｜查看说明 名称",
-                "【管理员】开启/关闭宠物联盟｜开启/关闭宠物跨群",
+                "【管理员】开启/关闭宠物联盟｜开启/关闭宠物跨群｜加金币 QQ 数量｜减金币 QQ 数量｜加积分 QQ 数量｜减积分 QQ 数量",
                 "═════════════",
                 "提示：本插件指令均无需前缀，直接发送即可；带 @ 的可 @ 对方或填写 QQ 号。",
             ]
@@ -590,8 +643,7 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
-        head = f"积分：{player['jifen']}  金币：{player['coin']}\n" + "-" * 16 + "\n"
-        return head + petmod.render_pet(p)
+        return petmod.render_pet(p)
 
     def _inspect(self, event, tokens: list[str]) -> str:
         target = self._target_qq(event, tokens, 1)
@@ -823,7 +875,7 @@ class PetParkPlugin(Star):
 
     def _bag_text(self, player: dict) -> str:
         bag = player.get("bag", {})
-        head = f"💼 背包  |  积分：{player['jifen']}  金币：{player['coin']}"
+        head = "💼 背包"
         if not bag:
             return head + "\n（空空如也）"
         lines = [head, "-" * 16]
