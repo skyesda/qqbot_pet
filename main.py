@@ -502,8 +502,8 @@ class PetParkPlugin(Star):
             [
                 "📇 我的信息",
                 "-" * 16,
-                f"用户ID：{player['qq']}",
-                f"群ID：{gid}",
+                f"QQ号：{player['qq']}",
+                f"群号：{gid}",
                 f"金币：{player.get('coin', 0)}",
                 f"积分：{player.get('jifen', 0)}",
             ]
