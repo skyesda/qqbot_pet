@@ -480,6 +480,22 @@ class PetParkPlugin(Star):
             return f"未找到『{name}』的说明。"
         return None
 
+    @staticmethod
+    def _fmt_duration(sec: int) -> str:
+        m, s = divmod(int(sec), 60)
+        if m and s:
+            return f"{m}分{s}秒"
+        if m:
+            return f"{m}分钟"
+        return f"{s}秒"
+
+    def _cooldown_block(self, player: dict, key: str, label: str) -> str | None:
+        """若该行为仍在冷却中，返回提示文本；否则返回 None。"""
+        remain = self.store.cooldown_remaining(player, key)
+        if remain > 0:
+            return f"⏳『{label}』冷却中，还需 {self._fmt_duration(remain)}。"
+        return None
+
     def _my_info(self, player: dict, group_id: str) -> str:
         gid = group_id if group_id and group_id != "private" else "私聊"
         return "\n".join(
@@ -597,9 +613,13 @@ class PetParkPlugin(Star):
     def _smash_egg(self, player: dict) -> str:
         if player.get("pet"):
             return "你已经有宠物啦！如需更换请先『放生宠物』。"
+        cd = self._cooldown_block(player, "砸蛋", "砸蛋")
+        if cd:
+            return cd
         species = random.choice(data.SPECIES_NAMES)
         quality = self._roll_quality()
         player["pet"] = petmod.new_pet(species, quality)
+        self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
         return f"💥 砸蛋成功！获得【{quality}】品质的『{species}』！\n发送『我的宠物』查看详情。"
 
     def _buy_pet(self, player: dict, tokens: list[str]) -> str:
@@ -899,7 +919,13 @@ class PetParkPlugin(Star):
             return f"精力不足（需 {conf['energy']}，当前 {p['energy']}）。"
         if action == "冥想" and not p.get("custom"):
             return "『冥想』需要定制宠物才行。"
+        cd = self._cooldown_block(player, f"日常:{action}", action)
+        if cd:
+            return cd
         p["energy"] -= conf["energy"]
+        self.store.set_cooldown(
+            player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
+        )
 
         if action == "约会":
             gain = 5 + p["level"] // 5
@@ -1603,10 +1629,14 @@ class PetParkPlugin(Star):
         d = data.DUNGEONS[name]
         if p["level"] < d["level_req"]:
             return f"进入『{name}』需要等级 Lv{d['level_req']}。"
+        cd = self._cooldown_block(player, "副本", "进入副本")
+        if cd:
+            return cd
         petmod.refresh_energy(p)
         if p["energy"] < d["energy"]:
             return f"精力不足（需 {d['energy']}）。"
         p["energy"] -= d["energy"]
+        self.store.set_cooldown(player, "副本", data.DUNGEON_COOLDOWN)
         petmod.add_exp(p, d["exp"])
         self.store.add_currency(player, "积分", d["jifen"])
         bonus = ""

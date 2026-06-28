@@ -140,3 +140,12 @@ class PetStore:
     @staticmethod
     def last_action_ts(player: dict, action: str) -> int:
         return player.get("last_actions", {}).get(action, 0)
+
+    @staticmethod
+    def set_cooldown(player: dict, key: str, seconds: int) -> None:
+        player.setdefault("cooldowns", {})[key] = int(time.time()) + int(seconds)
+
+    @staticmethod
+    def cooldown_remaining(player: dict, key: str) -> int:
+        end = player.get("cooldowns", {}).get(key, 0)
+        return max(0, int(end) - int(time.time()))

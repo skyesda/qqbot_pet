@@ -600,6 +600,11 @@ ENERGY_REGEN_PER_MIN = 1  # 每分钟恢复 1 点精力
 # 发起对战（宠物攻击 / 跨群挑战）消耗的精力，防止无限刷经验。
 ATTACK_ENERGY = 10
 
+# 各类行为冷却（秒）。日常活动为 [下限, 上限] 随机区间。
+EGG_COOLDOWN = 60  # 砸蛋冷却 1 分钟
+DUNGEON_COOLDOWN = 600  # 进入副本冷却 10 分钟
+DAILY_COOLDOWN_RANGE = (600, 1200)  # 修炼等日常活动冷却 10~20 分钟随机
+
 # 各日常活动：精力消耗 + 说明
 DAILY_ACTIONS = {
     "约会": {"energy": 10, "desc": "增加好感度"},
