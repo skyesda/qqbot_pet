@@ -141,7 +141,7 @@ KNOWN_COMMANDS = {
     "Devin",
     "宠物乐园 · 宠物联盟：群聊宠物养成与对战玩法（砸蛋/商城/对战/进化/姻缘/天赋/炼丹/副本）。",
     "1.0.0",
-    "https://github.com/AstrBotDevs/AstrBot",
+    "https://github.com/skyesda/qqbot_pet",
 )
 class PetParkPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
