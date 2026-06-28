@@ -34,12 +34,14 @@ class PetStore:
         self,
         data_path: Path,
         start_coin: int = 1000,
+        start_jifen: int = 0,
         default_enabled: bool = True,
         default_cross: bool = True,
     ):
         self.path = data_path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.start_coin = start_coin
+        self.start_jifen = start_jifen
         self.default_enabled = default_enabled
         self.default_cross = default_cross
         self._lock = asyncio.Lock()
@@ -75,7 +77,7 @@ class PetStore:
             players[qq] = {
                 "qq": qq,
                 "coin": self.start_coin,
-                "jifen": 0,
+                "jifen": self.start_jifen,
                 "bag": {},
                 "pet": None,
                 "last_actions": {},

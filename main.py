@@ -141,9 +141,18 @@ class PetParkPlugin(Star):
         self.store = PetStore(
             data_dir / "petpark.json",
             start_coin=int(self.config.get("start_coin", 1000)),
+            start_jifen=int(self.config.get("start_jifen", 0)),
             default_enabled=bool(self.config.get("default_enabled", True)),
             default_cross=bool(self.config.get("default_cross_group", True)),
         )
+        # 管理员 QQ 列表（白名单），统一转成字符串便于比较
+        self.admins = {str(a).strip() for a in self.config.get("admins", []) if str(a).strip()}
+        # 对战精力消耗、排行名额、神榜奖励等可调参数
+        self.attack_energy = max(0, int(self.config.get("attack_energy", data.ATTACK_ENERGY)))
+        self.rank_size = max(1, int(self.config.get("rank_size", 10)))
+        self.rank_reward_jifen = max(0, int(self.config.get("rank_reward_jifen", 50000)))
+        # 精力恢复速度为全局常量，按配置覆盖
+        data.ENERGY_REGEN_PER_MIN = max(1, int(self.config.get("energy_regen_per_min", data.ENERGY_REGEN_PER_MIN)))
 
     # =====================================================================
     # 消息入口：监听全部消息，解析无前缀中文指令
@@ -202,8 +211,10 @@ class PetParkPlugin(Star):
             return tokens[idx]
         return None
 
-    @staticmethod
-    def _is_admin(event: AstrMessageEvent) -> bool:
+    def _is_admin(self, event: AstrMessageEvent) -> bool:
+        # 配置里的管理员白名单优先
+        if str(event.get_sender_id()) in self.admins:
+            return True
         for attr in ("is_admin",):
             fn = getattr(event, attr, None)
             if callable(fn):
@@ -1414,9 +1425,9 @@ class PetParkPlugin(Star):
         if petmod.is_dead(tpet):
             return "对方宠物已死亡。"
         petmod.refresh_energy(p)
-        if p["energy"] < data.ATTACK_ENERGY:
-            return f"发起攻击需要 {data.ATTACK_ENERGY} 点精力（当前 {p['energy']}）。"
-        p["energy"] -= data.ATTACK_ENERGY
+        if p["energy"] < self.attack_energy:
+            return f"发起攻击需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
+        p["energy"] -= self.attack_energy
         return self._battle(p, tpet, player, tp)
 
     def _cross_attack(self, player: dict, group: dict, tokens: list[str]) -> str:
@@ -1444,9 +1455,9 @@ class PetParkPlugin(Star):
         if not target_player or not target_player.get("pet"):
             return "目标没有宠物。"
         petmod.refresh_energy(p)
-        if p["energy"] < data.ATTACK_ENERGY:
-            return f"发起挑战需要 {data.ATTACK_ENERGY} 点精力（当前 {p['energy']}）。"
-        p["energy"] -= data.ATTACK_ENERGY
+        if p["energy"] < self.attack_energy:
+            return f"发起挑战需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
+        p["energy"] -= self.attack_energy
         return self._battle(p, target_player["pet"], player, target_player)
 
     def _rank(self, group_id: str, local: bool) -> str:
@@ -1460,7 +1471,7 @@ class PetParkPlugin(Star):
                 continue
             entries.append((q, pet, petmod.battle_power(pet)))
         entries.sort(key=lambda x: x[2], reverse=True)
-        entries = entries[:10]
+        entries = entries[: self.rank_size]
         if not entries:
             return "暂无宠物上榜。"
         title = "🏆 宠物排行（本群口径）" if local else "🏅 宠物神榜（全服）"
@@ -1484,7 +1495,7 @@ class PetParkPlugin(Star):
         if player.get("rank_reward_day") == today:
             return "今天已领取过神榜奖励。"
         player["rank_reward_day"] = today
-        reward = 50000
+        reward = self.rank_reward_jifen
         self.store.add_currency(player, "积分", reward)
         return f"🎁 神榜强者奖励到账，积分 +{reward}！"
 

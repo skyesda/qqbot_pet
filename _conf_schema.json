@@ -1,17 +1,56 @@
 {
+  "admins": {
+    "description": "插件管理员 QQ 列表",
+    "hint": "这里填写的 QQ 号在任意群都可使用『开启宠物联盟/关闭宠物联盟/开启宠物跨群/关闭宠物跨群』等管理指令，无需依赖平台本身的群管理员身份。每行填一个 QQ 号。",
+    "type": "list",
+    "default": []
+  },
   "default_enabled": {
     "description": "新群是否默认开启宠物联盟",
+    "hint": "开启后，机器人加入的新群无需管理员手动『开启宠物联盟』即可直接游玩；关闭则需管理员逐群开启。",
     "type": "bool",
     "default": true
   },
   "default_cross_group": {
     "description": "新群是否默认开启宠物跨群挑战",
+    "hint": "开启后新群默认允许『跨群挑战宠物』，玩家可与其它群的宠物对战。",
     "type": "bool",
     "default": true
   },
   "start_coin": {
     "description": "新玩家初始金币",
+    "hint": "玩家首次参与时获得的金币数量。",
     "type": "int",
     "default": 1000
+  },
+  "start_jifen": {
+    "description": "新玩家初始积分",
+    "hint": "玩家首次参与时获得的积分数量（积分用于商城购买、炼丹、觉醒等）。",
+    "type": "int",
+    "default": 0
+  },
+  "energy_regen_per_min": {
+    "description": "宠物精力每分钟恢复点数",
+    "hint": "数值越大，精力恢复越快。默认每分钟恢复 1 点，精力上限 100。",
+    "type": "int",
+    "default": 1
+  },
+  "attack_energy": {
+    "description": "发起对战消耗的精力",
+    "hint": "『宠物攻击』『跨群挑战宠物』每次消耗的精力，用于限制刷战次数；设为 0 则不消耗。",
+    "type": "int",
+    "default": 10
+  },
+  "rank_size": {
+    "description": "排行榜/神榜显示名额",
+    "hint": "『宠物排行』『宠物神榜』最多显示的宠物数量。",
+    "type": "int",
+    "default": 10
+  },
+  "rank_reward_jifen": {
+    "description": "神榜前三每日可领取的积分奖励",
+    "hint": "『领取神榜奖励』时，全服神榜前三名每天可领取一次的积分数量。",
+    "type": "int",
+    "default": 50000
   }
 }
