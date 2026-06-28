@@ -213,12 +213,14 @@ class PetParkPlugin(Star):
     def _target_qq(
         self, event: AstrMessageEvent, tokens: list[str], idx: int
     ) -> str | None:
-        """优先取 @ 对象，否则取 tokens[idx] 中的纯数字 QQ。"""
+        """优先取 @ 对象，否则取 tokens[idx]（兼容纯数字 QQ 与平台 openid 字符串）。"""
         at = self._at_target(event)
         if at:
             return at
-        if idx < len(tokens) and tokens[idx].isdigit():
-            return tokens[idx]
+        if idx < len(tokens):
+            tok = tokens[idx].strip()
+            if tok:
+                return tok
         return None
 
     def _is_admin(self, event: AstrMessageEvent) -> bool:
@@ -520,12 +522,14 @@ class PetParkPlugin(Star):
             nums = [t for t in tokens[1:] if t.lstrip("-").isdigit()]
             amount = int(nums[0]) if nums else None
         else:
-            if len(tokens) < 3 or not tokens[1].isdigit() or not tokens[2].lstrip("-").isdigit():
-                return f"用法：{cmd} QQ号 数量（或 {cmd} @对方 数量）"
+            # 目标 ID 不一定是纯数字（QQ 官方机器人/频道为 openid 字符串），
+            # 仅要求最后给出的数量是整数。
+            if len(tokens) < 3 or not tokens[2].lstrip("-").isdigit():
+                return f"用法：{cmd} QQ号/ID 数量（或 {cmd} @对方 数量）"
             target = tokens[1]
             amount = int(tokens[2])
         if amount is None or amount <= 0:
-            return f"用法：{cmd} QQ号 数量（数量需为正整数）"
+            return f"用法：{cmd} QQ号/ID 数量（数量需为正整数）"
         tp = self.store.get_player(target)
         before = self.store.get_currency(tp, currency)
         self.store.add_currency(tp, currency, sign * amount)
