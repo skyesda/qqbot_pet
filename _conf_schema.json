@@ -1,0 +1,17 @@
+{
+  "default_enabled": {
+    "description": "新群是否默认开启宠物联盟",
+    "type": "bool",
+    "default": true
+  },
+  "default_cross_group": {
+    "description": "新群是否默认开启宠物跨群挑战",
+    "type": "bool",
+    "default": true
+  },
+  "start_coin": {
+    "description": "新玩家初始金币",
+    "type": "int",
+    "default": 1000
+  }
+}
