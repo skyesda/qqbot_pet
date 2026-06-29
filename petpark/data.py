@@ -807,7 +807,7 @@ DAILY_COOLDOWN_RANGE = (600, 1200)  # 修炼等日常活动冷却 10~20 分钟�
 DAILY_ACTIONS = {
     "约会": {"energy": 10, "desc": "增加好感度"},
     "修炼": {"energy": 10, "desc": "获得经验"},
-    "双修": {"energy": 20, "desc": "获得 2 倍经验"},
+    "双修": {"energy": 20, "desc": "获得 2 倍经验（需已婚）"},
     "打工": {"energy": 10, "desc": "获得积分"},
     "闭关": {"energy": 5, "desc": "恢复血量"},
     "学习": {"energy": 10, "desc": "增加智力"},
