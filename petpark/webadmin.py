@@ -156,10 +156,13 @@ class WebAdmin:
     async def _api_gen_cards(self, request):
         self._require(request)
         body = await request.json()
+        rewards = body.get("rewards")
+        if not isinstance(rewards, dict):
+            # 兼容旧版单一货币入参
+            rewards = {body.get("currency", ""): body.get("amount", 0)}
         try:
-            codes = self.store.create_cards(
-                currency=body.get("currency", ""),
-                amount=int(body.get("amount", 0)),
+            codes = self.store.create_combo_cards(
+                rewards=rewards,
                 count=int(body.get("count", 1)),
                 prefix=body.get("prefix", ""),
             )
@@ -248,11 +251,13 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <main>
 <div id="cardgen" style="display:none">
 <div class="cards-stat" id="cardstats"></div>
+<div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合（金币+钻石、金币+积分、三种一起…）。空或 0 表示不含该项。</div>
 <div class="bar">
-<select id="cur"><option>金币</option><option>积分</option><option>钻石</option></select>
-<input id="amt" type="number" placeholder="面额(如 10000)" style="width:150px">
-<input id="cnt" type="number" placeholder="数量" value="10" style="width:90px">
-<input id="pre" placeholder="前缀(可选,如VIP)" style="width:140px">
+<input id="amt_coin" type="number" placeholder="金币面额" style="width:120px">
+<input id="amt_jifen" type="number" placeholder="积分面额" style="width:120px">
+<input id="amt_diamond" type="number" placeholder="钻石面额" style="width:120px">
+<input id="cnt" type="number" placeholder="数量" value="10" style="width:80px">
+<input id="pre" placeholder="前缀(可选,如VIP)" style="width:130px">
 <button class="act" onclick="genCards()">批量生成</button>
 <button class="ghost act" onclick="exportUnused()">导出未用卡密</button>
 </div>
@@ -318,18 +323,28 @@ function renderGroups(){
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
  shell('<th>群号</th><th>宠物乐园</th><th>跨群挑战</th><th>今日签到数</th><th>操作</th>',rows);
 }
+const CUR_CLS={'金币':'coin','积分':'jifen','钻石':'diamond'};
+function cardRewards(v){
+ if(v.rewards&&typeof v.rewards==='object')return v.rewards;
+ if(v.currency&&v.amount)return {[v.currency]:v.amount};
+ return {};
+}
+function rewardsHtml(r){
+ const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(`<span class="${CUR_CLS[c]}">${c} +${r[c]}</span>`);
+ return parts.length?parts.join(' ＋ '):'<span class="muted">—</span>';
+}
 function renderCards(){
  let total=0,used=0;
  let rows='';
  for(const k of Object.keys(cache)){const v=cache[k];total++;if(v.used)used++;if(!match(k,v))continue;
   rows+=`<tr><td class="k">${esc(k)}</td>
-   <td>${esc(v.currency||'')}</td><td class="num">${v.amount||0}</td>
+   <td>${rewardsHtml(cardRewards(v))}</td>
    <td><span class="tag ${v.used?'used':'unused'}">${v.used?'已使用':'未使用'}</span></td>
    <td class="muted">${v.used_by?esc(v.used_by.replace(String.fromCharCode(31),' / ')):'—'}</td>
    <td class="muted">${fdate(v.created_at)}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
  document.getElementById('cardstats').innerHTML=`<div class="stat"><div class="n">${total}</div><div class="l">卡密总数</div></div><div class="stat"><div class="n">${total-used}</div><div class="l">未使用</div></div><div class="stat"><div class="n">${used}</div><div class="l">已使用</div></div>`;
- shell('<th>卡密</th><th>货币</th><th>面额</th><th>状态</th><th>使用者</th><th>创建时间</th><th>操作</th>',rows);
+ shell('<th>卡密</th><th>套餐内容</th><th>状态</th><th>使用者</th><th>创建时间</th><th>操作</th>',rows);
 }
 function fieldHtml(){
  if(cur==='players')return `
@@ -341,19 +356,21 @@ function fieldHtml(){
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启宠物乐园</label></div>
   <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>`;
  return `
-  <div class="row"><div><label class="fld">货币</label><select id="f_currency"><option>金币</option><option>积分</option><option>钻石</option></select></div>
-  <div><label class="fld">面额</label><input id="f_amount" type="number"></div></div>
+  <div class="muted">套餐面额（空或 0 表示不含该项，可任意组合）</div>
+  <div class="row"><div><label class="fld">金币</label><input id="f_r_coin" type="number"></div>
+  <div><label class="fld">积分</label><input id="f_r_jifen" type="number"></div>
+  <div><label class="fld">钻石</label><input id="f_r_diamond" type="number"></div></div>
   <div class="chk"><input id="f_used" type="checkbox"><label for="f_used">已使用</label></div>`;
 }
 function fillFields(v){
  if(cur==='players'){g('f_coin').value=v.coin||0;g('f_jifen').value=v.jifen||0;g('f_diamond').value=v.diamond||0;g('f_petlevel').value=v.pet?(v.pet.level||1):'';}
  else if(cur==='groups'){g('f_enabled').checked=!!v.enabled;g('f_cross').checked=!!v.cross;}
- else{g('f_currency').value=v.currency||'金币';g('f_amount').value=v.amount||0;g('f_used').checked=!!v.used;}
+ else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_used').checked=!!v.used;}
 }
 function applyFields(v){
  if(cur==='players'){v.coin=+g('f_coin').value||0;v.jifen=+g('f_jifen').value||0;v.diamond=+g('f_diamond').value||0;if(v.pet&&g('f_petlevel').value!=='')v.pet.level=+g('f_petlevel').value;}
  else if(cur==='groups'){v.enabled=g('f_enabled').checked;v.cross=g('f_cross').checked;}
- else{v.currency=g('f_currency').value;v.amount=+g('f_amount').value||0;v.used=g('f_used').checked;}
+ else{const r={};const c=+g('f_r_coin').value||0,j=+g('f_r_jifen').value||0,d=+g('f_r_diamond').value||0;if(c>0)r['金币']=c;if(j>0)r['积分']=j;if(d>0)r['钻石']=d;v.rewards=r;delete v.currency;delete v.amount;v.used=g('f_used').checked;}
  return v;
 }
 function g(id){return document.getElementById(id);}
@@ -381,15 +398,16 @@ async function saveRow(){
 function closeModal(){g('modal').style.display='none';editKey=null;}
 async function delRow(k){if(!confirm('确认删除 '+k+' ?'))return;await api('/api/delete',{table:cur,key:k});load();}
 async function genCards(){
- const body={currency:g('cur').value,amount:+g('amt').value,count:+g('cnt').value,prefix:g('pre').value};
- if(!body.amount){alert('请填写面额');return;}
- const r=await api('/api/cards/generate',body);
+ const rewards={};const c=+g('amt_coin').value||0,j=+g('amt_jifen').value||0,d=+g('amt_diamond').value||0;
+ if(c>0)rewards['金币']=c;if(j>0)rewards['积分']=j;if(d>0)rewards['钻石']=d;
+ if(!Object.keys(rewards).length){alert('请至少为 金币/积分/钻石 中的一项填写面额');return;}
+ const r=await api('/api/cards/generate',{rewards:rewards,count:+g('cnt').value,prefix:g('pre').value});
  if(!r.ok){alert(r.msg||'生成失败');return;}
  g('genout').innerHTML='✅ 已生成 '+r.codes.length+' 张：<br>'+r.codes.map(esc).join('<br>');
  load();
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(!v.used)lines.push(`${k}\\t${v.currency}\\t${v.amount}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;const r=cardRewards(v);const pkg=['金币','积分','钻石'].filter(c=>r[c]).map(c=>c+'+'+r[c]).join('/');lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }

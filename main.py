@@ -643,19 +643,20 @@ class PetParkPlugin(Star):
             return "⚠️ 用法：`兑换 卡密`（例如：兑换 ABCD23XY...）"
         code = tokens[1].strip()
         used_by = self.store.make_key(group_id, qq)
-        currency, result = self.store.redeem_card(code, player, used_by)
-        if currency is None:
-            return f"❌ 兑换失败：{result}"
-        bal = self.store.get_currency(player, currency)
-        return "\n".join(
-            [
-                "## 🎉 兑换成功",
-                "━━━━━━━━━━━━━━",
-                f"🎟 **卡密**　`{code.upper()}`",
-                f"✅ **获得**　{currency} +{result}",
-                f"💼 **当前{currency}**　{bal}",
-            ]
-        )
+        rewards, err = self.store.redeem_card(code, player, used_by)
+        if rewards is None:
+            return f"❌ 兑换失败：{err}"
+        lines = [
+            "## 🎉 兑换成功",
+            "━━━━━━━━━━━━━━",
+            f"🎟 **卡密**　`{code.upper()}`",
+        ]
+        for cur, amt in rewards.items():
+            lines.append(f"✅ **获得**　{cur} +{amt}")
+        lines.append("━━━━━━━━━━━━━━")
+        for cur in rewards:
+            lines.append(f"💼 **当前{cur}**　{self.store.get_currency(player, cur)}")
+        return "\n".join(lines)
 
     def _admin_adjust(
         self, event, group_id: str, cmd: str, tokens: list[str]

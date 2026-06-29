@@ -206,13 +206,44 @@ class PetStore:
             if code not in cards:
                 return code
 
+    @classmethod
+    def normalize_rewards(cls, rewards: dict) -> dict:
+        """清洗套餐奖励：仅保留 金币/积分/钻石 中数额 > 0 的项。"""
+        out: dict[str, int] = {}
+        for cur, amt in (rewards or {}).items():
+            if cur in cls.CURRENCY_KEYS:
+                try:
+                    n = int(amt)
+                except (TypeError, ValueError):
+                    continue
+                if n > 0:
+                    out[cur] = n
+        return out
+
+    @staticmethod
+    def card_rewards(card: dict) -> dict:
+        """读取卡密奖励，兼容旧版单一货币格式 {currency, amount}。"""
+        if isinstance(card.get("rewards"), dict):
+            return {k: int(v) for k, v in card["rewards"].items() if int(v) > 0}
+        cur = card.get("currency")
+        amt = int(card.get("amount", 0) or 0)
+        return {cur: amt} if cur and amt > 0 else {}
+
     def create_cards(
         self, currency: str, amount: int, count: int = 1, prefix: str = ""
     ) -> list[str]:
-        """批量生成卡密，返回卡密码列表。currency ∈ {金币, 积分, 钻石}。"""
+        """批量生成单一货币卡密（向后兼容）。currency ∈ {金币, 积分, 钻石}。"""
         if currency not in self.CURRENCY_KEYS:
             raise ValueError("货币类型必须为 金币 / 积分 / 钻石")
-        amount = int(amount)
+        return self.create_combo_cards({currency: int(amount)}, count, prefix)
+
+    def create_combo_cards(
+        self, rewards: dict, count: int = 1, prefix: str = ""
+    ) -> list[str]:
+        """批量生成套餐卡密：一张卡密可同时含 金币/积分/钻石 多种奖励。"""
+        rewards = self.normalize_rewards(rewards)
+        if not rewards:
+            raise ValueError("请至少为 金币 / 积分 / 钻石 中的一项填写正数面额")
         count = max(1, int(count))
         cards = self.cards()
         created: list[str] = []
@@ -220,8 +251,7 @@ class PetStore:
         for _ in range(count):
             code = self.gen_card_code(prefix)
             cards[code] = {
-                "currency": currency,
-                "amount": amount,
+                "rewards": dict(rewards),
                 "used": False,
                 "used_by": None,
                 "used_at": None,
@@ -231,7 +261,7 @@ class PetStore:
         return created
 
     def redeem_card(self, code: str, player: dict, used_by: str):
-        """兑换卡密：成功返回 (currency, amount)，失败返回 (None, 原因)。"""
+        """兑换卡密：成功返回 (rewards字典, None)，失败返回 (None, 原因)。"""
         code = str(code).strip().upper()
         cards = self.cards()
         card = cards.get(code)
@@ -239,11 +269,15 @@ class PetStore:
             return None, "卡密不存在或输入有误"
         if card.get("used"):
             return None, "该卡密已被使用"
+        rewards = self.card_rewards(card)
+        if not rewards:
+            return None, "该卡密无有效奖励"
         card["used"] = True
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
-        self.add_currency(player, card["currency"], int(card["amount"]))
-        return card["currency"], int(card["amount"])
+        for cur, amt in rewards.items():
+            self.add_currency(player, cur, int(amt))
+        return rewards, None
 
     # ----------------------------- 冷却 -----------------------------
     @staticmethod
