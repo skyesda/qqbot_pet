@@ -183,19 +183,37 @@ class PetParkPlugin(Star):
         await self.store.save()
         event.stop_event()
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
-        chain = self._reply_chain(event, qq, group_id, reply)
-        if chain is not None:
+        if self._is_group(group_id):
+            # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
+            # 形式前置 @昵称，确保任何平台都能看出这条消息@的是谁。
+            name = self._sender_name(event) or qq
+            head = Comp.Plain(f"@{name}\n")
+            at = self._safe_at(qq)
+            chain = ([at] if at else []) + [head, Comp.Plain(reply)]
             yield event.chain_result(chain)
         else:
             yield event.plain_result(reply)
 
     @staticmethod
-    def _reply_chain(event, qq: str, group_id: str, reply: str):
-        """群聊回复前置 @ 发送者；构造失败或私聊则返回 None（回退纯文本）。"""
-        if not group_id or group_id == "private":
-            return None
+    def _is_group(group_id: str) -> bool:
+        return bool(group_id) and group_id != "private"
+
+    @staticmethod
+    def _sender_name(event) -> str:
+        for attr in ("get_sender_name",):
+            fn = getattr(event, attr, None)
+            if callable(fn):
+                try:
+                    return str(fn() or "")
+                except Exception:
+                    return ""
+        return ""
+
+    @staticmethod
+    def _safe_at(qq: str):
+        """构造 At 组件（支持的平台会渲染为真正的@）；失败则返回 None。"""
         try:
-            return [Comp.At(qq=qq), Comp.Plain("\n" + reply)]
+            return Comp.At(qq=qq)
         except Exception:
             return None
 
