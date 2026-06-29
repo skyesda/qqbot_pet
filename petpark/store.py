@@ -35,6 +35,7 @@ class PetStore:
         data_path: Path,
         start_coin: int = 1000,
         start_jifen: int = 0,
+        start_diamond: int = 0,
         default_enabled: bool = True,
         default_cross: bool = True,
     ):
@@ -42,6 +43,7 @@ class PetStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.start_coin = start_coin
         self.start_jifen = start_jifen
+        self.start_diamond = start_diamond
         self.default_enabled = default_enabled
         self.default_cross = default_cross
         self._lock = asyncio.Lock()
@@ -108,6 +110,7 @@ class PetStore:
                 "group": group_id,
                 "coin": self.start_coin,
                 "jifen": self.start_jifen,
+                "diamond": self.start_diamond,
                 "bag": {},
                 "pet": None,
                 "last_actions": {},

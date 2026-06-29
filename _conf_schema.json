@@ -29,6 +29,12 @@
     "type": "int",
     "default": 0
   },
+  "start_diamond": {
+    "description": "新玩家初始钻石",
+    "hint": "玩家首次参与时获得的钻石数量（钻石展示在『我的信息』，后续用于商店）。",
+    "type": "int",
+    "default": 0
+  },
   "energy_regen_per_min": {
     "description": "宠物精力每分钟恢复点数",
     "hint": "数值越大，精力恢复越快。默认每分钟恢复 1 点，精力上限 100。",

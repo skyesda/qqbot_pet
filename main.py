@@ -152,6 +152,7 @@ class PetParkPlugin(Star):
             data_dir / "petpark.json",
             start_coin=int(self.config.get("start_coin", 1000)),
             start_jifen=int(self.config.get("start_jifen", 0)),
+            start_diamond=int(self.config.get("start_diamond", 0)),
             default_enabled=bool(self.config.get("default_enabled", True)),
             default_cross=bool(self.config.get("default_cross_group", True)),
         )
@@ -545,6 +546,7 @@ class PetParkPlugin(Star):
                 f"👥 **群号**　`{gid}`",
                 f"🪙 **金币**　{player.get('coin', 0)}",
                 f"💎 **积分**　{player.get('jifen', 0)}",
+                f"💠 **钻石**　{player.get('diamond', 0)}",
             ]
         )
 
