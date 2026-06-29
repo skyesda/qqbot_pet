@@ -165,7 +165,14 @@ class PetParkPlugin(Star):
         # 对战精力消耗、排行名额、神榜奖励等可调参数
         self.attack_energy = max(0, int(self.config.get("attack_energy", data.ATTACK_ENERGY)))
         self.rank_size = max(1, int(self.config.get("rank_size", 10)))
-        self.rank_reward_jifen = max(0, int(self.config.get("rank_reward_jifen", 50000)))
+        # 神榜前三每日可领取的随机钻石区间
+        self.rank_reward_diamond_min = max(
+            0, int(self.config.get("rank_reward_diamond_min", 10))
+        )
+        self.rank_reward_diamond_max = max(
+            self.rank_reward_diamond_min,
+            int(self.config.get("rank_reward_diamond_max", 50)),
+        )
         # 签到积分/金币随机范围（可在配置面板调整）
         self.sign_jifen_min = max(0, int(self.config.get("sign_jifen_min", 1000)))
         self.sign_jifen_max = max(self.sign_jifen_min, int(self.config.get("sign_jifen_max", 12000)))
@@ -1837,6 +1844,12 @@ class PetParkPlugin(Star):
                 f"{rk} **{pet['nickname']}**（{pet['quality']}/{pet['stage']}）\n"
                 f"　　💥 战力 `{bp}`　·　`{q}`"
             )
+        if not local:
+            lines.append("━━━━━━━━━━━━━━")
+            lines.append(
+                f"> 🎁 神榜前三每日可『领取神榜奖励』，随机钻石 💠 "
+                f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
+            )
         return "\n".join(lines)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:
@@ -1854,9 +1867,11 @@ class PetParkPlugin(Star):
         if player.get("rank_reward_day") == today:
             return "今天已领取过神榜奖励。"
         player["rank_reward_day"] = today
-        reward = self.rank_reward_jifen
-        self.store.add_currency(player, "积分", reward)
-        return f"🎁 神榜强者奖励到账，积分 +{reward}！"
+        reward = random.randint(
+            self.rank_reward_diamond_min, self.rank_reward_diamond_max
+        )
+        self.store.add_currency(player, "钻石", reward)
+        return f"🎁 神榜强者奖励到账，钻石 💠 +{reward}！"
 
     # =====================================================================
     # 副本 / 剧情任务

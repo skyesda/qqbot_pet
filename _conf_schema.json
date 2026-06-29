@@ -53,11 +53,17 @@
     "type": "int",
     "default": 10
   },
-  "rank_reward_jifen": {
-    "description": "神榜前三每日可领取的积分奖励",
-    "hint": "『领取神榜奖励』时，全服神榜前三名每天可领取一次的积分数量。",
+  "rank_reward_diamond_min": {
+    "description": "神榜前三每日可领取的钻石奖励下限",
+    "hint": "『领取神榜奖励』时，全服神榜前三名每天可领取一次的随机钻石最小值。",
     "type": "int",
-    "default": 50000
+    "default": 10
+  },
+  "rank_reward_diamond_max": {
+    "description": "神榜前三每日可领取的钻石奖励上限",
+    "hint": "『领取神榜奖励』时随机钻石的最大值（应 ≥ 下限）。",
+    "type": "int",
+    "default": 50
   },
   "sign_jifen_min": {
     "description": "每日签到积分随机下限",
