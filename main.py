@@ -51,6 +51,8 @@ KNOWN_COMMANDS = {
     "我的信息",
     "个人信息",
     "签到",
+    "兑换",
+    "卡密兑换",
     "查看说明",
     # 管理员：增减货币
     "加金币",
@@ -171,6 +173,41 @@ class PetParkPlugin(Star):
         self.sign_streak_bonus = max(0, int(self.config.get("sign_streak_bonus", 100)))
         # 精力恢复速度为全局常量，按配置覆盖
         data.ENERGY_REGEN_PER_MIN = max(1, int(self.config.get("energy_regen_per_min", data.ENERGY_REGEN_PER_MIN)))
+        # 专属管理网站（卡密生成 + 数据增删改查）
+        self._web = None
+        if bool(self.config.get("web_enabled", True)):
+            self._start_web_admin()
+
+    def _start_web_admin(self) -> None:
+        """在当前事件循环中后台启动管理网站；失败不影响插件主体。"""
+        import asyncio
+
+        try:
+            from .petpark.webadmin import WebAdmin
+        except Exception:  # 兼容不同导入路径
+            try:
+                from petpark.webadmin import WebAdmin
+            except Exception:
+                logger.exception("[petpark] 管理网站模块导入失败")
+                return
+        self._web = WebAdmin(
+            self.store,
+            host=str(self.config.get("web_host", "0.0.0.0")),
+            port=int(self.config.get("web_port", 7799)),
+            user=str(self.config.get("web_user", "admin")),
+            password=str(self.config.get("web_pass", "2468080asd")),
+        )
+
+        async def _boot():
+            try:
+                await self._web.start()
+            except Exception:
+                logger.exception("[petpark] 管理网站启动失败（端口被占用或权限不足？）")
+
+        try:
+            asyncio.get_event_loop().create_task(_boot())
+        except RuntimeError:
+            logger.warning("[petpark] 无运行中的事件循环，管理网站未启动")
 
     # =====================================================================
     # 消息入口：监听全部消息，解析无前缀中文指令
@@ -228,6 +265,8 @@ class PetParkPlugin(Star):
 
     async def terminate(self):
         await self.store.save()
+        if self._web is not None:
+            await self._web.stop()
 
     # =====================================================================
     # 工具函数
@@ -330,6 +369,10 @@ class PetParkPlugin(Star):
         # ---- 每日签到 ----
         if cmd == "签到":
             return self._sign_in(player, group_id)
+
+        # ---- 卡密兑换 ----
+        if cmd in ("兑换", "卡密兑换"):
+            return self._redeem(player, group_id, qq, tokens)
 
         # ---- 获取宠物 ----
         if cmd == "砸蛋":
@@ -595,6 +638,25 @@ class PetParkPlugin(Star):
         lines.append(now)
         return "\n".join(lines)
 
+    def _redeem(self, player: dict, group_id: str, qq: str, tokens: list[str]) -> str:
+        if len(tokens) < 2:
+            return "⚠️ 用法：`兑换 卡密`（例如：兑换 ABCD23XY...）"
+        code = tokens[1].strip()
+        used_by = self.store.make_key(group_id, qq)
+        currency, result = self.store.redeem_card(code, player, used_by)
+        if currency is None:
+            return f"❌ 兑换失败：{result}"
+        bal = self.store.get_currency(player, currency)
+        return "\n".join(
+            [
+                "## 🎉 兑换成功",
+                "━━━━━━━━━━━━━━",
+                f"🎟 **卡密**　`{code.upper()}`",
+                f"✅ **获得**　{currency} +{result}",
+                f"💼 **当前{currency}**　{bal}",
+            ]
+        )
+
     def _admin_adjust(
         self, event, group_id: str, cmd: str, tokens: list[str]
     ) -> str:
@@ -657,7 +719,7 @@ class PetParkPlugin(Star):
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**📇 个人**",
-                "我的信息（查看 QQ号/群号/金币/积分） · 签到（每日领积分金币）",
+                "我的信息（查看 QQ号/群号/金币/积分/钻石） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石）",
                 "",
                 "**📖 图鉴查询**",
                 "宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",

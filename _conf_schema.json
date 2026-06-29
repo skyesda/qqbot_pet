@@ -88,5 +88,35 @@
     "hint": "额外金币 = 连续签到天数 × 该值（连续天数最多按 7 天计）。设为 0 则无额外金币。",
     "type": "int",
     "default": 100
+  },
+  "web_enabled": {
+    "description": "启用专属管理网站",
+    "hint": "开启后插件会在下方端口启动一个网页后台，可查看/增删改查数据库并批量生成卡密。修改后需重载插件生效。",
+    "type": "bool",
+    "default": true
+  },
+  "web_host": {
+    "description": "管理网站监听地址",
+    "hint": "默认 0.0.0.0（允许外网访问，需在云服务器安全组放行端口）。仅本机访问可填 127.0.0.1。",
+    "type": "string",
+    "default": "0.0.0.0"
+  },
+  "web_port": {
+    "description": "管理网站端口",
+    "hint": "管理网站监听的端口，请避免与其它服务冲突，并在防火墙/安全组放行。默认 7799。",
+    "type": "int",
+    "default": 7799
+  },
+  "web_user": {
+    "description": "管理网站登录账号",
+    "hint": "登录管理后台的用户名。",
+    "type": "string",
+    "default": "admin"
+  },
+  "web_pass": {
+    "description": "管理网站登录密码",
+    "hint": "登录管理后台的密码，建议定期修改。",
+    "type": "string",
+    "default": "2468080asd"
   }
 }

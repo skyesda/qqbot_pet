@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -59,6 +60,7 @@ class PetStore:
                 self._data = {"players": {}, "groups": {}}
         self._data.setdefault("players", {})
         self._data.setdefault("groups", {})
+        self._data.setdefault("cards", {})
         self._migrate_group_keys()
 
     @staticmethod
@@ -152,14 +154,20 @@ class PetStore:
         return group["sign_count"]
 
     # ----------------------------- 货币 / 背包 -----------------------------
-    @staticmethod
-    def add_currency(player: dict, currency: str, amount: int) -> None:
-        key = "jifen" if currency == "积分" else "coin"
+    CURRENCY_KEYS = {"金币": "coin", "积分": "jifen", "钻石": "diamond"}
+
+    @classmethod
+    def currency_key(cls, currency: str) -> str:
+        return cls.CURRENCY_KEYS.get(currency, "coin")
+
+    @classmethod
+    def add_currency(cls, player: dict, currency: str, amount: int) -> None:
+        key = cls.currency_key(currency)
         player[key] = max(0, player.get(key, 0) + amount)
 
-    @staticmethod
-    def get_currency(player: dict, currency: str) -> int:
-        key = "jifen" if currency == "积分" else "coin"
+    @classmethod
+    def get_currency(cls, player: dict, currency: str) -> int:
+        key = cls.currency_key(currency)
         return player.get(key, 0)
 
     @staticmethod
@@ -182,6 +190,60 @@ class PetStore:
     @staticmethod
     def has_item(player: dict, name: str, count: int = 1) -> bool:
         return player.get("bag", {}).get(name, 0) >= count
+
+    # ----------------------------- 卡密 -----------------------------
+    CARD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 去掉易混淆的 0/O/1/I
+
+    def cards(self) -> dict:
+        return self._data.setdefault("cards", {})
+
+    def gen_card_code(self, prefix: str = "") -> str:
+        cards = self.cards()
+        prefix = "".join(c for c in str(prefix).upper() if c.isalnum())
+        while True:
+            body = "".join(random.choice(self.CARD_CHARS) for _ in range(16))
+            code = f"{prefix}{body}" if prefix else body
+            if code not in cards:
+                return code
+
+    def create_cards(
+        self, currency: str, amount: int, count: int = 1, prefix: str = ""
+    ) -> list[str]:
+        """批量生成卡密，返回卡密码列表。currency ∈ {金币, 积分, 钻石}。"""
+        if currency not in self.CURRENCY_KEYS:
+            raise ValueError("货币类型必须为 金币 / 积分 / 钻石")
+        amount = int(amount)
+        count = max(1, int(count))
+        cards = self.cards()
+        created: list[str] = []
+        now = int(time.time())
+        for _ in range(count):
+            code = self.gen_card_code(prefix)
+            cards[code] = {
+                "currency": currency,
+                "amount": amount,
+                "used": False,
+                "used_by": None,
+                "used_at": None,
+                "created_at": now,
+            }
+            created.append(code)
+        return created
+
+    def redeem_card(self, code: str, player: dict, used_by: str):
+        """兑换卡密：成功返回 (currency, amount)，失败返回 (None, 原因)。"""
+        code = str(code).strip().upper()
+        cards = self.cards()
+        card = cards.get(code)
+        if card is None:
+            return None, "卡密不存在或输入有误"
+        if card.get("used"):
+            return None, "该卡密已被使用"
+        card["used"] = True
+        card["used_by"] = used_by
+        card["used_at"] = int(time.time())
+        self.add_currency(player, card["currency"], int(card["amount"]))
+        return card["currency"], int(card["amount"])
 
     # ----------------------------- 冷却 -----------------------------
     @staticmethod
