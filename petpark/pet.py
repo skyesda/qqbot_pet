@@ -264,28 +264,39 @@ def effective_power_vs(pet: dict, enemy: dict) -> int:
 # --------------------------------------------------------------------------
 def render_pet(pet: dict) -> str:
     refresh_energy(pet)
-    gender_icon = "♂" if pet.get("gender") == "男" else "♀"
+    gender = {"男": "雄", "女": "雌"}.get(pet.get("gender"), pet.get("gender", "—"))
+    love = pet.get("love_state", "单身")
     mood = pet.get("mood", 0)
     stars = "★" * mood + "☆" * (5 - mood)
-    love = pet["love_state"]
-    if pet.get("love_target"):
-        love += f"（伴侣 `{pet['love_target']}`）"
+    skills = "、".join(pet.get("skills", [])) or "无"
+    artifact = pet.get("artifact") or "无"
+    talent = pet.get("talent") or "未觉醒"
+    need = _exp_to_next(pet["level"])
     lines = [
-        f"## 🐾 {pet['nickname']}",
-        f"**{pet['species']}** · {pet['quality']} · {pet['element']}属性 · {pet['gender']}{gender_icon}",
-        "━━━━━━━━━━━━━━",
-        f"🌟 **阶段** {pet['stage']}　**等级** `Lv{pet['level']}/{level_cap(pet)}`",
-        f"📈 **经验** {pet['exp']}　**状态** {pet['status']}",
-        f"❤️ **生命** {pet['hp']}/{pet['hp_max']}　**心情** {stars}",
-        f"⚔️ 攻击 {pet['atk']}　🛡️ 防御 {pet['def']}　🧠 智力 {pet['intel']}",
-        f"⚡ **精力** {pet['energy']}/{pet['energy_max']}",
-        f"💥 **战力** `{battle_power(pet)}`",
-        "━━━━━━━━━━━━━━",
-        f"🗡️ 神器：{pet.get('artifact') or '无'}",
-        f"📜 秘技：{'、'.join(pet.get('skills', [])) or '无'}",
-        f"✨ 天赋：{pet.get('talent') or '无'}",
-        f"💕 姻缘：{love}　好感度 {pet.get('favor', 0)}",
+        "┏━─★─ 宠 ☆ 物 ─★─┓",
+        f"● **等级**：Lv{pet['level']}/{level_cap(pet)}",
+        f"● **昵称**：{pet['nickname']}",
+        f"● **种类**：{pet['species']}",
+        f"● **属性**：{pet['element']}",
+        f"● **阶段**：{pet['stage']}",
+        f"● **级别**：{pet['quality']}",
+        f"● **战力**：{battle_power(pet)}",
+        f"● **智力**：{pet['intel']}",
+        f"● **攻击**：{pet['atk']}",
+        f"● **防御**：{pet['def']}",
+        f"● **秘技**：{skills}",
+        f"● **神器**：{artifact}",
+        f"● **性别**：{gender}（{love}）",
+        f"● **状态**：{pet['status']}",
+        f"● **天赋**：{talent}",
+        f"● **心情**：{stars}",
+        f"● **精力**：{pet['energy']}/{pet['energy_max']}",
+        f"● **血量**：{pet['hp']}/{pet['hp_max']}",
+        f"● **经验**：{pet['exp']}/{need}",
     ]
+    if pet.get("love_target"):
+        lines.append(f"● **伴侣**：`{pet['love_target']}`　好感度 {pet.get('favor', 0)}")
+    lines.append("┗━─★─ 信 ☆ 息 ─★─┛")
     if is_frozen(pet):
         lines.append(f"> ⚠️ 假死/惊魂中，剩余约 **{frozen_remain_min(pet)}** 分钟无法操作")
     return "\n".join(lines)
