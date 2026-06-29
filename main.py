@@ -59,6 +59,8 @@ KNOWN_COMMANDS = {
     "减金币",
     "加积分",
     "减积分",
+    "加钻石",
+    "减钻石",
     # 商城
     "宠物商城",
     "道具商城",
@@ -339,7 +341,7 @@ class PetParkPlugin(Star):
             return f"## 🌐 跨群挑战\n本群跨群功能**{state}**。"
 
         # ---- 管理员：增减指定用户金币 / 积分 ----
-        if cmd in ("加金币", "减金币", "加积分", "减积分"):
+        if cmd in ("加金币", "减金币", "加积分", "减积分", "加钻石", "减钻石"):
             return self._admin_adjust(event, group_id, cmd, tokens)
 
         # 群未开启则不响应任何宠物指令
@@ -662,8 +664,13 @@ class PetParkPlugin(Star):
         self, event, group_id: str, cmd: str, tokens: list[str]
     ) -> str:
         if not self._is_admin(event):
-            return "仅管理员可增减用户金币/积分。"
-        currency = "金币" if "金币" in cmd else "积分"
+            return "仅管理员可增减用户金币/积分/钻石。"
+        if "钻石" in cmd:
+            currency = "钻石"
+        elif "金币" in cmd:
+            currency = "金币"
+        else:
+            currency = "积分"
         sign = 1 if cmd.startswith("加") else -1
         # 目标 ID 不一定是纯数字（QQ 官方机器人/频道为 openid 字符串），
         # 仅要求最后给出的数量是整数。
@@ -680,7 +687,7 @@ class PetParkPlugin(Star):
         self.store.add_currency(tp, currency, sign * amount)
         after = self.store.get_currency(tp, currency)
         verb = "增加" if sign > 0 else "减少"
-        icon = "🪙" if currency == "金币" else "💎"
+        icon = "🪙" if currency == "金币" else ("💠" if currency == "钻石" else "💎")
         return (
             f"## ⚙️ 管理操作\n"
             f"已为用户 `{target}` {verb}{icon}**{currency} {amount}**\n"
@@ -726,7 +733,7 @@ class PetParkPlugin(Star):
                 "宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
                 "",
                 "**⚙️ 管理员**",
-                "开启/关闭宠物乐园 · 开启/关闭宠物跨群 · 加金币 QQ 数量 · 减金币 QQ 数量 · 加积分 QQ 数量 · 减积分 QQ 数量",
+                "开启/关闭宠物乐园 · 开启/关闭宠物跨群 · 加金币 QQ 数量 · 减金币 QQ 数量 · 加积分 QQ 数量 · 减积分 QQ 数量 · 加钻石 QQ 数量 · 减钻石 QQ 数量",
                 "",
                 "> 💡 指令均无需前缀，直接发送即可。\n"
                 "> 👤 需指定对方时请**直接填用户ID/QQ号**（不支持 @）；所有数据按群独立，神榜为全服排行。",
