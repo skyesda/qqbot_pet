@@ -1,4 +1,4 @@
-"""宠物乐园 · 宠物联盟 —— AstrBot 群聊养成 / 对战插件。
+"""宠物乐园 —— AstrBot 群聊养成 / 对战插件。
 
 参考某 QQ 群"宠物联盟"玩法复刻：砸蛋抽宠、宠物商城、属性克制对战、繁殖姻缘、
 进化飞升渡劫、天赋觉醒、炼丹、神器/秘技、副本、剧情任务、跨群挑战、排行神榜等。
@@ -16,8 +16,6 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
-import astrbot.api.message_components as Comp
-
 from .petpark import data, pet as petmod
 from .petpark.store import PetStore
 
@@ -34,8 +32,8 @@ PLUGIN_NAME = "astrbot_plugin_petpark"
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
 KNOWN_COMMANDS = {
     # 管理
-    "开启宠物联盟",
-    "关闭宠物联盟",
+    "开启宠物乐园",
+    "关闭宠物乐园",
     "开启宠物跨群",
     "关闭宠物跨群",
     # 信息查询
@@ -139,7 +137,7 @@ KNOWN_COMMANDS = {
 @register(
     PLUGIN_NAME,
     "Devin",
-    "宠物乐园 · 宠物联盟：群聊宠物养成与对战玩法（砸蛋/商城/对战/进化/姻缘/天赋/炼丹/副本）。",
+    "宠物乐园：群聊宠物养成与对战玩法（砸蛋/商城/对战/进化/姻缘/天赋/炼丹/副本）。",
     "1.0.0",
     "https://github.com/skyesda/qqbot_pet",
 )
@@ -201,27 +199,24 @@ class PetParkPlugin(Star):
         return str(gid) or "private"
 
     @staticmethod
-    def _at_target(event: AstrMessageEvent) -> str | None:
-        try:
-            for seg in event.get_messages():
-                if isinstance(seg, Comp.At):
-                    return str(seg.qq)
-        except Exception:
-            pass
-        return None
-
-    def _target_qq(
-        self, event: AstrMessageEvent, tokens: list[str], idx: int
-    ) -> str | None:
-        """优先取 @ 对象，否则取 tokens[idx]（兼容纯数字 QQ 与平台 openid 字符串）。"""
-        at = self._at_target(event)
-        if at:
-            return at
+    def _arg(tokens: list[str], idx: int) -> str | None:
+        """取 tokens[idx] 作为目标用户ID（兼容纯数字 QQ 与平台 openid 字符串）。"""
         if idx < len(tokens):
             tok = tokens[idx].strip()
             if tok:
                 return tok
         return None
+
+    def _find_target(
+        self, group_id: str, qq: str | None
+    ) -> tuple[dict | None, str | None]:
+        """按用户ID查本群玩家（数据按群隔离）。返回 (player, 错误提示)。"""
+        if not qq:
+            return None, None
+        tp = self.store.get_player(qq, group_id, create=False)
+        if not tp:
+            return None, f"❌ 用户 `{qq}` 在本群不存在（对方需先在本群参与宠物乐园）。"
+        return tp, None
 
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         # 配置里的管理员白名单优先
@@ -248,20 +243,22 @@ class PetParkPlugin(Star):
         group = self.store.get_group(group_id)
 
         # ---- 管理开关（管理员） ----
-        if cmd in ("开启宠物联盟", "关闭宠物联盟"):
+        if cmd in ("开启宠物乐园", "关闭宠物乐园"):
             if not self._is_admin(event):
-                return "仅管理员可开关宠物联盟。"
+                return "❌ 仅管理员可开关宠物乐园。"
             group["enabled"] = cmd.startswith("开启")
-            return f"本群宠物联盟已{'开启' if group['enabled'] else '关闭'}。"
+            state = "已开启 ✅" if group["enabled"] else "已关闭 🚫"
+            return f"## 🐾 宠物乐园\n本群宠物乐园**{state}**。"
         if cmd in ("开启宠物跨群", "关闭宠物跨群"):
             if not self._is_admin(event):
-                return "仅管理员可开关跨群功能。"
+                return "❌ 仅管理员可开关跨群功能。"
             group["cross"] = cmd.startswith("开启")
-            return f"本群宠物跨群功能已{'开启' if group['cross'] else '关闭'}。"
+            state = "已开启 ✅" if group["cross"] else "已关闭 🚫"
+            return f"## 🌐 跨群挑战\n本群跨群功能**{state}**。"
 
         # ---- 管理员：增减指定用户金币 / 积分 ----
         if cmd in ("加金币", "减金币", "加积分", "减积分"):
-            return self._admin_adjust(event, cmd, tokens)
+            return self._admin_adjust(event, group_id, cmd, tokens)
 
         # 群未开启则不响应任何宠物指令
         if not group.get("enabled", True):
@@ -280,9 +277,8 @@ class PetParkPlugin(Star):
         if cmd in ("宠物市场", "宠物专域"):
             return self._pet_market_text()
 
-        player = self.store.get_player(qq)
-        if group_id and group_id != "private":
-            player["group"] = group_id
+        player = self.store.get_player(qq, group_id)
+        player["group"] = group_id
 
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
@@ -309,15 +305,15 @@ class PetParkPlugin(Star):
         if cmd in ("丢弃",):
             return self._drop_item(player, tokens)
         if cmd == "转让":
-            return self._transfer_item(event, player, tokens)
+            return self._transfer_item(player, group_id, tokens)
 
         # ---- 以下指令大多需要拥有宠物 ----
         if cmd in ("我的宠物", "查看宠物", "宠物图"):
             return self._my_pet(player)
         if cmd == "宠物侦查":
-            return self._inspect(event, tokens)
+            return self._inspect(group_id, tokens)
         if cmd == "赠送宠物":
-            return self._gift_pet(event, player, tokens)
+            return self._gift_pet(player, group_id, tokens)
         if cmd == "放生宠物":
             return self._release(player)
         if cmd == "宠物改名":
@@ -375,19 +371,19 @@ class PetParkPlugin(Star):
         if cmd in ("炼丹", "提炼仙丹"):
             return self._refine_elixir(player)
         if cmd == "使用仙丹":
-            return self._use_elixir(event, player, tokens)
+            return self._use_elixir(player, group_id, tokens)
 
         # ---- 天赋触发指令 ----
         if cmd == "治愈":
-            return self._talent_heal(event, player, tokens)
+            return self._talent_heal(player, group_id, tokens)
         if cmd == "复活":
-            return self._talent_revive(event, player, tokens)
+            return self._talent_revive(player, group_id, tokens)
         if cmd == "精力转移":
-            return self._energy_transfer(event, player, tokens)
+            return self._energy_transfer(player, group_id, tokens)
 
         # ---- 对战 / 排行 ----
         if cmd == "宠物攻击":
-            return self._attack(event, player, group_id, tokens)
+            return self._attack(player, group_id, tokens)
         if cmd == "跨群挑战宠物":
             return self._cross_attack(player, group, tokens)
         if cmd == "宠物排行":
@@ -415,7 +411,7 @@ class PetParkPlugin(Star):
             return self._handle_quest(player, tokens, cmd)
 
         # ---- 婚恋 ----
-        love = self._handle_love(event, player, group_id, cmd, tokens)
+        love = self._handle_love(player, group_id, cmd, tokens)
         if love is not None:
             return love
 
@@ -428,58 +424,53 @@ class PetParkPlugin(Star):
         if cmd in ("宠物菜单", "宠物指令", "宠物帮助"):
             return self._menu_text()
         if cmd == "宠物种类":
-            names = "、".join(data.SPECIES_NAMES)
-            return f"【宠物种类】共 {len(data.SPECIES_NAMES)} 种：\n{names}"
+            names = " · ".join(data.SPECIES_NAMES)
+            return f"## 📖 宠物种类（共 {len(data.SPECIES_NAMES)} 种）\n{names}"
         if cmd == "属性":
-            lines = ["【属性克制】PK 时克制方额外 +50% 战力"]
-            lines.append("金→木→土→水→火→金")
-            lines.append("风→雷→冰→风")
-            lines.append("光→暗→光")
-            return "\n".join(lines)
+            return (
+                "## 🌀 属性克制\n"
+                "> PK 时克制方额外 **+50%** 战力\n\n"
+                "- 金 → 木 → 土 → 水 → 火 → 金\n"
+                "- 风 → 雷 → 冰 → 风\n"
+                "- 光 → 暗 → 光"
+            )
         if cmd == "神器":
-            lines = ["【神器一览】（武器加成）"]
+            lines = ["## 🗡️ 神器一览", "> 佩戴提供武器战力加成", ""]
             for n, v in data.ARTIFACTS.items():
-                lines.append(f"{n}：需 Lv{v['level_req']}，{v['desc']}")
+                lines.append(f"- **{n}**（需 Lv{v['level_req']}）：{v['desc']}")
             return "\n".join(lines)
         if cmd == "秘技":
-            lines = ["【秘技一览】（秘技加成）"]
+            lines = ["## 📜 秘技一览", "> 参悟后提供秘技战力加成", ""]
             for n, v in data.SKILLS.items():
                 lines.append(
-                    f"{n}：需 Lv{v['level_req']}/智力{v['intel_req']}，{v['desc']}"
+                    f"- **{n}**（需 Lv{v['level_req']}/智力{v['intel_req']}）：{v['desc']}"
                 )
             return "\n".join(lines)
         if cmd == "仙丹":
-            lines = ["【仙丹一览】"]
+            lines = ["## 💊 仙丹一览", ""]
             for n, v in data.ELIXIRS.items():
-                lines.append(f"{n}：{v['desc']}")
+                lines.append(f"- **{n}**：{v['desc']}")
             return "\n".join(lines)
         if cmd == "天赋":
-            lines = ["【天赋一览】每只宠物只能拥有 1 种天赋，可重复觉醒"]
+            lines = ["## ✨ 天赋一览", "> 每只宠物只能拥有 1 种天赋，可重复觉醒", ""]
             for n, v in data.TALENTS.items():
                 tag = "（需定制）" if v["need_custom"] else ""
-                lines.append(f"{n}{tag}：{v['desc']}")
+                lines.append(f"- **{n}**{tag}：{v['desc']}")
             return "\n".join(lines)
         if cmd == "状态":
             return (
-                "【宠物状态】"
-                + "/".join(data.STATUSES)
-                + "\n异常状态需喂食对应药品恢复，例如『喂食 解毒剂』可解除中毒。"
+                "## 🩺 宠物状态\n"
+                + " / ".join(data.STATUSES)
+                + "\n\n> 异常状态需喂食对应药品恢复，例如 `喂食 解毒剂` 可解除中毒。"
             )
         if cmd == "查看说明":
             if len(tokens) < 2:
-                return "用法：查看说明 物品名称（例如：查看说明 九转还魂丹）"
+                return "⚠️ 用法：`查看说明 物品名称`（例如：查看说明 九转还魂丹）"
             name = tokens[1]
-            if name in data.ITEMS:
-                return f"【{name}】{data.ITEMS[name]['desc']}"
-            if name in data.ELIXIRS:
-                return f"【{name}】{data.ELIXIRS[name]['desc']}"
-            if name in data.ARTIFACTS:
-                return f"【{name}】{data.ARTIFACTS[name]['desc']}"
-            if name in data.SKILLS:
-                return f"【{name}】{data.SKILLS[name]['desc']}"
-            if name in data.TALENTS:
-                return f"【{name}】{data.TALENTS[name]['desc']}"
-            return f"未找到『{name}』的说明。"
+            for table in (data.ITEMS, data.ELIXIRS, data.ARTIFACTS, data.SKILLS, data.TALENTS):
+                if name in table:
+                    return f"## 📘 {name}\n{table[name]['desc']}"
+            return f"❓ 未找到『{name}』的说明。"
         return None
 
     @staticmethod
@@ -495,67 +486,94 @@ class PetParkPlugin(Star):
         """若该行为仍在冷却中，返回提示文本；否则返回 None。"""
         remain = self.store.cooldown_remaining(player, key)
         if remain > 0:
-            return f"⏳『{label}』冷却中，还需 {self._fmt_duration(remain)}。"
+            return f"⏳ **{label}** 冷却中，还需 `{self._fmt_duration(remain)}`。"
         return None
 
     def _my_info(self, player: dict, group_id: str) -> str:
         gid = group_id if group_id and group_id != "private" else "私聊"
         return "\n".join(
             [
-                "📇 我的信息",
-                "-" * 16,
-                f"QQ号：{player['qq']}",
-                f"群号：{gid}",
-                f"金币：{player.get('coin', 0)}",
-                f"积分：{player.get('jifen', 0)}",
+                "## 📇 我的信息",
+                "━━━━━━━━━━━━━━",
+                f"🆔 **QQ号**　`{player['qq']}`",
+                f"👥 **群号**　`{gid}`",
+                f"🪙 **金币**　{player.get('coin', 0)}",
+                f"💎 **积分**　{player.get('jifen', 0)}",
             ]
         )
 
-    def _admin_adjust(self, event, cmd: str, tokens: list[str]) -> str:
+    def _admin_adjust(
+        self, event, group_id: str, cmd: str, tokens: list[str]
+    ) -> str:
         if not self._is_admin(event):
             return "仅管理员可增减用户金币/积分。"
         currency = "金币" if "金币" in cmd else "积分"
         sign = 1 if cmd.startswith("加") else -1
-        at = self._at_target(event)
-        if at:
-            target = at
-            nums = [t for t in tokens[1:] if t.lstrip("-").isdigit()]
-            amount = int(nums[0]) if nums else None
-        else:
-            # 目标 ID 不一定是纯数字（QQ 官方机器人/频道为 openid 字符串），
-            # 仅要求最后给出的数量是整数。
-            if len(tokens) < 3 or not tokens[2].lstrip("-").isdigit():
-                return f"用法：{cmd} QQ号/ID 数量（或 {cmd} @对方 数量）"
-            target = tokens[1]
-            amount = int(tokens[2])
-        if amount is None or amount <= 0:
+        # 目标 ID 不一定是纯数字（QQ 官方机器人/频道为 openid 字符串），
+        # 仅要求最后给出的数量是整数。
+        if len(tokens) < 3 or not tokens[2].lstrip("-").isdigit():
+            return f"用法：{cmd} QQ号/ID 数量"
+        target = tokens[1]
+        amount = int(tokens[2])
+        if amount <= 0:
             return f"用法：{cmd} QQ号/ID 数量（数量需为正整数）"
-        tp = self.store.get_player(target)
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
         before = self.store.get_currency(tp, currency)
         self.store.add_currency(tp, currency, sign * amount)
         after = self.store.get_currency(tp, currency)
         verb = "增加" if sign > 0 else "减少"
-        return f"已为用户 {target} {verb}{currency} {amount}（{before} → {after}）。"
+        icon = "🪙" if currency == "金币" else "💎"
+        return (
+            f"## ⚙️ 管理操作\n"
+            f"已为用户 `{target}` {verb}{icon}**{currency} {amount}**\n"
+            f"> {currency}：{before} → **{after}**"
+        )
 
     def _menu_text(self) -> str:
         return "\n".join(
             [
-                "🐾 宠物乐园 · 指令菜单",
-                "═════════════",
-                "【入门】砸蛋｜购买宠物｜我的宠物｜宠物状态｜宠物改名｜宠物变性｜赠送宠物 @｜放生宠物｜宠物侦查 @",
-                "【商城/背包】宠物商城｜道具商城｜宠物市场｜查看背包｜购买 物品 数量｜使用 物品｜出售 物品 数量｜丢弃 物品 数量｜转让 @ 物品 数量｜清空背包",
-                "【喂养/日常】喂食 物品｜" + "｜".join(data.DAILY_ACTIONS),
-                "【成长】一键升级宠物｜宠物升级 [次数]｜宠物进化｜宠物飞升｜宠物渡劫｜幻境寻宝｜宠物神仙劫",
-                "【神器/秘技】打造神器 名称｜佩戴神器 名称｜卸下神器｜参悟秘技 名称｜遗忘秘技",
-                "【天赋/炼丹】宠物觉醒｜制作天赋符｜使用天赋符 天赋｜炼丹｜使用仙丹 名称｜治愈 @｜复活 @｜精力转移 @",
-                "【对战/排行】宠物攻击 @｜跨群挑战宠物 [群号 QQ]｜宠物排行｜宠物神榜｜领取神榜奖励",
-                "【副本/任务】宠物副本｜进入副本 名称｜宠物剧情任务｜领取任务 名称｜提交任务 名称｜我的剧情任务｜取消剧情任务",
-                "【姻缘】宠物追求 @｜同意追求 @｜宠物求婚 @｜同意求婚 @｜宠物分手｜宠物离婚｜宠物恋情",
-                "【个人】我的信息（查看 用户ID/群ID/金币/积分）",
-                "【图鉴查询】宠物种类｜属性｜状态｜神器｜秘技｜仙丹｜天赋｜查看说明 名称",
-                "【管理员】开启/关闭宠物联盟｜开启/关闭宠物跨群｜加金币 QQ 数量｜减金币 QQ 数量｜加积分 QQ 数量｜减积分 QQ 数量",
-                "═════════════",
-                "提示：本插件指令均无需前缀，直接发送即可；带 @ 的可 @ 对方或填写 QQ 号。",
+                "# 🐾 宠物乐园 · 指令菜单",
+                "",
+                "**🐣 入门**",
+                "砸蛋 · 购买宠物 · 我的宠物 · 宠物状态 · 宠物改名 · 宠物变性 · 赠送宠物 用户ID · 放生宠物 · 宠物侦查 用户ID",
+                "",
+                "**🛒 商城 / 背包**",
+                "宠物商城 · 道具商城 · 宠物市场 · 查看背包 · 购买 物品 数量 · 使用 物品 · 出售 物品 数量 · 丢弃 物品 数量 · 转让 用户ID 物品 数量 · 清空背包",
+                "",
+                "**🍖 喂养 / 日常**（各 10~20 分钟冷却）",
+                "喂食 物品 · " + " · ".join(data.DAILY_ACTIONS),
+                "",
+                "**📈 成长**",
+                "一键升级宠物 · 宠物升级 [次数] · 宠物进化 · 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
+                "",
+                "**🗡️ 神器 / 秘技**",
+                "打造神器 名称 · 佩戴神器 名称 · 卸下神器 · 参悟秘技 名称 · 遗忘秘技",
+                "",
+                "**✨ 天赋 / 炼丹**",
+                "宠物觉醒 · 制作天赋符 · 使用天赋符 天赋 · 炼丹 · 使用仙丹 名称 用户ID 数量 · 治愈 用户ID · 复活 用户ID · 精力转移 用户ID 值",
+                "",
+                "**⚔️ 对战 / 排行**",
+                "宠物攻击 用户ID · 跨群挑战宠物 [群号 用户ID] · 宠物排行（本群） · 宠物神榜（全服） · 领取神榜奖励",
+                "",
+                "**🏰 副本 / 任务**（副本 10 分钟冷却）",
+                "宠物副本 · 进入副本 名称 · 宠物剧情任务 · 领取任务 名称 · 提交任务 名称 · 我的剧情任务 · 取消剧情任务",
+                "",
+                "**💕 姻缘**",
+                "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
+                "",
+                "**📇 个人**",
+                "我的信息（查看 QQ号/群号/金币/积分）",
+                "",
+                "**📖 图鉴查询**",
+                "宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
+                "",
+                "**⚙️ 管理员**",
+                "开启/关闭宠物乐园 · 开启/关闭宠物跨群 · 加金币 QQ 数量 · 减金币 QQ 数量 · 加积分 QQ 数量 · 减积分 QQ 数量",
+                "",
+                "> 💡 指令均无需前缀，直接发送即可。\n"
+                "> 👤 需指定对方时请**直接填用户ID/QQ号**（不支持 @）；所有数据按群独立，神榜为全服排行。",
             ]
         )
 
@@ -573,7 +591,7 @@ class PetParkPlugin(Star):
                 "聚灵丹",
                 "改名卡",
             ]
-            title = "🛒 宠物商城（发送：购买 物品名 数量）"
+            title = "## 🛒 宠物商城"
         else:
             wanted = [
                 "永恒钻戒",
@@ -590,19 +608,23 @@ class PetParkPlugin(Star):
                 "普通经验书",
                 "五色药",
             ]
-            title = "🏪 道具商城（发送：购买 物品名 数量）"
-        lines = [title, "=" * 16]
+            title = "## 🏪 道具商城"
+        lines = [title, "> 购买方式：`购买 物品名 数量`", ""]
         for n in wanted:
             it = data.ITEMS[n]
-            lines.append(f"{n} —— {it['price']} {it['currency']}")
+            lines.append(f"- **{n}** — {it['price']} {it['currency']}")
         return "\n".join(lines)
 
     def _pet_market_text(self) -> str:
-        lines = ["🐾 宠物专域 / 宠物市场（发送：购买宠物 宠物名 [品质]）", "=" * 16]
+        lines = [
+            "## 🐾 宠物市场 / 宠物专域",
+            "> 购买方式：`购买宠物 宠物名 [品质]`",
+            "",
+        ]
         for n, p in data.PET_MARKET.items():
-            lines.append(f"{n}（{p} 积分）")
-        lines.append("=" * 16)
-        lines.append("品质可选：" + "、".join(data.QUALITIES) + "（默认普通）")
+            lines.append(f"- **{n}** — {p} 积分")
+        lines.append("")
+        lines.append("> 品质可选：" + " / ".join(data.QUALITIES) + "（默认普通，高品质加价）")
         return "\n".join(lines)
 
     # =====================================================================
@@ -624,7 +646,10 @@ class PetParkPlugin(Star):
         quality = self._roll_quality()
         player["pet"] = petmod.new_pet(species, quality)
         self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
-        return f"💥 砸蛋成功！获得【{quality}】品质的『{species}』！\n发送『我的宠物』查看详情。"
+        return (
+            f"💥 **砸蛋成功！**\n获得 【{quality}】品质的 **{species}**！\n"
+            "> 发送 `我的宠物` 查看详情。"
+        )
 
     def _buy_pet(self, player: dict, tokens: list[str]) -> str:
         if player.get("pet"):
@@ -645,7 +670,7 @@ class PetParkPlugin(Star):
             return f"购买『{species}』（{quality}）需 {cost} 积分，积分不足。"
         self.store.add_currency(player, "积分", -cost)
         player["pet"] = petmod.new_pet(species, quality)
-        return f"购买成功！花费 {cost} 积分获得【{quality}】品质的『{species}』。"
+        return f"✅ **购买成功！**花费 {cost} 积分获得 【{quality}】品质的 **{species}**。"
 
     # =====================================================================
     # 宠物查看 / 管理
@@ -669,30 +694,34 @@ class PetParkPlugin(Star):
             return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
         return petmod.render_pet(p)
 
-    def _inspect(self, event, tokens: list[str]) -> str:
-        target = self._target_qq(event, tokens, 1)
+    def _inspect(self, group_id: str, tokens: list[str]) -> str:
+        target = self._arg(tokens, 1)
         if not target:
-            return "用法：宠物侦查 QQ号"
-        tp = self.store.get_player(target, create=False)
-        if not tp or not tp.get("pet"):
+            return "用法：宠物侦查 用户ID"
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("pet"):
             return "对方还没有宠物。"
         return petmod.render_pet(tp["pet"])
 
-    def _gift_pet(self, event, player: dict, tokens: list[str]) -> str:
+    def _gift_pet(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物可赠送。"
-        target = self._target_qq(event, tokens, 1)
+        target = self._arg(tokens, 1)
         if not target:
-            return "用法：赠送宠物 QQ号"
+            return "用法：赠送宠物 用户ID"
         if target == player["qq"]:
             return "不能赠送给自己。"
-        tp = self.store.get_player(target)
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
         if tp.get("pet"):
             return "对方已经有宠物了，无法接收。"
         tp["pet"] = p
         player["pet"] = None
-        return f"已将『{p['nickname']}』赠送给 {target}。"
+        return f"🎁 已将『{p['nickname']}』赠送给 `{target}`。"
 
     def _release(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -884,27 +913,30 @@ class PetParkPlugin(Star):
             return f"背包里『{name}』数量不足。"
         return f"已丢弃 {name} x{count}。"
 
-    def _transfer_item(self, event, player: dict, tokens: list[str]) -> str:
-        # 转让 QQ 物品 数量
-        target = self._target_qq(event, tokens, 1)
+    def _transfer_item(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        # 转让 用户ID 物品 数量
+        target = self._arg(tokens, 1)
         if not target or len(tokens) < 3:
-            return "用法：转让 QQ 物品 数量"
+            return "用法：转让 用户ID 物品 数量"
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
         name = tokens[2]
         count = self._parse_count(tokens, 3)
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
         self.store.remove_item(player, name, count)
-        self.store.add_item(self.store.get_player(target), name, count)
-        return f"已转让 {name} x{count} 给 {target}。"
+        self.store.add_item(tp, name, count)
+        return f"📦 已转让 {name} ×{count} 给 `{target}`。"
 
     def _bag_text(self, player: dict) -> str:
         bag = player.get("bag", {})
-        head = "💼 背包"
+        head = "## 💼 我的背包"
         if not bag:
-            return head + "\n（空空如也）"
-        lines = [head, "-" * 16]
+            return head + "\n> （空空如也，去商城逆选购吧）"
+        lines = [head, "━━━━━━━━━━━━━━"]
         for n, c in bag.items():
-            lines.append(f"{n} x{c}")
+            lines.append(f"• **{n}** ×{c}")
         return "\n".join(lines)
 
     # =====================================================================
@@ -1326,21 +1358,21 @@ class PetParkPlugin(Star):
         self.store.add_item(player, elixir, 1)
         return f"⚗ 炼丹成功，提炼出『{elixir}』x1！\n{data.ELIXIRS[elixir]['desc']}"
 
-    def _use_elixir(self, event, player: dict, tokens: list[str]) -> str:
-        # 使用仙丹 仙丹名 QQ号 数量
+    def _use_elixir(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        # 使用仙丹 仙丹名 用户ID 数量
         if len(tokens) < 3:
-            return "用法：使用仙丹 仙丹名 QQ号 [数量]"
+            return "用法：使用仙丹 仙丹名 用户ID [数量]"
         name = tokens[1]
         if name not in data.ELIXIRS:
             return f"没有名为『{name}』的仙丹。"
-        target = self._target_qq(event, tokens, 2)
-        if not target:
-            return "请指定目标 QQ 号。"
+        target = self._arg(tokens, 2)
         count = self._parse_count(tokens, 3)
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
-        tp = self.store.get_player(target, create=False)
-        if not tp or not tp.get("pet"):
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("pet"):
             return "目标没有宠物。"
         tpet = tp["pet"]
         if tpet.get("talent") == "不死之体" and data.ELIXIRS[name]["effect"].get(
@@ -1351,7 +1383,7 @@ class PetParkPlugin(Star):
         for _ in range(count):
             msg = self._apply_elixir(tpet, name)
         self.store.remove_item(player, name, count)
-        return f"对 {target} 的宠物使用『{name}』x{count}：{msg}"
+        return f"对 `{target}` 的宠物使用『{name}』×{count}：{msg}"
 
     def _apply_elixir(self, p: dict, name: str) -> str:
         eff = data.ELIXIRS[name]["effect"]
@@ -1387,57 +1419,65 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 天赋触发指令：治愈 / 复活 / 精力转移
     # =====================================================================
-    def _talent_heal(self, event, player: dict, tokens: list[str]) -> str:
+    def _talent_heal(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
         if p.get("talent") != "妙手回春":
             return "需要觉醒『妙手回春』天赋才能治愈他人宠物。"
-        target = self._target_qq(event, tokens, 1)
+        target = self._arg(tokens, 1)
         if not target:
-            return "用法：治愈 QQ"
-        tp = self.store.get_player(target, create=False)
-        if not tp or not tp.get("pet"):
+            return "用法：治愈 用户ID"
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("pet"):
             return "目标没有宠物。"
         tp["pet"]["hp"] = tp["pet"]["hp_max"]
-        return f"🌿 已治愈 {target} 的宠物，血量回满。"
+        return f"🌿 已治愈 `{target}` 的宠物，血量回满。"
 
-    def _talent_revive(self, event, player: dict, tokens: list[str]) -> str:
+    def _talent_revive(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
         if p.get("talent") != "起死回生":
             return "需要觉醒『起死回生』天赋才能复活他人宠物。"
-        target = self._target_qq(event, tokens, 1)
+        target = self._arg(tokens, 1)
         if not target:
-            return "用法：复活 QQ"
-        tp = self.store.get_player(target, create=False)
-        if not tp or not tp.get("pet"):
+            return "用法：复活 用户ID"
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("pet"):
             return "目标没有宠物。"
         tpet = tp["pet"]
         tpet["status"] = "正常"
         tpet["hp"] = tpet["hp_max"]
-        return f"💫 已复活 {target} 的宠物。"
+        return f"💫 已复活 `{target}` 的宠物。"
 
-    def _energy_transfer(self, event, player: dict, tokens: list[str]) -> str:
+    def _energy_transfer(
+        self, player: dict, group_id: str, tokens: list[str]
+    ) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
         if p.get("talent") != "精力转移":
             return "需要觉醒『精力转移』天赋（需定制宠物）才能转移精力。"
-        target = self._target_qq(event, tokens, 1)
+        target = self._arg(tokens, 1)
         amount = self._parse_count(tokens, 2)
         if not target or len(tokens) < 3:
-            return "用法：精力转移 QQ 精力值"
+            return "用法：精力转移 用户ID 精力值"
         if p["energy"] < amount:
             return "自身精力不足。"
-        tp = self.store.get_player(target, create=False)
-        if not tp or not tp.get("pet"):
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("pet"):
             return "目标没有宠物。"
         p["energy"] -= amount
         tpet = tp["pet"]
         tpet["energy"] = min(tpet["energy_max"], tpet["energy"] + amount)
-        return f"🔋 已向 {target} 的宠物转移 {amount} 点精力。"
+        return f"🔋 已向 `{target}` 的宠物转移 {amount} 点精力。"
 
     # =====================================================================
     # 对战 / 排行
@@ -1513,7 +1553,7 @@ class PetParkPlugin(Star):
         kill_txt = "（对方宠物已死亡）" if killed else ""
         return f"{head}经验 +{exp}{steal}{kill_txt}。"
 
-    def _attack(self, event, player: dict, group_id: str, tokens: list[str]) -> str:
+    def _attack(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
@@ -1521,13 +1561,15 @@ class PetParkPlugin(Star):
             return "你的宠物已死亡，请先复活。"
         if petmod.is_frozen(p):
             return f"宠物假死/惊魂中，约 {petmod.frozen_remain_min(p)} 分钟后才能战斗。"
-        target = self._target_qq(event, tokens, 1)
+        target = self._arg(tokens, 1)
         if not target:
-            return "用法：宠物攻击 QQ号"
+            return "用法：宠物攻击 用户ID"
         if target == player["qq"]:
             return "不能攻击自己。"
-        tp = self.store.get_player(target, create=False)
-        if not tp or not tp.get("pet"):
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("pet"):
             return "对方没有宠物。"
         tpet = tp["pet"]
         if petmod.is_dead(tpet):
@@ -1543,19 +1585,24 @@ class PetParkPlugin(Star):
         if not p:
             return "你没有宠物。"
         if not group.get("cross", True):
-            return "本群未开启宠物跨群功能。"
+            return "⚠️ 本群未开启宠物跨群功能。"
         busy = self._busy_reason(p)
         if busy:
             return busy
-        # 跨群挑战宠物 [群号 QQ]，或随机
+        # 跨群挑战宠物 [群号 用户ID]，或随机
         target_player = None
-        if len(tokens) >= 3 and tokens[2].isdigit():
-            target_player = self.store.get_player(tokens[2], create=False)
+        if len(tokens) >= 3:
+            target_player = self.store.get_player(
+                tokens[2], tokens[1], create=False
+            )
+            if not target_player:
+                return f"❌ 群 `{tokens[1]}` 内用户 `{tokens[2]}` 不存在。"
         if not target_player:
+            self_key = self.store.make_key(player.get("group", ""), player["qq"])
             candidates = [
                 pl
-                for q, pl in self.store.all_players().items()
-                if pl.get("pet") and q != player["qq"] and not petmod.is_dead(pl["pet"])
+                for k, pl in self.store.all_players().items()
+                if pl.get("pet") and k != self_key and not petmod.is_dead(pl["pet"])
             ]
             if not candidates:
                 return "暂时找不到可挑战的跨群宠物。"
@@ -1569,35 +1616,43 @@ class PetParkPlugin(Star):
         return self._battle(p, target_player["pet"], player, target_player)
 
     def _rank(self, group_id: str, local: bool) -> str:
+        # 本群排行只统计本群玩家；神榜为全服（跨群）。
+        source = (
+            self.store.players_in_group(group_id)
+            if local
+            else self.store.all_players()
+        )
         entries = []
-        for q, pl in self.store.all_players().items():
+        for pl in source.values():
             pet = pl.get("pet")
             if not pet:
                 continue
-            # 本群排行只统计最近在本群游玩的玩家
-            if local and str(pl.get("group", "")) != str(group_id):
-                continue
-            entries.append((q, pet, petmod.battle_power(pet)))
+            entries.append((pl.get("qq", "?"), pet, petmod.battle_power(pet)))
         entries.sort(key=lambda x: x[2], reverse=True)
         entries = entries[: self.rank_size]
         if not entries:
             return "暂无宠物上榜。"
-        title = "🏆 宠物排行（本群口径）" if local else "🏅 宠物神榜（全服）"
-        lines = [title, "=" * 16]
+        title = "## 🏆 宠物排行（本群）" if local else "## 🏅 宠物神榜（全服）"
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines = [title, "━━━━━━━━━━━━━━"]
         for i, (q, pet, bp) in enumerate(entries, 1):
+            rk = medals.get(i, f"`{i}.`")
             lines.append(
-                f"{i}. {pet['nickname']}（{pet['quality']}/{pet['stage']}）战力 {bp} —— {q}"
+                f"{rk} **{pet['nickname']}**（{pet['quality']}/{pet['stage']}）\n"
+                f"　　💥 战力 `{bp}`　·　`{q}`"
             )
         return "\n".join(lines)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:
+        # 神榜为全服跨群排行，以「群ID+用户ID」为唯一身份。
         entries = []
-        for q, pl in self.store.all_players().items():
+        for k, pl in self.store.all_players().items():
             if pl.get("pet"):
-                entries.append((q, petmod.battle_power(pl["pet"])))
+                entries.append((k, petmod.battle_power(pl["pet"])))
         entries.sort(key=lambda x: x[1], reverse=True)
-        top = [q for q, _ in entries[:3]]
-        if player["qq"] not in top:
+        top = [k for k, _ in entries[:3]]
+        self_key = self.store.make_key(player.get("group", group_id), player["qq"])
+        if self_key not in top:
             return "只有神榜前三名可领取奖励。"
         today = time.strftime("%Y-%m-%d")
         if player.get("rank_reward_day") == today:
@@ -1611,10 +1666,15 @@ class PetParkPlugin(Star):
     # 副本 / 剧情任务
     # =====================================================================
     def _dungeon_list(self) -> str:
-        lines = ["🏰 宠物副本（发送：进入副本 副本名称）", "=" * 16]
+        lines = [
+            "## 🏰 宠物副本",
+            "> 进入方式：`进入副本 副本名称`（冷却 10 分钟）",
+            "",
+        ]
         for n, d in data.DUNGEONS.items():
             lines.append(
-                f"{n}：需 Lv{d['level_req']}，耗 {d['energy']} 精力，产出 经验{d['exp']}/积分{d['jifen']}"
+                f"- **{n}**　需 Lv{d['level_req']} · 耗 {d['energy']} 精力\n"
+                f"　　产出：经验 {d['exp']} / 积分 {d['jifen']}"
             )
         return "\n".join(lines)
 
@@ -1651,29 +1711,30 @@ class PetParkPlugin(Star):
 
     def _quest_list(self) -> str:
         lines = [
-            "📜 可领取剧情任务（发送：领取任务 任务名 / 提交任务 任务名）",
-            "=" * 16,
+            "## 📜 可领取剧情任务",
+            "> `领取任务 任务名` 领取，完成后 `提交任务 任务名`",
+            "",
         ]
         for n, q in data.QUESTS.items():
-            need = "、".join(f"{k}x{v}" for k, v in q["need"].items())
+            need = "、".join(f"{k}×{v}" for k, v in q["need"].items())
             rwd = "、".join(f"{k}{v}" for k, v in q["reward"].items())
-            lines.append(f"{n}：目标 {need} → 奖励 {rwd}")
+            lines.append(f"- **{n}**\n　　🎯 {need}　🎁 {rwd}")
         return "\n".join(lines)
 
     def _my_quests(self, player: dict) -> str:
         qs = player.get("quests", {})
         if not qs:
-            return "你还没有领取剧情任务，发送『宠物剧情任务』查看。"
-        lines = ["📜 我的剧情任务"]
+            return "📜 你还没有领取剧情任务，发送『宠物剧情任务』查看。"
+        lines = ["## 📜 我的剧情任务", "━━━━━━━━━━━━━━"]
         stats = player.get("stats", {})
         for n, base in qs.items():
             need = data.QUESTS.get(n, {}).get("need", {})
             base = base if isinstance(base, dict) else {}
             prog = "、".join(
-                f"{k} {max(0, stats.get(k, 0) - base.get(k, 0))}/{v}"
+                f"{k} **{max(0, stats.get(k, 0) - base.get(k, 0))}**/{v}"
                 for k, v in need.items()
             )
-            lines.append(f"{n}：{prog}")
+            lines.append(f"- **{n}**：{prog}")
         return "\n".join(lines)
 
     def _handle_quest(self, player: dict, tokens: list[str], cmd: str) -> str:
@@ -1712,18 +1773,18 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 婚恋
     # =====================================================================
-    def _handle_love(self, event, player, group_id, cmd, tokens) -> str | None:
+    def _handle_love(self, player, group_id, cmd, tokens) -> str | None:
         if cmd == "宠物恋情":
             return self._love_status(player)
         if cmd == "宠物分手":
-            return self._breakup(player)
+            return self._breakup(player, group_id)
         if cmd == "宠物离婚":
-            return self._divorce(player)
+            return self._divorce(player, group_id)
         if cmd in ("宠物追求", "同意追求", "宠物求婚", "同意求婚"):
-            target = self._target_qq(event, tokens, 1)
+            target = self._arg(tokens, 1)
             if not target:
-                return f"用法：{cmd} QQ号"
-            return self._love_action(player, target, cmd)
+                return f"用法：{cmd} 用户ID"
+            return self._love_action(player, group_id, target, cmd)
         return None
 
     def _love_status(self, player: dict) -> str:
@@ -1731,17 +1792,24 @@ class PetParkPlugin(Star):
         if not p:
             return "你没有宠物。"
         if p["love_state"] == "单身":
-            return f"『{p['nickname']}』当前单身。"
-        return f"『{p['nickname']}』{p['love_state']}中，伴侣 {p['love_target']}，好感度 {p['favor']}。"
+            return f"💔 『{p['nickname']}』当前**单身**。"
+        return (
+            f"💕 『{p['nickname']}』**{p['love_state']}**中\n"
+            f"> 伴侣：`{p['love_target']}`　好感度：{p['favor']}"
+        )
 
-    def _love_action(self, player: dict, target: str, cmd: str) -> str:
+    def _love_action(
+        self, player: dict, group_id: str, target: str, cmd: str
+    ) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
         if target == player["qq"]:
             return "不能对自己的宠物执行该操作。"
-        tp = self.store.get_player(target, create=False)
-        if not tp or not tp.get("pet"):
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("pet"):
             return "对方没有宠物。"
         tpet = tp["pet"]
 
@@ -1774,15 +1842,14 @@ class PetParkPlugin(Star):
             pend = player.get("pending", {}).get("marry")
             if pend != target:
                 return "没有来自该 QQ 的求婚请求。"
-            proposer = self.store.get_player(target)
-            if not self.store.remove_item(proposer, "永恒钻戒"):
+            if not self.store.remove_item(tp, "永恒钻戒"):
                 return "对方没有『永恒钻戒』，求婚失效。"
             p["love_state"] = tpet["love_state"] = "已婚"
             player.get("pending", {}).pop("marry", None)
             return "🎉 喜结连理！双方宠物已婚，约会获得双倍好感度。"
         return "未知姻缘操作。"
 
-    def _breakup(self, player: dict) -> str:
+    def _breakup(self, player: dict, group_id: str) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
@@ -1791,12 +1858,12 @@ class PetParkPlugin(Star):
         partner = p.get("love_target")
         self._reset_love(p)
         if partner:
-            tp = self.store.get_player(partner, create=False)
+            tp = self.store.get_player(partner, group_id, create=False)
             if tp and tp.get("pet"):
                 self._reset_love(tp["pet"])
         return "💔 已分手。"
 
-    def _divorce(self, player: dict) -> str:
+    def _divorce(self, player: dict, group_id: str) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
@@ -1805,7 +1872,7 @@ class PetParkPlugin(Star):
         partner = p.get("love_target")
         self._reset_love(p)
         if partner:
-            tp = self.store.get_player(partner, create=False)
+            tp = self.store.get_player(partner, group_id, create=False)
             if tp and tp.get("pet"):
                 self._reset_love(tp["pet"])
         return "🕊 已离婚，缘尽于此。"

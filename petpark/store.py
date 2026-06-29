@@ -57,6 +57,30 @@ class PetStore:
                 self._data = {"players": {}, "groups": {}}
         self._data.setdefault("players", {})
         self._data.setdefault("groups", {})
+        self._migrate_group_keys()
+
+    @staticmethod
+    def make_key(group_id: str, qq: str) -> str:
+        """玩家在某个群内的唯一键：群ID + 用户ID（数据按群隔离）。"""
+        return f"{group_id}\x1f{qq}"
+
+    def _migrate_group_keys(self) -> None:
+        """把旧版（按 QQ 全局保存）的玩家数据迁移为按『群ID+用户ID』隔离。"""
+        players = self._data["players"]
+        migrated: dict[str, Any] = {}
+        changed = False
+        for key, pl in list(players.items()):
+            if "\x1f" in key:
+                migrated[key] = pl
+                continue
+            changed = True
+            gid = str(pl.get("group") or "private")
+            qq = str(pl.get("qq") or key)
+            pl.setdefault("qq", qq)
+            pl["group"] = gid
+            migrated[self.make_key(gid, qq)] = pl
+        if changed:
+            self._data["players"] = migrated
 
     def _flush(self) -> None:
         tmp = self.path.with_suffix(".tmp")
@@ -70,12 +94,18 @@ class PetStore:
             self._flush()
 
     # ----------------------------- 玩家 -----------------------------
-    def get_player(self, qq: str, create: bool = True) -> Optional[dict]:
+    def get_player(
+        self, qq: str, group_id: str, create: bool = True
+    ) -> Optional[dict]:
+        """取某群内的玩家数据（按群隔离）。create=False 时不存在返回 None。"""
         qq = str(qq)
+        group_id = str(group_id)
+        key = self.make_key(group_id, qq)
         players = self._data["players"]
-        if qq not in players and create:
-            players[qq] = {
+        if key not in players and create:
+            players[key] = {
                 "qq": qq,
+                "group": group_id,
                 "coin": self.start_coin,
                 "jifen": self.start_jifen,
                 "bag": {},
@@ -84,10 +114,19 @@ class PetStore:
                 "stats": {"battle_win": 0, "explore": 0},
                 "quests": {},
             }
-        return players.get(qq)
+        return players.get(key)
 
     def all_players(self) -> dict[str, dict]:
+        """全服所有玩家（键为 群ID+用户ID）。用于跨群神榜。"""
         return self._data["players"]
+
+    def players_in_group(self, group_id: str) -> dict[str, dict]:
+        """某个群内的全部玩家。"""
+        group_id = str(group_id)
+        prefix = self.make_key(group_id, "")
+        return {
+            k: v for k, v in self._data["players"].items() if k.startswith(prefix)
+        }
 
     # ----------------------------- 群设置 -----------------------------
     def get_group(self, group_id: str) -> dict:
