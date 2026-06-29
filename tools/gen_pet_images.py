@@ -67,11 +67,25 @@ def load_species() -> dict[str, str]:
 
 
 def build_prompt(species: str, element: str) -> str:
+    # 个别名称（多为知名商标角色）直连官方接口易触发审核/超时，
+    # 用去商标化的描述性 prompt 代替，文件名仍按种类名保存。
+    if species in PROMPT_OVERRIDES:
+        return PROMPT_OVERRIDES[species]
     return (
         f"一只名为「{species}」的可爱卡通游戏宠物，{element}属性，"
         f"全身居中，纯白色背景(#FFFFFF)，无文字、无边框、无地面阴影，"
         f"高质量数字插画风格，正方形构图"
     )
+
+
+# 去商标化的描述性 prompt（针对生成易超时/被拦截的名称）
+PROMPT_OVERRIDES = {
+    "皮卡丘": (
+        "一只可爱的黄色电气小鼠卡通宠物，圆润身体、红色脸颊、尖耳朵、"
+        "闪电形尾巴，雷属性，全身居中，纯白色背景(#FFFFFF)，"
+        "无文字、无边框、无地面阴影，高质量数字插画风格，正方形构图"
+    ),
+}
 
 
 def call_api(prompt: str, key: str) -> bytes:
