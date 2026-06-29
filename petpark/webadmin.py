@@ -40,6 +40,7 @@ class WebAdmin:
         app.router.add_post("/login", self._login_submit)
         app.router.add_get("/logout", self._logout)
         app.router.add_post("/api/list", self._api_list)
+        app.router.add_post("/api/meta", self._api_meta)
         app.router.add_post("/api/upsert", self._api_upsert)
         app.router.add_post("/api/delete", self._api_delete)
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
@@ -129,6 +130,30 @@ class WebAdmin:
         body = await request.json()
         table = self._table(body.get("table", ""))
         return self._json({"ok": True, "data": self.store._data.get(table, {})})
+
+    async def _api_meta(self, request):
+        """返回各类枚举值，供前端编辑表单渲染下拉框。"""
+        self._require(request)
+        from . import data
+
+        return self._json(
+            {
+                "ok": True,
+                "data": {
+                    "species": list(data.SPECIES.keys()),
+                    "qualities": list(data.QUALITIES),
+                    "elements": list(data.ELEMENTS),
+                    "genders": ["男", "女"],
+                    "stages": list(data.STAGES),
+                    "statuses": list(data.STATUSES),
+                    "love_states": list(data.LOVE_STATES),
+                    "artifacts": list(data.ARTIFACTS.keys()),
+                    "talents": list(data.TALENTS.keys()),
+                    "skills": list(data.SKILLS.keys()),
+                    "items": list(data.ITEMS.keys()),
+                },
+            }
+        )
 
     async def _api_upsert(self, request):
         self._require(request)
@@ -229,7 +254,7 @@ td.k{font-family:monospace;color:#a5b4fc;word-break:break-all;max-width:240px}
 .used{background:#7f1d1d;color:#fecaca}.unused{background:#14532d;color:#bbf7d0}
 .on{background:#1e3a8a;color:#bfdbfe}.off{background:#374151;color:#cbd5e1}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:20}
-.modal .card{background:#1e293b;padding:22px;border-radius:14px;width:min(560px,94vw);max-height:90vh;overflow:auto}
+.modal .card{background:#1e293b;padding:22px;border-radius:14px;width:min(720px,96vw);max-height:90vh;overflow:auto}
 .modal h3{margin:0 0 6px}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>div{flex:1;min-width:120px}
@@ -240,6 +265,8 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 .adv summary{cursor:pointer;color:#94a3b8;font-size:13px}
 .chk{display:flex;align-items:center;gap:8px;margin:10px 0}
 .chk input{width:auto}
+.sec{margin:16px 0 6px;font-weight:700;font-size:14px;color:#c7d2fe;border-bottom:1px solid #334155;padding-bottom:4px}
+.bagrow{margin:6px 0}
 .empty{padding:24px;text-align:center;color:#64748b}
 </style></head><body>
 <header><h1>🐾 宠物乐园 · 管理后台</h1><a href="/logout">退出登录</a></header>
@@ -274,6 +301,7 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <div class="modal" id="modal"><div class="card">
 <h3 id="mtitle">编辑</h3>
 <div class="muted" id="msub"></div>
+<datalist id="itemlist"></datalist>
 <div id="mfields"></div>
 <details class="adv"><summary>高级编辑（原始 JSON）</summary>
 <textarea id="mval"></textarea></details>
@@ -282,7 +310,23 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <button class="act" onclick="saveRow()">保存</button>
 </div></div></div>
 <script>
-let cur='players', cache={}, editKey=null;
+let cur='players', cache={}, editKey=null, META={};
+const PET_FIELDS=[
+ ['nickname','昵称','text'],['species','种类','sel','species'],
+ ['quality','品质','sel','qualities'],['element','元素','sel','elements'],
+ ['gender','性别','sel','genders'],['stage','阶段','sel','stages'],
+ ['level','等级','num'],['exp','经验','num'],
+ ['hp','生命','num'],['hp_max','生命上限','num'],
+ ['atk','攻击','num'],['def','防御','num'],['intel','智力','num'],
+ ['mood','心情(1-5)','num'],['energy','精力','num'],['energy_max','精力上限','num'],
+ ['status','状态','sel','statuses'],['love_state','姻缘','sel','love_states'],
+ ['love_target','伴侣键(群+QQ)','text'],['favor','好感度','num'],
+ ['artifact','神器','sel','artifacts','无'],['talent','天赋','sel','talents','无'],
+];
+const PET_DEF={nickname:'宝宝',species:'幼龙',quality:'普通',element:'金',gender:'男',stage:'幼年期',level:1,exp:0,hp:800,hp_max:800,atk:50,def:40,intel:30,mood:5,energy:100,energy_max:100,status:'正常',love_state:'单身',love_target:null,favor:0,artifact:null,talent:null,custom:false,skills:[],ascended:false,frozen_until:0};
+async function loadMeta(){try{const r=await api('/api/meta',{});META=r.data||{};}catch(e){META={};}}
+function escA(s){return esc(s).replace(/"/g,'&quot;');}
+function optHtml(list,val,empty){let h='';const L=(list||[]).map(String);if(empty!==undefined)h+=`<option value="">${esc(empty)}</option>`;for(const o of L)h+=`<option ${String(o)===String(val)?'selected':''}>${esc(o)}</option>`;if(val!==undefined&&val!==null&&val!==''&&!L.includes(String(val)))h+=`<option selected>${esc(val)}</option>`;return h;}
 function tab(t){cur=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';load();}
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
 async function load(){const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
@@ -348,10 +392,15 @@ function renderCards(){
 }
 function fieldHtml(){
  if(cur==='players')return `
+  <div class="sec">基础</div>
   <div class="row"><div><label class="fld">金币</label><input id="f_coin" type="number"></div>
   <div><label class="fld">积分</label><input id="f_jifen" type="number"></div>
   <div><label class="fld">钻石</label><input id="f_diamond" type="number"></div></div>
-  <div class="row"><div><label class="fld">宠物等级(无宠物则忽略)</label><input id="f_petlevel" type="number"></div></div>`;
+  <div class="row"><div><label class="fld">胜场</label><input id="f_st_win" type="number"></div>
+  <div><label class="fld">探索次数</label><input id="f_st_exp" type="number"></div></div>
+  <div class="sec">宠物</div><div id="petbox"></div>
+  <div class="sec">背包</div><div id="bagbox"></div>
+  <button class="act ghost" type="button" onclick="bagAdd()" style="margin-top:6px">＋ 添加物品</button>`;
  if(cur==='groups')return `
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启宠物乐园</label></div>
   <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>`;
@@ -362,13 +411,58 @@ function fieldHtml(){
   <div><label class="fld">钻石</label><input id="f_r_diamond" type="number"></div></div>
   <div class="chk"><input id="f_used" type="checkbox"><label for="f_used">已使用</label></div>`;
 }
+function buildPetForm(pet){
+ const has=!!pet&&typeof pet==='object';const p=has?pet:{};
+ let h=`<div class="chk"><input id="f_haspet" type="checkbox" ${has?'checked':''}><label for="f_haspet">拥有宠物（取消勾选并保存＝删除宠物；勾选无宠物者＝按默认值新建）</label></div><div class="row">`;
+ for(const f of PET_FIELDS){const k=f[0],l=f[1],t=f[2],opt=f[3],empty=f[4];const val=p[k];let inp;
+  if(t==='num')inp=`<input id="fp_${k}" type="number" value="${val!==undefined&&val!==null?escA(val):''}">`;
+  else if(t==='sel')inp=`<select id="fp_${k}">${optHtml(META[opt],val,empty)}</select>`;
+  else inp=`<input id="fp_${k}" value="${val!==undefined&&val!==null?escA(val):''}">`;
+  h+=`<div style="min-width:115px;flex:1"><label class="fld">${l}</label>${inp}</div>`;}
+ h+=`</div><div class="chk"><input id="fp_custom" type="checkbox" ${p.custom?'checked':''}><label for="fp_custom">定制宠物</label></div>`;
+ const sk=p.skills||[];h+=`<label class="fld">秘技（按住 Ctrl/Cmd 多选）</label><select id="fp_skills" multiple style="height:96px;width:100%">`;
+ for(const s of (META.skills||[]))h+=`<option ${sk.includes(s)?'selected':''}>${esc(s)}</option>`;
+ for(const s of sk)if(!(META.skills||[]).includes(s))h+=`<option selected>${esc(s)}</option>`;
+ h+=`</select>`;return h;
+}
+function bagRow(name,cnt){return `<div class="bagrow row" style="align-items:flex-end">
+ <div style="flex:3"><input class="bagname" list="itemlist" value="${escA(name||'')}" placeholder="物品名"></div>
+ <div style="flex:1"><input class="bagcnt" type="number" value="${cnt!==undefined&&cnt!==null?escA(cnt):1}" placeholder="数量"></div>
+ <div style="flex:0"><button class="act del" type="button" onclick="this.closest('.bagrow').remove()">×</button></div></div>`;}
+function buildBag(bag){bag=(bag&&typeof bag==='object')?bag:{};let h='';for(const n of Object.keys(bag))h+=bagRow(n,bag[n]);return h||'<div class="muted" id="bagempty">（空）</div>';}
+function bagAdd(){const box=g('bagbox');const e=g('bagempty');if(e)e.remove();box.insertAdjacentHTML('beforeend',bagRow('',1));}
 function fillFields(v){
- if(cur==='players'){g('f_coin').value=v.coin||0;g('f_jifen').value=v.jifen||0;g('f_diamond').value=v.diamond||0;g('f_petlevel').value=v.pet?(v.pet.level||1):'';}
+ if(cur==='players'){
+  g('f_coin').value=v.coin||0;g('f_jifen').value=v.jifen||0;g('f_diamond').value=v.diamond||0;
+  const st=v.stats||{};g('f_st_win').value=st.battle_win||0;g('f_st_exp').value=st.explore||0;
+  g('itemlist').innerHTML=(META.items||[]).map(i=>`<option value="${escA(i)}">`).join('');
+  g('petbox').innerHTML=buildPetForm(v.pet);
+  g('bagbox').innerHTML=buildBag(v.bag);
+ }
  else if(cur==='groups'){g('f_enabled').checked=!!v.enabled;g('f_cross').checked=!!v.cross;}
  else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_used').checked=!!v.used;}
 }
 function applyFields(v){
- if(cur==='players'){v.coin=+g('f_coin').value||0;v.jifen=+g('f_jifen').value||0;v.diamond=+g('f_diamond').value||0;if(v.pet&&g('f_petlevel').value!=='')v.pet.level=+g('f_petlevel').value;}
+ if(cur==='players'){
+  v.coin=+g('f_coin').value||0;v.jifen=+g('f_jifen').value||0;v.diamond=+g('f_diamond').value||0;
+  v.stats=v.stats||{};v.stats.battle_win=+g('f_st_win').value||0;v.stats.explore=+g('f_st_exp').value||0;
+  if(g('f_haspet')&&g('f_haspet').checked){
+   const pet=(v.pet&&typeof v.pet==='object')?v.pet:{};
+   for(const f of PET_FIELDS){const k=f[0],t=f[2];const el=g('fp_'+k);if(!el)continue;
+    if(t==='num'){if(el.value!=='')pet[k]=+el.value;}else{pet[k]=el.value;}}
+   pet.custom=g('fp_custom').checked;
+   pet.skills=Array.from(g('fp_skills').selectedOptions).map(o=>o.value);
+   if(pet.artifact==='')pet.artifact=null;
+   if(pet.talent==='')pet.talent=null;
+   if(pet.love_target==='')pet.love_target=null;
+   for(const k of Object.keys(PET_DEF))if(pet[k]===undefined)pet[k]=PET_DEF[k];
+   if(!pet.created_at)pet.created_at=Math.floor(Date.now()/1000);
+   if(!pet.last_energy_ts)pet.last_energy_ts=Math.floor(Date.now()/1000);
+   v.pet=pet;
+  }else{v.pet=null;}
+  const bag={};document.querySelectorAll('#bagbox .bagrow').forEach(r=>{const n=r.querySelector('.bagname').value.trim();const c=+r.querySelector('.bagcnt').value||0;if(n&&c>0)bag[n]=c;});
+  v.bag=bag;
+ }
  else if(cur==='groups'){v.enabled=g('f_enabled').checked;v.cross=g('f_cross').checked;}
  else{const r={};const c=+g('f_r_coin').value||0,j=+g('f_r_jifen').value||0,d=+g('f_r_diamond').value||0;if(c>0)r['金币']=c;if(j>0)r['积分']=j;if(d>0)r['钻石']=d;v.rewards=r;delete v.currency;delete v.amount;v.used=g('f_used').checked;}
  return v;
@@ -411,5 +505,6 @@ function exportUnused(){
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }
-load();
+(async()=>{await loadMeta();await load();})();
+
 </script></body></html>"""
