@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
+from astrbot.api import message_components as Comp
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
@@ -181,7 +182,22 @@ class PetParkPlugin(Star):
             return
         await self.store.save()
         event.stop_event()
-        yield event.plain_result(reply)
+        # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
+        chain = self._reply_chain(event, qq, group_id, reply)
+        if chain is not None:
+            yield event.chain_result(chain)
+        else:
+            yield event.plain_result(reply)
+
+    @staticmethod
+    def _reply_chain(event, qq: str, group_id: str, reply: str):
+        """群聊回复前置 @ 发送者；构造失败或私聊则返回 None（回退纯文本）。"""
+        if not group_id or group_id == "private":
+            return None
+        try:
+            return [Comp.At(qq=qq), Comp.Plain("\n" + reply)]
+        except Exception:
+            return None
 
     async def terminate(self):
         await self.store.save()
