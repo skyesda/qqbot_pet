@@ -20,14 +20,11 @@ PETS_DIR = Path(__file__).parent / "assets" / "pets"
 # 因此想让「图片 + 渲染后的文本」同处一条消息，唯一办法是把图片以 Markdown 图片
 # 语法 ![alt #宽 #高](url) 内嵌进文本里，让 QQ 服务端按 URL 拉取并渲染。
 #
-# QQ 服务端按 URL 抓图，必须是公网可达的 HTTPS 直链。插件图片已随仓库提交到
-# GitHub，这里用 jsDelivr 的 GitHub CDN 直链（国内可达性优于 raw.githubusercontent）。
-# 分支名 devin/petpark-plugin 含 "/" 会让 CDN 路径解析歧义，故固定到 commit SHA。
-# 若日后新增/重绘图片并提交，更新此 SHA 即可（取 `git rev-parse HEAD`）。
-_IMG_COMMIT = "9376e54f0d77057e307e47641d5da5b84169dc41"
-_CDN_BASE = (
-    f"https://cdn.jsdelivr.net/gh/skyesda/qqbot_pet@{_IMG_COMMIT}/petpark/assets/pets/"
-)
+# QQ 服务端按 URL 抓图，必须是「公网可达的 HTTPS 直链」，且 URL 域名要先在 QQ
+# 开放平台「消息URL配置」里登记（本服务器在香港，无需 ICP 备案）。这里用本机
+# nginx 在 www.flyyye.cn 下挂的静态目录 /petpark/pets/（与插件图片同一份）。
+# 该域名已有有效 TLS 证书，QQ 抓图不会因证书问题失败。
+_CDN_BASE = "https://www.flyyye.cn/petpark/pets/"
 # Markdown 内嵌图片的显示尺寸（原图 512×512 纯白底），统一为正方形。
 _IMG_DISPLAY = "260px"
 
