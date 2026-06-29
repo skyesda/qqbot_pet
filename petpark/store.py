@@ -267,6 +267,8 @@ class PetStore:
         card = cards.get(code)
         if card is None:
             return None, "卡密不存在或输入有误"
+        if int(card.get("auth_days", 0) or 0) > 0:
+            return None, "这是群授权卡，请用『授权 卡密』兑换"
         if card.get("used"):
             return None, "该卡密已被使用"
         rewards = self.card_rewards(card)
@@ -278,6 +280,46 @@ class PetStore:
         for cur, amt in rewards.items():
             self.add_currency(player, cur, int(amt))
         return rewards, None
+
+    def create_auth_cards(
+        self, days: int, count: int = 1, prefix: str = ""
+    ) -> list[str]:
+        """批量生成群授权卡：兑换后为所在群延长 days 天授权时长。"""
+        days = int(days)
+        if days <= 0:
+            raise ValueError("授权天数必须为正整数")
+        count = max(1, int(count))
+        cards = self.cards()
+        created: list[str] = []
+        now = int(time.time())
+        for _ in range(count):
+            code = self.gen_card_code(prefix)
+            cards[code] = {
+                "auth_days": days,
+                "used": False,
+                "used_by": None,
+                "used_at": None,
+                "created_at": now,
+            }
+            created.append(code)
+        return created
+
+    def redeem_auth_card(self, code: str, used_by: str):
+        """兑换群授权卡：成功返回 (天数, None)，失败返回 (None, 原因)。"""
+        code = str(code).strip().upper()
+        cards = self.cards()
+        card = cards.get(code)
+        if card is None:
+            return None, "卡密不存在或输入有误"
+        days = int(card.get("auth_days", 0) or 0)
+        if days <= 0:
+            return None, "这不是群授权卡（货币卡请用『兑换 卡密』）"
+        if card.get("used"):
+            return None, "该授权卡已被使用"
+        card["used"] = True
+        card["used_by"] = used_by
+        card["used_at"] = int(time.time())
+        return days, None
 
     # ----------------------------- 冷却 -----------------------------
     @staticmethod

@@ -54,6 +54,10 @@ KNOWN_COMMANDS = {
     "兑换",
     "卡密兑换",
     "查看说明",
+    # 群授权
+    "授权",
+    "授权状态",
+    "授权本群",
     # 管理员：增减货币
     "加金币",
     "减金币",
@@ -369,6 +373,18 @@ class PetParkPlugin(Star):
             return self._list_subadmins(event)
         if cmd == "我的管理额度":
             return self._my_admin_quota(event, qq, group_id)
+
+        # ---- 群授权（状态查询 / 卡密授权 / 大管理员直授）----
+        if cmd == "授权状态":
+            return self._auth_status(group_id)
+        if cmd == "授权":
+            return self._redeem_auth_card(event, group_id, qq, tokens)
+        if cmd == "授权本群":
+            return self._grant_auth(event, group_id, tokens)
+
+        # ---- 群授权校验：严格模式，所有群聊都需有效授权才能使用 ----
+        if self._is_group(group_id) and not self._is_group_authorized(group_id):
+            return self._auth_blocked_text()
 
         # 群未开启则不响应任何宠物指令
         if not group.get("enabled", True):
@@ -754,6 +770,9 @@ class PetParkPlugin(Star):
 
     # --------------------------- 小管理员 ---------------------------
     def _is_subadmin(self, group_id: str, qq: str) -> bool:
+        # 小管理员身份随本群授权有效而有效：授权失效则自动失去权限
+        if not self._is_group_authorized(group_id):
+            return False
         group = self.store.get_group(group_id)
         return str(qq) in [str(x) for x in group.get("subadmins", [])]
 
@@ -834,6 +853,118 @@ class PetParkPlugin(Star):
             "> 减少金币/积分不受限；不可增减钻石。额度每日 0 点自动重置。"
         )
 
+    # --------------------------- 群授权 ---------------------------
+    def _is_group_authorized(self, group_id: str) -> bool:
+        if not self._is_group(group_id):
+            return True  # 私聊不受群授权限制
+        group = self.store.get_group(group_id)
+        return int(group.get("auth_until", 0) or 0) > int(time.time())
+
+    def _extend_group_auth(self, group_id: str, days: int) -> int:
+        """延长群授权 days 天（未过期则在原到期时间上叠加，已过期从现在起算）。
+        若此前已过期/从未授权，则清空旧的小管理员（其身份随上次授权结束而消失）。"""
+        group = self.store.get_group(group_id)
+        now = int(time.time())
+        cur = int(group.get("auth_until", 0) or 0)
+        if cur <= now:
+            base = now
+            group["subadmins"] = []
+        else:
+            base = cur
+        group["auth_until"] = base + int(days) * 86400
+        return group["auth_until"]
+
+    @staticmethod
+    def _fmt_remain(until: int) -> str:
+        remain = int(until) - int(time.time())
+        if remain <= 0:
+            return "已到期"
+        days, rem = divmod(remain, 86400)
+        hours, rem = divmod(rem, 3600)
+        mins = rem // 60
+        if days > 0:
+            return f"{days} 天 {hours} 小时"
+        if hours > 0:
+            return f"{hours} 小时 {mins} 分钟"
+        return f"{mins} 分钟"
+
+    def _auth_status(self, group_id: str) -> str:
+        if not self._is_group(group_id):
+            return "私聊不受群授权限制。"
+        group = self.store.get_group(group_id)
+        until = int(group.get("auth_until", 0) or 0)
+        if until <= 0:
+            return (
+                "## 🔐 本群授权状态\n状态：**未授权** ❌\n"
+                "> 宠物乐园需授权后使用。请发送『授权 卡密』激活，或联系管理员。"
+            )
+        ok = until > int(time.time())
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
+        return (
+            "## 🔐 本群授权状态\n"
+            f"状态：{'**有效** ✅' if ok else '**已过期** ❌'}\n"
+            f"到期时间：{when}\n"
+            f"剩余：**{self._fmt_remain(until)}**"
+            + ("" if ok else "\n> 请发送『授权 卡密』续期。")
+        )
+
+    def _redeem_auth_card(self, event, group_id: str, qq: str, tokens: list[str]) -> str:
+        if not self._is_group(group_id):
+            return "授权卡只能在群聊内兑换。"
+        if len(tokens) < 2 or not tokens[1].strip():
+            return "用法：授权 卡密"
+        code = tokens[1].strip()
+        used_by = self.store.make_key(group_id, qq)
+        days, err = self.store.redeem_auth_card(code, used_by)
+        if days is None:
+            return f"❌ 授权失败：{err}"
+        until = self._extend_group_auth(group_id, days)
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
+        # 非大管理员激活本群者，自动升级为本群小管理员（随本群授权失效而失效）
+        promoted = ""
+        if not self._is_admin(event):
+            group = self.store.get_group(group_id)
+            subs = [str(x) for x in group.get("subadmins", [])]
+            if str(qq) not in subs:
+                subs.append(str(qq))
+                group["subadmins"] = subs
+            promoted = (
+                f"\n> 🛡️ 你已成为**本群小管理员**（可加减本群金币/积分，"
+                f"每日加币各上限 {self.subadmin_daily_add_limit}）；该身份随本群授权失效而消失。"
+            )
+        return (
+            "## 🔓 群授权成功\n"
+            f"本群授权 **+{days} 天**！\n到期时间：{when}\n"
+            f"剩余：**{self._fmt_remain(until)}**" + promoted
+        )
+
+    def _grant_auth(self, event, group_id: str, tokens: list[str]) -> str:
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可直接授权本群。"
+        if not self._is_group(group_id):
+            return "请在群聊内使用本指令。"
+        if len(tokens) < 2 or not tokens[1].lstrip("-").isdigit():
+            return "用法：授权本群 天数（正数延长，负数缩短）"
+        days = int(tokens[1])
+        if days == 0:
+            return "用法：授权本群 天数（不能为 0）"
+        until = self._extend_group_auth(group_id, days)
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
+        verb = "延长" if days > 0 else "缩短"
+        return (
+            "## 🔐 大管理员授权\n"
+            f"已为本群{verb} **{abs(days)} 天**。\n到期时间：{when}\n"
+            f"剩余：**{self._fmt_remain(until)}**"
+        )
+
+    @staticmethod
+    def _auth_blocked_text() -> str:
+        return (
+            "## 🔒 宠物乐园未授权\n"
+            "本群授权未激活或已到期，暂时无法使用宠物乐园。\n"
+            "> 发送『授权 卡密』激活，或『授权状态』查看；管理员可联系作者获取授权卡。"
+        )
+
     def _menu_text(self) -> str:
         return "\n".join(
             [
@@ -875,6 +1006,7 @@ class PetParkPlugin(Star):
                 "**⚙️ 管理员**",
                 "开启/关闭宠物乐园 · 开启/关闭宠物跨群 · 加金币 QQ 数量 · 减金币 QQ 数量 · 加积分 QQ 数量 · 减积分 QQ 数量 · 加钻石 QQ 数量 · 减钻石 QQ 数量",
                 "任命小管理 QQ · 撤销小管理 QQ · 小管理列表（大管理员查看全服）· 我的管理额度（小管理员查看今日额度）",
+                "授权状态（查看本群授权）· 授权 卡密（用授权卡激活/续期本群）· 授权本群 天数（大管理员直接授权）",
                 "",
                 "> 💡 指令均无需前缀，直接发送即可。\n"
                 "> 👤 需指定对方时请**直接填用户ID/QQ号**（不支持 @）；所有数据按群独立，神榜为全服排行。",

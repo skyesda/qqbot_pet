@@ -181,16 +181,24 @@ class WebAdmin:
     async def _api_gen_cards(self, request):
         self._require(request)
         body = await request.json()
-        rewards = body.get("rewards")
-        if not isinstance(rewards, dict):
-            # 兼容旧版单一货币入参
-            rewards = {body.get("currency", ""): body.get("amount", 0)}
+        auth_days = int(body.get("auth_days", 0) or 0)
         try:
-            codes = self.store.create_combo_cards(
-                rewards=rewards,
-                count=int(body.get("count", 1)),
-                prefix=body.get("prefix", ""),
-            )
+            if auth_days > 0:
+                codes = self.store.create_auth_cards(
+                    days=auth_days,
+                    count=int(body.get("count", 1)),
+                    prefix=body.get("prefix", ""),
+                )
+            else:
+                rewards = body.get("rewards")
+                if not isinstance(rewards, dict):
+                    # 兼容旧版单一货币入参
+                    rewards = {body.get("currency", ""): body.get("amount", 0)}
+                codes = self.store.create_combo_cards(
+                    rewards=rewards,
+                    count=int(body.get("count", 1)),
+                    prefix=body.get("prefix", ""),
+                )
         except (ValueError, TypeError) as e:
             return self._json({"ok": False, "msg": str(e)})
         await self.store.save()
@@ -278,11 +286,12 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <main>
 <div id="cardgen" style="display:none">
 <div class="cards-stat" id="cardstats"></div>
-<div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合（金币+钻石、金币+积分、三种一起…）。空或 0 表示不含该项。</div>
+<div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合（金币+钻石、金币+积分、三种一起…）。空或 0 表示不含该项。<b>填写「授权天数」则生成群授权卡（忽略货币）。</b></div>
 <div class="bar">
 <input id="amt_coin" type="number" placeholder="金币面额" style="width:120px">
 <input id="amt_jifen" type="number" placeholder="积分面额" style="width:120px">
 <input id="amt_diamond" type="number" placeholder="钻石面额" style="width:120px">
+<input id="amt_authdays" type="number" placeholder="授权天数(群授权卡)" style="width:160px">
 <input id="cnt" type="number" placeholder="数量" value="10" style="width:80px">
 <input id="pre" placeholder="前缀(可选,如VIP)" style="width:130px">
 <button class="act" onclick="genCards()">批量生成</button>
@@ -377,12 +386,17 @@ function rewardsHtml(r){
  const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(`<span class="${CUR_CLS[c]}">${c} +${r[c]}</span>`);
  return parts.length?parts.join(' ＋ '):'<span class="muted">—</span>';
 }
+function cardContentHtml(v){
+ const days=+(v.auth_days||0);
+ if(days>0)return `<span class="diamond">🔐 群授权 ${days} 天</span>`;
+ return rewardsHtml(cardRewards(v));
+}
 function renderCards(){
  let total=0,used=0;
  let rows='';
  for(const k of Object.keys(cache)){const v=cache[k];total++;if(v.used)used++;if(!match(k,v))continue;
   rows+=`<tr><td class="k">${esc(k)}</td>
-   <td>${rewardsHtml(cardRewards(v))}</td>
+   <td>${cardContentHtml(v)}</td>
    <td><span class="tag ${v.used?'used':'unused'}">${v.used?'已使用':'未使用'}</span></td>
    <td class="muted">${v.used_by?esc(v.used_by.replace(String.fromCharCode(31),' / ')):'—'}</td>
    <td class="muted">${fdate(v.created_at)}</td>
@@ -405,10 +419,11 @@ function fieldHtml(){
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启宠物乐园</label></div>
   <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>`;
  return `
-  <div class="muted">套餐面额（空或 0 表示不含该项，可任意组合）</div>
+  <div class="muted">套餐面额（空或 0 表示不含该项，可任意组合）；或填「授权天数」改为群授权卡。</div>
   <div class="row"><div><label class="fld">金币</label><input id="f_r_coin" type="number"></div>
   <div><label class="fld">积分</label><input id="f_r_jifen" type="number"></div>
-  <div><label class="fld">钻石</label><input id="f_r_diamond" type="number"></div></div>
+  <div><label class="fld">钻石</label><input id="f_r_diamond" type="number"></div>
+  <div><label class="fld">授权天数(群授权卡)</label><input id="f_authdays" type="number"></div></div>
   <div class="chk"><input id="f_used" type="checkbox"><label for="f_used">已使用</label></div>`;
 }
 function buildPetForm(pet){
@@ -440,7 +455,7 @@ function fillFields(v){
   g('bagbox').innerHTML=buildBag(v.bag);
  }
  else if(cur==='groups'){g('f_enabled').checked=!!v.enabled;g('f_cross').checked=!!v.cross;}
- else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_used').checked=!!v.used;}
+ else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_authdays').value=v.auth_days||'';g('f_used').checked=!!v.used;}
 }
 function applyFields(v){
  if(cur==='players'){
@@ -464,7 +479,7 @@ function applyFields(v){
   v.bag=bag;
  }
  else if(cur==='groups'){v.enabled=g('f_enabled').checked;v.cross=g('f_cross').checked;}
- else{const r={};const c=+g('f_r_coin').value||0,j=+g('f_r_jifen').value||0,d=+g('f_r_diamond').value||0;if(c>0)r['金币']=c;if(j>0)r['积分']=j;if(d>0)r['钻石']=d;v.rewards=r;delete v.currency;delete v.amount;v.used=g('f_used').checked;}
+ else{const ad=+g('f_authdays').value||0;if(ad>0){v.auth_days=ad;delete v.rewards;delete v.currency;delete v.amount;}else{const r={};const c=+g('f_r_coin').value||0,j=+g('f_r_jifen').value||0,d=+g('f_r_diamond').value||0;if(c>0)r['金币']=c;if(j>0)r['积分']=j;if(d>0)r['钻石']=d;v.rewards=r;delete v.currency;delete v.amount;delete v.auth_days;}v.used=g('f_used').checked;}
  return v;
 }
 function g(id){return document.getElementById(id);}
@@ -492,16 +507,23 @@ async function saveRow(){
 function closeModal(){g('modal').style.display='none';editKey=null;}
 async function delRow(k){if(!confirm('确认删除 '+k+' ?'))return;await api('/api/delete',{table:cur,key:k});load();}
 async function genCards(){
- const rewards={};const c=+g('amt_coin').value||0,j=+g('amt_jifen').value||0,d=+g('amt_diamond').value||0;
- if(c>0)rewards['金币']=c;if(j>0)rewards['积分']=j;if(d>0)rewards['钻石']=d;
- if(!Object.keys(rewards).length){alert('请至少为 金币/积分/钻石 中的一项填写面额');return;}
- const r=await api('/api/cards/generate',{rewards:rewards,count:+g('cnt').value,prefix:g('pre').value});
+ const authdays=+g('amt_authdays').value||0;
+ let payload;
+ if(authdays>0){
+  payload={auth_days:authdays,count:+g('cnt').value,prefix:g('pre').value};
+ }else{
+  const rewards={};const c=+g('amt_coin').value||0,j=+g('amt_jifen').value||0,d=+g('amt_diamond').value||0;
+  if(c>0)rewards['金币']=c;if(j>0)rewards['积分']=j;if(d>0)rewards['钻石']=d;
+  if(!Object.keys(rewards).length){alert('请填写金币/积分/钻石面额，或填写授权天数生成群授权卡');return;}
+  payload={rewards:rewards,count:+g('cnt').value,prefix:g('pre').value};
+ }
+ const r=await api('/api/cards/generate',payload);
  if(!r.ok){alert(r.msg||'生成失败');return;}
  g('genout').innerHTML='✅ 已生成 '+r.codes.length+' 张：<br>'+r.codes.map(esc).join('<br>');
  load();
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;const r=cardRewards(v);const pkg=['金币','积分','钻石'].filter(c=>r[c]).map(c=>c+'+'+r[c]).join('/');lines.push(`${k}\\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天';}else{const r=cardRewards(v);pkg=['金币','积分','钻石'].filter(c=>r[c]).map(c=>c+'+'+r[c]).join('/');}lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }
