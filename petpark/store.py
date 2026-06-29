@@ -139,6 +139,15 @@ class PetStore:
             }
         return groups[group_id]
 
+    def next_sign_order(self, group_id: str, date_str: str) -> int:
+        """记录并返回今天本群第几位签到（每天从 1 开始）。"""
+        group = self.get_group(group_id)
+        if group.get("sign_day") != date_str:
+            group["sign_day"] = date_str
+            group["sign_count"] = 0
+        group["sign_count"] = int(group.get("sign_count", 0)) + 1
+        return group["sign_count"]
+
     # ----------------------------- 货币 / 背包 -----------------------------
     @staticmethod
     def add_currency(player: dict, currency: str, amount: int) -> None:

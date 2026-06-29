@@ -50,6 +50,7 @@ KNOWN_COMMANDS = {
     "宠物帮助",
     "我的信息",
     "个人信息",
+    "签到",
     "查看说明",
     # 管理员：增减货币
     "加金币",
@@ -160,6 +161,13 @@ class PetParkPlugin(Star):
         self.attack_energy = max(0, int(self.config.get("attack_energy", data.ATTACK_ENERGY)))
         self.rank_size = max(1, int(self.config.get("rank_size", 10)))
         self.rank_reward_jifen = max(0, int(self.config.get("rank_reward_jifen", 50000)))
+        # 签到积分/金币随机范围（可在配置面板调整）
+        self.sign_jifen_min = max(0, int(self.config.get("sign_jifen_min", 1000)))
+        self.sign_jifen_max = max(self.sign_jifen_min, int(self.config.get("sign_jifen_max", 12000)))
+        self.sign_coin_min = max(0, int(self.config.get("sign_coin_min", 50)))
+        self.sign_coin_max = max(self.sign_coin_min, int(self.config.get("sign_coin_max", 200)))
+        # 连续签到每天的额外金币（额外金币 = 连续天数 × 该值，封顶 7 天）
+        self.sign_streak_bonus = max(0, int(self.config.get("sign_streak_bonus", 100)))
         # 精力恢复速度为全局常量，按配置覆盖
         data.ENERGY_REGEN_PER_MIN = max(1, int(self.config.get("energy_regen_per_min", data.ENERGY_REGEN_PER_MIN)))
 
@@ -317,6 +325,10 @@ class PetParkPlugin(Star):
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
             return self._my_info(player, group_id)
+
+        # ---- 每日签到 ----
+        if cmd == "签到":
+            return self._sign_in(player, group_id)
 
         # ---- 获取宠物 ----
         if cmd == "砸蛋":
@@ -536,6 +548,51 @@ class PetParkPlugin(Star):
             ]
         )
 
+    def _sign_in(self, player: dict, group_id: str) -> str:
+        today = time.strftime("%Y-%m-%d")
+        if player.get("sign_last") == today:
+            return (
+                "📅 今天已经签到过啦，明天再来吧～\n"
+                f"> 累计签到 {player.get('sign_total', 0)} 天"
+                f"，连续 {player.get('sign_streak', 0)} 天"
+            )
+        # 连续签到：昨天签过则 +1，否则连续天数重置为 1
+        yesterday = time.strftime(
+            "%Y-%m-%d", time.localtime(time.time() - 86400)
+        )
+        streak = player.get("sign_streak", 0)
+        streak = streak + 1 if player.get("sign_last") == yesterday else 1
+        total = player.get("sign_total", 0) + 1
+        player["sign_last"] = today
+        player["sign_streak"] = streak
+        player["sign_total"] = total
+
+        order = self.store.next_sign_order(group_id, today)
+        jifen = random.randint(self.sign_jifen_min, self.sign_jifen_max)
+        coin = random.randint(self.sign_coin_min, self.sign_coin_max)
+        extra = min(streak, 7) * self.sign_streak_bonus
+        self.store.add_currency(player, "积分", jifen)
+        self.store.add_currency(player, "金币", coin + extra)
+
+        title, need, nxt = data.sign_title(total)
+        now = time.strftime("%Y/%m/%d %H:%M:%S")
+        lines = [
+            "签到成功！",
+            "==================",
+            f"●今日是第：{order}位签到的！",
+            f"●获得积分：{jifen}",
+            f"●获得金币：{coin}",
+            f"●累计签到：{total}天",
+            f"●额外金币：{extra}",
+            f"●当前称号：{title}",
+        ]
+        if need and nxt:
+            lines.append(f"Tips：再签到{need}天即可成为{nxt}了哦！")
+        else:
+            lines.append("Tips：你已是最高称号，恭喜成为宠园传说！")
+        lines.append(now)
+        return "\n".join(lines)
+
     def _admin_adjust(
         self, event, group_id: str, cmd: str, tokens: list[str]
     ) -> str:
@@ -598,7 +655,7 @@ class PetParkPlugin(Star):
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**📇 个人**",
-                "我的信息（查看 QQ号/群号/金币/积分）",
+                "我的信息（查看 QQ号/群号/金币/积分） · 签到（每日领积分金币）",
                 "",
                 "**📖 图鉴查询**",
                 "宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",

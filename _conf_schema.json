@@ -52,5 +52,35 @@
     "hint": "『领取神榜奖励』时，全服神榜前三名每天可领取一次的积分数量。",
     "type": "int",
     "default": 50000
+  },
+  "sign_jifen_min": {
+    "description": "每日签到积分随机下限",
+    "hint": "『签到』时随机获得积分的最小值。",
+    "type": "int",
+    "default": 1000
+  },
+  "sign_jifen_max": {
+    "description": "每日签到积分随机上限",
+    "hint": "『签到』时随机获得积分的最大值（应 ≥ 下限）。",
+    "type": "int",
+    "default": 12000
+  },
+  "sign_coin_min": {
+    "description": "每日签到金币随机下限",
+    "hint": "『签到』时随机获得金币的最小值。",
+    "type": "int",
+    "default": 50
+  },
+  "sign_coin_max": {
+    "description": "每日签到金币随机上限",
+    "hint": "『签到』时随机获得金币的最大值（应 ≥ 下限）。",
+    "type": "int",
+    "default": 200
+  },
+  "sign_streak_bonus": {
+    "description": "连续签到每天的额外金币",
+    "hint": "额外金币 = 连续签到天数 × 该值（连续天数最多按 7 天计）。设为 0 则无额外金币。",
+    "type": "int",
+    "default": 100
   }
 }

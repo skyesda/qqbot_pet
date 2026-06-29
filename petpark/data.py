@@ -680,3 +680,28 @@ DAILY_ACTIONS = {
     },
     "冥想": {"energy": 30, "desc": "永久增加随机属性值（需定制宠物才行）"},
 }
+
+# ----------------------------------------------------------------------------
+# 签到称号：(累计签到天数门槛, 称号名)，按累计天数从高到低匹配。
+# ----------------------------------------------------------------------------
+SIGN_TITLES = [
+    (1, "偶尔冒泡"),
+    (8, "略懂一二"),
+    (15, "渐入佳境"),
+    (30, "小有名气"),
+    (60, "驾轻就熟"),
+    (100, "宠园达人"),
+    (200, "骨灰玩家"),
+    (365, "宠园传说"),
+]
+
+
+def sign_title(total_days: int) -> tuple[str, int | None, str | None]:
+    """根据累计签到天数返回 (当前称号, 距下一称号还需天数, 下一称号名)。"""
+    current = SIGN_TITLES[0][1]
+    for need, name in SIGN_TITLES:
+        if total_days >= need:
+            current = name
+        else:
+            return current, need - total_days, name
+    return current, None, None
