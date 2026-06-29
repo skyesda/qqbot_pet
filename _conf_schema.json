@@ -53,6 +53,12 @@
     "type": "int",
     "default": 10
   },
+  "subadmin_daily_add_limit": {
+    "description": "小管理员每日增加额度上限（金币/积分各自独立）",
+    "hint": "小管理员每天通过『加金币/加积分』累计可增加的上限（金币、积分分别计算；减少不受限；不可操作钻石）。",
+    "type": "int",
+    "default": 100000
+  },
   "rank_reward_diamond_min": {
     "description": "神榜前三每日可领取的钻石奖励下限",
     "hint": "『领取神榜奖励』时，全服神榜前三名每天可领取一次的随机钻石最小值。",

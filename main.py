@@ -61,6 +61,13 @@ KNOWN_COMMANDS = {
     "减积分",
     "加钻石",
     "减钻石",
+    # 小管理员（分群授权）
+    "任命小管理",
+    "任命小管理员",
+    "撤销小管理",
+    "撤销小管理员",
+    "小管理列表",
+    "我的管理额度",
     # 商城
     "宠物商城",
     "道具商城",
@@ -165,6 +172,10 @@ class PetParkPlugin(Star):
         # 对战精力消耗、排行名额、神榜奖励等可调参数
         self.attack_energy = max(0, int(self.config.get("attack_energy", data.ATTACK_ENERGY)))
         self.rank_size = max(1, int(self.config.get("rank_size", 10)))
+        # 小管理员每日「增加」额度上限（金币、积分各自独立；减少不限）
+        self.subadmin_daily_add_limit = max(
+            0, int(self.config.get("subadmin_daily_add_limit", 100000))
+        )
         # 神榜前三每日可领取的随机钻石区间
         self.rank_reward_diamond_min = max(
             0, int(self.config.get("rank_reward_diamond_min", 10))
@@ -347,9 +358,17 @@ class PetParkPlugin(Star):
             state = "已开启 ✅" if group["cross"] else "已关闭 🚫"
             return f"## 🌐 跨群挑战\n本群跨群功能**{state}**。"
 
-        # ---- 管理员：增减指定用户金币 / 积分 ----
+        # ---- 管理员：增减指定用户金币 / 积分 / 钻石 ----
         if cmd in ("加金币", "减金币", "加积分", "减积分", "加钻石", "减钻石"):
-            return self._admin_adjust(event, group_id, cmd, tokens)
+            return self._admin_adjust(event, qq, group_id, cmd, tokens)
+
+        # ---- 大管理员：任命 / 撤销 / 查看 小管理员 ----
+        if cmd in ("任命小管理", "任命小管理员", "撤销小管理", "撤销小管理员"):
+            return self._manage_subadmin(event, group_id, cmd, tokens)
+        if cmd == "小管理列表":
+            return self._list_subadmins(event)
+        if cmd == "我的管理额度":
+            return self._my_admin_quota(event, qq, group_id)
 
         # 群未开启则不响应任何宠物指令
         if not group.get("enabled", True):
@@ -668,10 +687,8 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _admin_adjust(
-        self, event, group_id: str, cmd: str, tokens: list[str]
+        self, event, qq: str, group_id: str, cmd: str, tokens: list[str]
     ) -> str:
-        if not self._is_admin(event):
-            return "仅管理员可增减用户金币/积分/钻石。"
         if "钻石" in cmd:
             currency = "钻石"
         elif "金币" in cmd:
@@ -679,6 +696,10 @@ class PetParkPlugin(Star):
         else:
             currency = "积分"
         sign = 1 if cmd.startswith("加") else -1
+        is_super = self._is_admin(event)
+        is_sub = self._is_subadmin(group_id, qq)
+        if not (is_super or is_sub):
+            return "❌ 仅管理员可增减用户金币/积分/钻石。"
         # 目标 ID 不一定是纯数字（QQ 官方机器人/频道为 openid 字符串），
         # 仅要求最后给出的数量是整数。
         if len(tokens) < 3 or not tokens[2].lstrip("-").isdigit():
@@ -687,18 +708,130 @@ class PetParkPlugin(Star):
         amount = int(tokens[2])
         if amount <= 0:
             return f"用法：{cmd} QQ号/ID 数量（数量需为正整数）"
+        # 小管理员：仅限本群、仅金币/积分、加币有每日额度、减币不限
+        if not is_super:
+            if currency == "钻石":
+                return "❌ 小管理员无权增减钻石（仅大管理员可操作钻石）。"
+            if sign > 0:
+                actor = self.store.get_player(qq, group_id)
+                quota = self._subadmin_quota(actor)
+                key = "coin" if currency == "金币" else "jifen"
+                used = quota.get(key, 0)
+                limit = self.subadmin_daily_add_limit
+                if used + amount > limit:
+                    remain = max(0, limit - used)
+                    return (
+                        f"❌ 小管理员每日增加{currency}上限 {limit}，今日已增加 {used}，"
+                        f"剩余 {remain}，本次 {amount} 超出额度。"
+                    )
         tp, err = self._find_target(group_id, target)
         if err:
             return err
         before = self.store.get_currency(tp, currency)
         self.store.add_currency(tp, currency, sign * amount)
         after = self.store.get_currency(tp, currency)
+        # 记录小管理员当日已用加币额度
+        if not is_super and sign > 0:
+            actor = self.store.get_player(qq, group_id)
+            quota = self._subadmin_quota(actor)
+            key = "coin" if currency == "金币" else "jifen"
+            quota[key] = quota.get(key, 0) + amount
         verb = "增加" if sign > 0 else "减少"
         icon = "🪙" if currency == "金币" else ("💠" if currency == "钻石" else "💎")
+        extra = ""
+        if not is_super and sign > 0:
+            key = "coin" if currency == "金币" else "jifen"
+            used = self._subadmin_quota(self.store.get_player(qq, group_id)).get(key, 0)
+            extra = (
+                f"\n> 🛡️ 小管理今日{currency}已增加 {used}/"
+                f"{self.subadmin_daily_add_limit}"
+            )
         return (
             f"## ⚙️ 管理操作\n"
             f"已为用户 `{target}` {verb}{icon}**{currency} {amount}**\n"
-            f"> {currency}：{before} → **{after}**"
+            f"> {currency}：{before} → **{after}**{extra}"
+        )
+
+    # --------------------------- 小管理员 ---------------------------
+    def _is_subadmin(self, group_id: str, qq: str) -> bool:
+        group = self.store.get_group(group_id)
+        return str(qq) in [str(x) for x in group.get("subadmins", [])]
+
+    def _subadmin_quota(self, player: dict) -> dict:
+        """取玩家当日小管理加币额度记录（跨天自动清零）。返回可变 dict。"""
+        today = time.strftime("%Y-%m-%d")
+        quota = player.get("subadmin_quota")
+        if not isinstance(quota, dict) or quota.get("day") != today:
+            quota = {"day": today, "coin": 0, "jifen": 0}
+            player["subadmin_quota"] = quota
+        return quota
+
+    def _manage_subadmin(
+        self, event, group_id: str, cmd: str, tokens: list[str]
+    ) -> str:
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可任命/撤销小管理员。"
+        if len(tokens) < 2 or not tokens[1].strip():
+            return f"用法：{cmd} QQ号/ID"
+        target = tokens[1].strip()
+        group = self.store.get_group(group_id)
+        subs = [str(x) for x in group.get("subadmins", [])]
+        appoint = cmd.startswith("任命")
+        if appoint:
+            if target in subs:
+                return f"用户 `{target}` 已经是本群小管理员。"
+            subs.append(target)
+            group["subadmins"] = subs
+            return (
+                f"## 🛡️ 小管理员任命\n已任命 `{target}` 为本群小管理员。\n"
+                f"> 权限：本群内『加金币/减金币/加积分/减积分』（不可操作钻石）；"
+                f"每日增加金币、积分各上限 {self.subadmin_daily_add_limit}，减少不限。"
+            )
+        else:
+            if target not in subs:
+                return f"用户 `{target}` 不是本群小管理员。"
+            subs.remove(target)
+            group["subadmins"] = subs
+            return f"## 🛡️ 小管理员撤销\n已撤销 `{target}` 的本群小管理员权限。"
+
+    def _list_subadmins(self, event) -> str:
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可查看小管理员列表。"
+        groups = self.store._data.get("groups", {})
+        lines = ["## 🛡️ 小管理员一览（全服）", "━━━━━━━━━━━━━━"]
+        found = False
+        for gid, g in groups.items():
+            subs = [str(x) for x in g.get("subadmins", [])]
+            if not subs:
+                continue
+            found = True
+            lines.append(f"**群 `{gid}`**")
+            for u in subs:
+                lines.append(f"　• `{u}`")
+        if not found:
+            return "目前没有任何群任命了小管理员。"
+        return "\n".join(lines)
+
+    def _my_admin_quota(self, event, qq: str, group_id: str) -> str:
+        is_super = self._is_admin(event)
+        is_sub = self._is_subadmin(group_id, qq)
+        if is_super:
+            return (
+                "## 🛡️ 管理额度\n你是**大管理员**，增减金币/积分/钻石均无每日上限。"
+            )
+        if not is_sub:
+            return "你不是本群管理员。"
+        actor = self.store.get_player(qq, group_id)
+        quota = self._subadmin_quota(actor)
+        limit = self.subadmin_daily_add_limit
+        coin_used = quota.get("coin", 0)
+        jifen_used = quota.get("jifen", 0)
+        return (
+            "## 🛡️ 我的管理额度（本群 · 今日）\n"
+            "━━━━━━━━━━━━━━\n"
+            f"🪙 **金币**　已增加 {coin_used} / {limit}　·　剩余 **{max(0, limit - coin_used)}**\n"
+            f"💎 **积分**　已增加 {jifen_used} / {limit}　·　剩余 **{max(0, limit - jifen_used)}**\n"
+            "> 减少金币/积分不受限；不可增减钻石。额度每日 0 点自动重置。"
         )
 
     def _menu_text(self) -> str:
@@ -741,6 +874,7 @@ class PetParkPlugin(Star):
                 "",
                 "**⚙️ 管理员**",
                 "开启/关闭宠物乐园 · 开启/关闭宠物跨群 · 加金币 QQ 数量 · 减金币 QQ 数量 · 加积分 QQ 数量 · 减积分 QQ 数量 · 加钻石 QQ 数量 · 减钻石 QQ 数量",
+                "任命小管理 QQ · 撤销小管理 QQ · 小管理列表（大管理员查看全服）· 我的管理额度（小管理员查看今日额度）",
                 "",
                 "> 💡 指令均无需前缀，直接发送即可。\n"
                 "> 👤 需指定对方时请**直接填用户ID/QQ号**（不支持 @）；所有数据按群独立，神榜为全服排行。",
