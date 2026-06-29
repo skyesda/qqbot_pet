@@ -17,7 +17,7 @@ from astrbot.api import message_components as Comp
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
-from .petpark import data, pet as petmod
+from .petpark import data, images, pet as petmod
 from .petpark.store import PetStore
 
 try:
@@ -248,10 +248,20 @@ class PetParkPlugin(Star):
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
             reply = f"宠物乐园处理出错：{e}"
+        # 部分指令返回 (文本, 图片路径) 二元组以便随消息附带宠物图片
+        image_path = None
+        if isinstance(reply, tuple):
+            reply, image_path = reply
         if reply is None:
             return
         await self.store.save()
         event.stop_event()
+        img_comp = None
+        if image_path:
+            try:
+                img_comp = Comp.Image.fromFileSystem(image_path)
+            except Exception:
+                logger.exception("[petpark] 构造图片组件失败：%s", image_path)
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
         if self._is_group(group_id):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
@@ -260,9 +270,14 @@ class PetParkPlugin(Star):
             head = Comp.Plain(f"@{name}\n")
             at = self._safe_at(qq)
             chain = ([at] if at else []) + [head, Comp.Plain(reply)]
+            if img_comp is not None:
+                chain.append(img_comp)
             yield event.chain_result(chain)
         else:
-            yield event.plain_result(reply)
+            if img_comp is not None:
+                yield event.chain_result([Comp.Plain(reply), img_comp])
+            else:
+                yield event.plain_result(reply)
 
     @staticmethod
     def _is_group(group_id: str) -> bool:
@@ -340,7 +355,8 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 路由
     # =====================================================================
-    def dispatch(self, event, qq, group_id, text) -> str | None:
+    def dispatch(self, event, qq, group_id, text):
+        """处理一条指令。返回 None / 文本字符串 / (文本, 图片路径) 二元组。"""
         tokens = text.split()
         cmd = tokens[0]
         # 非本插件指令直接放行，避免为每条普通聊天创建玩家/群档案
@@ -558,8 +574,20 @@ class PetParkPlugin(Star):
         if cmd in ("宠物菜单", "宠物指令", "宠物帮助"):
             return self._menu_text()
         if cmd == "宠物种类":
+            name = self._arg(tokens, 1)
+            if name and name in data.SPECIES:
+                element = data.SPECIES[name]
+                text = (
+                    f"## 📖 {name}\n"
+                    f"● **默认属性**：{element}\n"
+                    f"● 可通过『砸蛋』抽取，部分种类可在『宠物市场』购买"
+                )
+                return text, images.pet_image_path(name)
             names = " · ".join(data.SPECIES_NAMES)
-            return f"## 📖 宠物种类（共 {len(data.SPECIES_NAMES)} 种）\n{names}"
+            return (
+                f"## 📖 宠物种类（共 {len(data.SPECIES_NAMES)} 种）\n{names}\n\n"
+                f"> 发送 `宠物种类 名称` 可查看单个种类及其图片"
+            )
         if cmd == "属性":
             return (
                 "## 🌀 属性克制\n"
@@ -1001,7 +1029,7 @@ class PetParkPlugin(Star):
                 "我的信息（查看 QQ号/群号/金币/积分/钻石） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石）",
                 "",
                 "**📖 图鉴查询**",
-                "宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
+                "宠物种类（加名称看单个种类及图片，如 宠物种类 皮卡丘） · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
                 "",
                 "**⚙️ 管理员**",
                 "开启/关闭宠物乐园 · 开启/关闭宠物跨群 · 加金币 QQ 数量 · 减金币 QQ 数量 · 加积分 QQ 数量 · 减积分 QQ 数量 · 加钻石 QQ 数量 · 减钻石 QQ 数量",
@@ -1141,13 +1169,13 @@ class PetParkPlugin(Star):
             return f"宠物假死/惊魂中，约 {petmod.frozen_remain_min(p)} 分钟后才能操作。"
         return None
 
-    def _my_pet(self, player: dict) -> str:
+    def _my_pet(self, player: dict):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
-        return petmod.render_pet(p)
+        return petmod.render_pet(p), images.pet_image_path(p.get("species"))
 
-    def _inspect(self, group_id: str, tokens: list[str]) -> str:
+    def _inspect(self, group_id: str, tokens: list[str]):
         target = self._arg(tokens, 1)
         if not target:
             return "用法：宠物侦查 用户ID"
@@ -1156,7 +1184,8 @@ class PetParkPlugin(Star):
             return err
         if not tp.get("pet"):
             return "对方还没有宠物。"
-        return petmod.render_pet(tp["pet"])
+        pet = tp["pet"]
+        return petmod.render_pet(pet), images.pet_image_path(pet.get("species"))
 
     def _gift_pet(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
