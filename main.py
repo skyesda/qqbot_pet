@@ -14,7 +14,7 @@ from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api import message_components as Comp
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
 from .petpark import data, images, pet as petmod
@@ -262,10 +262,16 @@ class PetParkPlugin(Star):
                 img_comp = Comp.Image.fromFileSystem(image_path)
             except Exception:
                 logger.exception("[petpark] 构造图片组件失败：%s", image_path)
+        # 图片必须与文本分开发：一旦把 Image 和文本放进同一条消息，QQ 会按
+        # 「富媒体消息」处理，文本段不再做 Markdown 渲染。这里先用 event.send
+        # 主动单独发出图片（不经过会被 stop_event 影响的结果管线），再 yield
+        # 纯文本结果（走正常管线，保留 Markdown 自动转换）。
+        if img_comp is not None:
+            try:
+                await event.send(MessageChain(chain=[img_comp]))
+            except Exception:
+                logger.exception("[petpark] 发送宠物图片失败：%s", image_path)
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
-        # 注意：图片必须单独成一条消息发送。一旦把 Image 和文本放进同一条消息，
-        # QQ 会按「富媒体消息」处理，文本段不再做 Markdown 渲染；分两条发即可
-        # 让文本保持 Markdown 自动转换，图片另起一条。
         if self._is_group(group_id):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
             # 形式前置 @昵称，确保任何平台都能看出这条消息@的是谁。
@@ -276,8 +282,6 @@ class PetParkPlugin(Star):
             yield event.chain_result(chain)
         else:
             yield event.plain_result(reply)
-        if img_comp is not None:
-            yield event.chain_result([img_comp])
 
     @staticmethod
     def _is_group(group_id: str) -> bool:
