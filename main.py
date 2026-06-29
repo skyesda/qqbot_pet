@@ -533,9 +533,9 @@ class PetParkPlugin(Star):
         if cmd == "跨群挑战宠物":
             return self._cross_attack(player, group, tokens)
         if cmd == "宠物排行":
-            return self._rank(group_id, local=True)
+            return self._rank(player, group_id, local=True)
         if cmd == "宠物神榜":
-            return self._rank(group_id, local=False)
+            return self._rank(player, group_id, local=False)
         if cmd == "领取神榜奖励":
             return self._claim_rank_reward(player, group_id)
 
@@ -2111,7 +2111,14 @@ class PetParkPlugin(Star):
         p["energy"] -= self.attack_energy
         return self._battle(p, target_player["pet"], player, target_player)
 
-    def _rank(self, group_id: str, local: bool) -> str:
+    @staticmethod
+    def _fmt_power(bp: int) -> str:
+        """战力显示：≥1万用『X.XX万』，否则原值。"""
+        if bp >= 10000:
+            return f"{bp / 10000:.2f}万"
+        return str(bp)
+
+    def _rank(self, player: dict, group_id: str, local: bool) -> str:
         # 本群排行只统计本群玩家；神榜为全服（跨群）。
         source = (
             self.store.players_in_group(group_id)
@@ -2125,22 +2132,34 @@ class PetParkPlugin(Star):
                 continue
             entries.append((pl.get("qq", "?"), pet, petmod.battle_power(pet)))
         entries.sort(key=lambda x: x[2], reverse=True)
-        entries = entries[: self.rank_size]
         if not entries:
             return "暂无宠物上榜。"
         title = "## 🏆 宠物排行（本群）" if local else "## 🏅 宠物神榜（全服）"
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        lines = [title, "━━━━━━━━━━━━━━"]
-        for i, (q, pet, bp) in enumerate(entries, 1):
-            rk = medals.get(i, f"`{i}.`")
+        lines = [title]
+        # 我的排名/战力：按全量排序算真实名次，即使未进前 N 也显示。
+        my_pet = player.get("pet")
+        if my_pet:
+            my_bp = petmod.battle_power(my_pet)
+            my_rank = 1 + sum(1 for _, _, bp in entries if bp > my_bp)
             lines.append(
-                f"{rk} **{pet['nickname']}**（{pet['quality']}/{pet['stage']}）\n"
-                f"　　💥 战力 `{bp}`　·　`{q}`"
+                f"> 我的排名：**{my_rank}**　·　我的战力：**{self._fmt_power(my_bp)}**"
+            )
+        top = entries[: self.rank_size]
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines.append("")
+        lines.append("| 排名 | 昵称 | 等级 | 阶段 | 级别 | 战力 |")
+        lines.append("|:--:|:--:|:--:|:--:|:--:|--:|")
+        for i, (q, pet, bp) in enumerate(top, 1):
+            rk = medals.get(i, str(i))
+            # 昵称里若含 | 会破坏表格列，替换为视觉相近的全角竖线。
+            nick = str(pet.get("nickname", "")).replace("|", "丨")
+            lines.append(
+                f"| {rk} | {nick} | Lv{pet['level']} | "
+                f"{pet['stage']} | {pet['quality']} | {self._fmt_power(bp)} |"
             )
         if not local:
-            lines.append("━━━━━━━━━━━━━━")
             lines.append(
-                f"> 🎁 神榜前三每日可『领取神榜奖励』，随机钻石 💠 "
+                f"\n> 🎁 神榜前三每日可『领取神榜奖励』，随机钻石 💠 "
                 f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
             )
         return "\n".join(lines)
