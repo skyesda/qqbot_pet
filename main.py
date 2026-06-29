@@ -248,29 +248,21 @@ class PetParkPlugin(Star):
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
             reply = f"宠物乐园处理出错：{e}"
-        # 部分指令返回 (文本, 图片路径) 二元组以便随消息附带宠物图片
-        image_path = None
+        # 部分指令返回 (文本, Markdown图片串) 二元组，把宠物图片随消息一起展示。
+        image_md = None
         if isinstance(reply, tuple):
-            reply, image_path = reply
+            reply, image_md = reply
         if reply is None:
             return
         await self.store.save()
         event.stop_event()
-        img_comp = None
-        if image_path:
-            try:
-                img_comp = Comp.Image.fromFileSystem(image_path)
-            except Exception:
-                logger.exception("[petpark] 构造图片组件失败：%s", image_path)
-        # 图片必须与文本分开发：一旦把 Image 和文本放进同一条消息，QQ 会按
-        # 「富媒体消息」处理，文本段不再做 Markdown 渲染。这里先用 event.send
-        # 主动单独发出图片（不经过会被 stop_event 影响的结果管线），再 yield
-        # 纯文本结果（走正常管线，保留 Markdown 自动转换）。
-        if img_comp is not None:
-            try:
-                await event.send(MessageChain(chain=[img_comp]))
-            except Exception:
-                logger.exception("[petpark] 发送宠物图片失败：%s", image_path)
+        # QQ 官方机器人(qq_official)一条消息要么是原生 Markdown(msg_type=2，渲染
+        # ## / **)，要么是富媒体图片(msg_type=7，文本只当纯文本)——带 Image 组件就会
+        # 丢掉 markdown。所以这里不再附加 Image 组件，而是把宠物图片以 Markdown 图片
+        # 语法内嵌到文本最前(images.pet_image_md)，整条消息仍是纯文本走 msg_type=2，
+        # 让图片与渲染后的文本同处一条消息。QQ 服务端会按 URL(jsDelivr CDN)拉取图片。
+        if image_md:
+            reply = f"{image_md}\n{reply}"
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
         if self._is_group(group_id):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
@@ -586,7 +578,7 @@ class PetParkPlugin(Star):
                     f"● **默认属性**：{element}\n"
                     f"● 可通过『砸蛋』抽取，部分种类可在『宠物市场』购买"
                 )
-                return text, images.pet_image_path(name)
+                return text, images.pet_image_md(name)
             names = " · ".join(data.SPECIES_NAMES)
             return (
                 f"## 📖 宠物种类（共 {len(data.SPECIES_NAMES)} 种）\n{names}\n\n"
@@ -1177,7 +1169,7 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
-        return petmod.render_pet(p), images.pet_image_path(p.get("species"))
+        return petmod.render_pet(p), images.pet_image_md(p.get("species"))
 
     def _inspect(self, group_id: str, tokens: list[str]):
         target = self._arg(tokens, 1)
@@ -1189,7 +1181,7 @@ class PetParkPlugin(Star):
         if not tp.get("pet"):
             return "对方还没有宠物。"
         pet = tp["pet"]
-        return petmod.render_pet(pet), images.pet_image_path(pet.get("species"))
+        return petmod.render_pet(pet), images.pet_image_md(pet.get("species"))
 
     def _gift_pet(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
