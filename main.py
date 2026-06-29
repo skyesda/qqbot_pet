@@ -973,7 +973,10 @@ class PetParkPlugin(Star):
             base = random.randint(80, 200) + p["level"] * 10
             exp = base * (2 if action == "双修" else 1)
             petmod.add_exp(p, exp)
-            return f"🧘 {action}完成，经验 +{exp}，当前经验 {p['exp']}。"
+            return (
+                f"🧘 {action}完成，经验 +{exp}，当前经验 {p['exp']}。"
+                + self._auto_level_note(p)
+            )
         if action == "打工":
             gain = random.randint(200, 600) + p["level"] * 5
             self.store.add_currency(player, "积分", gain)
@@ -1673,10 +1676,23 @@ class PetParkPlugin(Star):
         ]
         for n, d in data.DUNGEONS.items():
             lines.append(
-                f"- **{n}**　需 Lv{d['level_req']} · 耗 {d['energy']} 精力\n"
-                f"　　产出：经验 {d['exp']} / 积分 {d['jifen']}"
+                f"- **{n}** `Lv{d['level_req']}`　🗡{d['monster']}（战力 {d['power']}）\n"
+                f"　　耗 {d['energy']} 精力 · 产出 经验 {d['exp']} / 积分 {d['jifen']}"
             )
+        lines.append("\n> 战力 ≥ 怪物战力即可通关；经验满后自动升级。")
         return "\n".join(lines)
+
+    def _auto_level_note(self, p: dict) -> str:
+        """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
+        if not petmod.exp_enough_to_level(p):
+            return ""
+        gained = petmod.auto_level_up(p)
+        if gained <= 0:
+            return ""
+        return (
+            f"\n⬆ **自动升级 +{gained} 级！**当前 "
+            f"Lv{p['level']}/{petmod.level_cap(p)}（剩余精力 {p['energy']}）"
+        )
 
     def _enter_dungeon(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -1701,13 +1717,50 @@ class PetParkPlugin(Star):
             return f"精力不足（需 {d['energy']}）。"
         p["energy"] -= d["energy"]
         self.store.set_cooldown(player, "副本", data.DUNGEON_COOLDOWN)
-        petmod.add_exp(p, d["exp"])
-        self.store.add_currency(player, "积分", d["jifen"])
-        bonus = ""
-        if random.random() < 0.2:
-            self.store.add_item(player, "万能宝石", 1)
-            bonus = "，并掉落『万能宝石』x1"
-        return f"🏰 通关副本『{name}』！经验 +{d['exp']}，积分 +{d['jifen']}{bonus}。"
+        return self._dungeon_battle(player, p, name, d)
+
+    def _dungeon_battle(self, player: dict, p: dict, name: str, d: dict) -> str:
+        monster = d["monster"]
+        power = d["power"]
+        my_power = petmod.battle_power(p)
+        # 战力 ±10% 浮动后比拼怪物战力
+        roll = int(my_power * random.uniform(0.9, 1.1))
+        win = roll >= power
+        minutes = random.randint(0, 5)
+        next_time = time.strftime(
+            "%Y/%m/%d %H:%M:%S",
+            time.localtime(time.time() + data.DUNGEON_COOLDOWN * 60),
+        )
+        nick = p["nickname"]
+        head = f"## ⚔ {nick} VS {monster}"
+        if win:
+            petmod.add_exp(p, d["exp"])
+            self.store.add_currency(player, "积分", d["jifen"])
+            drop = ""
+            if random.random() < 0.2:
+                self.store.add_item(player, "万能宝石", 1)
+                drop = "\n●掉落道具：万能宝石 ×1"
+            desc = f"您的{nick}在{name}遇见{monster}，激战{monster}结果**大胜**！"
+            body = (
+                "┏-★---副☆本---★-┓\n"
+                f"●本次耗时：{minutes}分钟\n"
+                f"●怪物战力：{power}\n"
+                f"●获得经验：{d['exp']}\n"
+                f"●获得积分：{d['jifen']}{drop}\n"
+                f"●下次时间：{next_time}\n"
+                "┗-★---信☆息---★-┛"
+            )
+            return f"{head}\n{desc}\n{body}{self._auto_level_note(p)}"
+        desc = f"您的{nick}在{name}遇见{monster}，力战{monster}结果**惨败**！"
+        body = (
+            "┏-★---副☆本---★-┓\n"
+            f"●本次耗时：{minutes}分钟\n"
+            f"●怪物战力：{power}\n"
+            "●战败没有经验奖励！\n"
+            f"●下次时间：{next_time}\n"
+            "┗-★---信☆息---★-┛"
+        )
+        return f"{head}\n{desc}\n{body}"
 
     def _quest_list(self) -> str:
         lines = [

@@ -145,6 +145,13 @@ def auto_level_up(pet: dict) -> int:
     return total
 
 
+def exp_enough_to_level(pet: dict) -> bool:
+    """经验是否已满足升下一级（且未到当前阶段满级）。"""
+    if pet["level"] >= level_cap(pet):
+        return False
+    return pet.get("exp", 0) >= _exp_to_next(pet["level"])
+
+
 # --------------------------------------------------------------------------
 # 进化 / 飞升 / 渡劫
 # --------------------------------------------------------------------------
