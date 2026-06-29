@@ -761,8 +761,25 @@ class PetParkPlugin(Star):
                 "进化神石",
                 "万能宝石",
                 "小精力瓶",
+                "中精力瓶",
+                "大精力瓶",
                 "普通经验书",
                 "五色药",
+                "智力宝符",
+                "智力仙符",
+                "智力神符",
+                "精力宝符",
+                "精力仙符",
+                "精力神符",
+                "攻击宝符",
+                "攻击仙符",
+                "攻击神符",
+                "防御宝符",
+                "防御仙符",
+                "防御神符",
+                "生命宝符",
+                "生命仙符",
+                "生命神符",
             ]
             title = "## 🏪 道具商城"
         lines = [title, "> 购买方式：`购买 物品名 数量`", ""]
@@ -1036,6 +1053,19 @@ class PetParkPlugin(Star):
             p["hp_max"] += eff["add_hp_max"]
             p["hp"] = p["hp_max"]
             return f"血量上限 +{eff['add_hp_max']} 并回满，当前上限 {p['hp_max']}。"
+        if "add_energy_max" in eff:
+            p["energy_max"] = p.get("energy_max", 100) + eff["add_energy_max"]
+            p["energy"] = p["energy_max"]
+            return f"精力上限 +{eff['add_energy_max']} 并回满，当前上限 {p['energy_max']}。"
+        if "add_atk" in eff:
+            p["atk"] += eff["add_atk"]
+            return f"攻击 +{eff['add_atk']}，当前攻击 {p['atk']}。"
+        if "add_def" in eff:
+            p["def"] += eff["add_def"]
+            return f"防御 +{eff['add_def']}，当前防御 {p['def']}。"
+        if "add_intel" in eff:
+            p["intel"] += eff["add_intel"]
+            return f"智力 +{eff['add_intel']}，当前智力 {p['intel']}。"
         if "cure" in eff:
             if p["status"] == eff["cure"]:
                 p["status"] = "正常"
