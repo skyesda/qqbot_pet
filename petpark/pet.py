@@ -167,7 +167,7 @@ def evolve(pet: dict, force: bool = False) -> tuple[bool, str]:
     pet["skills"] = []
     return (
         True,
-        f"进化成功！进入【{pet['stage']}】，攻击/防御翻倍，等级重置为 Lv1。"
+        f"🌟 **进化成功！**进入【{pet['stage']}】，攻击/防御翻倍，等级重置为 Lv1。"
         + (_drop_text(dropped)),
     )
 
@@ -195,7 +195,7 @@ def ascend(pet: dict) -> tuple[bool, str]:
     pet["atk"] = int(pet["atk"] * 1.5)
     pet["def"] = int(pet["def"] * 1.5)
     pet["hp"] = pet["hp_max"]
-    return True, "飞升成功！进入【飞升】阶段，可使用幻境寻宝、宠物神仙劫等指令。"
+    return True, "🕊️ **飞升成功！**进入【飞升】阶段，可使用幻境寻宝、宠物神仙劫等指令。"
 
 
 def tribulation(pet: dict) -> tuple[bool, str]:
@@ -206,14 +206,14 @@ def tribulation(pet: dict) -> tuple[bool, str]:
         return False, f"渡劫需先升满飞升阶段（Lv{level_cap(pet)}）。"
     if random.random() < 0.3:
         pet["hp"] = max(1, pet["hp_max"] // 2)
-        return False, "渡劫失败！天劫降下，宠物身受重伤，请恢复后再试。"
+        return False, "💥 **渡劫失败！**天劫降下，宠物身受重伤，请恢复后再试。"
     pet["stage"] = "渡劫"
     pet["level"] = 1
     pet["exp"] = 0
     pet["atk"] = int(pet["atk"] * 2)
     pet["def"] = int(pet["def"] * 2)
     pet["hp"] = pet["hp_max"]
-    return True, "渡劫成功！进入【渡劫】阶段，满级 Lv999，从此超凡入圣！"
+    return True, "⚡ **渡劫成功！**进入【渡劫】阶段，满级 Lv999，从此超凡入圣！"
 
 
 # --------------------------------------------------------------------------
@@ -257,22 +257,28 @@ def effective_power_vs(pet: dict, enemy: dict) -> int:
 # --------------------------------------------------------------------------
 def render_pet(pet: dict) -> str:
     refresh_energy(pet)
+    gender_icon = "♂" if pet.get("gender") == "男" else "♀"
+    mood = pet.get("mood", 0)
+    stars = "★" * mood + "☆" * (5 - mood)
+    love = pet["love_state"]
+    if pet.get("love_target"):
+        love += f"（伴侣 `{pet['love_target']}`）"
     lines = [
-        f"【{pet['nickname']}】（{pet['species']}）",
-        f"品质：{pet['quality']}  属性：{pet['element']}  性别：{pet['gender']}",
-        f"阶段：{pet['stage']}  等级：Lv{pet['level']}/{level_cap(pet)}",
-        f"经验：{pet['exp']}  状态：{pet['status']}",
-        f"生命：{pet['hp']}/{pet['hp_max']}  心情：{'★' * pet.get('mood', 0)}",
-        f"攻击：{pet['atk']}  防御：{pet['def']}  智力：{pet['intel']}",
-        f"精力：{pet['energy']}/{pet['energy_max']}",
-        f"战力：{battle_power(pet)}",
-        f"神器：{pet.get('artifact') or '无'}",
-        f"秘技：{'、'.join(pet.get('skills', [])) or '无'}",
-        f"天赋：{pet.get('talent') or '无'}",
-        f"姻缘：{pet['love_state']}"
-        + (f"（伴侣 {pet['love_target']}）" if pet.get("love_target") else "")
-        + f"  好感度：{pet.get('favor', 0)}",
+        f"## 🐾 {pet['nickname']}",
+        f"**{pet['species']}** · {pet['quality']} · {pet['element']}属性 · {pet['gender']}{gender_icon}",
+        "━━━━━━━━━━━━━━",
+        f"🌟 **阶段** {pet['stage']}　**等级** `Lv{pet['level']}/{level_cap(pet)}`",
+        f"📈 **经验** {pet['exp']}　**状态** {pet['status']}",
+        f"❤️ **生命** {pet['hp']}/{pet['hp_max']}　**心情** {stars}",
+        f"⚔️ 攻击 {pet['atk']}　🛡️ 防御 {pet['def']}　🧠 智力 {pet['intel']}",
+        f"⚡ **精力** {pet['energy']}/{pet['energy_max']}",
+        f"💥 **战力** `{battle_power(pet)}`",
+        "━━━━━━━━━━━━━━",
+        f"🗡️ 神器：{pet.get('artifact') or '无'}",
+        f"📜 秘技：{'、'.join(pet.get('skills', [])) or '无'}",
+        f"✨ 天赋：{pet.get('talent') or '无'}",
+        f"💕 姻缘：{love}　好感度 {pet.get('favor', 0)}",
     ]
     if is_frozen(pet):
-        lines.append(f"⚠ 假死/惊魂中，剩余约 {frozen_remain_min(pet)} 分钟无法操作")
+        lines.append(f"> ⚠️ 假死/惊魂中，剩余约 **{frozen_remain_min(pet)}** 分钟无法操作")
     return "\n".join(lines)
