@@ -352,7 +352,7 @@ class PetParkPlugin(Star):
     # 路由
     # =====================================================================
     def _active_event_commands(self) -> set[str]:
-        """返回当前生效活动的所有菜单/动作/抽奖/奖池列表指令。"""
+        """返回当前生效活动的所有菜单/动作/抽奖/奖池列表/副本/Boss 指令。"""
         cmds = set()
         for cfg in self.store.active_events().values():
             if cfg.get("menu_cmd"):
@@ -363,6 +363,12 @@ class PetParkPlugin(Star):
                 gcmd = gacha.get("cmd", "抽奖")
                 cmds.add(gcmd)
                 cmds.add(f"{gcmd}列表")
+            if cfg.get("dungeons"):
+                cmds.add("活动副本")
+                cmds.add("进入活动副本")
+            boss = cfg.get("boss", {})
+            if boss.get("enabled"):
+                cmds.add(boss.get("cmd", "活动Boss"))
         return cmds
 
     def dispatch(self, event, qq, group_id, text):
@@ -582,7 +588,7 @@ class PetParkPlugin(Star):
             return love
 
         # ---- 限时活动 ----
-        event_reply = self._handle_event(player, cmd, text)
+        event_reply = self._handle_event(player, cmd, text, tokens)
         if event_reply is not None:
             return event_reply
 
@@ -591,7 +597,7 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 限时活动
     # =====================================================================
-    def _handle_event(self, player: dict, cmd: str, text: str) -> str | None:
+    def _handle_event(self, player: dict, cmd: str, text: str, tokens: list[str]) -> str | None:
         for eid, cfg in self.store.active_events().items():
             if cfg.get("menu_cmd") and cmd == cfg["menu_cmd"]:
                 return self._event_menu(cfg)
@@ -604,6 +610,17 @@ class PetParkPlugin(Star):
                     return self._event_gacha(player, eid, cfg)
                 if cmd == f"{gcmd}列表":
                     return self._event_gacha_list(cfg)
+            dungeons = cfg.get("dungeons", {})
+            if dungeons:
+                if cmd == "活动副本":
+                    return self._event_dungeon_list(cfg)
+                if cmd == "进入活动副本" and len(tokens) >= 2:
+                    return self._event_enter_dungeon(player, eid, cfg, tokens[1])
+            boss = cfg.get("boss", {})
+            if boss.get("enabled") and cmd == boss.get("cmd", "活动Boss"):
+                return self._event_boss_challenge(player, eid, cfg)
+        if cmd == "活动副本":
+            return "当前没有开启的活动副本。"
         return None
 
     def _event_menu(self, cfg: dict) -> str:
@@ -631,6 +648,23 @@ class PetParkPlugin(Star):
             gcmd = gacha.get("cmd", "抽奖")
             lines.append(f"**活动抽奖**：发送 `{gcmd}`，每次 {cost}，每日限 {gacha.get('daily_limit', '∞')} 次")
             lines.append(f"> 发送 `{gcmd}列表` 查看奖池与概率")
+            lines.append("")
+        dungeons = cfg.get("dungeons", {})
+        if dungeons:
+            lines.append("**活动副本**（发送 `进入活动副本 名称`）")
+            for name, d in dungeons.items():
+                energy = d.get("energy", 0)
+                req = d.get("level_req", 1)
+                lines.append(f"• `{name}` — Lv{req} · 耗 {energy} 精力 · 战力 {d.get('power', 0)}")
+            lines.append("")
+        boss = cfg.get("boss", {})
+        if boss.get("enabled"):
+            bcmd = boss.get("cmd", "活动Boss")
+            state = self._event_boss_state(cfg)
+            hp_text = f"{state['hp']}/{state['max_hp']}"
+            lines.append(f"**世界 Boss**：`{boss.get('name', '活动Boss')}` 血量 {hp_text}")
+            lines.append(f"> 发送 `{bcmd}` 挑战，每次消耗宠物精力 {boss.get('energy', 0)}")
+            lines.append("")
         return "\n".join(lines)
 
     def _event_action(self, player: dict, eid: str, cfg: dict, action: str) -> str:
@@ -710,6 +744,214 @@ class PetParkPlugin(Star):
             lines.append(
                 f"{i}. **{reward_txt}** — {pct:.1f}%（权重 {weight}）{msg and ' — ' + msg or ''}"
             )
+        return "\n".join(lines)
+
+    def _event_dungeon_list(self, cfg: dict) -> str:
+        """显示活动副本列表。"""
+        dungeons = cfg.get("dungeons", {})
+        token = cfg.get("token", "代币")
+        lines = [f"## 🏰 {cfg.get('name', '活动')}·活动副本", f"> 活动代币：{token}", ""]
+        if not dungeons:
+            return "当前活动暂无副本。"
+        for name, d in dungeons.items():
+            energy = d.get("energy", 0)
+            req = d.get("level_req", 1)
+            power = d.get("power", 0)
+            drop = self._format_event_reward(d.get("reward", {}), token)
+            lines.append(
+                f"- **{name}** `Lv{req}`　🗡{d.get('monster', '怪物')}（战力 {power}）\n"
+                f"　　耗 {energy} 精力 · 通关奖励 {drop}"
+            )
+        lines.append("\n> 进入方式：`进入活动副本 副本名称`")
+        return "\n".join(lines)
+
+    def _event_enter_dungeon(
+        self, player: dict, eid: str, cfg: dict, name: str
+    ) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        dungeons = cfg.get("dungeons", {})
+        if name not in dungeons:
+            return f"活动副本中没有『{name}』。"
+        d = dungeons[name]
+        token = cfg.get("token", "代币")
+        today = time.strftime("%Y-%m-%d")
+        self.store.reset_event_daily(player, eid, today)
+        limit = d.get("daily_limit")
+        action_key = f"dungeon:{name}"
+        if limit and self.store.event_daily_count(player, eid, action_key) >= limit:
+            return f"今日『{name}』次数已用完。"
+        if p["level"] < d.get("level_req", 1):
+            return f"进入『{name}』需要宠物等级 Lv{d.get('level_req', 1)}。"
+        busy = self._busy_reason(p)
+        if busy:
+            return busy
+        cd_key = f"event:{eid}:dungeon:{name}"
+        cd = self._cooldown_block(player, cd_key, name)
+        if cd:
+            return cd
+        petmod.refresh_energy(p)
+        energy = d.get("energy", 0)
+        if p["energy"] < energy:
+            return f"宠物精力不足（需 {energy}，当前 {p['energy']}/{p['energy_max']}）。"
+        p["energy"] -= energy
+        self.store.set_cooldown(player, cd_key, d.get("cooldown", 600))
+        self.store.inc_event_daily(player, eid, action_key)
+        return self._event_dungeon_battle(player, eid, cfg, p, name, d)
+
+    def _event_dungeon_battle(
+        self, player: dict, eid: str, cfg: dict, p: dict, name: str, d: dict
+    ) -> str:
+        token = cfg.get("token", "代币")
+        monster = d.get("monster", "怪物")
+        power = d.get("power", 0)
+        my_power = petmod.battle_power(p)
+        roll = int(my_power * random.uniform(0.9, 1.1))
+        win = roll >= power
+        nick = p["nickname"]
+        head = f"## ⚔ {nick} VS {monster}"
+        if win:
+            exp_gain = d.get("exp", 0)
+            jifen_gain = d.get("jifen", 0)
+            token_gain = d.get("token_reward", 0)
+            if exp_gain:
+                petmod.add_exp(p, exp_gain)
+            if jifen_gain:
+                self.store.add_currency(player, "积分", jifen_gain)
+            if token_gain:
+                self.store.add_event_token(player, eid, token, token_gain)
+            reward_lines = []
+            if exp_gain:
+                reward_lines.append(f"经验 +{exp_gain}")
+            if jifen_gain:
+                reward_lines.append(f"积分 +{jifen_gain}")
+            if token_gain:
+                reward_lines.append(f"{token} +{token_gain}")
+            item_reward = d.get("reward", {})
+            if item_reward:
+                item_txt = self._format_event_reward(item_reward, token)
+                self._grant_event_reward(player, eid, cfg, item_reward)
+                reward_lines.append(item_txt)
+            drop = "\n● " + "\n● ".join(reward_lines) if reward_lines else ""
+            desc = f"您的{nick}在{name}遇见{monster}，激战之后**大胜**！"
+            body = (
+                "┏-★---副☆本---★-┓\n"
+                f"●怪物战力：{power}\n"
+                f"●本次战力：{roll}\n"
+                f"●通关奖励：{drop}\n"
+                "┗-★---信☆息---★-┛"
+            )
+            return f"{head}\n{desc}\n{body}{self._auto_level_note(player, p)}"
+        desc = f"您的{nick}在{name}遇见{monster}，力战之后**惨败**！"
+        body = (
+            "┏-★---副☆本---★-┓\n"
+            f"●怪物战力：{power}\n"
+            f"●本次战力：{roll}\n"
+            "●战败没有奖励！\n"
+            "┗-★---信☆息---★-┛"
+        )
+        return f"{head}\n{desc}\n{body}"
+
+    def _event_boss_state(self, cfg: dict) -> dict:
+        """初始化/返回活动 Boss 的共享状态。"""
+        boss = cfg.setdefault("boss", {})
+        state = cfg.setdefault("_boss_state", {})
+        max_hp = int(boss.get("hp", 10000))
+        if not state or state.get("max_hp") != max_hp:
+            state["max_hp"] = max_hp
+            state["hp"] = max_hp
+            state["respawn_until"] = 0
+            state["damage_rank"] = {}
+        return state
+
+    def _event_boss_challenge(self, player: dict, eid: str, cfg: dict) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        boss = cfg.get("boss", {})
+        token = cfg.get("token", "代币")
+        today = time.strftime("%Y-%m-%d")
+        self.store.reset_event_daily(player, eid, today)
+        cmd = boss.get("cmd", "活动Boss")
+        limit = boss.get("daily_limit")
+        if limit and self.store.event_daily_count(player, eid, cmd) >= limit:
+            return f"今日『{cmd}』挑战次数已用完。"
+        if p["level"] < boss.get("level_req", 1):
+            return f"挑战活动 Boss 需要宠物等级 Lv{boss.get('level_req', 1)}。"
+        busy = self._busy_reason(p)
+        if busy:
+            return busy
+        cd_key = f"event:{eid}:boss"
+        cd = self._cooldown_block(player, cd_key, cmd)
+        if cd:
+            return cd
+        state = self._event_boss_state(cfg)
+        now = int(time.time())
+        if state.get("respawn_until", 0) > now:
+            remain = state["respawn_until"] - now
+            return (
+                f"『{boss.get('name', '活动Boss')}』正在复活，"
+                f"还需 `{self._fmt_duration(remain)}`。"
+            )
+        petmod.refresh_energy(p)
+        energy = boss.get("energy", 0)
+        if p["energy"] < energy:
+            return f"宠物精力不足（需 {energy}，当前 {p['energy']}/{p['energy_max']}）。"
+        p["energy"] -= energy
+        self.store.set_cooldown(player, cd_key, boss.get("cooldown", 600))
+        self.store.inc_event_daily(player, eid, cmd)
+        return self._event_boss_battle(player, eid, cfg, p, state)
+
+    def _event_boss_battle(
+        self, player: dict, eid: str, cfg: dict, p: dict, state: dict
+    ) -> str:
+        boss = cfg.get("boss", {})
+        token = cfg.get("token", "代币")
+        bname = boss.get("name", "活动Boss")
+        factor = float(boss.get("damage_factor", 0.1))
+        base_damage = int(petmod.battle_power(p) * random.uniform(factor * 0.8, factor * 1.2))
+        damage = max(1, base_damage)
+        qq = player.get("qq", "")
+        state["damage_rank"][qq] = state["damage_rank"].get(qq, 0) + damage
+        old_hp = state["hp"]
+        state["hp"] = max(0, old_hp - damage)
+        token_per_hit = boss.get("token_per_hit", 0)
+        hit_reward = ""
+        if token_per_hit:
+            self.store.add_event_token(player, eid, token, token_per_hit)
+            hit_reward = f"，{token} +{token_per_hit}"
+        lines = [
+            f"## 👹 {p['nickname']} 挑战 {bname}",
+            f"● 造成伤害：**{damage}**",
+            f"● Boss 剩余血量：**{state['hp']}/{state['max_hp']}**{hit_reward}",
+        ]
+        if state["hp"] <= 0 < old_hp:
+            # 击杀：发放击杀奖励并进入复活
+            kill_rewards = boss.get("kill_rewards", [])
+            kill_msg = "\n🏆 **最后一击！**"
+            if kill_rewards:
+                weights = [r.get("weight", 1) for r in kill_rewards]
+                reward = random.choices(kill_rewards, weights=weights, k=1)[0].get(
+                    "reward", {}
+                )
+                kill_msg += "\n" + self._grant_event_reward(
+                    player, eid, cfg, reward, prefix="击杀奖励"
+                )
+            # 伤害榜前三额外奖励
+            rank = sorted(
+                state["damage_rank"].items(), key=lambda x: x[1], reverse=True
+            )[:3]
+            if rank:
+                kill_msg += "\n> 本轮回伤害榜："
+                for i, (rq, dmg) in enumerate(rank, 1):
+                    kill_msg += f"\n{i}. `{rq}` 伤害 {dmg}"
+            respawn = boss.get("respawn_seconds", 3600)
+            state["respawn_until"] = int(time.time()) + int(respawn)
+            state["hp"] = state["max_hp"]
+            state["damage_rank"] = {}
+            lines.append(kill_msg)
+            lines.append(f"\n⏳ {bname} 已阵亡，{self._fmt_duration(respawn)} 后复活。")
         return "\n".join(lines)
 
     def _event_buy(self, player: dict, eid: str, cfg: dict, item_name: str) -> str | None:

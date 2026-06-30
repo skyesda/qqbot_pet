@@ -470,6 +470,30 @@ function fieldHtml(){
   <div class="row"><div style="flex:1"><label class="fld">抽奖价格（如：贝壳 10）</label><input id="f_gacha_cost" placeholder="贝壳 10"></div></div>
   <div id="event_gacha_pool"></div>
   <button class="act ghost" type="button" onclick="eventAddGacha()" style="margin-top:6px">＋ 添加奖品</button>
+  <div class="sec">活动副本</div>
+  <div id="event_dungeons"></div>
+  <button class="act ghost" type="button" onclick="eventAddDungeon()" style="margin-top:6px">＋ 添加副本</button>
+  <div class="sec">世界 Boss</div>
+  <div class="chk"><input id="f_boss_enabled" type="checkbox"><label for="f_boss_enabled">启用世界 Boss</label></div>
+  <div class="row">
+   <div style="flex:1"><label class="fld">挑战指令</label><input id="f_boss_cmd" placeholder="夏日Boss"></div>
+   <div style="flex:1"><label class="fld">Boss名称</label><input id="f_boss_name" placeholder="深海巨鲸"></div>
+   <div style="flex:1"><label class="fld">血量</label><input id="f_boss_hp" type="number" value="100000"></div>
+  </div>
+  <div class="row">
+   <div style="flex:1"><label class="fld">等级要求</label><input id="f_boss_level" type="number" value="1"></div>
+   <div style="flex:1"><label class="fld">宠物精力</label><input id="f_boss_energy" type="number" value="20"></div>
+   <div style="flex:1"><label class="fld">冷却(秒)</label><input id="f_boss_cooldown" type="number" value="600"></div>
+   <div style="flex:1"><label class="fld">每日次数</label><input id="f_boss_limit" type="number" value="5"></div>
+  </div>
+  <div class="row">
+   <div style="flex:1"><label class="fld">伤害系数</label><input id="f_boss_factor" type="number" step="0.01" value="0.1"></div>
+   <div style="flex:1"><label class="fld">每次代币</label><input id="f_boss_token_hit" type="number" value="5"></div>
+   <div style="flex:1"><label class="fld">复活秒数</label><input id="f_boss_respawn" type="number" value="3600"></div>
+  </div>
+  <div class="sec" style="margin-top:10px">击杀奖励（权重越高越容易出现）</div>
+  <div id="event_boss_rewards"></div>
+  <button class="act ghost" type="button" onclick="eventAddBossReward()" style="margin-top:6px">＋ 添加击杀奖励</button>
   <div class="muted" style="margin-top:10px">高级用户仍可在下方「高级编辑」中直接修改 JSON。表单保存时会覆盖表单内容到 JSON。</div>`;
  return `
   <div class="muted">套餐面额（空或 0 表示不含该项，可任意组合）；或填「授权天数」改为群授权卡。</div>
@@ -524,6 +548,20 @@ function fillFields(v){
   eventRenderActions(v.actions||{});
   eventRenderShop(v.shop||{});
   eventRenderGacha(gc.pool||[]);
+  eventRenderDungeons(v.dungeons||{});
+  const bs=v.boss||{};
+  g('f_boss_enabled').checked=!!bs.enabled;
+  g('f_boss_cmd').value=bs.cmd||'';
+  g('f_boss_name').value=bs.name||'';
+  g('f_boss_hp').value=bs.hp!==undefined?bs.hp:100000;
+  g('f_boss_level').value=bs.level_req!==undefined?bs.level_req:1;
+  g('f_boss_energy').value=bs.energy!==undefined?bs.energy:20;
+  g('f_boss_cooldown').value=bs.cooldown!==undefined?bs.cooldown:600;
+  g('f_boss_limit').value=bs.daily_limit!==undefined?bs.daily_limit:5;
+  g('f_boss_factor').value=bs.damage_factor!==undefined?bs.damage_factor:0.1;
+  g('f_boss_token_hit').value=bs.token_per_hit!==undefined?bs.token_per_hit:5;
+  g('f_boss_respawn').value=bs.respawn_seconds!==undefined?bs.respawn_seconds:3600;
+  eventRenderBossRewards(bs.kill_rewards||[]);
  }
  else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_authdays').value=v.auth_days||'';g('f_used').checked=!!v.used;}
 }
@@ -567,6 +605,21 @@ function applyFields(v){
    cost:eventCostFromString(g('f_gacha_cost').value),
    pool:eventCollectGacha()
   };
+  v.dungeons=eventCollectDungeons();
+  v.boss={
+   enabled:g('f_boss_enabled').checked,
+   cmd:g('f_boss_cmd').value.trim()||'活动Boss',
+   name:g('f_boss_name').value.trim()||'活动Boss',
+   hp:+g('f_boss_hp').value||100000,
+   level_req:+g('f_boss_level').value||1,
+   energy:+g('f_boss_energy').value||0,
+   cooldown:+g('f_boss_cooldown').value||600,
+   daily_limit:+g('f_boss_limit').value||0,
+   damage_factor:+g('f_boss_factor').value||0.1,
+   token_per_hit:+g('f_boss_token_hit').value||0,
+   respawn_seconds:+g('f_boss_respawn').value||3600,
+   kill_rewards:eventCollectBossRewards()
+  };
  }
  else{const ad=+g('f_authdays').value||0;if(ad>0){v.auth_days=ad;delete v.rewards;delete v.currency;delete v.amount;}else{const r={};const c=+g('f_r_coin').value||0,j=+g('f_r_jifen').value||0,d=+g('f_r_diamond').value||0;if(c>0)r['金币']=c;if(j>0)r['积分']=j;if(d>0)r['钻石']=d;v.rewards=r;delete v.currency;delete v.amount;delete v.auth_days;}v.used=g('f_used').checked;}
  return v;
@@ -605,6 +658,17 @@ function openModal(k,v){
     {weight:15,reward:{金币:500}},
     {weight:4,reward:{effect:{add_hp_max:50}}},
     {weight:1,reward:{item:'史诗卡',count:1},msg:'🎉 大奖！'}
+   ]},
+   dungeons:{
+    '珊瑚洞穴':{monster:'巨蟹守卫',level_req:10,energy:15,cooldown:600,power:1500,exp:200,jifen:100,token_reward:10,reward:{item:'夏日冰饮',count:1}},
+    '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:500,jifen:300,token_reward:25,reward:{item:'史诗卡',count:1}}
+   },
+   boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,kill_rewards:[
+    {weight:50,reward:{贝壳:100},msg:'海量贝壳'},
+    {weight:30,reward:{item:'夏日冰饮',count:3}},
+    {weight:15,reward:{effect:{add_atk:50}}},
+    {weight:4,reward:{金币:5000}},
+    {weight:1,reward:{item:'混沌卡',count:1},msg:'🎉 混沌品质卡！'}
    ]}
   };
  }
@@ -913,6 +977,104 @@ function eventCollectGacha(){
   const rw=eventCollectReward(card.querySelector('.ev-g-reward .ev-reward'));
   if(!rw) return;
   out.push({weight:+card.querySelector('.ev-g-weight').value||1, msg:card.querySelector('.ev-g-msg').value, reward:rw});
+ });
+ return out;
+}
+
+// dungeons
+function eventDungeonHtml(name,conf){
+ conf=conf||{};
+ return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+  <div class="row">
+   <div style="flex:2"><label>副本名称</label><input class="ev-d-name" value="${escA(name)}"></div>
+   <div style="flex:2"><label>怪物名</label><input class="ev-d-monster" value="${escA(conf.monster||'')}"/></div>
+   <div style="flex:1"><label>等级要求</label><input class="ev-d-level" type="number" value="${conf.level_req!==undefined?conf.level_req:1}"></div>
+  </div>
+  <div class="row">
+   <div style="flex:1"><label>宠物精力</label><input class="ev-d-energy" type="number" value="${conf.energy!==undefined?conf.energy:10}"></div>
+   <div style="flex:1"><label>冷却(秒)</label><input class="ev-d-cooldown" type="number" value="${conf.cooldown!==undefined?conf.cooldown:600}"></div>
+   <div style="flex:1"><label>每日次数</label><input class="ev-d-limit" type="number" value="${conf.daily_limit!==undefined?conf.daily_limit:''}" placeholder="空=不限"></div>
+   <div style="flex:1"><label>怪物战力</label><input class="ev-d-power" type="number" value="${conf.power!==undefined?conf.power:1000}"></div>
+  </div>
+  <div class="row">
+   <div style="flex:1"><label>经验</label><input class="ev-d-exp" type="number" value="${conf.exp!==undefined?conf.exp:0}"></div>
+   <div style="flex:1"><label>积分</label><input class="ev-d-jifen" type="number" value="${conf.jifen!==undefined?conf.jifen:0}"></div>
+   <div style="flex:1"><label>代币奖励</label><input class="ev-d-token" type="number" value="${conf.token_reward!==undefined?conf.token_reward:0}"></div>
+  </div>
+  <div class="sec" style="margin-top:10px">通关额外奖励（可选）</div>
+  <div class="ev-d-reward">${eventRewardHtml(conf.reward||{})}</div>
+  <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除副本</button>
+ </div>`;
+}
+function eventAddDungeon(){
+ const box=g('event_dungeons');
+ const div=document.createElement('div');
+ div.innerHTML=eventDungeonHtml('',{});
+ box.appendChild(div.firstElementChild);
+}
+function eventRenderDungeons(dungeons){
+ const box=g('event_dungeons'); box.innerHTML='';
+ for(const [name,conf] of Object.entries(dungeons||{})){
+  const div=document.createElement('div');
+  div.innerHTML=eventDungeonHtml(name,conf);
+  box.appendChild(div.firstElementChild);
+ }
+}
+function eventCollectDungeons(){
+ const out={};
+ document.querySelectorAll('#event_dungeons .event-card').forEach(card=>{
+  const name=card.querySelector('.ev-d-name').value.trim();
+  if(!name) return;
+  const limit=card.querySelector('.ev-d-limit').value;
+  out[name]={
+   monster:card.querySelector('.ev-d-monster').value.trim()||'怪物',
+   level_req:+card.querySelector('.ev-d-level').value||1,
+   energy:+card.querySelector('.ev-d-energy').value||0,
+   cooldown:+card.querySelector('.ev-d-cooldown').value||600,
+   power:+card.querySelector('.ev-d-power').value||0,
+   exp:+card.querySelector('.ev-d-exp').value||0,
+   jifen:+card.querySelector('.ev-d-jifen').value||0,
+   token_reward:+card.querySelector('.ev-d-token').value||0,
+   reward:eventCollectReward(card.querySelector('.ev-d-reward .ev-reward'))
+  };
+  if(limit!=='') out[name].daily_limit=+limit;
+ });
+ return out;
+}
+
+// boss
+function eventBossRewardHtml(entry){
+ entry=entry||{};
+ return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+  <div class="row">
+   <div style="flex:1"><label>权重</label><input class="ev-b-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
+   <div style="flex:3"><label>提示文案（可选）</label><input class="ev-b-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
+  </div>
+  <div class="sec" style="margin-top:10px">奖励内容</div>
+  <div class="ev-b-reward">${eventRewardHtml(entry.reward||{})}</div>
+  <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除奖励</button>
+ </div>`;
+}
+function eventAddBossReward(){
+ const box=g('event_boss_rewards');
+ const div=document.createElement('div');
+ div.innerHTML=eventBossRewardHtml({});
+ box.appendChild(div.firstElementChild);
+}
+function eventRenderBossRewards(rewards){
+ const box=g('event_boss_rewards'); box.innerHTML='';
+ for(const entry of (rewards||[])){
+  const div=document.createElement('div');
+  div.innerHTML=eventBossRewardHtml(entry);
+  box.appendChild(div.firstElementChild);
+ }
+}
+function eventCollectBossRewards(){
+ const out=[];
+ document.querySelectorAll('#event_boss_rewards .event-card').forEach(card=>{
+  const rw=eventCollectReward(card.querySelector('.ev-b-reward .ev-reward'));
+  if(!rw) return;
+  out.push({weight:+card.querySelector('.ev-b-weight').value||1, msg:card.querySelector('.ev-b-msg').value, reward:rw});
  });
  return out;
 }
