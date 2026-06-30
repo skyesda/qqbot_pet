@@ -17,7 +17,7 @@ from typing import Any
 from astrbot.api import logger
 
 COOKIE = "pp_session"
-TABLES = ("players", "groups", "cards")
+TABLES = ("players", "groups", "cards", "events")
 
 
 class WebAdmin:
@@ -151,6 +151,7 @@ class WebAdmin:
                     "talents": list(data.TALENTS.keys()),
                     "skills": list(data.SKILLS.keys()),
                     "items": list(data.ITEMS.keys()),
+                    "currencies": ["金币", "积分", "钻石"],
                 },
             }
         )
@@ -282,6 +283,7 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <button data-t="players" class="active" onclick="tab('players')">玩家</button>
 <button data-t="groups" onclick="tab('groups')">群设置</button>
 <button data-t="cards" onclick="tab('cards')">卡密</button>
+<button data-t="events" onclick="tab('events')">活动</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -346,6 +348,7 @@ function match(k,v){const q=(document.getElementById('q').value||'').toLowerCase
 function render(){
  if(cur==='players')renderPlayers();
  else if(cur==='groups')renderGroups();
+ else if(cur==='events')renderEvents();
  else renderCards();
 }
 function shell(head,rows,cols){
@@ -404,6 +407,23 @@ function renderCards(){
  document.getElementById('cardstats').innerHTML=`<div class="stat"><div class="n">${total}</div><div class="l">卡密总数</div></div><div class="stat"><div class="n">${total-used}</div><div class="l">未使用</div></div><div class="stat"><div class="n">${used}</div><div class="l">已使用</div></div>`;
  shell('<th>卡密</th><th>套餐内容</th><th>状态</th><th>使用者</th><th>创建时间</th><th>操作</th>',rows);
 }
+function renderEvents(){
+ let rows='';
+ for(const k of Object.keys(cache)){const v=cache[k];if(!match(k,v))continue;
+  const now=Math.floor(Date.now()/1000);
+  const active=!!v.enabled && v.start_at<=now && now<=v.end_at;
+  const start=v.start_at?new Date(v.start_at*1000).toLocaleString('zh-CN',{hour12:false}):'—';
+  const end=v.end_at?new Date(v.end_at*1000).toLocaleString('zh-CN',{hour12:false}):'—';
+  rows+=`<tr><td class="k">${esc(k)}</td>
+   <td>${esc(v.name||'—')}</td>
+   <td><span class="tag ${active?'on':'off'}">${active?'生效中':(v.enabled?'未生效':'已禁用')}</span></td>
+   <td>${esc(v.token||'—')}</td>
+   <td class="muted">${esc(start)}</td>
+   <td class="muted">${esc(end)}</td>
+   <td class="num">${Object.keys(v.actions||{}).length} / ${Object.keys(v.shop||{}).length} / ${(v.gacha||{}).pool?1:0}</td>
+   <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
+ shell('<th>ID</th><th>名称</th><th>状态</th><th>代币</th><th>开始</th><th>结束</th><th>玩法/商店/抽奖</th><th>操作</th>',rows);
+}
 function fieldHtml(){
  if(cur==='players')return `
   <div class="sec">基础</div>
@@ -418,6 +438,26 @@ function fieldHtml(){
  if(cur==='groups')return `
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启宠物乐园</label></div>
   <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>`;
+ if(cur==='events')return `
+  <div class="muted">活动时间使用 Unix 时间戳（秒）。actions / shop / gacha 请在下方高级 JSON 中编辑。</div>
+  <div class="row">
+   <div style="flex:2"><label class="fld">活动名称</label><input id="f_name" placeholder="清凉一夏"></div>
+   <div><label class="fld">主题</label><input id="f_theme" placeholder="summer"></div>
+  </div>
+  <div class="row">
+   <div><label class="fld">菜单指令</label><input id="f_menu_cmd" placeholder="夏日活动"></div>
+   <div><label class="fld">代币名</label><input id="f_token" placeholder="贝壳"></div>
+  </div>
+  <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">启用</label></div>
+  <div class="row">
+   <div><label class="fld">开始时间戳</label><input id="f_start_at" type="number" placeholder="1751241600"></div>
+   <div><label class="fld">结束时间戳</label><input id="f_end_at" type="number" placeholder="1753920000"></div>
+  </div>
+  <div class="row">
+   <div><label class="fld">精力上限</label><input id="f_energy_max" type="number" value="100"></div>
+   <div><label class="fld">精力恢复/分钟</label><input id="f_energy_regen_per_min" type="number" value="1"></div>
+  </div>
+  <div class="muted">高级 JSON 中必须包含 id（与键相同）、actions、shop、gacha 等结构。</div>`;
  return `
   <div class="muted">套餐面额（空或 0 表示不含该项，可任意组合）；或填「授权天数」改为群授权卡。</div>
   <div class="row"><div><label class="fld">金币</label><input id="f_r_coin" type="number"></div>
@@ -455,6 +495,17 @@ function fillFields(v){
   g('bagbox').innerHTML=buildBag(v.bag);
  }
  else if(cur==='groups'){g('f_enabled').checked=!!v.enabled;g('f_cross').checked=!!v.cross;}
+ else if(cur==='events'){
+  g('f_name').value=v.name||'';
+  g('f_theme').value=v.theme||'';
+  g('f_menu_cmd').value=v.menu_cmd||'';
+  g('f_token').value=v.token||'';
+  g('f_enabled').checked=!!v.enabled;
+  g('f_start_at').value=v.start_at||'';
+  g('f_end_at').value=v.end_at||'';
+  g('f_energy_max').value=v.energy_max!==undefined?v.energy_max:100;
+  g('f_energy_regen_per_min').value=v.energy_regen_per_min!==undefined?v.energy_regen_per_min:1;
+ }
  else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_authdays').value=v.auth_days||'';g('f_used').checked=!!v.used;}
 }
 function applyFields(v){
@@ -479,18 +530,59 @@ function applyFields(v){
   v.bag=bag;
  }
  else if(cur==='groups'){v.enabled=g('f_enabled').checked;v.cross=g('f_cross').checked;}
+ else if(cur==='events'){
+  v.name=g('f_name').value.trim();
+  v.theme=g('f_theme').value.trim();
+  v.menu_cmd=g('f_menu_cmd').value.trim();
+  v.token=g('f_token').value.trim();
+  v.enabled=g('f_enabled').checked;
+  v.start_at=+g('f_start_at').value||0;
+  v.end_at=+g('f_end_at').value||0;
+  v.energy_max=+g('f_energy_max').value||100;
+  v.energy_regen_per_min=+g('f_energy_regen_per_min').value||1;
+ }
  else{const ad=+g('f_authdays').value||0;if(ad>0){v.auth_days=ad;delete v.rewards;delete v.currency;delete v.amount;}else{const r={};const c=+g('f_r_coin').value||0,j=+g('f_r_jifen').value||0,d=+g('f_r_diamond').value||0;if(c>0)r['金币']=c;if(j>0)r['积分']=j;if(d>0)r['钻石']=d;v.rewards=r;delete v.currency;delete v.amount;delete v.auth_days;}v.used=g('f_used').checked;}
  return v;
 }
 function g(id){return document.getElementById(id);}
 function editRow(k){openModal(k,JSON.parse(JSON.stringify(cache[k]||{})));}
 function addRow(){openModal('',{});}
-function keyLabel(){return cur==='players'?'玩家键（群号\\x1fQQ号）':cur==='groups'?'群号':'卡密码';}
+function keyLabel(){return cur==='players'?'玩家键（群号\\x1fQQ号）':cur==='groups'?'群号':cur==='events'?'活动ID':'卡密码';}
 function openModal(k,v){
  editKey=k;
  g('mtitle').textContent=k?'编辑记录':'新增记录';
  g('mfields').innerHTML=(k?'':`<label class="fld">${keyLabel()}</label><input id="newkey" style="width:100%">`)+fieldHtml();
  g('msub').textContent=k?k:'';
+ if(cur==='events' && !k){
+  const now=Math.floor(Date.now()/1000);
+  v={
+   id:'',
+   name:'清凉一夏',
+   enabled:true,
+   start_at:now,
+   end_at:now+30*86400,
+   token:'贝壳',
+   theme:'summer',
+   menu_cmd:'夏日活动',
+   energy_max:100,
+   energy_regen_per_min:1,
+   actions:{
+    '赶海':{energy:10,cooldown:600,daily_limit:5,rewards:{贝壳:{min:3,max:8,chance:1}},msg:'🌊 你在礁石边翻到 {贝壳} 个贝壳！'},
+    '冲浪':{energy:15,cooldown:900,daily_limit:3,rewards:{贝壳:{min:5,max:12,chance:1},经验:{min:50,max:120,chance:0.3}},msg:'🏄 冲浪收获 {贝壳} 个贝壳！'}
+   },
+   shop:{
+    '夏日冰饮':{cost:{贝壳:20},stock:{per_player:5},reward:{item:'夏日冰饮',count:1},desc:'恢复 200 精力并回满心情'},
+    '遮阳帽':{cost:{贝壳:80},stock:{per_player:1},reward:{effect:{add_atk:20}},desc:'永久攻击 +20'}
+   },
+   gacha:{enabled:true,cmd:'夏日抽奖',cost:{贝壳:10},daily_limit:5,pool:[
+    {weight:50,reward:{贝壳:5},msg:'安慰奖'},
+    {weight:30,reward:{item:'夏日冰饮',count:1}},
+    {weight:15,reward:{金币:500}},
+    {weight:4,reward:{effect:{add_hp_max:50}}},
+    {weight:1,reward:{item:'史诗卡',count:1},msg:'🎉 大奖！'}
+   ]}
+  };
+ }
  fillFields(v);
  g('mval').value=JSON.stringify(v,null,2);
  g('modal').style.display='flex';

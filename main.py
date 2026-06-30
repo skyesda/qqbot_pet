@@ -351,12 +351,29 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 路由
     # =====================================================================
+    def _active_event_commands(self) -> set[str]:
+        """返回当前生效活动的所有菜单/动作/抽奖指令。"""
+        cmds = set()
+        for cfg in self.store.active_events().values():
+            if cfg.get("menu_cmd"):
+                cmds.add(cfg["menu_cmd"])
+            cmds.update(cfg.get("actions", {}).keys())
+            if cfg.get("gacha", {}).get("enabled"):
+                cmds.add(cfg["gacha"].get("cmd", "抽奖"))
+        return cmds
+
     def dispatch(self, event, qq, group_id, text):
         """处理一条指令。返回 None / 文本字符串 / (文本, 图片路径) 二元组。"""
         tokens = text.split()
         cmd = tokens[0]
         # 非本插件指令直接放行，避免为每条普通聊天创建玩家/群档案
-        if cmd not in KNOWN_COMMANDS and text not in data.DAILY_ACTIONS:
+        event_cmds = self._active_event_commands()
+        if (
+            cmd not in KNOWN_COMMANDS
+            and text not in data.DAILY_ACTIONS
+            and cmd not in event_cmds
+            and text not in event_cmds
+        ):
             return None
         group = self.store.get_group(group_id)
 
@@ -561,7 +578,195 @@ class PetParkPlugin(Star):
         if love is not None:
             return love
 
+        # ---- 限时活动 ----
+        event_reply = self._handle_event(player, cmd, text)
+        if event_reply is not None:
+            return event_reply
+
         return None
+
+    # =====================================================================
+    # 限时活动
+    # =====================================================================
+    def _handle_event(self, player: dict, cmd: str, text: str) -> str | None:
+        for eid, cfg in self.store.active_events().items():
+            if cfg.get("menu_cmd") and cmd == cfg["menu_cmd"]:
+                return self._event_menu(cfg)
+            if text in cfg.get("actions", {}):
+                return self._event_action(player, eid, cfg, text)
+            gacha = cfg.get("gacha", {})
+            if gacha.get("enabled") and cmd == gacha.get("cmd"):
+                return self._event_gacha(player, eid, cfg)
+        return None
+
+    def _event_menu(self, cfg: dict) -> str:
+        token = cfg.get("token", "代币")
+        lines = [f"## 🎉 {cfg.get('name', '限时活动')}", f"> 活动代币：{token}", ""]
+        actions = cfg.get("actions", {})
+        if actions:
+            lines.append("**活动玩法**")
+            for action, aconf in actions.items():
+                energy = aconf.get("energy", 0)
+                limit = aconf.get("daily_limit")
+                limit_txt = f"每日限 {limit} 次" if limit else "不限次数"
+                lines.append(f"• `{action}` — 消耗活动精力 {energy}，{limit_txt}")
+            lines.append("")
+        shop = cfg.get("shop", {})
+        if shop:
+            lines.append("**活动商店**（发送 `购买 物品名`）")
+            for name, it in shop.items():
+                cost = " / ".join(f"{v} {k}" for k, v in it.get("cost", {}).items())
+                lines.append(f"• `{name}` — {cost} — {it.get('desc', '')}")
+            lines.append("")
+        gacha = cfg.get("gacha", {})
+        if gacha.get("enabled"):
+            cost = " / ".join(f"{v} {k}" for k, v in gacha.get("cost", {}).items())
+            lines.append(f"**活动抽奖**：发送 `{gacha.get('cmd', '抽奖')}`，每次 {cost}，每日限 {gacha.get('daily_limit', '∞')} 次")
+        return "\n".join(lines)
+
+    def _event_action(self, player: dict, eid: str, cfg: dict, action: str) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        conf = cfg["actions"][action]
+        token = cfg.get("token", "代币")
+        today = time.strftime("%Y-%m-%d")
+        self.store.reset_event_daily(player, eid, today)
+        limit = conf.get("daily_limit")
+        if limit and self.store.event_daily_count(player, eid, action) >= limit:
+            return f"今日『{action}』次数已用完。"
+        self.store.refresh_event_energy(player, eid, cfg)
+        energy = conf.get("energy", 0)
+        cur_e, _ = self.store.event_energy(player, eid)
+        if cur_e < energy:
+            return f"活动精力不足（需 {energy}，当前 {cur_e}）。"
+        cd_key = f"event:{eid}:{action}"
+        cd = self._cooldown_block(player, cd_key, action)
+        if cd:
+            return cd
+        if energy:
+            self.store.add_event_energy(player, eid, -energy)
+        cooldown = conf.get("cooldown", 0)
+        if cooldown:
+            self.store.set_cooldown(player, cd_key, cooldown)
+        self.store.inc_event_daily(player, eid, action)
+        reward_texts = {}
+        for reward_name, reward_cfg in conf.get("rewards", {}).items():
+            if random.random() > reward_cfg.get("chance", 1.0):
+                continue
+            amount = random.randint(reward_cfg.get("min", 0), reward_cfg.get("max", 0))
+            if amount <= 0:
+                continue
+            if reward_name == token:
+                self.store.add_event_token(player, eid, token, amount)
+                reward_texts[token] = reward_texts.get(token, 0) + amount
+            elif reward_name in self.store.CURRENCY_KEYS:
+                self.store.add_currency(player, reward_name, amount)
+                reward_texts[reward_name] = reward_texts.get(reward_name, 0) + amount
+            elif reward_name == "经验":
+                petmod.add_exp(p, amount)
+                reward_texts["经验"] = reward_texts.get("经验", 0) + amount
+            else:
+                self.store.add_item(player, reward_name, amount)
+                reward_texts[reward_name] = reward_texts.get(reward_name, 0) + amount
+        msg_template = conf.get("msg", f"完成『{action}』！")
+        for k, v in reward_texts.items():
+            msg_template = msg_template.replace(f"{{{k}}}", str(v))
+        lines = [msg_template]
+        fmt = self._format_event_rewards(reward_texts)
+        if fmt:
+            lines.append(fmt)
+        return "\n".join(lines)
+
+    def _event_buy(self, player: dict, eid: str, cfg: dict, item_name: str) -> str | None:
+        shop = cfg.get("shop", {})
+        if item_name not in shop:
+            return None
+        it = shop[item_name]
+        token = cfg.get("token", "代币")
+        today = time.strftime("%Y-%m-%d")
+        self.store.reset_event_daily(player, eid, today)
+        cost = it.get("cost", {})
+        for cur, amt in cost.items():
+            if cur == token:
+                if self.store.get_event_token(player, eid, token) < amt:
+                    return f"购买『{item_name}』需要 {amt} {token}，余额不足。"
+            else:
+                if self.store.get_currency(player, cur) < amt:
+                    return f"购买『{item_name}』需要 {amt} {cur}，余额不足。"
+        per_player = it.get("stock", {}).get("per_player")
+        if per_player and self.store.event_shop_bought(player, eid, item_name) >= per_player:
+            return f"『{item_name}』每人限购 {per_player} 个。"
+        global_stock = it.get("stock", {}).get("global")
+        if global_stock is not None:
+            sold = cfg.setdefault("_sold", {}).get(item_name, 0)
+            if sold >= global_stock:
+                return f"『{item_name}』已售罄。"
+        for cur, amt in cost.items():
+            if cur == token:
+                self.store.add_event_token(player, eid, token, -amt)
+            else:
+                self.store.add_currency(player, cur, -amt)
+        self.store.inc_event_shop_bought(player, eid, item_name)
+        if global_stock is not None:
+            cfg["_sold"][item_name] = cfg["_sold"].get(item_name, 0) + 1
+        return self._grant_event_reward(player, eid, cfg, it.get("reward", {}), prefix=f"购买『{item_name}』成功")
+
+    def _event_gacha(self, player: dict, eid: str, cfg: dict) -> str:
+        gacha = cfg.get("gacha", {})
+        token = cfg.get("token", "代币")
+        today = time.strftime("%Y-%m-%d")
+        self.store.reset_event_daily(player, eid, today)
+        cmd = gacha.get("cmd", "抽奖")
+        limit = gacha.get("daily_limit")
+        if limit and self.store.event_daily_count(player, eid, cmd) >= limit:
+            return f"今日『{cmd}』次数已用完。"
+        pool = gacha.get("pool", [])
+        if not pool:
+            return "奖池为空。"
+        cost = gacha.get("cost", {})
+        for cur, amt in cost.items():
+            if cur == token:
+                if self.store.get_event_token(player, eid, token) < amt:
+                    return f"抽奖需要 {amt} {token}，余额不足。"
+            else:
+                if self.store.get_currency(player, cur) < amt:
+                    return f"抽奖需要 {amt} {cur}，余额不足。"
+        for cur, amt in cost.items():
+            if cur == token:
+                self.store.add_event_token(player, eid, token, -amt)
+            else:
+                self.store.add_currency(player, cur, -amt)
+        self.store.inc_event_daily(player, eid, cmd)
+        weights = [entry.get("weight", 1) for entry in pool]
+        entry = random.choices(pool, weights=weights, k=1)[0]
+        msg = entry.get("msg", "🎰 抽奖结果")
+        return self._grant_event_reward(player, eid, cfg, entry.get("reward", {}), prefix=msg)
+
+    def _grant_event_reward(self, player: dict, eid: str, cfg: dict, reward: dict, prefix: str = "") -> str:
+        token = cfg.get("token", "代币")
+        p = self._need_pet(player)
+        lines = [prefix] if prefix else []
+        if "item" in reward:
+            self.store.add_item(player, reward["item"], reward.get("count", 1))
+            lines.append(f"获得 {reward['item']} x{reward.get('count', 1)}")
+        if "effect" in reward and p:
+            eff_msg = self._apply_effect(p, reward["effect"], reward.get("item", "奖励"))
+            lines.append(eff_msg)
+        for cur in self.store.CURRENCY_KEYS:
+            if cur in reward:
+                self.store.add_currency(player, cur, reward[cur])
+                lines.append(f"{cur} +{reward[cur]}")
+        if token in reward:
+            self.store.add_event_token(player, eid, token, reward[token])
+            lines.append(f"{token} +{reward[token]}")
+        return "\n".join(lines)
+
+    def _format_event_rewards(self, reward_texts: dict) -> str:
+        parts = []
+        for k, v in reward_texts.items():
+            parts.append(f"{k} +{v}")
+        return "、".join(parts) if parts else ""
 
     # =====================================================================
     # 帮助 / 信息查询
@@ -649,17 +854,24 @@ class PetParkPlugin(Star):
 
     def _my_info(self, player: dict, group_id: str) -> str:
         gid = group_id if group_id and group_id != "private" else "私聊"
-        return "\n".join(
-            [
-                "## 📇 我的信息",
-                "━━━━━━━━━━━━━━",
-                f"🆔 **QQ号**　`{player['qq']}`",
-                f"👥 **群号**　`{gid}`",
-                f"🪙 **金币**　{player.get('coin', 0)}",
-                f"💎 **积分**　{player.get('jifen', 0)}",
-                f"💠 **钻石**　{player.get('diamond', 0)}",
-            ]
-        )
+        lines = [
+            "## 📇 我的信息",
+            "━━━━━━━━━━━━━━",
+            f"🆔 **QQ号**　`{player['qq']}`",
+            f"👥 **群号**　`{gid}`",
+            f"🪙 **金币**　{player.get('coin', 0)}",
+            f"💎 **积分**　{player.get('jifen', 0)}",
+            f"💠 **钻石**　{player.get('diamond', 0)}",
+        ]
+        active = self.store.active_events()
+        if active:
+            lines.append("━━━━━━━━━━━━━━")
+            lines.append("**🎉 活动代币**")
+            for eid, cfg in active.items():
+                token = cfg.get("token", "代币")
+                bal = self.store.get_event_token(player, eid, token)
+                lines.append(f"• {cfg.get('name', eid)} {token}：{bal}")
+        return "\n".join(lines)
 
     def _sign_in(self, player: dict, group_id: str) -> str:
         today = time.strftime("%Y-%m-%d")
@@ -990,6 +1202,15 @@ class PetParkPlugin(Star):
         )
 
     def _menu_text(self) -> str:
+        event_lines = []
+        active = self.store.active_events()
+        if active:
+            event_lines.append("")
+            event_lines.append("**🎉 限时活动**")
+            for cfg in active.values():
+                menu = cfg.get("menu_cmd", "活动菜单")
+                event_lines.append(f"{cfg.get('name', '活动')}：发送 `{menu}` 查看")
+            event_lines.append("")
         return "\n".join(
             [
                 "# 🐾 宠物乐园 · 指令菜单",
@@ -1003,6 +1224,9 @@ class PetParkPlugin(Star):
                 "**🍖 喂养 / 日常**（各 10~20 分钟冷却）",
                 "喂食 物品 · " + " · ".join(data.DAILY_ACTIONS),
                 "",
+            ]
+            + event_lines
+            + [
                 "**📈 成长**",
                 "一键升级宠物 · 宠物升级 [次数] · 宠物进化 · 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
                 "> 宠物每突破 60 级赠『史诗卡』，`使用 史诗卡` 可将品质升为史诗（属性同步飞跃，史诗及以上不可用）。",
@@ -1023,7 +1247,7 @@ class PetParkPlugin(Star):
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**📇 个人**",
-                "我的信息（查看 QQ号/群号/金币/积分/钻石） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石）",
+                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石）",
                 "",
                 "**📖 图鉴查询**",
                 "宠物种类（加名称看单个种类及图片，如 宠物种类 皮卡丘） · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
@@ -1292,6 +1516,10 @@ class PetParkPlugin(Star):
         if len(tokens) < 2:
             return "用法：购买 物品名 [数量]"
         name = tokens[1]
+        # 优先检查活动商店
+        for eid, cfg in self.store.active_events().items():
+            if name in cfg.get("shop", {}):
+                return self._event_buy(player, eid, cfg, name) or "购买失败。"
         if name not in data.ITEMS:
             return f"商城没有『{name}』。发送『宠物商城』或『道具商城』查看。"
         it = data.ITEMS[name]
@@ -1380,6 +1608,9 @@ class PetParkPlugin(Star):
         if "add_intel" in eff:
             p["intel"] += eff["add_intel"]
             return f"智力 +{eff['add_intel']}，当前智力 {p['intel']}。"
+        if "mood" in eff:
+            p["mood"] = max(1, min(5, eff["mood"]))
+            return f"心情已恢复到 {p['mood']} 颗星！"
         if "cure" in eff:
             if p["status"] == eff["cure"]:
                 p["status"] = "正常"

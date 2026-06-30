@@ -338,3 +338,95 @@ class PetStore:
     def cooldown_remaining(player: dict, key: str) -> int:
         end = player.get("cooldowns", {}).get(key, 0)
         return max(0, int(end) - int(time.time()))
+
+    # ----------------------------- 活动 -----------------------------
+    def events(self) -> dict:
+        return self._data.setdefault("events", {})
+
+    def active_events(self, now: int | None = None) -> dict[str, dict]:
+        """返回当前生效且 enabled 的活动 {id: config}。"""
+        now = now or int(time.time())
+        out = {}
+        for eid, cfg in self.events().items():
+            if not cfg.get("enabled"):
+                continue
+            if cfg.get("start_at", 0) <= now <= cfg.get("end_at", 0):
+                out[eid] = cfg
+        return out
+
+    @staticmethod
+    def player_event_state(player: dict, event_id: str) -> dict:
+        st = player.setdefault("event_state", {}).setdefault(event_id, {})
+        st.setdefault("tokens", {})
+        st.setdefault("energy_max", 100)
+        st.setdefault("energy", st.get("energy_max", 100))
+        st.setdefault("last_energy_ts", int(time.time()))
+        st.setdefault("daily_counts", {})
+        st.setdefault("daily_reset", "")
+        st.setdefault("shop_bought", {})
+        st.setdefault("progress", {})
+        return st
+
+    @staticmethod
+    def refresh_event_energy(player: dict, event_id: str, cfg: dict) -> None:
+        """按配置恢复玩家在该活动中的独立精力（懒惰计算）。"""
+        st = PetStore.player_event_state(player, event_id)
+        max_e = int(cfg.get("energy_max", 100))
+        st["energy_max"] = max_e
+        rate = float(cfg.get("energy_regen_per_min", 1))
+        now = int(time.time())
+        last = st.get("last_energy_ts", now)
+        elapsed_min = (now - last) // 60
+        if elapsed_min <= 0:
+            return
+        gain = int(elapsed_min * rate)
+        if gain > 0:
+            st["energy"] = min(max_e, st.get("energy", 0) + gain)
+            st["last_energy_ts"] = last + elapsed_min * 60
+
+    @staticmethod
+    def event_energy(player: dict, event_id: str) -> tuple[int, int]:
+        st = PetStore.player_event_state(player, event_id)
+        return int(st.get("energy", 0)), int(st.get("energy_max", 100))
+
+    @staticmethod
+    def add_event_energy(player: dict, event_id: str, delta: int) -> None:
+        st = PetStore.player_event_state(player, event_id)
+        st["energy"] = max(
+            0, min(st.get("energy_max", 100), st.get("energy", 0) + delta)
+        )
+
+    @staticmethod
+    def add_event_token(player: dict, event_id: str, token: str, amount: int) -> None:
+        st = PetStore.player_event_state(player, event_id)
+        st["tokens"][token] = max(0, st["tokens"].get(token, 0) + amount)
+
+    @staticmethod
+    def get_event_token(player: dict, event_id: str, token: str) -> int:
+        return PetStore.player_event_state(player, event_id)["tokens"].get(token, 0)
+
+    @staticmethod
+    def reset_event_daily(player: dict, event_id: str, date_str: str) -> None:
+        st = PetStore.player_event_state(player, event_id)
+        if st.get("daily_reset") != date_str:
+            st["daily_counts"] = {}
+            st["shop_bought"] = {}
+            st["daily_reset"] = date_str
+
+    @staticmethod
+    def event_daily_count(player: dict, event_id: str, action: str) -> int:
+        return PetStore.player_event_state(player, event_id)["daily_counts"].get(action, 0)
+
+    @staticmethod
+    def inc_event_daily(player: dict, event_id: str, action: str) -> None:
+        st = PetStore.player_event_state(player, event_id)
+        st["daily_counts"][action] = st["daily_counts"].get(action, 0) + 1
+
+    @staticmethod
+    def event_shop_bought(player: dict, event_id: str, item: str) -> int:
+        return PetStore.player_event_state(player, event_id)["shop_bought"].get(item, 0)
+
+    @staticmethod
+    def inc_event_shop_bought(player: dict, event_id: str, item: str) -> None:
+        st = PetStore.player_event_state(player, event_id)
+        st["shop_bought"][item] = st["shop_bought"].get(item, 0) + 1
