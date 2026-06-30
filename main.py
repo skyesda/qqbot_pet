@@ -12,6 +12,7 @@ import asyncio
 import random
 import time
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api import message_components as Comp
@@ -2488,11 +2489,18 @@ class PetParkPlugin(Star):
             self.store.remove_item(player, name, 1)
             return f"使用『{name}』：{msg}"
         msgs = []
-        for _ in range(count):
-            msgs.append(self._apply_effect(p, eff, name))
+        scaled: dict[str, Any] = {}
+        for k, v in eff.items():
+            if isinstance(v, bool):
+                scaled[k] = v
+            elif isinstance(v, (int, float)):
+                scaled[k] = v * count
+            else:
+                scaled[k] = v
+        msg = self._apply_effect(p, scaled, name)
         self.store.remove_item(player, name, count)
         petmod.refresh_energy(p)
-        return f"使用『{name}』x{count}：\n" + "\n".join(msgs[-1:])
+        return f"使用『{name}』x{count}：\n{msg}"
 
     def _apply_effect(self, p: dict, eff: dict, name: str) -> str:
         if "heal_hp" in eff:
