@@ -364,8 +364,8 @@ class PetParkPlugin(Star):
                 cmds.add(gcmd)
                 cmds.add(f"{gcmd}列表")
             if cfg.get("dungeons"):
-                cmds.add("活动副本")
-                cmds.add("进入活动副本")
+                cmds.add(cfg.get("dungeon_list_cmd", "活动副本"))
+                cmds.add(cfg.get("dungeon_enter_cmd", "进入活动副本"))
             boss = cfg.get("boss", {})
             if boss.get("enabled"):
                 cmds.add(boss.get("cmd", "活动Boss"))
@@ -611,10 +611,12 @@ class PetParkPlugin(Star):
                 if cmd == f"{gcmd}列表":
                     return self._event_gacha_list(cfg)
             dungeons = cfg.get("dungeons", {})
+            list_cmd = cfg.get("dungeon_list_cmd", "活动副本")
+            enter_cmd = cfg.get("dungeon_enter_cmd", "进入活动副本")
             if dungeons:
-                if cmd == "活动副本":
+                if cmd == list_cmd:
                     return self._event_dungeon_list(cfg)
-                if cmd == "进入活动副本" and len(tokens) >= 2:
+                if cmd == enter_cmd and len(tokens) >= 2:
                     return self._event_enter_dungeon(player, eid, cfg, tokens[1])
             boss = cfg.get("boss", {})
             if boss.get("enabled") and cmd == boss.get("cmd", "活动Boss"):
@@ -651,11 +653,14 @@ class PetParkPlugin(Star):
             lines.append("")
         dungeons = cfg.get("dungeons", {})
         if dungeons:
-            lines.append("**活动副本**（发送 `进入活动副本 名称`）")
+            list_cmd = cfg.get("dungeon_list_cmd", "活动副本")
+            enter_cmd = cfg.get("dungeon_enter_cmd", "进入活动副本")
+            lines.append("**活动副本**（发送 `{enter_cmd} 名称`）".format(enter_cmd=enter_cmd))
             for name, d in dungeons.items():
                 energy = d.get("energy", 0)
                 req = d.get("level_req", 1)
                 lines.append(f"• `{name}` — Lv{req} · 耗 {energy} 精力 · 战力 {d.get('power', 0)}")
+            lines.append(f"> 发送 `{list_cmd}` 查看完整副本列表")
             lines.append("")
         boss = cfg.get("boss", {})
         if boss.get("enabled"):
@@ -762,7 +767,9 @@ class PetParkPlugin(Star):
                 f"- **{name}** `Lv{req}`　🗡{d.get('monster', '怪物')}（战力 {power}）\n"
                 f"　　耗 {energy} 精力 · 通关奖励 {drop}"
             )
-        lines.append("\n> 进入方式：`进入活动副本 副本名称`")
+        lines.append(
+            f"\n> 进入方式：`{cfg.get('dungeon_enter_cmd', '进入活动副本')} 副本名称`"
+        )
         return "\n".join(lines)
 
     def _event_enter_dungeon(

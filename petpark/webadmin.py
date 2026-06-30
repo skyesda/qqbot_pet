@@ -450,6 +450,10 @@ function fieldHtml(){
    <div><label class="fld">菜单指令</label><input id="f_menu_cmd" placeholder="夏日活动"></div>
    <div><label class="fld">代币名</label><input id="f_token" placeholder="贝壳"></div>
   </div>
+  <div class="row">
+   <div><label class="fld">副本列表指令</label><input id="f_dungeon_list_cmd" placeholder="活动副本"></div>
+   <div><label class="fld">进入副本指令</label><input id="f_dungeon_enter_cmd" placeholder="进入活动副本"></div>
+  </div>
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">启用</label></div>
   <div class="row">
    <div><label class="fld">开始时间</label><input id="f_start_at" type="datetime-local"></div>
@@ -537,6 +541,8 @@ function fillFields(v){
   g('f_theme').value=v.theme||'';
   g('f_menu_cmd').value=v.menu_cmd||'';
   g('f_token').value=v.token||'';
+  g('f_dungeon_list_cmd').value=v.dungeon_list_cmd||'';
+  g('f_dungeon_enter_cmd').value=v.dungeon_enter_cmd||'';
   g('f_enabled').checked=!!v.enabled;
   g('f_start_at').value=eventTsToLocal(v.start_at||0);
   g('f_end_at').value=eventTsToLocal(v.end_at||0);
@@ -592,6 +598,8 @@ function applyFields(v){
   v.theme=g('f_theme').value.trim();
   v.menu_cmd=g('f_menu_cmd').value.trim();
   v.token=g('f_token').value.trim();
+  v.dungeon_list_cmd=g('f_dungeon_list_cmd').value.trim()||'活动副本';
+  v.dungeon_enter_cmd=g('f_dungeon_enter_cmd').value.trim()||'进入活动副本';
   v.enabled=g('f_enabled').checked;
   const now=Math.floor(Date.now()/1000);
   v.start_at=eventLocalToTs(g('f_start_at').value)||now;
@@ -644,6 +652,8 @@ function openModal(k,v){
    token:'贝壳',
    theme:'summer',
    menu_cmd:'夏日活动',
+   dungeon_list_cmd:'活动副本',
+   dungeon_enter_cmd:'进入活动副本',
    actions:{
     '赶海':{energy:10,cooldown:600,daily_limit:5,rewards:{贝壳:{min:3,max:8,chance:1}},msg:'🌊 你在礁石边翻到 {贝壳} 个贝壳！'},
     '冲浪':{energy:15,cooldown:900,daily_limit:3,rewards:{贝壳:{min:5,max:12,chance:1},经验:{min:50,max:120,chance:0.3}},msg:'🏄 冲浪收获 {贝壳} 个贝壳！'}
