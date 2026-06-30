@@ -873,9 +873,11 @@ class PetParkPlugin(Star):
                 reward_lines.append(f"{token} +{token_gain}")
             item_reward = d.get("reward", {})
             if item_reward:
-                item_txt = self._format_event_reward(item_reward, token)
-                self._grant_event_reward(player, eid, cfg, item_reward)
-                reward_lines.append(item_txt)
+                extra = self._grant_event_reward(player, eid, cfg, item_reward)
+                if extra:
+                    for line in extra.split("\n"):
+                        if line:
+                            reward_lines.append(line)
             drop = "\n● " + "\n● ".join(reward_lines) if reward_lines else ""
             desc = f"您的{nick}在{name}遇见{monster}，激战之后**大胜**！"
             body = (
