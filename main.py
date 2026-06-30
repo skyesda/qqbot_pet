@@ -1492,13 +1492,13 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _accept_invite(self, player: dict, group_id: str, tokens: list[str]) -> str:
-        """被邀请用户发送『受邀 邀请人QQ』，双方均在本群时发放邀请奖励。"""
+        """被邀请用户发送『受邀 用户ID』，双方均在本群时发放邀请奖励。"""
         if len(tokens) < 2:
-            return "⚠️ 用法：`受邀 邀请人QQ`（例如：受邀 123456）"
+            return "⚠️ 用法：`受邀 用户ID`（例如：受邀 7FC131A00B...）"
         inviter_qq = str(tokens[1]).strip()
         invitee_qq = str(player.get("qq", ""))
-        if not inviter_qq.isdigit():
-            return "❌ 邀请人QQ必须是数字。"
+        if not inviter_qq:
+            return "❌ 邀请人ID不能为空。"
         if inviter_qq == invitee_qq:
             return "❌ 不能邀请自己哦。"
         inviter = self.store.get_player(inviter_qq, group_id, create=False)
@@ -1538,13 +1538,13 @@ class PetParkPlugin(Star):
             return (
                 "## 📋 我的邀请情况\n"
                 "你还没有成功邀请过好友。\n"
-                "> 让好友发送 `受邀 你的QQ`，双方即可领取奖励！"
+                "> 让好友发送 `受邀 你的用户ID`，双方即可领取奖励！"
             )
         lines = [
             "## 📋 我的邀请情况",
             f"累计邀请：**{len(users)}** 人",
             "",
-            "| 序号 | 用户QQ | 邀请时间 |",
+            "| 序号 | 用户ID | 邀请时间 |",
             "|---:|---|---|",
         ]
         for i, entry in enumerate(users, 1):
@@ -1928,7 +1928,7 @@ class PetParkPlugin(Star):
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**📇 个人**",
-                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石） · 我的邀请情况 · 受邀 邀请人QQ",
+                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石） · 我的邀请情况 · 受邀 用户ID",
                 "",
                 "📖 图鉴查询",
                 "宠物种类（加名称看单个种类及图片，如 宠物种类 皮卡丘） · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
