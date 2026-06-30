@@ -152,6 +152,27 @@ def exp_enough_to_level(pet: dict) -> bool:
     return pet.get("exp", 0) >= _exp_to_next(pet["level"])
 
 
+def upgrade_quality(pet: dict, target_quality: str = "史诗") -> tuple[bool, str]:
+    """提升宠物品质到 target_quality，并按新品质成长系数重新计算基础属性。"""
+    current = pet.get("quality", "普通")
+    if current == target_quality:
+        return False, f"宠物当前已是【{target_quality}】品质，无需使用。"
+    if current not in data.QUALITIES or target_quality not in data.QUALITIES:
+        return False, "品质信息异常，无法使用。"
+    if data.QUALITIES.index(current) >= data.QUALITIES.index(target_quality):
+        return False, f"宠物当前品质为【{current}】，不低于【{target_quality}】，无法使用。"
+    old_growth = data.QUALITY_GROWTH.get(current, 1.0)
+    new_growth = data.QUALITY_GROWTH.get(target_quality, 1.0)
+    ratio = new_growth / old_growth
+    pet["hp_max"] = int(pet["hp_max"] * ratio)
+    pet["hp"] = pet["hp_max"]
+    pet["atk"] = int(pet["atk"] * ratio)
+    pet["def"] = int(pet["def"] * ratio)
+    pet["intel"] = int(pet["intel"] * ratio)
+    pet["quality"] = target_quality
+    return True, f"🎴 **品质飞升！**由【{current}】进阶为【{target_quality}】，属性全面提升！"
+
+
 # --------------------------------------------------------------------------
 # 进化 / 飞升 / 渡劫
 # --------------------------------------------------------------------------

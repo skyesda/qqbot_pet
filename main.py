@@ -1005,6 +1005,7 @@ class PetParkPlugin(Star):
                 "",
                 "**📈 成长**",
                 "一键升级宠物 · 宠物升级 [次数] · 宠物进化 · 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
+                "> 宠物每突破 60 级赠『史诗卡』，`使用 史诗卡` 可将品质升为史诗（属性同步飞跃，史诗及以上不可用）。",
                 "",
                 "**🗡️ 神器 / 秘技**",
                 "打造神器 名称 · 佩戴神器 名称 · 卸下神器 · 参悟秘技 名称 · 遗忘秘技",
@@ -1337,6 +1338,14 @@ class PetParkPlugin(Star):
                 self.store.add_item(player, itx, 1)
             self.store.remove_item(player, name, 1)
             return f"使用『{name}』：{msg}"
+        # 品质提升卡：每次 1 张，史诗及以上无法使用
+        if "upgrade_quality" in eff:
+            target = eff["upgrade_quality"]
+            ok, msg = petmod.upgrade_quality(p, target)
+            if not ok:
+                return msg
+            self.store.remove_item(player, name, 1)
+            return f"使用『{name}』：{msg}"
         msgs = []
         for _ in range(count):
             msgs.append(self._apply_effect(p, eff, name))
@@ -1468,7 +1477,7 @@ class PetParkPlugin(Star):
             petmod.add_exp(p, exp)
             return (
                 f"🧘 {action}完成，经验 +{exp}，当前经验 {p['exp']}。"
-                + self._auto_level_note(p)
+                + self._auto_level_note(player, p)
             )
         if action == "打工":
             gain = random.randint(200, 600) + p["level"] * 5
@@ -1562,10 +1571,15 @@ class PetParkPlugin(Star):
         if busy:
             return busy
         petmod.refresh_energy(p)
+        before = p.get("level", 1)
         n = petmod.auto_level_up(p)
         if n == 0:
             return f"未能升级（经验或精力不足）。当前 Lv{p['level']}/{petmod.level_cap(p)}。"
-        return f"⬆ 一键升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}，剩余精力 {p['energy']}。"
+        reward = self._grant_level60_reward(player, p, before)
+        return (
+            f"⬆ 一键升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}，剩余精力 {p['energy']}。"
+            + reward
+        )
 
     def _manual_level(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -1576,11 +1590,16 @@ class PetParkPlugin(Star):
             return busy
         times = self._parse_count(tokens, 1)
         petmod.refresh_energy(p)
+        before = p.get("level", 1)
         n, note = petmod.level_up(p, times)
         if n == 0:
             return f"升级失败：{note}"
         suffix = f"（{note}）" if note else ""
-        return f"⬆ 升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}{suffix}。"
+        reward = self._grant_level60_reward(player, p, before)
+        return (
+            f"⬆ 升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}{suffix}。"
+            + reward
+        )
 
     def _evolve(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -2202,17 +2221,26 @@ class PetParkPlugin(Star):
         lines.append("\n> 战力 ≥ 怪物战力即可通关；经验满后自动升级。")
         return "\n".join(lines)
 
-    def _auto_level_note(self, p: dict) -> str:
+    def _auto_level_note(self, player: dict, p: dict) -> str:
         """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
         if not petmod.exp_enough_to_level(p):
             return ""
+        before = p.get("level", 1)
         gained = petmod.auto_level_up(p)
         if gained <= 0:
             return ""
         return (
             f"\n⬆ **自动升级 +{gained} 级！**当前 "
             f"Lv{p['level']}/{petmod.level_cap(p)}（剩余精力 {p['energy']}）"
-        )
+        ) + self._grant_level60_reward(player, p, before)
+
+    def _grant_level60_reward(self, player: dict, p: dict, before_level: int) -> str:
+        """宠物本次升级若跨过 60 级倍数，赠送 1 张『史诗卡』放入背包。返回提示文本。"""
+        after_level = p.get("level", 1)
+        if before_level // 60 < after_level // 60:
+            self.store.add_item(player, "史诗卡", 1)
+            return "\n🎁 宠物等级突破 **60 级**，获得 **史诗卡** ×1（背包查看，可使用提升品质至史诗）！"
+        return ""
 
     def _enter_dungeon(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -2270,7 +2298,7 @@ class PetParkPlugin(Star):
                 f"●下次时间：{next_time}\n"
                 "┗-★---信☆息---★-┛"
             )
-            return f"{head}\n{desc}\n{body}{self._auto_level_note(p)}"
+            return f"{head}\n{desc}\n{body}{self._auto_level_note(player, p)}"
         desc = f"您的{nick}在{name}遇见{monster}，力战{monster}结果**惨败**！"
         body = (
             "┏-★---副☆本---★-┓\n"
