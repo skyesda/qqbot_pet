@@ -2464,7 +2464,7 @@ class PetParkPlugin(Star):
             p["favor"] = min(data.FAVOR_MAX, p["favor"] + gain)
             return f"💕 约会愉快，好感度 +{gain}，当前 {p['favor']}。"
         if action in ("修炼", "双修"):
-            base = random.randint(80, 200) + p["level"] * 10
+            base = random.randint(80, 200) + p["level"] * 25
             exp = base * (2 if action == "双修" else 1)
             petmod.add_exp(p, exp)
             return (
