@@ -1305,6 +1305,17 @@ class PetParkPlugin(Star):
         if global_stock is not None:
             cfg["_sold"][item_name] = cfg["_sold"].get(item_name, 0) + 1
         reward = it.get("reward") or {"item": item_name, "count": 1}
+        # 兼容旧版/误配置：如果商店奖励写的是效果，则视为该道具的使用效果，购买时只给道具
+        if "effect" in reward and "item" not in reward:
+            effect = reward["effect"]
+            if isinstance(effect, dict):
+                cfg.setdefault("event_items", {})[item_name] = {
+                    "category": "道具",
+                    "usable": True,
+                    "desc": it.get("desc", ""),
+                    "effect": effect,
+                }
+            reward = {"item": item_name, "count": 1}
         return self._grant_event_reward(
             player, eid, cfg, reward, prefix=f"购买『{item_name}』成功"
         )
