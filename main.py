@@ -373,6 +373,10 @@ class PetParkPlugin(Star):
                 gcmd = gacha.get("cmd", "抽奖")
                 cmds.add(gcmd)
                 cmds.add(f"{gcmd}列表")
+                cmds.add(f"{gcmd}十连")
+                cmds.add(f"{gcmd}10连")
+                if gcmd.endswith("抽奖"):
+                    cmds.add(gcmd[:-2] + "十连抽")
             if cfg.get("dungeons"):
                 cmds.add(cfg.get("dungeon_list_cmd", "活动副本"))
                 cmds.add(cfg.get("dungeon_enter_cmd", "进入活动副本"))
@@ -637,6 +641,11 @@ class PetParkPlugin(Star):
                     return self._event_gacha(player, eid, cfg)
                 if cmd == f"{gcmd}列表":
                     return self._event_gacha_list(cfg)
+                ten_cmds = {f"{gcmd}十连", f"{gcmd}10连"}
+                if gcmd.endswith("抽奖"):
+                    ten_cmds.add(gcmd[:-2] + "十连抽")
+                if cmd in ten_cmds:
+                    return self._event_gacha_multi(player, eid, cfg, times=10)
             dungeons = cfg.get("dungeons", {})
             list_cmd = cfg.get("dungeon_list_cmd", "活动副本")
             enter_cmd = cfg.get("dungeon_enter_cmd", "进入活动副本")
@@ -679,9 +688,15 @@ class PetParkPlugin(Star):
             lines.append("")
         gacha = cfg.get("gacha", {})
         if gacha.get("enabled"):
-            cost = " / ".join(f"{v} {k}" for k, v in gacha.get("cost", {}).items())
+            cost = gacha.get("cost", {})
+            single_cost = " / ".join(f"{v} {k}" for k, v in cost.items())
+            ten_cost = " / ".join(f"{v * 9} {k}" for k, v in cost.items())
             gcmd = gacha.get("cmd", "抽奖")
-            lines.append(f"**活动抽奖**：发送 `{gcmd}`，每次 {cost}，每日限 {gacha.get('daily_limit', '∞')} 次")
+            ten_cmd = gcmd[:-2] + "十连抽" if gcmd.endswith("抽奖") else f"{gcmd}十连"
+            lines.append(
+                f"**活动抽奖**：`{gcmd}` 单次 {single_cost} · "
+                f"`{ten_cmd}` 十连 {ten_cost} · 每日限 {gacha.get('daily_limit', '∞')} 次"
+            )
             lines.append(f"> 发送 `{gcmd}列表` 查看奖池与概率")
             lines.append("")
         dungeons = cfg.get("dungeons", {})
@@ -1313,6 +1328,59 @@ class PetParkPlugin(Star):
         entry = random.choices(pool, weights=weights, k=1)[0]
         msg = entry.get("msg", "🎰 抽奖结果")
         return self._grant_event_reward(player, eid, cfg, entry.get("reward", {}), prefix=msg)
+
+    def _event_gacha_multi(
+        self, player: dict, eid: str, cfg: dict, times: int = 10
+    ) -> str:
+        """活动抽奖 N 连抽：消耗 (times-1) 倍单次价格，结果以 Markdown 表格展示。"""
+        gacha = cfg.get("gacha", {})
+        token = cfg.get("token", "代币")
+        today = time.strftime("%Y-%m-%d")
+        self.store.reset_event_daily(player, eid, today)
+        cmd = gacha.get("cmd", "抽奖")
+        limit = gacha.get("daily_limit")
+        current = self.store.event_daily_count(player, eid, cmd)
+        if limit and current + times > limit:
+            return (
+                f"今日『{cmd}』剩余次数不足进行 {times} 连抽（剩余 {limit - current} 次）。"
+            )
+        pool = gacha.get("pool", [])
+        if not pool:
+            return "奖池为空。"
+        cost = gacha.get("cost", {})
+        multi_cost = {cur: amt * (times - 1) for cur, amt in cost.items()}
+        for cur, amt in multi_cost.items():
+            if cur == token:
+                if self.store.get_event_token(player, eid, token) < amt:
+                    return f"{times}连抽需要 {amt} {token}，余额不足。"
+            else:
+                if self.store.get_currency(player, cur) < amt:
+                    return f"{times}连抽需要 {amt} {cur}，余额不足。"
+        for cur, amt in multi_cost.items():
+            if cur == token:
+                self.store.add_event_token(player, eid, token, -amt)
+            else:
+                self.store.add_currency(player, cur, -amt)
+        for _ in range(times):
+            self.store.inc_event_daily(player, eid, cmd)
+        weights = [entry.get("weight", 1) for entry in pool]
+        entries = random.choices(pool, weights=weights, k=times)
+        cost_txt = " / ".join(f"{v} {k}" for k, v in multi_cost.items())
+        lines = [
+            f"## 🎰 {cmd}{times}连抽结果",
+            f"消耗：{cost_txt}",
+            "",
+            "| 序号 | 奖品 |",
+            "|---:|:---|",
+        ]
+        for i, entry in enumerate(entries, 1):
+            msg = entry.get("msg", "🎰 奖励")
+            reward_txt = self._grant_event_reward(
+                player, eid, cfg, entry.get("reward", {}), prefix=msg
+            )
+            cell = reward_txt.replace("\n", "<br>")
+            lines.append(f"| {i} | {cell} |")
+        return "\n".join(lines)
 
     def _grant_event_reward(self, player: dict, eid: str, cfg: dict, reward: dict, prefix: str = "") -> str:
         token = cfg.get("token", "代币")
