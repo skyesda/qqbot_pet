@@ -166,6 +166,12 @@ class WebAdmin:
             return self._json({"ok": False, "msg": "键不能为空"})
         if not isinstance(value, dict):
             return self._json({"ok": False, "msg": "记录内容必须是 JSON 对象"})
+        # 保存活动时保留运行时 Boss 状态，避免后台编辑把当前血量/伤害排行清空
+        if table == "events":
+            existing = self.store._data.get(table, {}).get(key)
+            if isinstance(existing, dict) and "_boss_state" in existing \
+                    and "_boss_state" not in value:
+                value["_boss_state"] = existing["_boss_state"]
         self.store._data.setdefault(table, {})[key] = value
         await self.store.save()
         return self._json({"ok": True})

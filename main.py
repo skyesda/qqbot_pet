@@ -884,15 +884,27 @@ class PetParkPlugin(Star):
         return f"{head}\n{desc}\n{body}"
 
     def _event_boss_state(self, cfg: dict) -> dict:
-        """初始化/返回活动 Boss 的共享状态。"""
+        """初始化/返回活动 Boss 的共享状态。编辑活动时若只改非血量字段，应保持当前血量。"""
         boss = cfg.setdefault("boss", {})
         state = cfg.setdefault("_boss_state", {})
         max_hp = int(boss.get("hp", 10000))
-        if not state or state.get("max_hp") != max_hp:
+        if not state:
             state["max_hp"] = max_hp
             state["hp"] = max_hp
             state["respawn_until"] = 0
             state["damage_rank"] = {}
+            return state
+        # 血量上限变化时按比例缩放当前血量，而不是直接回满
+        old_max = state.get("max_hp")
+        if old_max != max_hp:
+            old_hp = state.get("hp", old_max or max_hp)
+            if old_max:
+                state["hp"] = max(1, int(old_hp * max_hp / old_max))
+            else:
+                state["hp"] = max_hp
+            state["max_hp"] = max_hp
+        state.setdefault("respawn_until", 0)
+        state.setdefault("damage_rank", {})
         return state
 
     def _event_boss_challenge(
