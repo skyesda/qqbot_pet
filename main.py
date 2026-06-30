@@ -214,6 +214,7 @@ class PetParkPlugin(Star):
         self._broadcast_tasks: set = set()
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
+        self._patch_qqofficial_markdown_broadcast()
 
     def _start_web_admin(self) -> None:
         """在当前事件循环中后台启动管理网站；失败不影响插件主体。"""
@@ -246,6 +247,84 @@ class PetParkPlugin(Star):
             asyncio.get_event_loop().create_task(_boot())
         except RuntimeError:
             logger.warning("[petpark] 无运行中的事件循环，管理网站未启动")
+
+    def _patch_qqofficial_markdown_broadcast(self) -> None:
+        """为 QQ 官方适配器的主动群推送补齐 Markdown 支持。
+
+        AstrBot 事件响应路径会自动把 use_markdown_=True 的消息按 msg_type=2 发送，
+        但 `context.send_message` -> `send_by_session` 的群聊主动推送目前只发 `content`，
+        导致原生 Markdown（##、**、表格）以纯文本形式显示。这里在插件加载时打运行时补丁。
+        """
+        try:
+            from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import (
+                QQOfficialPlatformAdapter,
+            )
+            from astrbot.core.platform.sources.qqofficial.qqofficial_message_event import (
+                QQOfficialMessageEvent,
+            )
+            from astrbot.api.platform import MessageType
+            from botpy.types.message import MarkdownPayload
+        except Exception:
+            logger.debug("[petpark] QQ 官方适配器未加载，跳过 Markdown 广播补丁")
+            return
+
+        _orig = QQOfficialPlatformAdapter._send_by_session_common
+
+        async def _patched(self, session, message_chain):
+            use_md = getattr(message_chain, "use_markdown_", None)
+            scene = getattr(self, "_session_scene", {})
+            is_group = (
+                session.message_type == MessageType.GROUP_MESSAGE
+                and scene.get(session.session_id) == "group"
+            )
+            if is_group and use_md is not False:
+                try:
+                    parsed = await QQOfficialMessageEvent._parse_to_qqofficial(
+                        message_chain
+                    )
+                except Exception:
+                    parsed = None
+                if parsed:
+                    (
+                        plain_text,
+                        image_base64,
+                        image_path,
+                        record_file_path,
+                        video_file_source,
+                        file_source,
+                        _,
+                    ) = parsed
+                    has_media = (
+                        image_base64
+                        or image_path
+                        or record_file_path
+                        or video_file_source
+                        or file_source
+                    )
+                    if plain_text and not has_media:
+                        msg_id = self._session_last_message_id.get(session.session_id)
+                        allow = getattr(self, "_allow_group_proactive_send", False)
+                        if msg_id or allow:
+                            payload = {
+                                "markdown": MarkdownPayload(content=plain_text),
+                                "msg_type": 2,
+                                "msg_seq": random.randint(1, 10000),
+                            }
+                            if msg_id and not allow:
+                                payload["msg_id"] = msg_id
+                            try:
+                                await self.client.api.post_group_message(
+                                    group_openid=session.session_id, **payload
+                                )
+                                return
+                            except Exception as e:
+                                logger.warning(
+                                    f"[petpark] QQ 官方主动 Markdown 推送失败，将走原接口: {e}"
+                                )
+            return await _orig(self, session, message_chain)
+
+        QQOfficialPlatformAdapter._send_by_session_common = _patched
+        logger.info("[petpark] 已打补丁：QQ 官方主动群推送支持原生 Markdown")
 
     # =====================================================================
     # 消息入口：监听全部消息，解析无前缀中文指令
@@ -947,7 +1026,9 @@ class PetParkPlugin(Star):
         logger.info(f"[petpark] 开始向 {len(targets)} 个授权群广播 Boss 消息")
         for gid, umo in targets:
             try:
-                await self.context.send_message(umo, MessageChain().message(text))
+                await self.context.send_message(
+                    umo, MessageChain().message(text).use_markdown(True)
+                )
                 logger.info(f"[petpark] 已向群 {gid} 广播 Boss 消息")
             except Exception:
                 logger.exception(f"[petpark] 向群 {gid} 主动推送失败")
