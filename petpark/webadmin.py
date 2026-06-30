@@ -455,10 +455,6 @@ function fieldHtml(){
    <div><label class="fld">开始时间</label><input id="f_start_at" type="datetime-local"></div>
    <div><label class="fld">结束时间</label><input id="f_end_at" type="datetime-local"></div>
   </div>
-  <div class="row">
-   <div><label class="fld">精力上限</label><input id="f_energy_max" type="number" value="100"></div>
-   <div><label class="fld">精力恢复/分钟</label><input id="f_energy_regen_per_min" type="number" value="1"></div>
-  </div>
   <div class="sec">活动玩法</div>
   <div id="event_actions"></div>
   <button class="act ghost" type="button" onclick="eventAddAction()" style="margin-top:6px">＋ 添加玩法</button>
@@ -520,8 +516,6 @@ function fillFields(v){
   g('f_enabled').checked=!!v.enabled;
   g('f_start_at').value=eventTsToLocal(v.start_at||0);
   g('f_end_at').value=eventTsToLocal(v.end_at||0);
-  g('f_energy_max').value=v.energy_max!==undefined?v.energy_max:100;
-  g('f_energy_regen_per_min').value=v.energy_regen_per_min!==undefined?v.energy_regen_per_min:1;
   const gc=v.gacha||{};
   g('f_gacha_enabled').checked=!!gc.enabled;
   g('f_gacha_cmd').value=gc.cmd||'';
@@ -564,8 +558,6 @@ function applyFields(v){
   const now=Math.floor(Date.now()/1000);
   v.start_at=eventLocalToTs(g('f_start_at').value)||now;
   v.end_at=eventLocalToTs(g('f_end_at').value)||(now+30*86400);
-  v.energy_max=+g('f_energy_max').value||100;
-  v.energy_regen_per_min=+g('f_energy_regen_per_min').value||1;
   v.actions=eventCollectActions();
   v.shop=eventCollectShop();
   v.gacha={
@@ -599,8 +591,6 @@ function openModal(k,v){
    token:'贝壳',
    theme:'summer',
    menu_cmd:'夏日活动',
-   energy_max:100,
-   energy_regen_per_min:1,
    actions:{
     '赶海':{energy:10,cooldown:600,daily_limit:5,rewards:{贝壳:{min:3,max:8,chance:1}},msg:'🌊 你在礁石边翻到 {贝壳} 个贝壳！'},
     '冲浪':{energy:15,cooldown:900,daily_limit:3,rewards:{贝壳:{min:5,max:12,chance:1},经验:{min:50,max:120,chance:0.3}},msg:'🏄 冲浪收获 {贝壳} 个贝壳！'}
@@ -683,14 +673,15 @@ function eventRewardHtml(reward){
  reward=reward||{};
  let type='item';
  if(reward.effect!==undefined) type='effect';
+ else if(reward.item!==undefined) type='item';
  else {
-  const k=Object.keys(reward).find(x=>x!=='msg');
+  const k=Object.keys(reward).find(x=>x!=='msg' && !x.endsWith('_max'));
   if(k && META.currencies && META.currencies.includes(k)) type='currency';
   else if(k) type='token';
  }
  let detail='';
  if(type==='item'){
-  detail=`<div class="row"><div style="flex:3"><label>物品名</label><input class="ev-r-item" value="${escA(reward.item||'')}"></div><div style="flex:1"><label>数量</label><input class="ev-r-count" type="number" value="${reward.count!==undefined?reward.count:1}"></div></div>`;
+  detail=`<div class="row"><div style="flex:2"><label>物品名</label><select class="ev-r-item">${optHtml(META.items||[],reward.item||'')}</select></div><div style="flex:1"><label>最小数量</label><input class="ev-r-count" type="number" value="${reward.count!==undefined?reward.count:1}"></div><div style="flex:1"><label>最大数量</label><input class="ev-r-count-max" type="number" value="${reward.count_max!==undefined?reward.count_max:''}" placeholder="固定"></div></div>`;
  } else if(type==='effect'){
   const eff=reward.effect||{};
   const k=Object.keys(eff)[0]||'add_atk';
@@ -699,11 +690,13 @@ function eventRewardHtml(reward){
  } else if(type==='currency'){
   const k=Object.keys(reward).find(x=>META.currencies.includes(x))||'金币';
   const v=reward[k]||0;
-  detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${META.currencies.map(o=>`<option ${o===k?'selected':''}>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数量</label><input class="ev-r-curv" type="number" value="${v}"></div></div>`;
+  const vmax=reward[k+'_max'];
+  detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${META.currencies.map(o=>`<option ${o===k?'selected':''}>${o}</option>`).join('')}</select></div><div style="flex:1"><label>最小值</label><input class="ev-r-curv" type="number" value="${v}"></div><div style="flex:1"><label>最大值</label><input class="ev-r-curv-max" type="number" value="${vmax!==undefined?vmax:''}" placeholder="固定"></div></div>`;
  } else if(type==='token'){
-  const k=Object.keys(reward).find(x=>!META.currencies.includes(x)&&x!=='msg')||'';
+  const k=Object.keys(reward).find(x=>!META.currencies.includes(x)&&x!=='msg'&&!x.endsWith('_max'))||'';
   const v=reward[k]||0;
-  detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value="${escA(k)}"></div><div style="flex:1"><label>数量</label><input class="ev-r-tokv" type="number" value="${v}"></div></div>`;
+  const vmax=reward[k+'_max'];
+  detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value="${escA(k)}"></div><div style="flex:1"><label>最小值</label><input class="ev-r-tokv" type="number" value="${v}"></div><div style="flex:1"><label>最大值</label><input class="ev-r-tokv-max" type="number" value="${vmax!==undefined?vmax:''}" placeholder="固定"></div></div>`;
  }
  return `<div class="ev-reward" data-type="${type}"><div class="row"><div style="flex:1"><label>奖励类型</label><select class="ev-r-type" onchange="eventRewardTypeChange(this)">${[['item','物品'],['effect','属性'],['currency','货币'],['token','活动代币']].map(([t,l])=>`<option value="${t}" ${t===type?'selected':''}>${l}</option>`).join('')}</select></div></div><div class="ev-r-detail">${detail}</div></div>`;
 }
@@ -712,10 +705,10 @@ function eventRewardTypeChange(sel){
  const type=sel.value;
  box.dataset.type=type;
  let detail='';
- if(type==='item') detail=`<div class="row"><div style="flex:3"><label>物品名</label><input class="ev-r-item" value=""></div><div style="flex:1"><label>数量</label><input class="ev-r-count" type="number" value="1"></div></div>`;
+ if(type==='item') detail=`<div class="row"><div style="flex:2"><label>物品名</label><select class="ev-r-item">${optHtml(META.items||[],'')}</select></div><div style="flex:1"><label>最小数量</label><input class="ev-r-count" type="number" value="1"></div><div style="flex:1"><label>最大数量</label><input class="ev-r-count-max" type="number" value="" placeholder="固定"></div></div>`;
  else if(type==='effect') detail=`<div class="row"><div style="flex:2"><label>效果键</label><select class="ev-r-effk">${['add_atk','add_def','add_intel','add_hp_max','add_energy_max','mood','heal_hp','heal_energy','add_exp'].map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数值</label><input class="ev-r-effv" type="number" value="0"></div></div>`;
- else if(type==='currency') detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${(META.currencies||['金币','积分','钻石']).map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数量</label><input class="ev-r-curv" type="number" value="0"></div></div>`;
- else if(type==='token') detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value=""></div><div style="flex:1"><label>数量</label><input class="ev-r-tokv" type="number" value="0"></div></div>`;
+ else if(type==='currency') detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${(META.currencies||['金币','积分','钻石']).map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>最小值</label><input class="ev-r-curv" type="number" value="0"></div><div style="flex:1"><label>最大值</label><input class="ev-r-curv-max" type="number" value="" placeholder="固定"></div></div>`;
+ else if(type==='token') detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value=""></div><div style="flex:1"><label>最小值</label><input class="ev-r-tokv" type="number" value="0"></div><div style="flex:1"><label>最大值</label><input class="ev-r-tokv-max" type="number" value="" placeholder="固定"></div></div>`;
  box.querySelector('.ev-r-detail').innerHTML=detail;
 }
 function eventCollectReward(box){
@@ -723,21 +716,30 @@ function eventCollectReward(box){
  if(type==='item'){
   const name=box.querySelector('.ev-r-item').value.trim();
   const count=+box.querySelector('.ev-r-count').value||1;
+  const countMax=+box.querySelector('.ev-r-count-max').value||0;
   if(!name) return null;
-  return {item:name,count:count};
+  const out={item:name,count:count};
+  if(countMax>count) out.count_max=countMax;
+  return out;
  } else if(type==='effect'){
   const k=box.querySelector('.ev-r-effk').value;
   const v=+box.querySelector('.ev-r-effv').value||0;
   return {effect:{[k]:v}};
  } else if(type==='currency'){
   const k=box.querySelector('.ev-r-cur').value;
-  const v=+box.querySelector('.ev-r-curv').value||0;
-  return {[k]:v};
+  const min=+box.querySelector('.ev-r-curv').value||0;
+  const max=+box.querySelector('.ev-r-curv-max').value||0;
+  const out={[k]:min};
+  if(max>min) out[k+'_max']=max;
+  return out;
  } else if(type==='token'){
   const k=box.querySelector('.ev-r-tok').value.trim();
-  const v=+box.querySelector('.ev-r-tokv').value||0;
+  const min=+box.querySelector('.ev-r-tokv').value||0;
+  const max=+box.querySelector('.ev-r-tokv-max').value||0;
   if(!k) return null;
-  return {[k]:v};
+  const out={[k]:min};
+  if(max>min) out[k+'_max']=max;
+  return out;
  }
  return null;
 }
@@ -748,7 +750,7 @@ function eventActionHtml(name,conf){
  return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:2"><label>玩法指令</label><input class="ev-a-name" value="${escA(name)}"></div>
-   <div style="flex:1"><label>精力</label><input class="ev-a-energy" type="number" value="${conf.energy!==undefined?conf.energy:10}"></div>
+   <div style="flex:1"><label>宠物精力</label><input class="ev-a-energy" type="number" value="${conf.energy!==undefined?conf.energy:10}"></div>
    <div style="flex:1"><label>冷却(秒)</label><input class="ev-a-cooldown" type="number" value="${conf.cooldown!==undefined?conf.cooldown:600}"></div>
    <div style="flex:1"><label>每日次数</label><input class="ev-a-limit" type="number" value="${conf.daily_limit!==undefined?conf.daily_limit:5}" placeholder="空=不限"></div>
   </div>

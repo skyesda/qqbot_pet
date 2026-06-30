@@ -358,43 +358,11 @@ class PetStore:
     def player_event_state(player: dict, event_id: str) -> dict:
         st = player.setdefault("event_state", {}).setdefault(event_id, {})
         st.setdefault("tokens", {})
-        st.setdefault("energy_max", 100)
-        st.setdefault("energy", st.get("energy_max", 100))
-        st.setdefault("last_energy_ts", int(time.time()))
         st.setdefault("daily_counts", {})
         st.setdefault("daily_reset", "")
         st.setdefault("shop_bought", {})
         st.setdefault("progress", {})
         return st
-
-    @staticmethod
-    def refresh_event_energy(player: dict, event_id: str, cfg: dict) -> None:
-        """按配置恢复玩家在该活动中的独立精力（懒惰计算）。"""
-        st = PetStore.player_event_state(player, event_id)
-        max_e = int(cfg.get("energy_max", 100))
-        st["energy_max"] = max_e
-        rate = float(cfg.get("energy_regen_per_min", 1))
-        now = int(time.time())
-        last = st.get("last_energy_ts", now)
-        elapsed_min = (now - last) // 60
-        if elapsed_min <= 0:
-            return
-        gain = int(elapsed_min * rate)
-        if gain > 0:
-            st["energy"] = min(max_e, st.get("energy", 0) + gain)
-            st["last_energy_ts"] = last + elapsed_min * 60
-
-    @staticmethod
-    def event_energy(player: dict, event_id: str) -> tuple[int, int]:
-        st = PetStore.player_event_state(player, event_id)
-        return int(st.get("energy", 0)), int(st.get("energy_max", 100))
-
-    @staticmethod
-    def add_event_energy(player: dict, event_id: str, delta: int) -> None:
-        st = PetStore.player_event_state(player, event_id)
-        st["energy"] = max(
-            0, min(st.get("energy_max", 100), st.get("energy", 0) + delta)
-        )
 
     @staticmethod
     def add_event_token(player: dict, event_id: str, token: str, amount: int) -> None:

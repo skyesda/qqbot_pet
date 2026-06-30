@@ -352,14 +352,17 @@ class PetParkPlugin(Star):
     # 路由
     # =====================================================================
     def _active_event_commands(self) -> set[str]:
-        """返回当前生效活动的所有菜单/动作/抽奖指令。"""
+        """返回当前生效活动的所有菜单/动作/抽奖/奖池列表指令。"""
         cmds = set()
         for cfg in self.store.active_events().values():
             if cfg.get("menu_cmd"):
                 cmds.add(cfg["menu_cmd"])
             cmds.update(cfg.get("actions", {}).keys())
-            if cfg.get("gacha", {}).get("enabled"):
-                cmds.add(cfg["gacha"].get("cmd", "抽奖"))
+            gacha = cfg.get("gacha", {})
+            if gacha.get("enabled"):
+                gcmd = gacha.get("cmd", "抽奖")
+                cmds.add(gcmd)
+                cmds.add(f"{gcmd}列表")
         return cmds
 
     def dispatch(self, event, qq, group_id, text):
@@ -595,8 +598,12 @@ class PetParkPlugin(Star):
             if text in cfg.get("actions", {}):
                 return self._event_action(player, eid, cfg, text)
             gacha = cfg.get("gacha", {})
-            if gacha.get("enabled") and cmd == gacha.get("cmd"):
-                return self._event_gacha(player, eid, cfg)
+            gcmd = gacha.get("cmd", "抽奖")
+            if gacha.get("enabled"):
+                if cmd == gcmd:
+                    return self._event_gacha(player, eid, cfg)
+                if cmd == f"{gcmd}列表":
+                    return self._event_gacha_list(cfg)
         return None
 
     def _event_menu(self, cfg: dict) -> str:
@@ -609,7 +616,7 @@ class PetParkPlugin(Star):
                 energy = aconf.get("energy", 0)
                 limit = aconf.get("daily_limit")
                 limit_txt = f"每日限 {limit} 次" if limit else "不限次数"
-                lines.append(f"• `{action}` — 消耗活动精力 {energy}，{limit_txt}")
+                lines.append(f"• `{action}` — 消耗宠物精力 {energy}，{limit_txt}")
             lines.append("")
         shop = cfg.get("shop", {})
         if shop:
@@ -621,7 +628,9 @@ class PetParkPlugin(Star):
         gacha = cfg.get("gacha", {})
         if gacha.get("enabled"):
             cost = " / ".join(f"{v} {k}" for k, v in gacha.get("cost", {}).items())
-            lines.append(f"**活动抽奖**：发送 `{gacha.get('cmd', '抽奖')}`，每次 {cost}，每日限 {gacha.get('daily_limit', '∞')} 次")
+            gcmd = gacha.get("cmd", "抽奖")
+            lines.append(f"**活动抽奖**：发送 `{gcmd}`，每次 {cost}，每日限 {gacha.get('daily_limit', '∞')} 次")
+            lines.append(f"> 发送 `{gcmd}列表` 查看奖池与概率")
         return "\n".join(lines)
 
     def _event_action(self, player: dict, eid: str, cfg: dict, action: str) -> str:
@@ -635,17 +644,16 @@ class PetParkPlugin(Star):
         limit = conf.get("daily_limit")
         if limit and self.store.event_daily_count(player, eid, action) >= limit:
             return f"今日『{action}』次数已用完。"
-        self.store.refresh_event_energy(player, eid, cfg)
+        petmod.refresh_energy(p)
         energy = conf.get("energy", 0)
-        cur_e, _ = self.store.event_energy(player, eid)
-        if cur_e < energy:
-            return f"活动精力不足（需 {energy}，当前 {cur_e}）。"
+        if p["energy"] < energy:
+            return f"宠物精力不足（需 {energy}，当前 {p['energy']}/{p['energy_max']}）。"
         cd_key = f"event:{eid}:{action}"
         cd = self._cooldown_block(player, cd_key, action)
         if cd:
             return cd
         if energy:
-            self.store.add_event_energy(player, eid, -energy)
+            p["energy"] -= energy
         cooldown = conf.get("cooldown", 0)
         if cooldown:
             self.store.set_cooldown(player, cd_key, cooldown)
@@ -676,6 +684,32 @@ class PetParkPlugin(Star):
         fmt = self._format_event_rewards(reward_texts)
         if fmt:
             lines.append(fmt)
+        return "\n".join(lines)
+
+    def _event_gacha_list(self, cfg: dict) -> str:
+        """显示活动抽奖奖池列表及中奖概率。"""
+        gacha = cfg.get("gacha", {})
+        pool = gacha.get("pool", [])
+        if not pool:
+            return "当前活动抽奖奖池为空。"
+        total = sum(entry.get("weight", 1) for entry in pool)
+        if total <= 0:
+            return "当前活动抽奖奖池权重配置有误。"
+        token = cfg.get("token", "代币")
+        lines = [
+            f"## 🎰 {cfg.get('name', '活动')}·抽奖奖池",
+            f"> 总权重：{total}，每次消耗 {gacha.get('cmd', '抽奖')}",
+            "",
+        ]
+        for i, entry in enumerate(pool, 1):
+            weight = entry.get("weight", 1)
+            pct = weight / total * 100
+            reward = entry.get("reward", {})
+            reward_txt = self._format_event_reward(reward, token)
+            msg = entry.get("msg", "")
+            lines.append(
+                f"{i}. **{reward_txt}** — {pct:.1f}%（权重 {weight}）{msg and ' — ' + msg or ''}"
+            )
         return "\n".join(lines)
 
     def _event_buy(self, player: dict, eid: str, cfg: dict, item_name: str) -> str | None:
@@ -748,19 +782,56 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         lines = [prefix] if prefix else []
         if "item" in reward:
-            self.store.add_item(player, reward["item"], reward.get("count", 1))
-            lines.append(f"获得 {reward['item']} x{reward.get('count', 1)}")
+            count = reward.get("count", 1)
+            count_max = reward.get("count_max")
+            if count_max is not None and count_max > count:
+                count = random.randint(count, count_max)
+            self.store.add_item(player, reward["item"], count)
+            lines.append(f"获得 {reward['item']} x{count}")
         if "effect" in reward and p:
             eff_msg = self._apply_effect(p, reward["effect"], reward.get("item", "奖励"))
             lines.append(eff_msg)
         for cur in self.store.CURRENCY_KEYS:
             if cur in reward:
-                self.store.add_currency(player, cur, reward[cur])
-                lines.append(f"{cur} +{reward[cur]}")
+                amt = reward[cur]
+                amt_max = reward.get(f"{cur}_max")
+                if amt_max is not None and amt_max > amt:
+                    amt = random.randint(amt, amt_max)
+                self.store.add_currency(player, cur, amt)
+                lines.append(f"{cur} +{amt}")
         if token in reward:
-            self.store.add_event_token(player, eid, token, reward[token])
-            lines.append(f"{token} +{reward[token]}")
+            amt = reward[token]
+            amt_max = reward.get(f"{token}_max")
+            if amt_max is not None and amt_max > amt:
+                amt = random.randint(amt, amt_max)
+            self.store.add_event_token(player, eid, token, amt)
+            lines.append(f"{token} +{amt}")
         return "\n".join(lines)
+
+    def _format_event_reward(self, reward: dict, token: str = "代币") -> str:
+        """把单个奖励对象格式化为人类可读文本（支持随机范围）。"""
+        parts = []
+        if "item" in reward:
+            count = reward.get("count", 1)
+            count_max = reward.get("count_max")
+            range_txt = f"{count}~{count_max}" if count_max and count_max > count else str(count)
+            parts.append(f"{reward['item']} x{range_txt}")
+        if "effect" in reward:
+            eff = reward["effect"]
+            for k, v in eff.items():
+                parts.append(f"效果 {k}:{v}")
+        for cur in self.store.CURRENCY_KEYS:
+            if cur in reward:
+                v = reward[cur]
+                v_max = reward.get(f"{cur}_max")
+                range_txt = f"{v}~{v_max}" if v_max and v_max > v else str(v)
+                parts.append(f"{cur} +{range_txt}")
+        if token in reward:
+            v = reward[token]
+            v_max = reward.get(f"{token}_max")
+            range_txt = f"{v}~{v_max}" if v_max and v_max > v else str(v)
+            parts.append(f"{token} +{range_txt}")
+        return "、".join(parts) if parts else "无奖励"
 
     def _format_event_rewards(self, reward_texts: dict) -> str:
         parts = []
