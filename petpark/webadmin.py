@@ -407,22 +407,24 @@ function renderCards(){
  document.getElementById('cardstats').innerHTML=`<div class="stat"><div class="n">${total}</div><div class="l">卡密总数</div></div><div class="stat"><div class="n">${total-used}</div><div class="l">未使用</div></div><div class="stat"><div class="n">${used}</div><div class="l">已使用</div></div>`;
  shell('<th>卡密</th><th>套餐内容</th><th>状态</th><th>使用者</th><th>创建时间</th><th>操作</th>',rows);
 }
+function eventDate(ts){
+ if(!ts)return '—';
+ return new Date(ts*1000).toLocaleString('zh-CN',{hour12:false});
+}
 function renderEvents(){
  let rows='';
  for(const k of Object.keys(cache)){const v=cache[k];if(!match(k,v))continue;
   const now=Math.floor(Date.now()/1000);
   const active=!!v.enabled && v.start_at<=now && now<=v.end_at;
-  const start=v.start_at?new Date(v.start_at*1000).toLocaleString('zh-CN',{hour12:false}):'—';
-  const end=v.end_at?new Date(v.end_at*1000).toLocaleString('zh-CN',{hour12:false}):'—';
   rows+=`<tr><td class="k">${esc(k)}</td>
    <td>${esc(v.name||'—')}</td>
    <td><span class="tag ${active?'on':'off'}">${active?'生效中':(v.enabled?'未生效':'已禁用')}</span></td>
    <td>${esc(v.token||'—')}</td>
-   <td class="muted">${esc(start)}</td>
-   <td class="muted">${esc(end)}</td>
-   <td class="num">${Object.keys(v.actions||{}).length} / ${Object.keys(v.shop||{}).length} / ${(v.gacha||{}).pool?1:0}</td>
+   <td class="muted">${eventDate(v.start_at)}</td>
+   <td class="muted">${eventDate(v.end_at)}</td>
+   <td class="num">${Object.keys(v.actions||{}).length} / ${Object.keys(v.shop||{}).length} / ${((v.gacha||{}).pool||[]).length}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
- shell('<th>ID</th><th>名称</th><th>状态</th><th>代币</th><th>开始</th><th>结束</th><th>玩法/商店/抽奖</th><th>操作</th>',rows);
+ shell('<th>ID</th><th>名称</th><th>状态</th><th>代币</th><th>开始</th><th>结束</th><th>玩法/商店/奖品</th><th>操作</th>',rows);
 }
 function fieldHtml(){
  if(cur==='players')return `
@@ -439,7 +441,7 @@ function fieldHtml(){
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启宠物乐园</label></div>
   <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>`;
  if(cur==='events')return `
-  <div class="muted">活动时间使用 Unix 时间戳（秒）。actions / shop / gacha 请在下方高级 JSON 中编辑。</div>
+  <div class="muted">ID 保存后不可修改；活动时间选择本地日期，后台自动转时间戳。</div>
   <div class="row">
    <div style="flex:2"><label class="fld">活动名称</label><input id="f_name" placeholder="清凉一夏"></div>
    <div><label class="fld">主题</label><input id="f_theme" placeholder="summer"></div>
@@ -450,14 +452,29 @@ function fieldHtml(){
   </div>
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">启用</label></div>
   <div class="row">
-   <div><label class="fld">开始时间戳</label><input id="f_start_at" type="number" placeholder="1751241600"></div>
-   <div><label class="fld">结束时间戳</label><input id="f_end_at" type="number" placeholder="1753920000"></div>
+   <div><label class="fld">开始时间</label><input id="f_start_at" type="datetime-local"></div>
+   <div><label class="fld">结束时间</label><input id="f_end_at" type="datetime-local"></div>
   </div>
   <div class="row">
    <div><label class="fld">精力上限</label><input id="f_energy_max" type="number" value="100"></div>
    <div><label class="fld">精力恢复/分钟</label><input id="f_energy_regen_per_min" type="number" value="1"></div>
   </div>
-  <div class="muted">高级 JSON 中必须包含 id（与键相同）、actions、shop、gacha 等结构。</div>`;
+  <div class="sec">活动玩法</div>
+  <div id="event_actions"></div>
+  <button class="act ghost" type="button" onclick="eventAddAction()" style="margin-top:6px">＋ 添加玩法</button>
+  <div class="sec">活动商店</div>
+  <div id="event_shop"></div>
+  <button class="act ghost" type="button" onclick="eventAddShop()" style="margin-top:6px">＋ 添加商品</button>
+  <div class="sec">活动抽奖</div>
+  <div class="chk"><input id="f_gacha_enabled" type="checkbox"><label for="f_gacha_enabled">启用抽奖</label></div>
+  <div class="row">
+   <div><label class="fld">抽奖指令</label><input id="f_gacha_cmd" placeholder="夏日抽奖"></div>
+   <div><label class="fld">每日次数</label><input id="f_gacha_limit" type="number" value="5"></div>
+  </div>
+  <div class="row"><div style="flex:1"><label class="fld">抽奖价格（如：贝壳 10）</label><input id="f_gacha_cost" placeholder="贝壳 10"></div></div>
+  <div id="event_gacha_pool"></div>
+  <button class="act ghost" type="button" onclick="eventAddGacha()" style="margin-top:6px">＋ 添加奖品</button>
+  <div class="muted" style="margin-top:10px">高级用户仍可在下方「高级编辑」中直接修改 JSON。表单保存时会覆盖表单内容到 JSON。</div>`;
  return `
   <div class="muted">套餐面额（空或 0 表示不含该项，可任意组合）；或填「授权天数」改为群授权卡。</div>
   <div class="row"><div><label class="fld">金币</label><input id="f_r_coin" type="number"></div>
@@ -501,10 +518,18 @@ function fillFields(v){
   g('f_menu_cmd').value=v.menu_cmd||'';
   g('f_token').value=v.token||'';
   g('f_enabled').checked=!!v.enabled;
-  g('f_start_at').value=v.start_at||'';
-  g('f_end_at').value=v.end_at||'';
+  g('f_start_at').value=eventTsToLocal(v.start_at||0);
+  g('f_end_at').value=eventTsToLocal(v.end_at||0);
   g('f_energy_max').value=v.energy_max!==undefined?v.energy_max:100;
   g('f_energy_regen_per_min').value=v.energy_regen_per_min!==undefined?v.energy_regen_per_min:1;
+  const gc=v.gacha||{};
+  g('f_gacha_enabled').checked=!!gc.enabled;
+  g('f_gacha_cmd').value=gc.cmd||'';
+  g('f_gacha_limit').value=gc.daily_limit!==undefined?gc.daily_limit:5;
+  g('f_gacha_cost').value=eventCostToString(gc.cost||{});
+  eventRenderActions(v.actions||{});
+  eventRenderShop(v.shop||{});
+  eventRenderGacha(gc.pool||[]);
  }
  else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_authdays').value=v.auth_days||'';g('f_used').checked=!!v.used;}
 }
@@ -536,10 +561,20 @@ function applyFields(v){
   v.menu_cmd=g('f_menu_cmd').value.trim();
   v.token=g('f_token').value.trim();
   v.enabled=g('f_enabled').checked;
-  v.start_at=+g('f_start_at').value||0;
-  v.end_at=+g('f_end_at').value||0;
+  const now=Math.floor(Date.now()/1000);
+  v.start_at=eventLocalToTs(g('f_start_at').value)||now;
+  v.end_at=eventLocalToTs(g('f_end_at').value)||(now+30*86400);
   v.energy_max=+g('f_energy_max').value||100;
   v.energy_regen_per_min=+g('f_energy_regen_per_min').value||1;
+  v.actions=eventCollectActions();
+  v.shop=eventCollectShop();
+  v.gacha={
+   enabled:g('f_gacha_enabled').checked,
+   cmd:g('f_gacha_cmd').value.trim()||'抽奖',
+   daily_limit:+g('f_gacha_limit').value||0,
+   cost:eventCostFromString(g('f_gacha_cost').value),
+   pool:eventCollectGacha()
+  };
  }
  else{const ad=+g('f_authdays').value||0;if(ad>0){v.auth_days=ad;delete v.rewards;delete v.currency;delete v.amount;}else{const r={};const c=+g('f_r_coin').value||0,j=+g('f_r_jifen').value||0,d=+g('f_r_diamond').value||0;if(c>0)r['金币']=c;if(j>0)r['积分']=j;if(d>0)r['钻石']=d;v.rewards=r;delete v.currency;delete v.amount;delete v.auth_days;}v.used=g('f_used').checked;}
  return v;
@@ -619,6 +654,267 @@ function exportUnused(){
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }
+
+// ---- 活动编辑器辅助函数 ----
+function eventTsToLocal(ts){
+ if(!ts) return '';
+ const d=new Date(ts*1000);
+ d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
+ return d.toISOString().slice(0,16);
+}
+function eventLocalToTs(s){
+ if(!s) return 0;
+ return Math.floor(new Date(s).getTime()/1000);
+}
+function eventCostToString(cost){
+ if(!cost || typeof cost!=='object') return '';
+ return Object.entries(cost).map(([k,v])=>k+' '+v).join(' / ');
+}
+function eventCostFromString(s){
+ const out={};
+ if(!s) return out;
+ for(const part of s.split('/')){
+  const m=part.trim().match(/^(.+?)\\s+(\\d+)$/);
+  if(m) out[m[1].trim()]=+m[2];
+ }
+ return out;
+}
+function eventRewardHtml(reward){
+ reward=reward||{};
+ let type='item';
+ if(reward.effect!==undefined) type='effect';
+ else {
+  const k=Object.keys(reward).find(x=>x!=='msg');
+  if(k && META.currencies && META.currencies.includes(k)) type='currency';
+  else if(k) type='token';
+ }
+ let detail='';
+ if(type==='item'){
+  detail=`<div class="row"><div style="flex:3"><label>物品名</label><input class="ev-r-item" value="${escA(reward.item||'')}"></div><div style="flex:1"><label>数量</label><input class="ev-r-count" type="number" value="${reward.count!==undefined?reward.count:1}"></div></div>`;
+ } else if(type==='effect'){
+  const eff=reward.effect||{};
+  const k=Object.keys(eff)[0]||'add_atk';
+  const v=Object.values(eff)[0]||0;
+  detail=`<div class="row"><div style="flex:2"><label>效果键</label><select class="ev-r-effk">${['add_atk','add_def','add_intel','add_hp_max','add_energy_max','mood','heal_hp','heal_energy','add_exp'].map(o=>`<option ${o===k?'selected':''}>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数值</label><input class="ev-r-effv" type="number" value="${v}"></div></div>`;
+ } else if(type==='currency'){
+  const k=Object.keys(reward).find(x=>META.currencies.includes(x))||'金币';
+  const v=reward[k]||0;
+  detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${META.currencies.map(o=>`<option ${o===k?'selected':''}>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数量</label><input class="ev-r-curv" type="number" value="${v}"></div></div>`;
+ } else if(type==='token'){
+  const k=Object.keys(reward).find(x=>!META.currencies.includes(x)&&x!=='msg')||'';
+  const v=reward[k]||0;
+  detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value="${escA(k)}"></div><div style="flex:1"><label>数量</label><input class="ev-r-tokv" type="number" value="${v}"></div></div>`;
+ }
+ return `<div class="ev-reward" data-type="${type}"><div class="row"><div style="flex:1"><label>奖励类型</label><select class="ev-r-type" onchange="eventRewardTypeChange(this)">${[['item','物品'],['effect','属性'],['currency','货币'],['token','活动代币']].map(([t,l])=>`<option value="${t}" ${t===type?'selected':''}>${l}</option>`).join('')}</select></div></div><div class="ev-r-detail">${detail}</div></div>`;
+}
+function eventRewardTypeChange(sel){
+ const box=sel.closest('.ev-reward');
+ const type=sel.value;
+ box.dataset.type=type;
+ let detail='';
+ if(type==='item') detail=`<div class="row"><div style="flex:3"><label>物品名</label><input class="ev-r-item" value=""></div><div style="flex:1"><label>数量</label><input class="ev-r-count" type="number" value="1"></div></div>`;
+ else if(type==='effect') detail=`<div class="row"><div style="flex:2"><label>效果键</label><select class="ev-r-effk">${['add_atk','add_def','add_intel','add_hp_max','add_energy_max','mood','heal_hp','heal_energy','add_exp'].map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数值</label><input class="ev-r-effv" type="number" value="0"></div></div>`;
+ else if(type==='currency') detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${(META.currencies||['金币','积分','钻石']).map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数量</label><input class="ev-r-curv" type="number" value="0"></div></div>`;
+ else if(type==='token') detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value=""></div><div style="flex:1"><label>数量</label><input class="ev-r-tokv" type="number" value="0"></div></div>`;
+ box.querySelector('.ev-r-detail').innerHTML=detail;
+}
+function eventCollectReward(box){
+ const type=box.dataset.type || box.querySelector('.ev-r-type').value;
+ if(type==='item'){
+  const name=box.querySelector('.ev-r-item').value.trim();
+  const count=+box.querySelector('.ev-r-count').value||1;
+  if(!name) return null;
+  return {item:name,count:count};
+ } else if(type==='effect'){
+  const k=box.querySelector('.ev-r-effk').value;
+  const v=+box.querySelector('.ev-r-effv').value||0;
+  return {effect:{[k]:v}};
+ } else if(type==='currency'){
+  const k=box.querySelector('.ev-r-cur').value;
+  const v=+box.querySelector('.ev-r-curv').value||0;
+  return {[k]:v};
+ } else if(type==='token'){
+  const k=box.querySelector('.ev-r-tok').value.trim();
+  const v=+box.querySelector('.ev-r-tokv').value||0;
+  if(!k) return null;
+  return {[k]:v};
+ }
+ return null;
+}
+
+// actions
+function eventActionHtml(name,conf){
+ conf=conf||{};
+ return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+  <div class="row">
+   <div style="flex:2"><label>玩法指令</label><input class="ev-a-name" value="${escA(name)}"></div>
+   <div style="flex:1"><label>精力</label><input class="ev-a-energy" type="number" value="${conf.energy!==undefined?conf.energy:10}"></div>
+   <div style="flex:1"><label>冷却(秒)</label><input class="ev-a-cooldown" type="number" value="${conf.cooldown!==undefined?conf.cooldown:600}"></div>
+   <div style="flex:1"><label>每日次数</label><input class="ev-a-limit" type="number" value="${conf.daily_limit!==undefined?conf.daily_limit:5}" placeholder="空=不限"></div>
+  </div>
+  <div style="margin-top:6px"><label>结果文案（可用 {代币名} 占位）</label><input class="ev-a-msg" style="width:100%" value="${escA(conf.msg||'')}"></div>
+  <div class="sec" style="margin-top:10px">随机奖励</div>
+  <div class="ev-a-rewards"></div>
+  <button class="act ghost" type="button" onclick="eventAddReward(this.closest('.event-card').querySelector('.ev-a-rewards'))" style="margin-top:6px">＋ 奖励</button>
+  <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除玩法</button>
+ </div>`;
+}
+function eventAddAction(){
+ const box=g('event_actions');
+ const div=document.createElement('div');
+ div.innerHTML=eventActionHtml('',{});
+ const card=div.firstElementChild;
+ box.appendChild(card);
+ eventAddReward(card.querySelector('.ev-a-rewards'));
+}
+function eventRenderActions(actions){
+ const box=g('event_actions'); box.innerHTML='';
+ for(const [name,conf] of Object.entries(actions||{})){
+  const div=document.createElement('div');
+  div.innerHTML=eventActionHtml(name,conf);
+  const card=div.firstElementChild;
+  box.appendChild(card);
+  eventRenderRewards(card.querySelector('.ev-a-rewards'),conf.rewards||{});
+ }
+}
+function eventCollectActions(){
+ const out={};
+ document.querySelectorAll('#event_actions .event-card').forEach(card=>{
+  const name=card.querySelector('.ev-a-name').value.trim();
+  if(!name) return;
+  const limit=card.querySelector('.ev-a-limit').value;
+  out[name]={
+   energy:+card.querySelector('.ev-a-energy').value||0,
+   cooldown:+card.querySelector('.ev-a-cooldown').value||0,
+   daily_limit:limit===''?null:+limit,
+   msg:card.querySelector('.ev-a-msg').value,
+   rewards:eventCollectRewards(card.querySelector('.ev-a-rewards'))
+  };
+ });
+ return out;
+}
+function eventAddReward(container){
+ const div=document.createElement('div');
+ div.innerHTML=`<div class="reward-row row" style="align-items:flex-end;margin:6px 0;border:1px dashed #334155;padding:8px;border-radius:6px">
+   <div style="flex:2"><label>奖励名</label><input class="ev-r-name" value="" placeholder="贝壳 / 经验 / 物品名"></div>
+   <div style="flex:1"><label>最小值</label><input class="ev-r-min" type="number" value="0"></div>
+   <div style="flex:1"><label>最大值</label><input class="ev-r-max" type="number" value="0"></div>
+   <div style="flex:1"><label>概率</label><input class="ev-r-chance" type="number" step="0.1" value="1"></div>
+   <div style="flex:0"><button class="act del" type="button" onclick="this.closest('.reward-row').remove()">×</button></div>
+  </div>`;
+ container.appendChild(div.firstElementChild);
+}
+function eventRenderRewards(container,rewards){
+ container.innerHTML='';
+ for(const [name,cfg] of Object.entries(rewards||{})){
+  const div=document.createElement('div');
+  div.innerHTML=`<div class="reward-row row" style="align-items:flex-end;margin:6px 0;border:1px dashed #334155;padding:8px;border-radius:6px">
+   <div style="flex:2"><label>奖励名</label><input class="ev-r-name" value="${escA(name)}" placeholder="贝壳 / 经验 / 物品名"></div>
+   <div style="flex:1"><label>最小值</label><input class="ev-r-min" type="number" value="${cfg.min!==undefined?cfg.min:0}"></div>
+   <div style="flex:1"><label>最大值</label><input class="ev-r-max" type="number" value="${cfg.max!==undefined?cfg.max:0}"></div>
+   <div style="flex:1"><label>概率</label><input class="ev-r-chance" type="number" step="0.1" value="${cfg.chance!==undefined?cfg.chance:1}"></div>
+   <div style="flex:0"><button class="act del" type="button" onclick="this.closest('.reward-row').remove()">×</button></div>
+  </div>`;
+  container.appendChild(div.firstElementChild);
+ }
+}
+function eventCollectRewards(container){
+ const out={};
+ container.querySelectorAll('.reward-row').forEach(row=>{
+  const name=row.querySelector('.ev-r-name').value.trim();
+  if(!name) return;
+  out[name]={
+   min:+row.querySelector('.ev-r-min').value||0,
+   max:+row.querySelector('.ev-r-max').value||0,
+   chance:+row.querySelector('.ev-r-chance').value||1
+  };
+ });
+ return out;
+}
+
+// shop
+function eventShopHtml(name,it){
+ it=it||{};
+ return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+  <div class="row">
+   <div style="flex:2"><label>商品名</label><input class="ev-s-name" value="${escA(name)}"></div>
+   <div style="flex:2"><label>价格（如：贝壳 20 / 金币 100）</label><input class="ev-s-cost" value="${escA(eventCostToString(it.cost||{}))}"></div>
+   <div style="flex:1"><label>每人限购</label><input class="ev-s-per" type="number" value="${it.stock&&it.stock.per_player!==undefined?it.stock.per_player:''}" placeholder="空=不限"></div>
+   <div style="flex:1"><label>全局库存</label><input class="ev-s-global" type="number" value="${it.stock&&it.stock.global!==undefined?it.stock.global:''}" placeholder="空=不限"></div>
+  </div>
+  <div style="margin-top:6px"><label>描述</label><input class="ev-s-desc" style="width:100%" value="${escA(it.desc||'')}"></div>
+  <div class="sec" style="margin-top:10px">购买奖励</div>
+  <div class="ev-s-reward">${eventRewardHtml(it.reward||{})}</div>
+  <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除商品</button>
+ </div>`;
+}
+function eventAddShop(){
+ const box=g('event_shop');
+ const div=document.createElement('div');
+ div.innerHTML=eventShopHtml('',{});
+ box.appendChild(div.firstElementChild);
+}
+function eventRenderShop(shop){
+ const box=g('event_shop'); box.innerHTML='';
+ for(const [name,it] of Object.entries(shop||{})){
+  const div=document.createElement('div');
+  div.innerHTML=eventShopHtml(name,it);
+  box.appendChild(div.firstElementChild);
+ }
+}
+function eventCollectShop(){
+ const out={};
+ document.querySelectorAll('#event_shop .event-card').forEach(card=>{
+  const name=card.querySelector('.ev-s-name').value.trim();
+  if(!name) return;
+  const it={cost:eventCostFromString(card.querySelector('.ev-s-cost').value), desc:card.querySelector('.ev-s-desc').value, reward:eventCollectReward(card.querySelector('.ev-s-reward .ev-reward'))};
+  const per=card.querySelector('.ev-s-per').value;
+  const glob=card.querySelector('.ev-s-global').value;
+  it.stock={};
+  if(per!=='') it.stock.per_player=+per;
+  if(glob!=='') it.stock.global=+glob;
+  out[name]=it;
+ });
+ return out;
+}
+
+// gacha
+function eventGachaHtml(entry){
+ entry=entry||{};
+ return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+  <div class="row">
+   <div style="flex:1"><label>权重</label><input class="ev-g-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
+   <div style="flex:3"><label>提示文案（可选）</label><input class="ev-g-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
+  </div>
+  <div class="sec" style="margin-top:10px">奖品内容</div>
+  <div class="ev-g-reward">${eventRewardHtml(entry.reward||{})}</div>
+  <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除奖品</button>
+ </div>`;
+}
+function eventAddGacha(){
+ const box=g('event_gacha_pool');
+ const div=document.createElement('div');
+ div.innerHTML=eventGachaHtml({});
+ box.appendChild(div.firstElementChild);
+}
+function eventRenderGacha(pool){
+ const box=g('event_gacha_pool'); box.innerHTML='';
+ for(const entry of (pool||[])){
+  const div=document.createElement('div');
+  div.innerHTML=eventGachaHtml(entry);
+  box.appendChild(div.firstElementChild);
+ }
+}
+function eventCollectGacha(){
+ const out=[];
+ document.querySelectorAll('#event_gacha_pool .event-card').forEach(card=>{
+  const rw=eventCollectReward(card.querySelector('.ev-g-reward .ev-reward'));
+  if(!rw) return;
+  out.push({weight:+card.querySelector('.ev-g-weight').value||1, msg:card.querySelector('.ev-g-msg').value, reward:rw});
+ });
+ return out;
+}
+
 (async()=>{await loadMeta();await load();})();
 
 </script></body></html>"""
