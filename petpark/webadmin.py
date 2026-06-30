@@ -618,7 +618,7 @@ function fillFields(v){
   g('f_gacha_cost').value=eventCostToString(gc.cost||{});
   eventRenderActions(v.actions||{});
   eventRenderItems(v.event_items||{});
-  eventRenderShop(v.shop||{});
+  eventRenderShop(v.shop||{}, v.event_items||{});
   eventRenderGacha(gc.pool||[]);
   eventRenderDungeons(v.dungeons||{});
   const bs=v.boss||{};
@@ -677,14 +677,20 @@ function applyFields(v){
   v.shop={};
   v.event_items=v.event_items||{};
   for(const [name,it] of Object.entries(rawShop)){
-   v.shop[name]={cost:it.cost, stock:it.stock, desc:it.desc, reward:{item:name,count:1}};
+   const shopEff=it.effect||{};
    const existing=v.event_items[name]||{};
-   const hasEffect=Object.keys(it.effect||{}).length>0;
+   const dedicatedEff=existing.effect||{};
+   // 商店效果与独立活动道具效果同一概念：若两者不同，优先以商店编辑为准；否则保留独立区域的数据
+   let finalEff=dedicatedEff;
+   if(Object.keys(shopEff).length>0 && JSON.stringify(shopEff)!==JSON.stringify(dedicatedEff)){
+    finalEff=shopEff;
+   }
+   v.shop[name]={cost:it.cost, stock:it.stock, desc:it.desc, effect:finalEff, reward:{item:name,count:1}};
    v.event_items[name]={
     category:existing.category||'道具',
-    usable:hasEffect?true:(existing.usable||false),
+    usable:Object.keys(finalEff).length>0?true:(existing.usable||false),
     desc:it.desc||existing.desc||'',
-    effect:hasEffect?it.effect:(existing.effect||{})
+    effect:finalEff
    };
   }
   v.gacha={
@@ -1018,11 +1024,16 @@ function eventAddShop(){
  div.innerHTML=eventShopHtml('',{});
  box.appendChild(div.firstElementChild);
 }
-function eventRenderShop(shop){
+function eventRenderShop(shop,event_items){
+ event_items=event_items||{};
  const box=g('event_shop'); box.innerHTML='';
  for(const [name,it] of Object.entries(shop||{})){
-  // 兼容旧版把使用效果误存进 reward.effect 的数据
+  // 使用效果统一存到 event_items，shop 自身可能没 effect；这里优先回显 event_items
   let effect=it.effect||{};
+  if(!Object.keys(effect).length){
+   const ei=event_items[name];
+   if(ei && ei.effect && typeof ei.effect==='object') effect=ei.effect;
+  }
   if(!Object.keys(effect).length && it.reward && it.reward.effect && typeof it.reward.effect==='object'){
    effect=it.reward.effect;
   }
@@ -1175,7 +1186,7 @@ function eventItemEffectHtml(effect){
  // 兼容旧版 {effect:{heal_energy:200}} 包裹格式
  if(effect.effect && typeof effect.effect==='object') effect=effect.effect;
  const keys=Object.keys(effect);
- if(keys.length===0) return eventItemEffectRowHtml('heal_energy',200);
+ if(keys.length===0) return '';
  return keys.map(k=>eventItemEffectRowHtml(k,effect[k])).join('');
 }
 function eventAddEffRow(btn){
