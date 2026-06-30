@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 import time
 from pathlib import Path
@@ -253,6 +254,11 @@ class PetParkPlugin(Star):
             return
         qq = str(event.get_sender_id())
         group_id = self._group_id(event)
+        # 记录群聊统一消息来源，便于 Boss 击杀/复活时向授权群主动推送
+        if self._is_group(group_id):
+            umo = getattr(event, "unified_msg_origin", None)
+            if umo:
+                self.store.get_group(group_id)["umo"] = umo
         try:
             reply = self.dispatch(event, qq, group_id, text)
         except Exception as e:  # 保证插件不因单条消息崩溃
@@ -913,6 +919,28 @@ class PetParkPlugin(Star):
         )
         return f"{head}\n{desc}\n{body}"
 
+    # --------------------------- Boss 全服广播 -----------------------------
+    def _broadcast_to_authorized_groups(self, text: str) -> None:
+        """向所有已授权且记录过 UMO 的群主动推送一条文本消息。"""
+        try:
+            asyncio.get_running_loop().create_task(self._do_broadcast(text))
+        except RuntimeError:
+            pass
+
+    async def _do_broadcast(self, text: str) -> None:
+        from astrbot.api.event import MessageChain
+
+        for gid, g in self.store._data.get("groups", {}).items():
+            if not self._is_group_authorized(gid):
+                continue
+            umo = g.get("umo")
+            if not umo:
+                continue
+            try:
+                await self.context.send_message(umo, MessageChain().message(text))
+            except Exception:
+                logger.exception(f"[petpark] 向群 {gid} 主动推送失败")
+
     def _event_boss_state(self, cfg: dict) -> dict:
         """初始化/返回活动 Boss 的共享状态。编辑活动时若只改非血量字段，应保持当前血量。"""
         boss = cfg.setdefault("boss", {})
@@ -923,6 +951,7 @@ class PetParkPlugin(Star):
             state["hp"] = max_hp
             state["respawn_until"] = 0
             state["damage_rank"] = {}
+            state["respawn_notified"] = False
             return state
         # 血量上限变化时按比例缩放当前血量，而不是直接回满
         old_max = state.get("max_hp")
@@ -935,6 +964,17 @@ class PetParkPlugin(Star):
             state["max_hp"] = max_hp
         state.setdefault("respawn_until", 0)
         state.setdefault("damage_rank", {})
+        state.setdefault("respawn_notified", False)
+        # Boss 复活时向所有授权群推送
+        now = int(time.time())
+        respawn_until = state.get("respawn_until", 0)
+        if respawn_until and now >= respawn_until and not state.get("respawn_notified"):
+            state["respawn_notified"] = True
+            bname = boss.get("name", "活动Boss")
+            self._broadcast_to_authorized_groups(
+                f"## 👹 世界 Boss {bname} 已复活！\n"
+                f"血量 {state['hp']}/{state['max_hp']}，发送 `{boss.get('cmd', '活动Boss')}` 即可挑战。"
+            )
         return state
 
     def _event_boss_challenge(
@@ -1021,14 +1061,19 @@ class PetParkPlugin(Star):
         ]
         if state["hp"] <= 0 < old_hp:
             lines.append("\n🏆 **Boss 被击杀！** 奖励已按伤害比例分配给所有参与者。")
-            lines.append(
-                self._distribute_boss_kill_rewards(eid, cfg, state, bname)
-            )
+            reward_table = self._distribute_boss_kill_rewards(eid, cfg, state, bname)
+            lines.append(reward_table)
             respawn = boss.get("respawn_seconds", 3600)
             state["respawn_until"] = int(time.time()) + int(respawn)
             state["hp"] = state["max_hp"]
             state["damage_rank"] = {}
+            state["respawn_notified"] = False
             lines.append(f"\n⏳ {bname} 已阵亡，{self._fmt_duration(respawn)} 后复活。")
+            self._broadcast_to_authorized_groups(
+                f"## 🏆 世界 Boss {bname} 被击杀！\n"
+                f"{bname} 已被击败，{self._fmt_duration(respawn)} 后复活。\n"
+                f"{reward_table}"
+            )
         return "\n".join(lines)
 
     @staticmethod
@@ -2046,7 +2091,6 @@ class PetParkPlugin(Star):
                 "九转还魂丹",
                 "变性药水",
                 "永恒钻戒",
-                "聚灵丹",
                 "改名卡",
             ]
             title = "## 🛒 宠物商城"
