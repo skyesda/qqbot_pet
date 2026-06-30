@@ -148,6 +148,9 @@ KNOWN_COMMANDS = {
     "同意追求",
     "宠物求婚",
     "同意求婚",
+    # Boss
+    "Boss伤害排行",
+    "Boss历史奖品",
 }
 
 
@@ -368,7 +371,9 @@ class PetParkPlugin(Star):
                 cmds.add(cfg.get("dungeon_enter_cmd", "进入活动副本"))
             boss = cfg.get("boss", {})
             if boss.get("enabled"):
-                cmds.add(boss.get("cmd", "活动Boss"))
+                bcmd = boss.get("cmd", "活动Boss")
+                cmds.add(bcmd)
+                cmds.add(f"{bcmd}伤害排行")
         return cmds
 
     def dispatch(self, event, qq, group_id, text):
@@ -588,16 +593,24 @@ class PetParkPlugin(Star):
             return love
 
         # ---- 限时活动 ----
-        event_reply = self._handle_event(player, cmd, text, tokens)
+        event_reply = self._handle_event(player, group_id, cmd, text, tokens)
         if event_reply is not None:
             return event_reply
+
+        # ---- Boss 全服排行 / 个人 Boss 奖品历史 ----
+        if cmd == "Boss伤害排行":
+            return self._event_boss_ranking_all(group_id)
+        if cmd == "Boss历史奖品":
+            return self._my_boss_rewards(player)
 
         return None
 
     # =====================================================================
     # 限时活动
     # =====================================================================
-    def _handle_event(self, player: dict, cmd: str, text: str, tokens: list[str]) -> str | None:
+    def _handle_event(
+        self, player: dict, group_id: str, cmd: str, text: str, tokens: list[str]
+    ) -> str | None:
         for eid, cfg in self.store.active_events().items():
             if cfg.get("menu_cmd") and cmd == cfg["menu_cmd"]:
                 return self._event_menu(cfg)
@@ -619,8 +632,12 @@ class PetParkPlugin(Star):
                 if cmd == enter_cmd and len(tokens) >= 2:
                     return self._event_enter_dungeon(player, eid, cfg, tokens[1])
             boss = cfg.get("boss", {})
-            if boss.get("enabled") and cmd == boss.get("cmd", "活动Boss"):
-                return self._event_boss_challenge(player, eid, cfg)
+            bcmd = boss.get("cmd", "活动Boss")
+            if boss.get("enabled"):
+                if cmd == bcmd:
+                    return self._event_boss_challenge(player, group_id, eid, cfg)
+                if cmd == f"{bcmd}伤害排行":
+                    return self._event_boss_ranking(cfg)
         if cmd == "活动副本":
             return "当前没有开启的活动副本。"
         return None
@@ -872,7 +889,9 @@ class PetParkPlugin(Star):
             state["damage_rank"] = {}
         return state
 
-    def _event_boss_challenge(self, player: dict, eid: str, cfg: dict) -> str:
+    def _event_boss_challenge(
+        self, player: dict, group_id: str, eid: str, cfg: dict
+    ) -> str:
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』获取一只。"
@@ -908,10 +927,10 @@ class PetParkPlugin(Star):
         p["energy"] -= energy
         self.store.set_cooldown(player, cd_key, boss.get("cooldown", 600))
         self.store.inc_event_daily(player, eid, cmd)
-        return self._event_boss_battle(player, eid, cfg, p, state)
+        return self._event_boss_battle(player, group_id, eid, cfg, p, state)
 
     def _event_boss_battle(
-        self, player: dict, eid: str, cfg: dict, p: dict, state: dict
+        self, player: dict, group_id: str, eid: str, cfg: dict, p: dict, state: dict
     ) -> str:
         boss = cfg.get("boss", {})
         token = cfg.get("token", "代币")
@@ -935,8 +954,10 @@ class PetParkPlugin(Star):
                 f"● 『{nick}』不幸阵亡，挑战失败。\n"
                 f"> 发送『宠物复活』或使用『九转还魂丹』复活后再来挑战。"
             )
-        qq = player.get("qq", "")
-        state["damage_rank"][qq] = state["damage_rank"].get(qq, 0) + player_damage
+        store_key = self.store.make_key(group_id, player.get("qq", ""))
+        state["damage_rank"][store_key] = (
+            state["damage_rank"].get(store_key, 0) + player_damage
+        )
         old_hp = state["hp"]
         state["hp"] = max(0, old_hp - player_damage)
         token_per_hit = boss.get("token_per_hit", 0)
@@ -951,31 +972,215 @@ class PetParkPlugin(Star):
             f"● Boss 剩余血量：**{state['hp']}/{state['max_hp']}**{hit_reward}",
         ]
         if state["hp"] <= 0 < old_hp:
-            # 击杀：发放击杀奖励并进入复活
-            kill_rewards = boss.get("kill_rewards", [])
-            kill_msg = "\n🏆 **最后一击！**"
-            if kill_rewards:
-                weights = [r.get("weight", 1) for r in kill_rewards]
-                reward = random.choices(kill_rewards, weights=weights, k=1)[0].get(
-                    "reward", {}
-                )
-                kill_msg += "\n" + self._grant_event_reward(
-                    player, eid, cfg, reward, prefix="击杀奖励"
-                )
-            # 伤害榜前三额外奖励
-            rank = sorted(
-                state["damage_rank"].items(), key=lambda x: x[1], reverse=True
-            )[:3]
-            if rank:
-                kill_msg += "\n> 本轮回伤害榜："
-                for i, (rq, dmg) in enumerate(rank, 1):
-                    kill_msg += f"\n{i}. `{rq}` 伤害 {dmg}"
+            lines.append("\n🏆 **Boss 被击杀！** 奖励已按伤害比例分配给所有参与者。")
+            lines.append(
+                self._distribute_boss_kill_rewards(eid, cfg, state, bname)
+            )
             respawn = boss.get("respawn_seconds", 3600)
             state["respawn_until"] = int(time.time()) + int(respawn)
             state["hp"] = state["max_hp"]
             state["damage_rank"] = {}
-            lines.append(kill_msg)
             lines.append(f"\n⏳ {bname} 已阵亡，{self._fmt_duration(respawn)} 后复活。")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _roll_value(value: int, max_value: int | None) -> int:
+        """在 value 与 max_value 之间随机取值；max_value 无效时返回 value。"""
+        value = int(value or 0)
+        if max_value is None:
+            return value
+        max_value = int(max_value)
+        if max_value > value:
+            return random.randint(value, max_value)
+        return value
+
+    @staticmethod
+    def _allocate_by_damage(total: int, ratios: list[float]) -> list[int]:
+        """按伤害比例分配 total，尽量保证每人都有产出。"""
+        n = len(ratios)
+        if n == 0 or total <= 0:
+            return [0] * n
+        # 按比例下取整
+        bases = [int(total * r) for r in ratios]
+        # 若 total 足够，确保每人至少 1
+        if total >= n:
+            for i in range(n):
+                if bases[i] < 1:
+                    bases[i] = 1
+        # 不能超过 total
+        if sum(bases) > total:
+            # 按伤害比例重新归一化
+            bases = [max(0, int(total * r)) for r in ratios]
+        remainder = total - sum(bases)
+        if remainder > 0:
+            # 按小数部分从大到小补余数
+            fracs = sorted(
+                ((i, total * ratios[i] - bases[i]) for i in range(n)),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            for i in range(min(remainder, n)):
+                bases[fracs[i][0]] += 1
+        return bases
+
+    def _distribute_boss_kill_rewards(
+        self, eid: str, cfg: dict, state: dict, bname: str
+    ) -> str:
+        """按本轮伤害比例发放 Boss 击杀奖励，并记录到各人历史。"""
+        boss = cfg.get("boss", {})
+        token = cfg.get("token", "代币")
+        kill_rewards = boss.get("kill_rewards", [])
+        rank = sorted(
+            state["damage_rank"].items(), key=lambda x: x[1], reverse=True
+        )
+        if not rank or not kill_rewards:
+            return ""
+        total_damage = sum(d for _, d in rank)
+        if total_damage <= 0:
+            return ""
+        ratios = [d / total_damage for _, d in rank]
+        all_players = self.store.all_players()
+        granted: dict[str, list[str]] = {sk: [] for sk, _ in rank}
+        summary_parts: list[str] = []
+        for entry in kill_rewards:
+            reward = entry.get("reward", {})
+            if not reward:
+                continue
+            # 物品
+            if "item" in reward:
+                total = self._roll_value(
+                    reward.get("count", 1), reward.get("count_max")
+                )
+                amounts = self._allocate_by_damage(total, ratios)
+                for (sk, _), amt in zip(rank, amounts):
+                    if amt <= 0:
+                        continue
+                    target = all_players.get(sk)
+                    if not target:
+                        continue
+                    partial = dict(reward)
+                    partial["count"] = amt
+                    self._grant_event_reward(target, eid, cfg, partial)
+                    granted[sk].append(f"{reward['item']} x{amt}")
+            # 货币
+            for cur in self.store.CURRENCY_KEYS:
+                if cur not in reward:
+                    continue
+                total = self._roll_value(reward[cur], reward.get(f"{cur}_max"))
+                amounts = self._allocate_by_damage(total, ratios)
+                for (sk, _), amt in zip(rank, amounts):
+                    if amt <= 0:
+                        continue
+                    target = all_players.get(sk)
+                    if not target:
+                        continue
+                    partial = dict(reward)
+                    partial[cur] = amt
+                    self._grant_event_reward(target, eid, cfg, partial)
+                    granted[sk].append(f"{cur} +{amt}")
+            # 活动代币
+            if token in reward:
+                total = self._roll_value(reward[token], reward.get(f"{token}_max"))
+                amounts = self._allocate_by_damage(total, ratios)
+                for (sk, _), amt in zip(rank, amounts):
+                    if amt <= 0:
+                        continue
+                    target = all_players.get(sk)
+                    if not target:
+                        continue
+                    partial = dict(reward)
+                    partial[token] = amt
+                    self._grant_event_reward(target, eid, cfg, partial)
+                    granted[sk].append(f"{token} +{amt}")
+        # 记录到个人历史
+        now = int(time.time())
+        for sk, items in granted.items():
+            if not items:
+                continue
+            target = all_players.get(sk)
+            if not target:
+                continue
+            hist = (
+                self.store.player_event_state(target, eid)
+                .setdefault("boss_history", [])
+            )
+            hist.append({"time": now, "boss": bname, "rewards": items})
+        # 生成前三名摘要
+        top3 = []
+        for sk, dmg in rank[:3]:
+            target = all_players.get(sk)
+            nick = "未知"
+            if target and target.get("pet"):
+                nick = target["pet"].get("nickname", "未知")
+            qq = sk.split("\x1f")[-1] if "\x1f" in sk else sk
+            got = "、".join(granted.get(sk, [])) or "无"
+            top3.append(f"| {len(top3)+1} | `{qq}` {nick} | {dmg} | {got} |")
+        return (
+            "**本轮回伤害榜与奖励分配**\n"
+            "| 排名 | 玩家 | 伤害 | 获得奖励 |\n"
+            "|---|---|---|---|\n"
+            + "\n".join(top3)
+        )
+
+    def _event_boss_ranking(self, cfg: dict) -> str:
+        """显示单个活动 Boss 的当前伤害排行。"""
+        state = cfg.get("_boss_state", {})
+        rank = sorted(
+            state.get("damage_rank", {}).items(), key=lambda x: x[1], reverse=True
+        )
+        bname = cfg.get("boss", {}).get("name", "活动Boss")
+        lines = [f"## 👹 {cfg.get('name','活动')}·{bname} 伤害排行", ""]
+        if not rank:
+            lines.append("> 本轮暂无挑战记录。")
+            return "\n".join(lines)
+        lines.append("| 排名 | 玩家 | 宠物 | 伤害 |")
+        lines.append("|---|---|---|---|")
+        all_players = self.store.all_players()
+        for i, (sk, dmg) in enumerate(rank, 1):
+            target = all_players.get(sk)
+            qq = sk.split("\x1f")[-1] if "\x1f" in sk else sk
+            pet_name = "-"
+            if target and target.get("pet"):
+                pet_name = target["pet"].get("nickname", "-")
+            lines.append(f"| {i} | `{qq}` | {pet_name} | {dmg} |")
+        return "\n".join(lines)
+
+    def _event_boss_ranking_all(self, group_id: str) -> str:
+        """显示当前所有活动 Boss 的伤害排行。"""
+        active = self.store.active_events()
+        if not active:
+            return "当前没有开启的活动。"
+        parts = []
+        for eid, cfg in active.items():
+            if not cfg.get("boss", {}).get("enabled"):
+                continue
+            parts.append(self._event_boss_ranking(cfg))
+        if not parts:
+            return "当前没有开启的世界 Boss。"
+        return "\n\n".join(parts)
+
+    def _my_boss_rewards(self, player: dict) -> str:
+        """查看玩家在所有活动中获得过的 Boss 奖励历史。"""
+        event_state = player.get("event_state", {})
+        lines = ["## 🎁 我的 Boss 奖励历史", ""]
+        has_any = False
+        for eid, st in event_state.items():
+            hist = st.get("boss_history", [])
+            if not hist:
+                continue
+            cfg = self.store.events().get(eid, {})
+            bname = cfg.get("boss", {}).get("name", "活动Boss")
+            lines.append(f"**{cfg.get('name', eid)} · {bname}**")
+            for entry in hist[-5:]:
+                has_any = True
+                t = time.strftime(
+                    "%Y/%m/%d %H:%M", time.localtime(entry.get("time", 0))
+                )
+                rewards = "、".join(entry.get("rewards", []))
+                lines.append(f"- {t}：{rewards}")
+            lines.append("")
+        if not has_any:
+            lines.append("> 你还没有获得过 Boss 击杀奖励。多参与世界 Boss 挑战吧！")
         return "\n".join(lines)
 
     def _event_buy(self, player: dict, eid: str, cfg: dict, item_name: str) -> str | None:

@@ -677,11 +677,11 @@ function openModal(k,v){
     '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:500,jifen:300,token_reward:25,reward:{item:'史诗卡',count:1}}
    },
    boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,kill_rewards:[
-    {weight:50,reward:{贝壳:100},msg:'海量贝壳'},
-    {weight:30,reward:{item:'夏日冰饮',count:3}},
-    {weight:15,reward:{effect:{add_atk:50}}},
-    {weight:4,reward:{金币:5000}},
-    {weight:1,reward:{item:'混沌卡',count:1},msg:'🎉 混沌品质卡！'}
+    {reward:{贝壳:100,贝壳_max:200},msg:'海量贝壳'},
+    {reward:{item:'夏日冰饮',count:1,count_max:3}},
+    {reward:{effect:{add_atk:50}}},
+    {reward:{金币:1000,金币_max:5000}},
+    {reward:{item:'混沌卡',count:1},msg:'🎉 混沌品质卡！'}
    ]}
   };
  }
@@ -1059,11 +1059,8 @@ function eventCollectDungeons(){
 function eventBossRewardHtml(entry){
  entry=entry||{};
  return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
-  <div class="row">
-   <div style="flex:1"><label>权重</label><input class="ev-b-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
-   <div style="flex:3"><label>提示文案（可选）</label><input class="ev-b-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
-  </div>
-  <div class="sec" style="margin-top:10px">奖励内容</div>
+  <div style="margin-bottom:6px"><label>提示文案（可选）</label><input class="ev-b-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！" style="width:100%"></div>
+  <div class="sec" style="margin-top:10px">奖励内容（设置最小/最大数量即可随机）</div>
   <div class="ev-b-reward">${eventRewardHtml(entry.reward||{})}</div>
   <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除奖励</button>
  </div>`;
@@ -1087,7 +1084,7 @@ function eventCollectBossRewards(){
  document.querySelectorAll('#event_boss_rewards .event-card').forEach(card=>{
   const rw=eventCollectReward(card.querySelector('.ev-b-reward .ev-reward'));
   if(!rw) return;
-  out.push({weight:+card.querySelector('.ev-b-weight').value||1, msg:card.querySelector('.ev-b-msg').value, reward:rw});
+  out.push({msg:card.querySelector('.ev-b-msg').value, reward:rw});
  });
  return out;
 }
