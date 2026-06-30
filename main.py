@@ -1304,7 +1304,10 @@ class PetParkPlugin(Star):
         self.store.inc_event_shop_bought(player, eid, item_name)
         if global_stock is not None:
             cfg["_sold"][item_name] = cfg["_sold"].get(item_name, 0) + 1
-        return self._grant_event_reward(player, eid, cfg, it.get("reward", {}), prefix=f"购买『{item_name}』成功")
+        reward = it.get("reward") or {"item": item_name, "count": 1}
+        return self._grant_event_reward(
+            player, eid, cfg, reward, prefix=f"购买『{item_name}』成功"
+        )
 
     def _event_gacha(self, player: dict, eid: str, cfg: dict) -> str:
         gacha = cfg.get("gacha", {})

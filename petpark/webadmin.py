@@ -618,7 +618,20 @@ function applyFields(v){
   v.end_at=eventLocalToTs(g('f_end_at').value)||(now+30*86400);
   v.actions=eventCollectActions();
   v.event_items=eventCollectItems();
-  v.shop=eventCollectShop();
+  const rawShop=eventCollectShop();
+  v.shop={};
+  v.event_items=v.event_items||{};
+  for(const [name,it] of Object.entries(rawShop)){
+   v.shop[name]={cost:it.cost, stock:it.stock, desc:it.desc, reward:{item:name,count:1}};
+   const existing=v.event_items[name]||{};
+   const hasEffect=Object.keys(it.effect||{}).length>0;
+   v.event_items[name]={
+    category:existing.category||'道具',
+    usable:hasEffect?true:(existing.usable||false),
+    desc:it.desc||existing.desc||'',
+    effect:hasEffect?it.effect:(existing.effect||{})
+   };
+  }
   v.gacha={
    enabled:g('f_gacha_enabled').checked,
    cmd:g('f_gacha_cmd').value.trim()||'抽奖',
@@ -938,8 +951,9 @@ function eventShopHtml(name,it){
    <div style="flex:1"><label>全局库存</label><input class="ev-s-global" type="number" value="${it.stock&&it.stock.global!==undefined?it.stock.global:''}" placeholder="空=不限"></div>
   </div>
   <div style="margin-top:6px"><label>描述</label><input class="ev-s-desc" style="width:100%" value="${escA(it.desc||'')}"></div>
-  <div class="sec" style="margin-top:10px">购买奖励</div>
-  <div class="ev-s-reward">${eventRewardHtml(it.reward||{})}</div>
+  <div class="sec" style="margin-top:10px">道具使用效果（购买后获得该道具）</div>
+  <div class="ev-s-effect">${eventItemEffectHtml(it.effect||{})}</div>
+  <button class="act ghost" type="button" onclick="eventAddEffRow(this)" style="margin-top:6px">＋ 添加效果</button>
   <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除商品</button>
  </div>`;
 }
@@ -952,8 +966,13 @@ function eventAddShop(){
 function eventRenderShop(shop){
  const box=g('event_shop'); box.innerHTML='';
  for(const [name,it] of Object.entries(shop||{})){
+  // 兼容旧版把使用效果误存进 reward.effect 的数据
+  let effect=it.effect||{};
+  if(!Object.keys(effect).length && it.reward && it.reward.effect && typeof it.reward.effect==='object'){
+   effect=it.reward.effect;
+  }
   const div=document.createElement('div');
-  div.innerHTML=eventShopHtml(name,it);
+  div.innerHTML=eventShopHtml(name,{...it,effect:effect});
   box.appendChild(div.firstElementChild);
  }
 }
@@ -962,7 +981,13 @@ function eventCollectShop(){
  document.querySelectorAll('#event_shop .event-card').forEach(card=>{
   const name=card.querySelector('.ev-s-name').value.trim();
   if(!name) return;
-  const it={cost:eventCostFromString(card.querySelector('.ev-s-cost').value), desc:card.querySelector('.ev-s-desc').value, reward:eventCollectReward(card.querySelector('.ev-s-reward .ev-reward'))};
+  const effect={};
+  card.querySelectorAll('.ev-s-effect .ev-eff-row').forEach(row=>{
+   const k=row.querySelector('.ev-eff-k').value;
+   const v=+row.querySelector('.ev-eff-v').value||0;
+   if(k) effect[k]=v;
+  });
+  const it={cost:eventCostFromString(card.querySelector('.ev-s-cost').value), desc:card.querySelector('.ev-s-desc').value, effect:effect, reward:{item:name,count:1}};
   const per=card.querySelector('.ev-s-per').value;
   const glob=card.querySelector('.ev-s-global').value;
   it.stock={};
