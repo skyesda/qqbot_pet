@@ -2145,11 +2145,13 @@ class PetParkPlugin(Star):
 
     @staticmethod
     def _busy_reason(p: dict) -> str | None:
-        """宠物当前是否无法被操作（死亡 / 假死惊魂）。可操作返回 None。"""
+        """宠物当前是否无法被操作（死亡 / 假死惊魂 / 心情 1 星）。可操作返回 None。"""
         if petmod.is_dead(p):
             return "宠物已死亡，请先复活（宠物复活 / 九转还魂丹）。"
         if petmod.is_frozen(p):
             return f"宠物假死/惊魂中，约 {petmod.frozen_remain_min(p)} 分钟后才能操作。"
+        if p.get("mood", 5) <= 1:
+            return "宠物心情低落（1颗星），无法参加活动，请先恢复心情（玩耍 / 喂食 / 使用道具）。"
         return None
 
     def _my_pet(self, player: dict):
@@ -3017,16 +3019,21 @@ class PetParkPlugin(Star):
         loss = attacker["hp_max"] // 3
         if attacker.get("talent") == "不死之体":
             attacker["hp"] = max(1, attacker["hp"] - loss)
-            dead_txt = ""
+            dead_txt = f"，HP -{loss}"
         else:
             attacker["hp"] = max(0, attacker["hp"] - loss)
-            dead_txt = ""
             if attacker["hp"] <= 0:
                 attacker["status"] = "死亡"
-                dead_txt = "，你的宠物力竭身亡！"
+                attacker["mood"] = max(1, attacker.get("mood", 5) - 1)
+                dead_txt = (
+                    f"，HP -{loss}，你的宠物力竭身亡！"
+                    f"心情降至 {attacker['mood']} 颗星。"
+                )
+            else:
+                dead_txt = f"，HP -{loss}，受了点伤。"
         return (
             f"⚔ 战斗失败！你的『{attacker['nickname']}』(战力{ap}) 不敌 "
-            f"『{defender['nickname']}』(战力{dp}){dead_txt or '，受了点伤'}。"
+            f"『{defender['nickname']}』(战力{dp}){dead_txt}"
         )
 
     def _battle_win(
@@ -3038,6 +3045,7 @@ class PetParkPlugin(Star):
             defender["hp"] = max(0, defender["hp"] - defender["hp_max"] // 2)
             if defender["hp"] <= 0:
                 defender["status"] = "死亡"
+                defender["mood"] = max(1, defender.get("mood", 5) - 1)
                 killed = True
         exp = random.randint(300, 1500) + attacker["level"] * 5
         # 七星化海：额外经验
