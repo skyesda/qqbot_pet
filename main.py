@@ -210,6 +210,8 @@ class PetParkPlugin(Star):
         data.ENERGY_REGEN_PER_MIN = max(1, int(self.config.get("energy_regen_per_min", data.ENERGY_REGEN_PER_MIN)))
         # 专属管理网站（卡密生成 + 数据增删改查）
         self._web = None
+        # 全服广播任务引用，防止被 GC
+        self._broadcast_tasks: set = set()
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
 
@@ -924,21 +926,29 @@ class PetParkPlugin(Star):
     def _broadcast_to_authorized_groups(self, text: str) -> None:
         """向所有已授权且记录过 UMO 的群主动推送一条文本消息。"""
         try:
-            asyncio.get_running_loop().create_task(self._do_broadcast(text))
+            task = asyncio.get_running_loop().create_task(self._do_broadcast(text))
+            self._broadcast_tasks.add(task)
+            task.add_done_callback(self._broadcast_tasks.discard)
         except RuntimeError:
             pass
 
     async def _do_broadcast(self, text: str) -> None:
         from astrbot.api.event import MessageChain
 
-        for gid, g in self.store._data.get("groups", {}).items():
-            if not self._is_group_authorized(gid):
-                continue
-            umo = g.get("umo")
-            if not umo:
-                continue
+        groups = self.store._data.get("groups", {})
+        targets = [
+            (gid, g.get("umo"))
+            for gid, g in groups.items()
+            if self._is_group_authorized(gid) and g.get("umo")
+        ]
+        if not targets:
+            logger.info("[petpark] 没有可广播的授权群（UMO 未记录）")
+            return
+        logger.info(f"[petpark] 开始向 {len(targets)} 个授权群广播 Boss 消息")
+        for gid, umo in targets:
             try:
                 await self.context.send_message(umo, MessageChain().message(text))
+                logger.info(f"[petpark] 已向群 {gid} 广播 Boss 消息")
             except Exception:
                 logger.exception(f"[petpark] 向群 {gid} 主动推送失败")
 
