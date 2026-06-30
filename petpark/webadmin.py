@@ -494,6 +494,7 @@ function fieldHtml(){
    <div style="flex:1"><label class="fld">伤害系数</label><input id="f_boss_factor" type="number" step="0.01" value="0.1"></div>
    <div style="flex:1"><label class="fld">每次代币</label><input id="f_boss_token_hit" type="number" value="5"></div>
    <div style="flex:1"><label class="fld">复活秒数</label><input id="f_boss_respawn" type="number" value="3600"></div>
+   <div style="flex:1"><label class="fld">Boss攻击</label><input id="f_boss_damage" type="number" value="100" placeholder="每次反击宠物的基础伤害"></div>
   </div>
   <div class="sec" style="margin-top:10px">击杀奖励（权重越高越容易出现）</div>
   <div id="event_boss_rewards"></div>
@@ -567,6 +568,7 @@ function fillFields(v){
   g('f_boss_factor').value=bs.damage_factor!==undefined?bs.damage_factor:0.1;
   g('f_boss_token_hit').value=bs.token_per_hit!==undefined?bs.token_per_hit:5;
   g('f_boss_respawn').value=bs.respawn_seconds!==undefined?bs.respawn_seconds:3600;
+  g('f_boss_damage').value=bs.boss_damage!==undefined?bs.boss_damage:100;
   eventRenderBossRewards(bs.kill_rewards||[]);
  }
  else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_authdays').value=v.auth_days||'';g('f_used').checked=!!v.used;}
@@ -626,6 +628,7 @@ function applyFields(v){
    damage_factor:+g('f_boss_factor').value||0.1,
    token_per_hit:+g('f_boss_token_hit').value||0,
    respawn_seconds:+g('f_boss_respawn').value||3600,
+   boss_damage:+g('f_boss_damage').value||100,
    kill_rewards:eventCollectBossRewards()
   };
  }
@@ -673,7 +676,7 @@ function openModal(k,v){
     '珊瑚洞穴':{monster:'巨蟹守卫',level_req:10,energy:15,cooldown:600,power:1500,exp:200,jifen:100,token_reward:10,reward:{item:'夏日冰饮',count:1}},
     '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:500,jifen:300,token_reward:25,reward:{item:'史诗卡',count:1}}
    },
-   boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,kill_rewards:[
+   boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,kill_rewards:[
     {weight:50,reward:{贝壳:100},msg:'海量贝壳'},
     {weight:30,reward:{item:'夏日冰饮',count:3}},
     {weight:15,reward:{effect:{add_atk:50}}},

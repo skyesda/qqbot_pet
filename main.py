@@ -917,20 +917,37 @@ class PetParkPlugin(Star):
         token = cfg.get("token", "代币")
         bname = boss.get("name", "活动Boss")
         factor = float(boss.get("damage_factor", 0.1))
-        base_damage = int(petmod.battle_power(p) * random.uniform(factor * 0.8, factor * 1.2))
-        damage = max(1, base_damage)
+        base_player_damage = int(
+            petmod.battle_power(p) * random.uniform(factor * 0.8, factor * 1.2)
+        )
+        player_damage = max(1, base_player_damage)
+        # Boss 反击：对宠物造成伤害
+        boss_base_damage = int(boss.get("boss_damage", 100))
+        boss_damage = max(1, int(boss_base_damage * random.uniform(0.8, 1.2)))
+        nick = p["nickname"]
+        # 先结算 Boss 对宠物的伤害
+        p["hp"] = max(0, p["hp"] - boss_damage)
+        if petmod.is_dead(p):
+            p["status"] = "死亡"
+            return (
+                f"## 👹 {nick} 挑战 {bname}\n"
+                f"● {bname} 发起攻击，造成 **{boss_damage}** 伤害！\n"
+                f"● 『{nick}』不幸阵亡，挑战失败。\n"
+                f"> 发送『宠物复活』或使用『九转还魂丹』复活后再来挑战。"
+            )
         qq = player.get("qq", "")
-        state["damage_rank"][qq] = state["damage_rank"].get(qq, 0) + damage
+        state["damage_rank"][qq] = state["damage_rank"].get(qq, 0) + player_damage
         old_hp = state["hp"]
-        state["hp"] = max(0, old_hp - damage)
+        state["hp"] = max(0, old_hp - player_damage)
         token_per_hit = boss.get("token_per_hit", 0)
         hit_reward = ""
         if token_per_hit:
             self.store.add_event_token(player, eid, token, token_per_hit)
             hit_reward = f"，{token} +{token_per_hit}"
         lines = [
-            f"## 👹 {p['nickname']} 挑战 {bname}",
-            f"● 造成伤害：**{damage}**",
+            f"## 👹 {nick} 挑战 {bname}",
+            f"● {bname} 造成 **{boss_damage}** 伤害，『{nick}』剩余 HP {p['hp']}/{p['hp_max']}",
+            f"● 『{nick}』反击造成 **{player_damage}** 伤害",
             f"● Boss 剩余血量：**{state['hp']}/{state['max_hp']}**{hit_reward}",
         ]
         if state["hp"] <= 0 < old_hp:
