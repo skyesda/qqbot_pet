@@ -374,6 +374,7 @@ class PetParkPlugin(Star):
                 bcmd = boss.get("cmd", "活动Boss")
                 cmds.add(bcmd)
                 cmds.add(f"{bcmd}伤害排行")
+                cmds.add(f"{bcmd}奖池")
         return cmds
 
     def dispatch(self, event, qq, group_id, text):
@@ -638,6 +639,8 @@ class PetParkPlugin(Star):
                     return self._event_boss_challenge(player, group_id, eid, cfg)
                 if cmd == f"{bcmd}伤害排行":
                     return self._event_boss_ranking(cfg)
+                if cmd == f"{bcmd}奖池":
+                    return self._event_boss_pool(cfg)
         if cmd == "活动副本":
             return "当前没有开启的活动副本。"
         return None
@@ -685,7 +688,10 @@ class PetParkPlugin(Star):
             state = self._event_boss_state(cfg)
             hp_text = f"{state['hp']}/{state['max_hp']}"
             lines.append(f"**世界 Boss**：`{boss.get('name', '活动Boss')}` 血量 {hp_text}")
-            lines.append(f"> 发送 `{bcmd}` 挑战，每次消耗宠物精力 {boss.get('energy', 0)}")
+            lines.append("**Boss 指令**")
+            lines.append(f"• `{bcmd}` — 挑战 Boss（消耗宠物精力 {boss.get('energy', 0)}）")
+            lines.append(f"• `{bcmd}伤害排行` — 查看全服伤害排行")
+            lines.append(f"• `{bcmd}奖池` — 查看击杀奖励池")
             lines.append("")
         return "\n".join(lines)
 
@@ -1041,8 +1047,11 @@ class PetParkPlugin(Star):
         ratios = [d / total_damage for _, d in rank]
         all_players = self.store.all_players()
         granted: dict[str, list[str]] = {sk: [] for sk, _ in rank}
-        summary_parts: list[str] = []
-        for entry in kill_rewards:
+        # 按分配权重从高到低依次发放，高权重奖励优先分给高伤害玩家
+        sorted_rewards = sorted(
+            kill_rewards, key=lambda x: x.get("weight", 1), reverse=True
+        )
+        for entry in sorted_rewards:
             reward = entry.get("reward", {})
             if not reward:
                 continue
@@ -1182,6 +1191,36 @@ class PetParkPlugin(Star):
         if not has_any:
             lines.append("> 你还没有获得过 Boss 击杀奖励。多参与世界 Boss 挑战吧！")
         return "\n".join(lines)
+
+    def _event_boss_pool(self, cfg: dict) -> str:
+        """显示活动 Boss 的击杀奖励池。"""
+        boss = cfg.get("boss", {})
+        bname = boss.get("name", "活动Boss")
+        token = cfg.get("token", "代币")
+        kill_rewards = boss.get("kill_rewards", [])
+        lines = [f"## 🎁 {cfg.get('name','活动')}·{bname} 奖池", ""]
+        if not kill_rewards:
+            lines.append("> 当前 Boss 没有设置击杀奖励。")
+            return "\n".join(lines)
+        lines.append("| 优先级 | 奖励内容 | 提示 |")
+        lines.append("|---|---|---|")
+        for entry in sorted(
+            kill_rewards, key=lambda x: x.get("weight", 1), reverse=True
+        ):
+            reward_txt = self._format_event_reward(entry.get("reward", {}), token)
+            msg = entry.get("msg", "")
+            lines.append(f"| {entry.get('weight', 1)} | {reward_txt} | {msg} |")
+        lines.append("")
+        lines.append("> 击杀后按权重优先分配给伤害排行高的玩家，同时按伤害比例确保参与者都有奖励。")
+        return "\n".join(lines)
+
+    def _event_item_def(self, name: str) -> dict | None:
+        """从当前生效活动中查找自定义道具定义。"""
+        for cfg in self.store.active_events().values():
+            item = cfg.get("event_items", {}).get(name)
+            if item:
+                return item
+        return None
 
     def _event_buy(self, player: dict, eid: str, cfg: dict, item_name: str) -> str | None:
         shop = cfg.get("shop", {})
@@ -1375,6 +1414,18 @@ class PetParkPlugin(Star):
             for table in (data.ITEMS, data.ELIXIRS, data.ARTIFACTS, data.SKILLS, data.TALENTS):
                 if name in table:
                     return f"## 📘 {name}\n{table[name]['desc']}"
+            # 活动自定义道具
+            event_item = self._event_item_def(name)
+            if event_item:
+                effect = event_item.get("effect", {})
+                eff_txt = "、".join(f"{k}:{v}" for k, v in effect.items()) or "无"
+                return (
+                    f"## 📘 {name}\n"
+                    f"{event_item.get('desc', '')}\n\n"
+                    f"> 分类：{event_item.get('category', '道具')} | "
+                    f"{'可使用' if event_item.get('usable') else '不可使用'} | "
+                    f"效果：{eff_txt}"
+                )
             return f"❓ 未找到『{name}』的说明。"
         return None
 
@@ -2085,12 +2136,14 @@ class PetParkPlugin(Star):
         if not self.store.has_item(player, name):
             return f"背包里没有『{name}』。"
         it = data.ITEMS.get(name)
+        if not it:
+            it = self._event_item_def(name)
         if not it or not it.get("usable"):
             return f"『{name}』不能直接使用。"
         count = self._parse_count(tokens, 2)
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
-        eff = it["effect"]
+        eff = it.get("effect", {})
         # 条件性物品：条件不满足则不消耗
         if eff.get("revive") and not petmod.is_dead(p):
             return "宠物还活着，无需复活。"

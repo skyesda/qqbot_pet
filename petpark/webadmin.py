@@ -462,6 +462,9 @@ function fieldHtml(){
   <div class="sec">活动玩法</div>
   <div id="event_actions"></div>
   <button class="act ghost" type="button" onclick="eventAddAction()" style="margin-top:6px">＋ 添加玩法</button>
+  <div class="sec">活动道具（自定义）</div>
+  <div id="event_items"></div>
+  <button class="act ghost" type="button" onclick="eventAddItem()" style="margin-top:6px">＋ 添加活动道具</button>
   <div class="sec">活动商店</div>
   <div id="event_shop"></div>
   <button class="act ghost" type="button" onclick="eventAddShop()" style="margin-top:6px">＋ 添加商品</button>
@@ -496,7 +499,7 @@ function fieldHtml(){
    <div style="flex:1"><label class="fld">复活秒数</label><input id="f_boss_respawn" type="number" value="3600"></div>
    <div style="flex:1"><label class="fld">Boss攻击</label><input id="f_boss_damage" type="number" value="100" placeholder="每次反击宠物的基础伤害"></div>
   </div>
-  <div class="sec" style="margin-top:10px">击杀奖励（权重越高越容易出现）</div>
+  <div class="sec" style="margin-top:10px">击杀奖励（每条奖励都会发放，可设置随机数量）</div>
   <div id="event_boss_rewards"></div>
   <button class="act ghost" type="button" onclick="eventAddBossReward()" style="margin-top:6px">＋ 添加击杀奖励</button>
   <div class="muted" style="margin-top:10px">高级用户仍可在下方「高级编辑」中直接修改 JSON。表单保存时会覆盖表单内容到 JSON。</div>`;
@@ -553,6 +556,7 @@ function fillFields(v){
   g('f_gacha_limit').value=gc.daily_limit!==undefined?gc.daily_limit:5;
   g('f_gacha_cost').value=eventCostToString(gc.cost||{});
   eventRenderActions(v.actions||{});
+  eventRenderItems(v.event_items||{});
   eventRenderShop(v.shop||{});
   eventRenderGacha(gc.pool||[]);
   eventRenderDungeons(v.dungeons||{});
@@ -607,6 +611,7 @@ function applyFields(v){
   v.start_at=eventLocalToTs(g('f_start_at').value)||now;
   v.end_at=eventLocalToTs(g('f_end_at').value)||(now+30*86400);
   v.actions=eventCollectActions();
+  v.event_items=eventCollectItems();
   v.shop=eventCollectShop();
   v.gacha={
    enabled:g('f_gacha_enabled').checked,
@@ -661,6 +666,11 @@ function openModal(k,v){
     '赶海':{energy:10,cooldown:600,daily_limit:5,rewards:{贝壳:{min:3,max:8,chance:1}},msg:'🌊 你在礁石边翻到 {贝壳} 个贝壳！'},
     '冲浪':{energy:15,cooldown:900,daily_limit:3,rewards:{贝壳:{min:5,max:12,chance:1},经验:{min:50,max:120,chance:0.3}},msg:'🏄 冲浪收获 {贝壳} 个贝壳！'}
    },
+   event_items:{
+    '夏日冰饮':{category:'药品',usable:true,desc:'清凉解暑，恢复 200 点精力并回满心情。',effect:{heal_energy:200,mood:5}},
+    '游泳圈':{category:'装饰',usable:false,desc:'夏日活动限定装饰道具，可佩戴在宠物身上（收藏用）。',effect:{}},
+    '遮阳帽':{category:'道具',usable:true,desc:'戴上后永久增加 20 点攻击。',effect:{add_atk:20}}
+   },
    shop:{
     '夏日冰饮':{cost:{贝壳:20},stock:{per_player:5},reward:{item:'夏日冰饮',count:1},desc:'恢复 200 精力并回满心情'},
     '遮阳帽':{cost:{贝壳:80},stock:{per_player:1},reward:{effect:{add_atk:20}},desc:'永久攻击 +20'}
@@ -677,11 +687,11 @@ function openModal(k,v){
     '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:500,jifen:300,token_reward:25,reward:{item:'史诗卡',count:1}}
    },
    boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,kill_rewards:[
-    {reward:{贝壳:100,贝壳_max:200},msg:'海量贝壳'},
-    {reward:{item:'夏日冰饮',count:1,count_max:3}},
-    {reward:{effect:{add_atk:50}}},
-    {reward:{金币:1000,金币_max:5000}},
-    {reward:{item:'混沌卡',count:1},msg:'🎉 混沌品质卡！'}
+    {weight:50,reward:{贝壳:100,贝壳_max:200},msg:'海量贝壳'},
+    {weight:30,reward:{item:'夏日冰饮',count:1,count_max:3}},
+    {weight:15,reward:{effect:{add_atk:50}}},
+    {weight:4,reward:{金币:1000,金币_max:5000}},
+    {weight:1,reward:{item:'混沌卡',count:1},msg:'🎉 混沌品质卡！'}
    ]}
   };
  }
@@ -758,7 +768,7 @@ function eventRewardHtml(reward){
  }
  let detail='';
  if(type==='item'){
-  detail=`<div class="row"><div style="flex:2"><label>物品名</label><select class="ev-r-item">${optHtml(META.items||[],reward.item||'')}</select></div><div style="flex:1"><label>最小数量</label><input class="ev-r-count" type="number" value="${reward.count!==undefined?reward.count:1}"></div><div style="flex:1"><label>最大数量</label><input class="ev-r-count-max" type="number" value="${reward.count_max!==undefined?reward.count_max:''}" placeholder="固定"></div></div>`;
+  detail=`<div class="row"><div style="flex:2"><label>物品名</label><input class="ev-r-item" list="ev-item-datalist" value="${escA(reward.item||'')}" placeholder="输入或选择道具名"></div><div style="flex:1"><label>最小数量</label><input class="ev-r-count" type="number" value="${reward.count!==undefined?reward.count:1}"></div><div style="flex:1"><label>最大数量</label><input class="ev-r-count-max" type="number" value="${reward.count_max!==undefined?reward.count_max:''}" placeholder="固定"></div></div>`;
  } else if(type==='effect'){
   const eff=reward.effect||{};
   const k=Object.keys(eff)[0]||'add_atk';
@@ -782,7 +792,7 @@ function eventRewardTypeChange(sel){
  const type=sel.value;
  box.dataset.type=type;
  let detail='';
- if(type==='item') detail=`<div class="row"><div style="flex:2"><label>物品名</label><select class="ev-r-item">${optHtml(META.items||[],'')}</select></div><div style="flex:1"><label>最小数量</label><input class="ev-r-count" type="number" value="1"></div><div style="flex:1"><label>最大数量</label><input class="ev-r-count-max" type="number" value="" placeholder="固定"></div></div>`;
+ if(type==='item') detail=`<div class="row"><div style="flex:2"><label>物品名</label><input class="ev-r-item" list="ev-item-datalist" value="" placeholder="输入或选择道具名"></div><div style="flex:1"><label>最小数量</label><input class="ev-r-count" type="number" value="1"></div><div style="flex:1"><label>最大数量</label><input class="ev-r-count-max" type="number" value="" placeholder="固定"></div></div>`;
  else if(type==='effect') detail=`<div class="row"><div style="flex:2"><label>效果键</label><select class="ev-r-effk">${['add_atk','add_def','add_intel','add_hp_max','add_energy_max','mood','heal_hp','heal_energy','add_exp'].map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数值</label><input class="ev-r-effv" type="number" value="0"></div></div>`;
  else if(type==='currency') detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${(META.currencies||['金币','积分','钻石']).map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>最小值</label><input class="ev-r-curv" type="number" value="0"></div><div style="flex:1"><label>最大值</label><input class="ev-r-curv-max" type="number" value="" placeholder="固定"></div></div>`;
  else if(type==='token') detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value=""></div><div style="flex:1"><label>最小值</label><input class="ev-r-tokv" type="number" value="0"></div><div style="flex:1"><label>最大值</label><input class="ev-r-tokv-max" type="number" value="" placeholder="固定"></div></div>`;
@@ -1055,11 +1065,79 @@ function eventCollectDungeons(){
  return out;
 }
 
+// event items
+function eventItemHtml(name,conf){
+ conf=conf||{};
+ return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+  <div class="row">
+   <div style="flex:2"><label>道具名</label><input class="ev-i-name" value="${escA(name)}" placeholder="夏日冰饮"></div>
+   <div style="flex:1"><label>分类</label><select class="ev-i-cat">${['药品','道具','装饰','材料'].map(o=>`<option ${o===(conf.category||'道具')?'selected':''}>${o}</option>`).join('')}</select></div>
+   <div style="flex:0"><div class="chk" style="margin-top:20px"><input class="ev-i-usable" type="checkbox" ${conf.usable?'checked':''}><label>可使用</label></div></div>
+  </div>
+  <div style="margin-top:6px"><label>描述</label><input class="ev-i-desc" style="width:100%" value="${escA(conf.desc||'')}"></div>
+  <div class="sec" style="margin-top:10px">使用效果</div>
+  <div class="ev-i-effect">${eventRewardHtml(conf.effect||{})}</div>
+  <button class="act del" type="button" onclick="this.closest('.event-card').remove();updateEventItemDatalist();" style="margin-top:6px">删除道具</button>
+ </div>`;
+}
+function eventAddItem(){
+ const box=g('event_items');
+ const div=document.createElement('div');
+ div.innerHTML=eventItemHtml('',{});
+ const card=div.firstElementChild;
+ box.appendChild(card);
+ // 新道具默认给治疗效果示例
+ const rw=card.querySelector('.ev-i-effect .ev-reward');
+ if(rw){
+  const sel=rw.querySelector('.ev-r-type');
+  if(sel){sel.value='effect';eventRewardTypeChange(sel);}
+ }
+ updateEventItemDatalist();
+}
+function eventRenderItems(items){
+ const box=g('event_items'); box.innerHTML='';
+ for(const [name,conf] of Object.entries(items||{})){
+  const div=document.createElement('div');
+  div.innerHTML=eventItemHtml(name,conf);
+  box.appendChild(div.firstElementChild);
+ }
+ updateEventItemDatalist();
+}
+function eventCollectItems(){
+ const out={};
+ document.querySelectorAll('#event_items .event-card').forEach(card=>{
+  const name=card.querySelector('.ev-i-name').value.trim();
+  if(!name) return;
+  const effRw=card.querySelector('.ev-i-effect .ev-reward');
+  out[name]={
+   category:card.querySelector('.ev-i-cat').value,
+   usable:!!card.querySelector('.ev-i-usable').checked,
+   desc:card.querySelector('.ev-i-desc').value,
+   effect:effRw?eventCollectReward(effRw):{}
+  };
+ });
+ return out;
+}
+function updateEventItemDatalist(){
+ let dl=g('ev-item-datalist');
+ if(!dl){
+  dl=document.createElement('datalist');
+  dl.id='ev-item-datalist';
+  document.body.appendChild(dl);
+ }
+ const names=new Set(META.items||[]);
+ document.querySelectorAll('#event_items .ev-i-name').forEach(el=>{const v=el.value.trim();if(v)names.add(v);});
+ dl.innerHTML=Array.from(names).map(i=>`<option value="${escA(i)}">`).join('');
+}
+
 // boss
 function eventBossRewardHtml(entry){
  entry=entry||{};
  return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
-  <div style="margin-bottom:6px"><label>提示文案（可选）</label><input class="ev-b-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！" style="width:100%"></div>
+  <div class="row">
+   <div style="flex:1"><label>分配权重（越高越优先给高伤害）</label><input class="ev-b-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
+   <div style="flex:3"><label>提示文案（可选）</label><input class="ev-b-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
+  </div>
   <div class="sec" style="margin-top:10px">奖励内容（设置最小/最大数量即可随机）</div>
   <div class="ev-b-reward">${eventRewardHtml(entry.reward||{})}</div>
   <button class="act del" type="button" onclick="this.closest('.event-card').remove()" style="margin-top:6px">删除奖励</button>
@@ -1084,7 +1162,7 @@ function eventCollectBossRewards(){
  document.querySelectorAll('#event_boss_rewards .event-card').forEach(card=>{
   const rw=eventCollectReward(card.querySelector('.ev-b-reward .ev-reward'));
   if(!rw) return;
-  out.push({msg:card.querySelector('.ev-b-msg').value, reward:rw});
+  out.push({weight:+card.querySelector('.ev-b-weight').value||1, msg:card.querySelector('.ev-b-msg').value, reward:rw});
  });
  return out;
 }

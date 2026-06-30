@@ -585,23 +585,6 @@ ITEMS = {
         "desc": "将宠物品质提升为【混沌】，属性随品质同步飞跃。已是混沌品质无法使用。",
         "effect": {"upgrade_quality": "混沌"},
     },
-    # ---- 夏日活动限定道具（不可购买，通过活动获得）----
-    "夏日冰饮": {
-        "price": 0,
-        "currency": CURRENCY_JIFEN,
-        "category": "药品",
-        "usable": True,
-        "desc": "清凉解暑，恢复 200 点精力并回满心情。",
-        "effect": {"heal_energy": 200, "mood": 5},
-    },
-    "游泳圈": {
-        "price": 0,
-        "currency": CURRENCY_JIFEN,
-        "category": "装饰",
-        "usable": False,
-        "desc": "夏日活动限定装饰道具，可佩戴在宠物身上（收藏用）。",
-        "effect": {},
-    },
 }
 
 # ----------------------------------------------------------------------------
