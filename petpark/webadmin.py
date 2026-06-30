@@ -21,12 +21,21 @@ TABLES = ("players", "groups", "cards", "events")
 
 
 class WebAdmin:
-    def __init__(self, store, host: str, port: int, user: str, password: str):
+    def __init__(
+        self,
+        store,
+        host: str,
+        port: int,
+        user: str,
+        password: str,
+        broadcast_callback=None,
+    ):
         self.store = store
         self.host = host
         self.port = int(port)
         self.user = user
         self.password = password
+        self._broadcast_callback = broadcast_callback
         self._tokens: set[str] = set()
         self._runner = None
 
@@ -44,6 +53,7 @@ class WebAdmin:
         app.router.add_post("/api/upsert", self._api_upsert)
         app.router.add_post("/api/delete", self._api_delete)
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
+        app.router.add_post("/api/boss_respawn", self._api_boss_respawn)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -212,6 +222,42 @@ class WebAdmin:
         return self._json({"ok": True, "codes": codes})
 
 
+    async def _api_boss_respawn(self, request):
+        """管理后台：立即复活指定活动的 Boss，并向所有授权群播报。"""
+        self._require(request)
+        body = await request.json()
+        eid = str(body.get("event_id", "")).strip()
+        if not eid:
+            return self._json({"ok": False, "msg": "请填写活动ID"})
+        cfg = self.store.events().get(eid)
+        if not cfg:
+            return self._json({"ok": False, "msg": f"活动 {eid} 不存在"})
+        boss = cfg.get("boss", {})
+        if not boss.get("enabled"):
+            return self._json({"ok": False, "msg": "该活动未启用 Boss"})
+        max_hp = int(boss.get("hp", 10000))
+        cfg["_boss_state"] = {
+            "max_hp": max_hp,
+            "hp": max_hp,
+            "respawn_until": 0,
+            "damage_rank": {},
+            "respawn_notified": False,
+        }
+        await self.store.save()
+        bname = boss.get("name", "活动Boss")
+        cmd = boss.get("cmd", "活动Boss")
+        text = (
+            f"## 👹 世界 Boss {bname} 已复活！\n"
+            f"血量 {max_hp}/{max_hp}，发送 `{cmd}` 即可挑战。"
+        )
+        if self._broadcast_callback:
+            try:
+                self._broadcast_callback(text)
+            except Exception:
+                logger.exception("[petpark] 后台复活 Boss 广播失败")
+        return self._json({"ok": True, "msg": f"Boss {bname} 已复活并全服播报"})
+
+
 LOGIN_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>宠物乐园 · 管理登录</title>
@@ -313,6 +359,7 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <button class="ghost act" onclick="load()">刷新</button>
 <span class="muted" id="count"></span>
 </div>
+<div id="extrawrap"></div>
 <div id="tablewrap"></div>
 </main>
 <div class="modal" id="modal"><div class="card">
@@ -359,6 +406,7 @@ function render(){
 }
 function shell(head,rows,cols){
  document.getElementById('count').textContent='共 '+Object.keys(cache).length+' 条';
+ document.getElementById('extrawrap').innerHTML='';
  document.getElementById('tablewrap').innerHTML = rows
    ? `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无数据</div>`;
@@ -431,6 +479,13 @@ function renderEvents(){
    <td class="num">${Object.keys(v.actions||{}).length} / ${Object.keys(v.shop||{}).length} / ${((v.gacha||{}).pool||[]).length}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
  shell('<th>ID</th><th>名称</th><th>状态</th><th>代币</th><th>开始</th><th>结束</th><th>玩法/商店/奖品</th><th>操作</th>',rows);
+ document.getElementById('extrawrap').innerHTML=`
+  <div class="sec" style="margin-top:14px">Boss 管理</div>
+  <div class="bar" style="align-items:flex-end">
+   <input id="boss_respawn_id" placeholder="活动ID" style="width:220px">
+   <button class="act" onclick="bossRespawn()">立即复活该活动 Boss 并全服播报</button>
+  </div>
+  <div id="boss_respawn_msg" class="muted"></div>`;
 }
 function fieldHtml(){
  if(cur==='players')return `
@@ -996,6 +1051,16 @@ function eventCollectShop(){
   out[name]=it;
  });
  return out;
+}
+
+
+async function bossRespawn(){
+ const eid=g('boss_respawn_id').value.trim();
+ const box=g('boss_respawn_msg');
+ if(!eid){box.textContent='请输入活动ID';return;}
+ const r=await api('/api/boss_respawn',{event_id:eid});
+ box.textContent=r.ok?(r.msg||'操作成功'):(r.msg||'操作失败');
+ if(r.ok) load();
 }
 
 // gacha

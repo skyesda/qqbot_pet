@@ -231,6 +231,7 @@ class PetParkPlugin(Star):
             port=int(self.config.get("web_port", 7799)),
             user=str(self.config.get("web_user", "admin")),
             password=str(self.config.get("web_pass", "2468080asd")),
+            broadcast_callback=self._broadcast_to_authorized_groups,
         )
 
         async def _boot():
