@@ -1072,6 +1072,29 @@ function eventCollectDungeons(){
 }
 
 // event items
+const EVENT_ITEM_EFFECT_KEYS=['add_atk','add_def','add_intel','add_hp_max','add_energy_max','mood','heal_hp','heal_energy','add_exp'];
+function eventItemEffectRowHtml(k,v){
+ return `<div class="ev-eff-row row" style="align-items:flex-end;margin:4px 0">
+  <div style="flex:2"><label>效果键</label><select class="ev-eff-k">${EVENT_ITEM_EFFECT_KEYS.map(o=>`<option ${o===k?'selected':''}>${o}</option>`).join('')}</select></div>
+  <div style="flex:1"><label>数值</label><input class="ev-eff-v" type="number" value="${v!==undefined?v:0}"></div>
+  <div style="flex:0"><button class="act del" type="button" onclick="this.closest('.ev-eff-row').remove()">×</button></div>
+ </div>`;
+}
+function eventItemEffectHtml(effect){
+ effect=effect||{};
+ // 兼容旧版 {effect:{heal_energy:200}} 包裹格式
+ if(effect.effect && typeof effect.effect==='object') effect=effect.effect;
+ const keys=Object.keys(effect);
+ if(keys.length===0) return eventItemEffectRowHtml('heal_energy',200);
+ return keys.map(k=>eventItemEffectRowHtml(k,effect[k])).join('');
+}
+function eventAddEffRow(btn){
+ const box=btn.previousElementSibling;
+ if(!box) return;
+ const div=document.createElement('div');
+ div.innerHTML=eventItemEffectRowHtml('heal_energy',0);
+ box.appendChild(div.firstElementChild);
+}
 function eventItemHtml(name,conf){
  conf=conf||{};
  return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
@@ -1082,7 +1105,8 @@ function eventItemHtml(name,conf){
   </div>
   <div style="margin-top:6px"><label>描述</label><input class="ev-i-desc" style="width:100%" value="${escA(conf.desc||'')}"></div>
   <div class="sec" style="margin-top:10px">使用效果</div>
-  <div class="ev-i-effect">${eventRewardHtml(conf.effect||{})}</div>
+  <div class="ev-i-effect">${eventItemEffectHtml(conf.effect)}</div>
+  <button class="act ghost" type="button" onclick="eventAddEffRow(this)" style="margin-top:6px">＋ 添加效果</button>
   <button class="act del" type="button" onclick="this.closest('.event-card').remove();updateEventItemDatalist();" style="margin-top:6px">删除道具</button>
  </div>`;
 }
@@ -1090,19 +1114,14 @@ function eventAddItem(){
  const box=g('event_items');
  const div=document.createElement('div');
  div.innerHTML=eventItemHtml('',{});
- const card=div.firstElementChild;
- box.appendChild(card);
- // 新道具默认给治疗效果示例
- const rw=card.querySelector('.ev-i-effect .ev-reward');
- if(rw){
-  const sel=rw.querySelector('.ev-r-type');
-  if(sel){sel.value='effect';eventRewardTypeChange(sel);}
- }
+ box.appendChild(div.firstElementChild);
  updateEventItemDatalist();
 }
 function eventRenderItems(items){
  const box=g('event_items'); box.innerHTML='';
  for(const [name,conf] of Object.entries(items||{})){
+  // 兼容旧版包裹格式
+  if(conf.effect && conf.effect.effect && typeof conf.effect.effect==='object') conf.effect=conf.effect.effect;
   const div=document.createElement('div');
   div.innerHTML=eventItemHtml(name,conf);
   box.appendChild(div.firstElementChild);
@@ -1114,12 +1133,17 @@ function eventCollectItems(){
  document.querySelectorAll('#event_items .event-card').forEach(card=>{
   const name=card.querySelector('.ev-i-name').value.trim();
   if(!name) return;
-  const effRw=card.querySelector('.ev-i-effect .ev-reward');
+  const effect={};
+  card.querySelectorAll('.ev-i-effect .ev-eff-row').forEach(row=>{
+   const k=row.querySelector('.ev-eff-k').value;
+   const v=+row.querySelector('.ev-eff-v').value||0;
+   if(k) effect[k]=v;
+  });
   out[name]={
    category:card.querySelector('.ev-i-cat').value,
    usable:!!card.querySelector('.ev-i-usable').checked,
    desc:card.querySelector('.ev-i-desc').value,
-   effect:effRw?eventCollectReward(effRw):{}
+   effect:effect
   };
  });
  return out;

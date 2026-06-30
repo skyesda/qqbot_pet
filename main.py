@@ -1257,10 +1257,18 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _event_item_def(self, name: str) -> dict | None:
-        """从当前生效活动中查找自定义道具定义。"""
+        """从当前生效活动中查找自定义道具定义，并兼容旧版 effect 被多包一层的情况。"""
         for cfg in self.store.active_events().values():
             item = cfg.get("event_items", {}).get(name)
             if item:
+                # 旧版网页编辑器把使用效果存成了 {effect:{heal_energy:200}}，这里自动拆包
+                eff = item.get("effect", {})
+                if (
+                    isinstance(eff, dict)
+                    and "effect" in eff
+                    and isinstance(eff["effect"], dict)
+                ):
+                    item["effect"] = eff["effect"]
                 return item
         return None
 
