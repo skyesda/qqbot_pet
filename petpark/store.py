@@ -398,3 +398,27 @@ class PetStore:
     def inc_event_shop_bought(player: dict, event_id: str, item: str) -> None:
         st = PetStore.player_event_state(player, event_id)
         st["shop_bought"][item] = st["shop_bought"].get(item, 0) + 1
+
+    # ----------------------------- 邀请 -----------------------------
+    @staticmethod
+    def record_invite(inviter: dict, invitee: dict) -> None:
+        """记录一次成功邀请：inviter 的 invited_users 列表增加 invitee，invitee 标记 invited_by。"""
+        invitee["invited_by"] = str(inviter.get("qq", ""))
+        inviter.setdefault("invited_users", []).append(
+            {"qq": str(invitee.get("qq", "")), "at": int(time.time())}
+        )
+
+    @staticmethod
+    def get_invited_users(player: dict) -> list[dict]:
+        return player.get("invited_users", [])
+
+    @staticmethod
+    def invited_by(player: dict) -> str | None:
+        return player.get("invited_by")
+
+    @staticmethod
+    def is_already_invited_by(inviter: dict, invitee_qq: str) -> bool:
+        for entry in inviter.get("invited_users", []):
+            if str(entry.get("qq", "")) == str(invitee_qq):
+                return True
+        return False

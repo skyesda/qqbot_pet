@@ -151,6 +151,9 @@ KNOWN_COMMANDS = {
     # Boss
     "Boss伤害排行",
     "Boss历史奖品",
+    # 邀请
+    "受邀",
+    "我的邀请情况",
 }
 
 
@@ -198,6 +201,10 @@ class PetParkPlugin(Star):
         self.sign_coin_max = max(self.sign_coin_min, int(self.config.get("sign_coin_max", 200)))
         # 连续签到每天的额外金币（额外金币 = 连续天数 × 该值，封顶 7 天）
         self.sign_streak_bonus = max(0, int(self.config.get("sign_streak_bonus", 100)))
+        # 邀请成功奖励（可在 Aster 插件配置面板调整）
+        self.invite_coin = max(0, int(self.config.get("invite_coin", 500)))
+        self.invite_jifen = max(0, int(self.config.get("invite_jifen", 5000)))
+        self.invite_diamond = max(0, int(self.config.get("invite_diamond", 50)))
         # 精力恢复速度为全局常量，按配置覆盖
         data.ENERGY_REGEN_PER_MIN = max(1, int(self.config.get("energy_regen_per_min", data.ENERGY_REGEN_PER_MIN)))
         # 专属管理网站（卡密生成 + 数据增删改查）
@@ -453,6 +460,12 @@ class PetParkPlugin(Star):
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
             return self._my_info(player, group_id)
+
+        # ---- 邀请 ----
+        if cmd == "受邀":
+            return self._accept_invite(player, group_id, tokens)
+        if cmd == "我的邀请情况":
+            return self._my_invites(player)
 
         # ---- 每日签到 ----
         if cmd == "签到":
@@ -1478,6 +1491,66 @@ class PetParkPlugin(Star):
                 lines.append(f"• {cfg.get('name', eid)} {token}：{bal}")
         return "\n".join(lines)
 
+    def _accept_invite(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """被邀请用户发送『受邀 邀请人QQ』，双方均在本群时发放邀请奖励。"""
+        if len(tokens) < 2:
+            return "⚠️ 用法：`受邀 邀请人QQ`（例如：受邀 123456）"
+        inviter_qq = str(tokens[1]).strip()
+        invitee_qq = str(player.get("qq", ""))
+        if not inviter_qq.isdigit():
+            return "❌ 邀请人QQ必须是数字。"
+        if inviter_qq == invitee_qq:
+            return "❌ 不能邀请自己哦。"
+        inviter = self.store.get_player(inviter_qq, group_id, create=False)
+        if not inviter:
+            return f"❌ 用户 `{inviter_qq}` 不在本群或未注册。"
+        if self.store.invited_by(player):
+            return "❌ 你已经接受过他人邀请，无法重复接受。"
+        if self.store.is_already_invited_by(inviter, invitee_qq):
+            return f"❌ 用户 `{inviter_qq}` 已经邀请过你啦。"
+        # 记录邀请关系并发放奖励
+        self.store.record_invite(inviter, player)
+        rewards = [
+            ("金币", self.invite_coin),
+            ("积分", self.invite_jifen),
+            ("钻石", self.invite_diamond),
+        ]
+        for p in (inviter, player):
+            for currency, amount in rewards:
+                self.store.add_currency(p, currency, amount)
+        reward_text = "、".join(
+            [f"{c} +{a}" for c, a in rewards]
+        )
+        return (
+            f"## 🎉 邀请成功\n"
+            f"你已成功接受 `{inviter_qq}` 的邀请！\n"
+            f"双方各获得：**{reward_text}**\n"
+            f"> 发送 `我的邀请情况` 可查看自己邀请的好友列表。"
+        )
+
+    def _my_invites(self, player: dict) -> str:
+        """以 Markdown 表格展示当前玩家邀请的所有用户。"""
+        users = self.store.get_invited_users(player)
+        if not users:
+            return (
+                "## 📋 我的邀请情况\n"
+                "你还没有成功邀请过好友。\n"
+                "> 让好友发送 `受邀 你的QQ`，双方即可领取奖励！"
+            )
+        lines = [
+            "## 📋 我的邀请情况",
+            f"累计邀请：**{len(users)}** 人",
+            "",
+            "| 序号 | 用户QQ | 邀请时间 |",
+            "|---:|---|---|",
+        ]
+        for i, entry in enumerate(users, 1):
+            qq = entry.get("qq", "")
+            at = entry.get("at", 0)
+            ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(at)) if at else "-"
+            lines.append(f"| {i} | `{qq}` | {ts} |")
+        return "\n".join(lines)
+
     def _sign_in(self, player: dict, group_id: str) -> str:
         today = time.strftime("%Y-%m-%d")
         if player.get("sign_last") == today:
@@ -1852,9 +1925,9 @@ class PetParkPlugin(Star):
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**📇 个人**",
-                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石）",
+                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石） · 我的邀请情况 · 受邀 邀请人QQ",
                 "",
-                "**📖 图鉴查询**",
+                "📖 图鉴查询",
                 "宠物种类（加名称看单个种类及图片，如 宠物种类 皮卡丘） · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
                 "",
                 "**⚙️ 管理员**",
