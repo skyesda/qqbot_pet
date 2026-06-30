@@ -544,7 +544,7 @@ ITEMS = {
         "desc": "喂给恋爱中的宠物可增加 50 点好感度。",
         "effect": {},
     },
-    # ---- 品质提升卡（宠物每达到 60 级自动赠送，不可购买）----
+    # ---- 品质提升卡（宠物每达到 60 级自动赠送史诗卡，其余可通过活动/奖品获得）----
     "史诗卡": {
         "price": 0,
         "currency": CURRENCY_JIFEN,
@@ -552,6 +552,38 @@ ITEMS = {
         "usable": True,
         "desc": "将宠物品质提升为【史诗】，属性随品质同步飞跃。史诗及以上品质无法使用。",
         "effect": {"upgrade_quality": "史诗"},
+    },
+    "圣灵卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【圣灵】，属性随品质同步飞跃。圣灵及以上品质无法使用。",
+        "effect": {"upgrade_quality": "圣灵"},
+    },
+    "洪荒卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【洪荒】，属性随品质同步飞跃。洪荒及以上品质无法使用。",
+        "effect": {"upgrade_quality": "洪荒"},
+    },
+    "创世卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【创世】，属性随品质同步飞跃。创世及以上品质无法使用。",
+        "effect": {"upgrade_quality": "创世"},
+    },
+    "混沌卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【混沌】，属性随品质同步飞跃。已是混沌品质无法使用。",
+        "effect": {"upgrade_quality": "混沌"},
     },
     # ---- 夏日活动限定道具（不可购买，通过活动获得）----
     "夏日冰饮": {
