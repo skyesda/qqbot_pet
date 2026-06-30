@@ -1504,6 +1504,9 @@ class PetParkPlugin(Star):
         inviter = self.store.get_player(inviter_qq, group_id, create=False)
         if not inviter:
             return f"❌ 用户 `{inviter_qq}` 不在本群或未注册。"
+        # 杜绝互相邀请/反向接受：自己已经邀请过对方，就不能再变成对方的被邀请人
+        if self.store.is_already_invited_by(player, inviter_qq):
+            return "❌ 你已经邀请过该用户，不能反向接受邀请。"
         if self.store.invited_by(player):
             return "❌ 你已经接受过他人邀请，无法重复接受。"
         if self.store.is_already_invited_by(inviter, invitee_qq):
