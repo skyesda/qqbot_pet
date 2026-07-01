@@ -395,7 +395,7 @@ class PetParkPlugin(Star):
                         "action": {
                             "type": 2,
                             "permission": {
-                                "type": 3,
+                                "type": 2,
                                 "specify_role_ids": [],
                                 "specify_user_ids": [],
                             },
