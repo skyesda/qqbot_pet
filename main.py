@@ -3595,14 +3595,14 @@ class PetParkPlugin(Star):
                 return f"好感度需达到 {data.FAVOR_MARRY_REQUIRE} 才能求婚（当前 {p['favor']}）。"
             if not self.store.has_item(player, "永恒钻戒"):
                 return "求婚需要消耗『永恒钻戒』。"
+            if not self.store.remove_item(player, "永恒钻戒"):
+                return "你没有『永恒钻戒』。"
             tp.setdefault("pending", {})["marry"] = player["qq"]
             return f"💍 已向 {target} 求婚，等待对方『同意求婚 {player['qq']}』。"
         if cmd == "同意求婚":
             pend = player.get("pending", {}).get("marry")
             if pend != target:
                 return "没有来自该 QQ 的求婚请求。"
-            if not self.store.remove_item(tp, "永恒钻戒"):
-                return "对方没有『永恒钻戒』，求婚失效。"
             p["love_state"] = tpet["love_state"] = "已婚"
             player.get("pending", {}).pop("marry", None)
             return "🎉 喜结连理！双方宠物已婚，约会获得双倍好感度。"

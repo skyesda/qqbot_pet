@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import time
 from typing import Any
 
 from astrbot.api import logger
@@ -223,7 +224,10 @@ class WebAdmin:
 
 
     async def _api_boss_respawn(self, request):
-        """管理后台：立即复活指定活动的 Boss，并向所有授权群播报。"""
+        """管理后台：立即复活指定活动的 Boss，并向所有授权群播报。
+
+        仅在 Boss 已阵亡（处于复活倒计时中）时允许立即复活；Boss 还活着时不能强制复活。
+        """
         self._require(request)
         body = await request.json()
         eid = str(body.get("event_id", "")).strip()
@@ -235,6 +239,19 @@ class WebAdmin:
         boss = cfg.get("boss", {})
         if not boss.get("enabled"):
             return self._json({"ok": False, "msg": "该活动未启用 Boss"})
+
+        state = cfg.get("_boss_state", {})
+        now = int(time.time())
+        # 判断 Boss 是否还活着：有血且不在复活倒计时中
+        if (
+            state
+            and state.get("hp", 0) > 0
+            and state.get("respawn_until", 0) <= now
+        ):
+            return self._json(
+                {"ok": False, "msg": "Boss 还活着，无需复活。请等待它被击杀后再操作。"}
+            )
+
         max_hp = int(boss.get("hp", 10000))
         cfg["_boss_state"] = {
             "max_hp": max_hp,
