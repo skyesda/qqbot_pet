@@ -215,7 +215,7 @@ class PetParkPlugin(Star):
         self._broadcast_tasks: set = set()
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
-        self._patch_qqofficial_markdown_broadcast()
+        self._patch_qqofficial_message_extensions()
 
     def _start_web_admin(self) -> None:
         """在当前事件循环中后台启动管理网站；失败不影响插件主体。"""
@@ -249,12 +249,13 @@ class PetParkPlugin(Star):
         except RuntimeError:
             logger.warning("[petpark] 无运行中的事件循环，管理网站未启动")
 
-    def _patch_qqofficial_markdown_broadcast(self) -> None:
-        """为 QQ 官方适配器的主动群推送补齐 Markdown 支持。
+    def _patch_qqofficial_message_extensions(self) -> None:
+        """为 QQ 官方适配器补齐 Markdown 主动推送与消息按钮支持。
 
         AstrBot 事件响应路径会自动把 use_markdown_=True 的消息按 msg_type=2 发送，
         但 `context.send_message` -> `send_by_session` 的群聊主动推送目前只发 `content`，
-        导致原生 Markdown（##、**、表格）以纯文本形式显示。这里在插件加载时打运行时补丁。
+        导致原生 Markdown（##、**、表格）以纯文本形式显示；同时 MessageChain 没有官方
+        消息按钮组件。这里在插件加载时打运行时补丁。
         """
         try:
             from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import (
@@ -264,14 +265,24 @@ class PetParkPlugin(Star):
                 QQOfficialMessageEvent,
             )
             from astrbot.api.platform import MessageType
-            from botpy.types.message import MarkdownPayload
+            from botpy.types.message import KeyboardPayload, MarkdownPayload
         except Exception:
-            logger.debug("[petpark] QQ 官方适配器未加载，跳过 Markdown 广播补丁")
+            logger.debug("[petpark] QQ 官方适配器未加载，跳过消息扩展补丁")
             return
 
-        _orig = QQOfficialPlatformAdapter._send_by_session_common
+        def _keyboard_from_chain(chain):
+            kb = getattr(chain, "qq_keyboard", None)
+            if kb:
+                try:
+                    return KeyboardPayload(content=kb)
+                except Exception:
+                    pass
+            return None
 
-        async def _patched(self, session, message_chain):
+        # ---------- 1. 主动推送路径 ----------
+        _orig_send_by_session = QQOfficialPlatformAdapter._send_by_session_common
+
+        async def _patched_send_by_session(self, session, message_chain):
             use_md = getattr(message_chain, "use_markdown_", None)
             scene = getattr(self, "_session_scene", {})
             is_group = (
@@ -313,6 +324,9 @@ class PetParkPlugin(Star):
                             }
                             if msg_id and not allow:
                                 payload["msg_id"] = msg_id
+                            kb = _keyboard_from_chain(message_chain)
+                            if kb:
+                                payload["keyboard"] = kb
                             try:
                                 await self.client.api.post_group_message(
                                     group_openid=session.session_id, **payload
@@ -322,10 +336,105 @@ class PetParkPlugin(Star):
                                 logger.warning(
                                     f"[petpark] QQ 官方主动 Markdown 推送失败，将走原接口: {e}"
                                 )
-            return await _orig(self, session, message_chain)
+            return await _orig_send_by_session(self, session, message_chain)
 
-        QQOfficialPlatformAdapter._send_by_session_common = _patched
-        logger.info("[petpark] 已打补丁：QQ 官方主动群推送支持原生 Markdown")
+        QQOfficialPlatformAdapter._send_by_session_common = _patched_send_by_session
+
+        # ---------- 2. 事件响应路径 ----------
+        _orig_fallback = QQOfficialMessageEvent._send_with_markdown_fallback
+
+        async def _patched_fallback(self, send_func, payload, plain_text, stream=None):
+            send_buffer = getattr(self, "send_buffer", None)
+            if send_buffer and payload.get("markdown"):
+                kb = _keyboard_from_chain(send_buffer)
+                if kb:
+                    payload["keyboard"] = kb
+
+            def _wrap(sf):
+                async def wrapper(p):
+                    if not p.get("markdown") and "keyboard" in p:
+                        p.pop("keyboard", None)
+                    return await sf(p)
+
+                return wrapper
+
+            return await _orig_fallback(self, _wrap(send_func), payload, plain_text, stream)
+
+        QQOfficialMessageEvent._send_with_markdown_fallback = _patched_fallback
+        logger.info("[petpark] 已打补丁：QQ 官方消息支持 Markdown 与消息按钮")
+
+    @staticmethod
+    def _build_qq_keyboard(rows: list[list[tuple[str, str]]]) -> dict:
+        """构造 QQ 官方机器人的 InlineKeyboard 数据字典。
+
+        rows: 每一行是 (显示文字, 点击后发送的文本) 元组列表。
+        """
+        out_rows: list[dict] = []
+        for r, row in enumerate(rows):
+            buttons: list[dict] = []
+            for c, (label, data) in enumerate(row):
+                buttons.append(
+                    {
+                        "id": f"btn_{r}_{c}",
+                        "render_data": {
+                            "label": label,
+                            "visited_label": label,
+                            "style": 0,
+                        },
+                        "action": {
+                            "type": 2,
+                            "permission": {
+                                "type": 3,
+                                "specify_role_ids": [],
+                                "specify_user_ids": [],
+                            },
+                            "click_limit": 100,
+                            "data": data,
+                            "at_bot_show_channel_list": False,
+                        },
+                    }
+                )
+            out_rows.append({"buttons": buttons})
+        return {"rows": out_rows}
+
+    def _main_menu_keyboard(self) -> dict:
+        return self._build_qq_keyboard(
+            [
+                [("🥚 砸蛋", "砸蛋"), ("🐾 我的宠物", "我的宠物")],
+                [("💼 查看背包", "查看背包"), ("⚔️ 宠物攻击", "宠物攻击")],
+                [("📜 宠物菜单", "宠物菜单"), ("🎁 每日签到", "签到")],
+            ]
+        )
+
+    def _event_menu_keyboard(self, cfg: dict) -> dict:
+        rows: list[list[tuple[str, str]]] = []
+        actions = list(cfg.get("actions", {}).keys())
+        if actions:
+            rows.append([(a, a) for a in actions[:4]])
+        shop = cfg.get("shop", {})
+        if shop:
+            first = next(iter(shop))
+            rows.append([("🛒 活动商店", f"购买 {first}")])
+        gacha = cfg.get("gacha", {})
+        if gacha.get("enabled"):
+            cmd = gacha.get("cmd", "抽奖")
+            rows.append([(f"🎰 {cmd}", cmd)])
+        boss = cfg.get("boss", {})
+        if boss.get("enabled"):
+            cmd = boss.get("cmd", "活动Boss")
+            rows.append([(f"👹 {cmd}", cmd)])
+        dungeon_cmd = cfg.get("dungeon_list_cmd", "活动副本")
+        rows.append([(f"🗺️ {dungeon_cmd}", dungeon_cmd)])
+        return self._build_qq_keyboard(rows)
+
+    def _keyboard_for_cmd(self, text: str) -> dict | None:
+        """根据用户发送的指令决定要不要附带快捷按钮。"""
+        if text in {"宠物菜单", "宠物指令", "宠物帮助"}:
+            return self._main_menu_keyboard()
+        for cfg in self.store.active_events().values():
+            if text == cfg.get("menu_cmd"):
+                return self._event_menu_keyboard(cfg)
+        return None
 
     # =====================================================================
     # 消息入口：监听全部消息，解析无前缀中文指令
@@ -362,6 +471,8 @@ class PetParkPlugin(Star):
         # 让图片与渲染后的文本同处一条消息。QQ 服务端会按 URL(jsDelivr CDN)拉取图片。
         if image_md:
             reply = f"{image_md}\n{reply}"
+        # 在合适的地方附加 QQ 官方消息按钮，方便用户快捷发送指令
+        keyboard = self._keyboard_for_cmd(text)
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
         if self._is_group(group_id):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
@@ -370,9 +481,15 @@ class PetParkPlugin(Star):
             head = Comp.Plain(f"@{name}\n")
             at = self._safe_at(qq)
             chain = ([at] if at else []) + [head, Comp.Plain(reply)]
-            yield event.chain_result(chain)
+            res = event.chain_result(chain)
+            if keyboard:
+                res.qq_keyboard = keyboard
+            yield res
         else:
-            yield event.plain_result(reply)
+            res = event.plain_result(reply)
+            if keyboard:
+                res.qq_keyboard = keyboard
+            yield res
 
     @staticmethod
     def _is_group(group_id: str) -> bool:
