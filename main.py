@@ -279,6 +279,17 @@ class PetParkPlugin(Star):
                     pass
             return None
 
+        # 让 MessageChain.derive 复制 qq_keyboard，否则 AstrBot 响应管道拆分消息链时会丢失按钮
+        _orig_derive = MessageChain.derive
+
+        def _patched_derive(self, chain=None):
+            new = _orig_derive(self, chain if chain is not None else [])
+            if hasattr(self, "qq_keyboard"):
+                new.qq_keyboard = self.qq_keyboard
+            return new
+
+        MessageChain.derive = _patched_derive
+
         # ---------- 1. 主动推送路径 ----------
         _orig_send_by_session = QQOfficialPlatformAdapter._send_by_session_common
 
