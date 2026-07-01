@@ -2586,6 +2586,19 @@ class PetParkPlugin(Star):
         if not it:
             it = self._event_item_def(name)
         if not it or not it.get("usable"):
+            # 背包里的秘技书（如进化/渡劫脱落的秘技），使用后学习并消耗
+            if name in data.SKILLS:
+                if name in p.get("skills", []):
+                    return "已学会该秘技。"
+                s = data.SKILLS[name]
+                if p["level"] < s["level_req"]:
+                    return f"参悟『{name}』需要等级 Lv{s['level_req']}。"
+                if p["intel"] < s["intel_req"]:
+                    return f"参悟『{name}』需要智力 {s['intel_req']}。"
+                p.setdefault("skills", []).append(name)
+                self.store.remove_item(player, name, 1)
+                petmod.refresh_energy(p)
+                return f"📜 参悟成功！习得秘技『{name}』，战力 +{s['power']}。"
             return f"『{name}』不能直接使用。"
         count = self._parse_count(tokens, 2)
         if not self.store.has_item(player, name, count):
