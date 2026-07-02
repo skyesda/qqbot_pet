@@ -2844,13 +2844,19 @@ class PetParkPlugin(Star):
             return "🧭 探险获得机缘『进化神石』x1！"
         if kind == "神器":
             art = random.choice(data.ARTIFACT_NAMES)
+            self.store.add_item(player, "神器图纸", 1)
             self.store.add_item(player, "万能宝石", 2)
             return (
-                f"🧭 探险偶遇神器图纸（{art}），并获得万能宝石 x2，可用于『打造神器』！"
+                f"🧭 探险偶遇神器图纸（{art}），获得『神器图纸』x1 和『万能宝石』x2，"
+                f"可用于『打造神器 {art}』！"
             )
         if kind == "秘技":
             skill = random.choice(data.SKILL_NAMES)
-            return f"🧭 探险参悟到秘技线索（{skill}），可前往『参悟秘技 {skill}』！"
+            self.store.add_item(player, skill, 1)
+            return (
+                f"🧭 探险参悟到秘技线索（{skill}），获得『{skill}』x1，"
+                f"可『使用 {skill}』或发送『参悟秘技 {skill}』学习！"
+            )
         return "🧭 探险归来。"
 
     # =====================================================================
@@ -2984,8 +2990,18 @@ class PetParkPlugin(Star):
             return f"打造『{name}』需 {cost['jifen']} 积分。"
         if not self.store.has_item(player, cost["material"], cost["material_count"]):
             return f"打造需要材料『{cost['material']}』x{cost['material_count']}。"
+        if not self.store.has_item(
+            player, cost.get("blueprint", "神器图纸"), cost.get("blueprint_count", 1)
+        ):
+            return (
+                f"打造需要『{cost.get('blueprint', '神器图纸')}』"
+                f"x{cost.get('blueprint_count', 1)}。"
+            )
         self.store.add_currency(player, "积分", -cost["jifen"])
         self.store.remove_item(player, cost["material"], cost["material_count"])
+        self.store.remove_item(
+            player, cost.get("blueprint", "神器图纸"), cost.get("blueprint_count", 1)
+        )
         self.store.add_item(player, name, 1)
         return f"⚒ 打造成功！『{name}』已放入背包，可『佩戴神器 {name}』。"
 
@@ -3036,11 +3052,14 @@ class PetParkPlugin(Star):
             return f"没有名为『{name}』的秘技。"
         if name in p.get("skills", []):
             return "已学会该秘技。"
+        if not self.store.has_item(player, name, 1):
+            return f"背包里没有秘技书『{name}』，请通过探险等途径获取。"
         s = data.SKILLS[name]
         if p["level"] < s["level_req"]:
             return f"参悟『{name}』需要等级 Lv{s['level_req']}。"
         if p["intel"] < s["intel_req"]:
             return f"参悟『{name}』需要智力 {s['intel_req']}（当前 {p['intel']}）。"
+        self.store.remove_item(player, name, 1)
         p.setdefault("skills", []).append(name)
         return f"📜 参悟成功！习得秘技『{name}』，战力 +{s['power']}。"
 

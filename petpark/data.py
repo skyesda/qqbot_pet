@@ -365,6 +365,14 @@ ITEMS = {
         "desc": "可镶嵌到装备上的万能宝石。",
         "effect": {},
     },
+    "神器图纸": {
+        "price": 50000,
+        "currency": CURRENCY_JIFEN,
+        "category": "材料",
+        "usable": False,
+        "desc": "记载神器打造方法的图纸，打造神器时消耗。",
+        "effect": {},
+    },
     "小精力瓶": {
         "price": 5,
         "currency": CURRENCY_DIAMOND,
@@ -727,6 +735,17 @@ SKILLS = {
 
 SKILL_NAMES = list(SKILLS.keys())
 
+# 将各秘技也作为可掉落、可交易的背包物品（由 _use_item 特殊处理学习）
+for _sk_name, _sk_info in SKILLS.items():
+    ITEMS.setdefault(_sk_name, {
+        "price": _sk_info["level_req"] * 1000,
+        "currency": CURRENCY_JIFEN,
+        "category": "秘技书",
+        "usable": False,
+        "desc": _sk_info["desc"],
+        "effect": {},
+    })
+
 # ----------------------------------------------------------------------------
 # 神器系统（打造/佩戴神器）：name -> {power, level_req, material, desc}
 # power 计入战力的"武器加成"。
@@ -767,7 +786,13 @@ ARTIFACTS = {
 
 ARTIFACT_NAMES = list(ARTIFACTS.keys())
 # 打造神器消耗
-ARTIFACT_FORGE_COST = {"jifen": 100_000, "material": "万能宝石", "material_count": 1}
+ARTIFACT_FORGE_COST = {
+    "jifen": 100_000,
+    "material": "万能宝石",
+    "material_count": 1,
+    "blueprint": "神器图纸",
+    "blueprint_count": 1,
+}
 
 # ----------------------------------------------------------------------------
 # 宠物副本
