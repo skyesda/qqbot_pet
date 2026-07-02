@@ -112,6 +112,9 @@ KNOWN_COMMANDS = {
     "宠物渡劫",
     "幻境寻宝",
     "宠物神仙劫",
+    "合成卡",
+    "合成品质卡",
+    "卡合成",
     # 神器 / 秘技
     "打造神器",
     "佩戴神器",
@@ -706,6 +709,8 @@ class PetParkPlugin(Star):
             return self._smash_egg(player)
         if cmd == "购买宠物":
             return self._buy_pet(player, tokens)
+        if cmd in ("合成卡", "合成品质卡", "卡合成"):
+            return self._compose_quality_card(player, tokens)
 
         # ---- 背包 / 商城购买 / 物品 ----
         if cmd in ("查看背包", "背包图"):
@@ -2354,8 +2359,8 @@ class PetParkPlugin(Star):
             + event_lines
             + [
                 "**📈 成长**",
-                "一键升级宠物 · 宠物升级 [次数] · 宠物进化 · 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
-                "> 宠物每突破 60 级赠『史诗卡』，`使用 史诗卡` 可将品质升为史诗（属性同步飞跃，史诗及以上不可用）。",
+                "一键升级宠物 · 宠物升级 [次数] · 宠物进化 · 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫 · 合成卡 目标卡名",
+                "> 宠物每突破 60 级赠『史诗卡』，`使用 史诗卡` 可将品质升为史诗；10 张低一级品质卡可 `合成卡` 为高一级卡（如 10 史诗卡 → 1 圣灵卡）。",
                 "",
                 "**🗡️ 神器 / 秘技**",
                 "打造神器 名称 · 佩戴神器 名称 · 卸下神器 · 参悟秘技 名称 · 遗忘秘技",
@@ -2501,6 +2506,30 @@ class PetParkPlugin(Star):
         self.store.add_currency(player, "积分", -cost)
         player["pet"] = petmod.new_pet(species, quality)
         return f"✅ **购买成功！**花费 {cost} 积分获得 【{quality}】品质的 **{species}**。"
+
+    def _compose_quality_card(self, player: dict, tokens: list[str]) -> str:
+        """品质卡合成：10 张低一级卡合成 1 张高一级卡。"""
+        if len(tokens) < 2:
+            available = "、".join(data.QUALITY_CARD_UPGRADE.keys()) or "暂无可合成卡片"
+            return (
+                "用法：`合成卡 目标卡名`（例如：`合成卡 圣灵卡`）\n"
+                f"当前可合成：{available}\n"
+                "规则：10 张低一级品质卡可合成 1 张高一级品质卡。"
+            )
+        target = tokens[1]
+        if target not in data.QUALITY_CARD_UPGRADE:
+            available = "、".join(data.QUALITY_CARD_UPGRADE.keys()) or "暂无可合成卡片"
+            return f"『{target}』无法通过合成获得。当前可合成：{available}。"
+        src_card, need = data.QUALITY_CARD_UPGRADE[target]
+        have = player.get("bag", {}).get(src_card, 0)
+        if have < need:
+            return f"合成 1 张【{target}】需要 {src_card} ×{need}，你当前只有 {have} 张。"
+        self.store.remove_item(player, src_card, need)
+        self.store.add_item(player, target, 1)
+        return (
+            f"✅ **合成成功！**\n"
+            f"消耗 {src_card} ×{need}，获得 **{target}** ×1。"
+        )
 
     # =====================================================================
     # 宠物查看 / 管理

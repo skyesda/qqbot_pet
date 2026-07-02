@@ -607,6 +607,23 @@ ITEMS = {
     },
 }
 
+# 品质卡合成链（10 张低一级卡合成 1 张高一级卡）。
+# 仅对实际存在的品质卡建立映射；缺少低级卡时链从第一个存在的卡开始。
+QUALITY_CARD_UPGRADE: dict[str, tuple[str, int]] = {}
+for _i, _q in enumerate(QUALITIES):
+    _src_card = f"{_q}卡"
+    if _i + 1 < len(QUALITIES):
+        _dst_card = f"{QUALITIES[_i + 1]}卡"
+        if _src_card in ITEMS and _dst_card in ITEMS:
+            QUALITY_CARD_UPGRADE[_dst_card] = (_src_card, 10)
+
+# 在品质卡说明里追加合成信息
+for _dst_card, (_src_card, _need) in QUALITY_CARD_UPGRADE.items():
+    if _dst_card in ITEMS:
+        ITEMS[_dst_card]["desc"] = ITEMS[_dst_card]["desc"].rstrip("。") + f"，可由 {_need} 张【{_src_card}】合成。"
+    if _src_card in ITEMS:
+        ITEMS[_src_card]["desc"] = ITEMS[_src_card]["desc"].rstrip("。") + f"，{_need} 张可合成 1 张【{_dst_card}】。"
+
 # ----------------------------------------------------------------------------
 # 异常状态 -> 解除物品
 # ----------------------------------------------------------------------------
