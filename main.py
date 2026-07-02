@@ -1800,19 +1800,45 @@ class PetParkPlugin(Star):
             if len(tokens) < 2:
                 return "⚠️ 用法：`查看说明 物品名称`（例如：查看说明 九转还魂丹）"
             name = tokens[1]
-            for table in (data.ITEMS, data.ELIXIRS, data.ARTIFACTS, data.SKILLS, data.TALENTS):
-                if name in table:
-                    return f"## 📘 {name}\n{table[name]['desc']}"
+            if name in data.ITEMS:
+                info = data.ITEMS[name]
+                lines = [f"## 📘 {name}", info.get("desc", "")]
+                eff = info.get("effect")
+                if eff:
+                    lines.append(f"\n> 效果：{self._format_effect(eff)}")
+                lines.append(
+                    f"\n> 分类：{info.get('category', '未分类')} | "
+                    f"价格：{info.get('price', 0)} {info.get('currency', '')} | "
+                    f"{'可使用 ✅' if info.get('usable') else '不可使用 ❌'}"
+                )
+                return "\n".join(lines)
+            if name in data.ELIXIRS:
+                info = data.ELIXIRS[name]
+                return (
+                    f"## 📘 {name}\n"
+                    f"{info.get('desc', '')}\n\n"
+                    f"> 效果：{self._format_effect(info.get('effect', {}))}"
+                )
+            if name in data.ARTIFACTS:
+                info = data.ARTIFACTS[name]
+                return f"## 📘 {name}\n{info.get('desc', '')}\n\n> 等级要求：Lv{info.get('level_req')}"
+            if name in data.SKILLS:
+                info = data.SKILLS[name]
+                return f"## 📘 {name}\n{info.get('desc', '')}"
+            if name in data.TALENTS:
+                info = data.TALENTS[name]
+                tag = "（需定制宠物）" if info.get("need_custom") else ""
+                return f"## 📘 {name}{tag}\n{info.get('desc', '')}"
             # 活动自定义道具
             event_item = self._event_item_def(name)
             if event_item:
                 effect = event_item.get("effect", {})
-                eff_txt = "、".join(f"{k}:{v}" for k, v in effect.items()) or "无"
+                eff_txt = self._format_effect(effect)
                 return (
                     f"## 📘 {name}\n"
                     f"{event_item.get('desc', '')}\n\n"
                     f"> 分类：{event_item.get('category', '道具')} | "
-                    f"{'可使用' if event_item.get('usable') else '不可使用'} | "
+                    f"{'可使用 ✅' if event_item.get('usable') else '不可使用 ❌'} | "
                     f"效果：{eff_txt}"
                 )
             return f"❓ 未找到『{name}』的说明。"
@@ -1826,6 +1852,51 @@ class PetParkPlugin(Star):
         if m:
             return f"{m}分钟"
         return f"{s}秒"
+
+    @staticmethod
+    def _format_effect(eff: dict) -> str:
+        """把 effect 字典格式化为人类可读文本。"""
+        if not eff:
+            return "无"
+        parts = []
+        for k, v in eff.items():
+            if k == "heal_hp":
+                parts.append(f"恢复 {v} 血量")
+            elif k == "heal_energy":
+                parts.append(f"恢复 {v} 精力")
+            elif k == "add_exp":
+                parts.append(f"经验 +{v}")
+            elif k == "add_hp_max":
+                parts.append(f"生命上限 +{v}")
+            elif k == "add_energy_max":
+                parts.append(f"精力上限 +{v}")
+            elif k == "add_atk":
+                parts.append(f"攻击 +{v}")
+            elif k == "add_def":
+                parts.append(f"防御 +{v}")
+            elif k == "add_intel":
+                parts.append(f"智力 +{v}")
+            elif k == "mood":
+                parts.append(f"心情设为 {v} 星")
+            elif k == "cure":
+                parts.append(f"解除『{v}』状态")
+            elif k == "revive":
+                parts.append("复活并回满血量")
+            elif k == "force_evolve":
+                parts.append("强制进化")
+            elif k == "upgrade_quality":
+                parts.append(f"品质提升为【{v}】")
+            elif k == "clear_abyss_corruption":
+                parts.append(f"清除 {v} 点深渊侵蚀")
+            elif k == "freeze_hours":
+                parts.append(f"假死 {v} 小时")
+            elif k == "cure_all":
+                parts.append("解除所有限制和异常")
+            elif k == "kill":
+                parts.append("立即死亡")
+            else:
+                parts.append(f"{k}:{v}")
+        return "、".join(parts) if parts else "无"
 
     def _cooldown_block(self, player: dict, key: str, label: str) -> str | None:
         """若该行为仍在冷却中，返回提示文本；否则返回 None。"""
@@ -2265,7 +2336,7 @@ class PetParkPlugin(Star):
                 "砸蛋 · 购买宠物 · 我的宠物 · 宠物状态 · 宠物改名 · 宠物变性 · 赠送宠物 用户ID · 放生宠物 · 宠物侦查 用户ID",
                 "",
                 "**🛒 商城 / 背包**",
-                "宠物商城 · 道具商城 · 宠物市场 · 查看背包 · 购买 物品 数量 · 使用 物品 · 出售 物品 数量 · 丢弃 物品 数量 · 转让 用户ID 物品 数量 · 清空背包",
+                "宠物商城 · 道具商城 · 宠物市场 · 查看背包 · 购买 物品 数量 · 使用 物品 · 出售 物品 数量 · 丢弃 物品 数量 · 转让 用户ID 物品 数量 · 清空背包 · 查看说明 物品名",
                 "",
                 "**🍖 喂养 / 日常**（各 10~20 分钟冷却）",
                 "喂食 物品 · " + " · ".join(data.DAILY_ACTIONS),
@@ -2339,6 +2410,7 @@ class PetParkPlugin(Star):
                 "大精力瓶",
                 "普通经验书",
                 "五色药",
+                "净化药水",
                 "智力宝符",
                 "智力仙符",
                 "智力神符",
