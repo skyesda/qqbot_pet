@@ -756,7 +756,7 @@ class PetParkPlugin(Star):
 
         # ---- 日常活动 ----
         if text in data.DAILY_ACTIONS:
-            return self._daily(player, text)
+            return self._daily(player, group_id, text)
 
         # ---- 成长 ----
         if cmd == "一键升级宠物":
@@ -2894,7 +2894,7 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 日常活动
     # =====================================================================
-    def _daily(self, player: dict, action: str) -> str:
+    def _daily(self, player: dict, group_id: str, action: str) -> str:
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』获取一只。"
@@ -2922,7 +2922,15 @@ class PetParkPlugin(Star):
             if p["love_state"] == "已婚":
                 gain *= 2
             p["favor"] = min(data.FAVOR_MAX, p["favor"] + gain)
-            return f"💕 约会愉快，好感度 +{gain}，当前 {p['favor']}。"
+            extra = ""
+            if p.get("love_target") and p["love_state"] in ("恋爱", "已婚"):
+                tp = self.store.get_player(p["love_target"], group_id, create=False)
+                if tp and tp.get("pet"):
+                    tp["pet"]["favor"] = min(
+                        data.FAVOR_MAX, tp["pet"]["favor"] + gain
+                    )
+                    extra = f"\n💕 伴侣 `{p['love_target']}` 的好感度也 +{gain}。"
+            return f"💕 约会愉快，好感度 +{gain}，当前 {p['favor']}。" + extra
         if action in ("修炼", "双修"):
             base = random.randint(80, 200) + p["level"] * 25
             exp = base * (2 if action == "双修" else 1)
