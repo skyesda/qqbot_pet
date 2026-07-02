@@ -2452,7 +2452,7 @@ class PetParkPlugin(Star):
         for n, p in data.PET_MARKET.items():
             lines.append(f"- **{n}** — {p} 积分")
         lines.append("")
-        lines.append("> 品质可选：" + " / ".join(data.QUALITIES) + "（默认普通，高品质加价）")
+        lines.append("> 品质可选：" + " / ".join([q for q in data.QUALITIES if q not in data.PET_MARKET_BANNED_QUALITIES]) + "（默认普通，高品质加价；圣灵/洪荒/创世/混沌为活动/定制限定，不可在市场购买）")
         return "\n".join(lines)
 
     # =====================================================================
@@ -2490,6 +2490,8 @@ class PetParkPlugin(Star):
         quality = (
             tokens[2] if len(tokens) > 2 and tokens[2] in data.QUALITIES else "普通"
         )
+        if quality in data.PET_MARKET_BANNED_QUALITIES:
+            return f"【{quality}】为活动/定制限定品质，无法通过宠物市场购买。"
         price = data.PET_MARKET[species]
         # 高品质加价
         mult = 1 + data.QUALITIES.index(quality) * 0.5
