@@ -780,8 +780,8 @@ function openModal(k,v){
     {weight:1,reward:{item:'史诗卡',count:1},msg:'🎉 大奖！'}
    ]},
    dungeons:{
-    '珊瑚洞穴':{monster:'巨蟹守卫',level_req:10,energy:15,cooldown:600,power:1500,exp:200,jifen:100,token_reward:10,reward:{item:'夏日冰饮',count:1}},
-    '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:500,jifen:300,token_reward:25,reward:{item:'史诗卡',count:1}}
+    '珊瑚洞穴':{monster:'巨蟹守卫',level_req:10,energy:15,cooldown:600,power:1500,exp:315,jifen:180,token_reward:10,reward:{item:'夏日冰饮',count:1}},
+    '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:875,jifen:340,token_reward:25,reward:{item:'史诗卡',count:1}}
    },
    boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,kill_rewards:[
     {weight:50,reward:{贝壳:100,贝壳_max:200},msg:'海量贝壳'},
@@ -1144,8 +1144,8 @@ function eventDungeonHtml(name,conf){
    <div style="flex:1"><label>怪物战力</label><input class="ev-d-power" type="number" value="${conf.power!==undefined?conf.power:1000}"></div>
   </div>
   <div class="row">
-   <div style="flex:1"><label>经验</label><input class="ev-d-exp" type="number" value="${conf.exp!==undefined?conf.exp:0}"></div>
-   <div style="flex:1"><label>积分</label><input class="ev-d-jifen" type="number" value="${conf.jifen!==undefined?conf.jifen:0}"></div>
+   <div style="flex:1"><label title="推荐≈(100+等级×80)×0.35，避免一次副本连升数级">经验</label><input class="ev-d-exp" type="number" value="${conf.exp!==undefined?conf.exp:0}"></div>
+   <div style="flex:1"><label title="推荐≈100+等级×8">积分</label><input class="ev-d-jifen" type="number" value="${conf.jifen!==undefined?conf.jifen:0}"></div>
    <div style="flex:1"><label>代币奖励</label><input class="ev-d-token" type="number" value="${conf.token_reward!==undefined?conf.token_reward:0}"></div>
   </div>
   <div class="sec" style="margin-top:10px">通关额外奖励（可选）</div>

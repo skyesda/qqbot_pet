@@ -3534,7 +3534,7 @@ class PetParkPlugin(Star):
         for n, d in data.DUNGEONS.items():
             lines.append(
                 f"- **{n}** `Lv{d['level_req']}`　🗡{d['monster']}（战力 {d['power']}）\n"
-                f"　　耗 {d['energy']} 精力 · 产出 经验 {d['exp']} / 积分 {d['jifen']}"
+                f"　　耗 {d['energy']} 精力 · 产出 经验约 {d['exp']}（±20%） / 积分约 {d['jifen']}（±20%）"
             )
         lines.append("\n> 战力 ≥ 怪物战力即可通关；经验满后自动升级。")
         return "\n".join(lines)
@@ -3600,8 +3600,11 @@ class PetParkPlugin(Star):
         nick = p["nickname"]
         head = f"## ⚔ {nick} VS {monster}"
         if win:
-            petmod.add_exp(p, d["exp"])
-            self.store.add_currency(player, "积分", d["jifen"])
+            # 实际获得数值在配置值基础 ±20% 浮动，避免每次完全相同
+            exp_gain = max(1, int(d["exp"] * random.uniform(0.8, 1.2)))
+            jifen_gain = max(1, int(d["jifen"] * random.uniform(0.8, 1.2)))
+            petmod.add_exp(p, exp_gain)
+            self.store.add_currency(player, "积分", jifen_gain)
             drop = ""
             if random.random() < 0.2:
                 self.store.add_item(player, "万能宝石", 1)
@@ -3611,8 +3614,8 @@ class PetParkPlugin(Star):
                 "┏-★---副☆本---★-┓\n"
                 f"●本次耗时：{minutes}分钟\n"
                 f"●怪物战力：{power}\n"
-                f"●获得经验：{d['exp']}\n"
-                f"●获得积分：{d['jifen']}{drop}\n"
+                f"●获得经验：{exp_gain}\n"
+                f"●获得积分：{jifen_gain}{drop}\n"
                 f"●下次时间：{next_time}\n"
                 "┗-★---信☆息---★-┛"
             )

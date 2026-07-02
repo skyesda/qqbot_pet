@@ -822,14 +822,18 @@ _DUNGEON_DEFS = [
     ("噬神之窟", 190, "噬神魔影"),
     ("神陨星域", 200, "陨落星神"),
 ]
+# 副本奖励重平衡：
+# - 经验 ≈ 升到下一级所需经验的 35%，避免一次副本连升数级。
+#   _exp_to_next(lv) = 100 + lv * 80，因此经验 = int((100 + lv * 80) * 0.35)。
+# - 积分 ≈ 100 + lv * 8，保持为日常打工/修炼的 1~2 倍，但不再远超商城物价。
 DUNGEONS = {
     name: {
         "level_req": lv,
         "energy": min(60, 18 + lv // 10 * 2),
         "monster": monster,
         "power": lv * 1000,
-        "exp": lv * 600,
-        "jifen": lv * 400,
+        "exp": int((100 + lv * 80) * 0.35),
+        "jifen": 100 + lv * 8,
     }
     for name, lv, monster in _DUNGEON_DEFS
 }
