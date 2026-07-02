@@ -115,6 +115,9 @@ KNOWN_COMMANDS = {
     "合成卡",
     "合成品质卡",
     "卡合成",
+    "赠送金币",
+    "赠送积分",
+    "赠送钻石",
     # 神器 / 秘技
     "打造神器",
     "佩戴神器",
@@ -711,6 +714,8 @@ class PetParkPlugin(Star):
             return self._buy_pet(player, tokens)
         if cmd in ("合成卡", "合成品质卡", "卡合成"):
             return self._compose_quality_card(player, tokens)
+        if cmd in ("赠送金币", "赠送积分", "赠送钻石"):
+            return self._gift_currency(player, group_id, cmd, tokens)
 
         # ---- 背包 / 商城购买 / 物品 ----
         if cmd in ("查看背包", "背包图"):
@@ -2378,7 +2383,7 @@ class PetParkPlugin(Star):
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**📇 个人**",
-                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石） · 我的邀请情况 · 受邀 用户ID",
+                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石） · 赠送金币 用户ID 数量 · 赠送积分 用户ID 数量 · 赠送钻石 用户ID 数量 · 我的邀请情况 · 受邀 用户ID",
                 "",
                 "📖 图鉴查询",
                 "宠物种类（加名称看单个种类及图片，如 宠物种类 皮卡丘） · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
@@ -2850,6 +2855,31 @@ class PetParkPlugin(Star):
         self.store.remove_item(player, name, count)
         self.store.add_item(tp, name, count)
         return f"📦 已转让 {name} ×{count} 给 `{target}`。"
+
+    def _gift_currency(
+        self, player: dict, group_id: str, cmd: str, tokens: list[str]
+    ) -> str:
+        # 赠送金币 用户ID 数量
+        currency = cmd.replace("赠送", "")
+        if len(tokens) < 3:
+            return f"用法：{cmd} 用户ID 数量"
+        target = self._arg(tokens, 1)
+        if not target:
+            return f"用法：{cmd} 用户ID 数量"
+        if not tokens[2].isdigit():
+            return "数量必须为正整数。"
+        count = max(1, int(tokens[2]))
+        if str(target) == str(player.get("qq", "")):
+            return "不能赠送给自己。"
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        have = self.store.get_currency(player, currency)
+        if have < count:
+            return f"你的{currency}不足（需要 {count}，当前 {have}）。"
+        self.store.add_currency(player, currency, -count)
+        self.store.add_currency(tp, currency, count)
+        return f"💰 已向 `{target}` 赠送 {currency} ×{count}。"
 
     def _bag_text(self, player: dict) -> str:
         bag = player.get("bag", {})
