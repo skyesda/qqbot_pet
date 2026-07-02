@@ -138,6 +138,7 @@ KNOWN_COMMANDS = {
     "宠物副本",
     "进入副本",
     "深渊秘境",
+    "深渊介绍",
     "宠物剧情任务",
     "我的剧情任务",
     "取消剧情任务",
@@ -813,6 +814,8 @@ class PetParkPlugin(Star):
             return self._enter_dungeon(player, tokens)
         if cmd == "深渊秘境":
             return self._abyss_dungeon(player)
+        if cmd == "深渊介绍":
+            return self._abyss_intro()
 
         # ---- 剧情任务 ----
         if cmd == "宠物剧情任务":
@@ -2284,7 +2287,7 @@ class PetParkPlugin(Star):
                 "宠物攻击 用户ID · 跨群挑战宠物 [群号 用户ID] · 宠物排行（本群） · 宠物神榜（全服） · 领取神榜奖励",
                 "",
                 "**🏰 副本 / 任务**（副本 10 分钟冷却）",
-                "宠物副本 · 进入副本 名称 · 宠物剧情任务 · 领取任务 名称 · 提交任务 名称 · 我的剧情任务 · 取消剧情任务",
+                "宠物副本 · 进入副本 名称 · 深渊秘境 · 深渊介绍 · 宠物剧情任务 · 领取任务 名称 · 提交任务 名称 · 我的剧情任务 · 取消剧情任务",
                 "",
                 "**💕 姻缘**",
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
@@ -3876,6 +3879,20 @@ class PetParkPlugin(Star):
             lines.append("⚠️ 侵蚀已非常高，建议先休息或使用『净化药水』清理。")
 
         return "\n".join(lines) + self._auto_level_note(player, p)
+
+    def _abyss_intro(self) -> str:
+        """读取 docs/深渊秘境.md 并返回完整玩法介绍。"""
+        from pathlib import Path
+
+        doc_path = Path(__file__).parent / "docs" / "深渊秘境.md"
+        try:
+            text = doc_path.read_text(encoding="utf-8")
+        except Exception:
+            return "📖 深渊秘境玩法介绍文档暂不可用。"
+        # 控制长度，避免单条消息过长被平台截断
+        if len(text) > 8000:
+            text = text[:8000] + "\n\n...（内容已截断，请联系管理员获取完整文档）"
+        return text
 
     def _quest_list(self) -> str:
         lines = [
