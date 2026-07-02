@@ -118,6 +118,11 @@ class PetStore:
                 "last_actions": {},
                 "stats": {"battle_win": 0, "explore": 0},
                 "quests": {},
+                "abyss_corruption": 0,
+                "abyss_pity": 0,
+                "abyss_crystal": 0,
+                "abyss_last_decay": 0,
+                "abyss_last_reset": "",
             }
         return players.get(key)
 
@@ -398,6 +403,86 @@ class PetStore:
     def inc_event_shop_bought(player: dict, event_id: str, item: str) -> None:
         st = PetStore.player_event_state(player, event_id)
         st["shop_bought"][item] = st["shop_bought"].get(item, 0) + 1
+
+    # ----------------------------- 深渊秘境 -----------------------------
+    @staticmethod
+    def abyss_state(player: dict) -> dict:
+        """返回玩家深渊状态，自动 lazy init 所需字段。"""
+        st = player.setdefault("abyss", {})
+        st.setdefault("corruption", player.get("abyss_corruption", 0))
+        st.setdefault("pity", player.get("abyss_pity", 0))
+        st.setdefault("crystal", player.get("abyss_crystal", 0))
+        st.setdefault("last_decay", player.get("abyss_last_decay", 0))
+        st.setdefault("last_reset", player.get("abyss_last_reset", ""))
+        return st
+
+    @classmethod
+    def refresh_abyss(cls, player: dict) -> dict:
+        """刷新深渊状态：每日 0 点清零；按时间自然衰减侵蚀。"""
+        today = time.strftime("%Y-%m-%d")
+        st = cls.abyss_state(player)
+        # 迁移旧字段到 st 后，删除顶层字段避免歧义
+        for old_key in ("abyss_corruption", "abyss_pity", "abyss_crystal",
+                        "abyss_last_decay", "abyss_last_reset"):
+            player.pop(old_key, None)
+        if st.get("last_reset") != today:
+            st["corruption"] = 0
+            st["pity"] = 0
+            st["last_reset"] = today
+        # 自然衰减
+        now = int(time.time())
+        last = st.get("last_decay", 0)
+        from . import data  # 延迟导入避免循环
+        interval = data.ABYSS_CORRUPTION_DECAY_INTERVAL
+        amount = data.ABYSS_CORRUPTION_DECAY_AMOUNT
+        if interval > 0 and now > last:
+            elapsed = now - last
+            drops = elapsed // interval
+            if drops > 0:
+                st["corruption"] = max(0, st.get("corruption", 0) - drops * amount)
+                st["last_decay"] = now
+        return st
+
+    @classmethod
+    def add_abyss_corruption(cls, player: dict, amount: int = 1) -> int:
+        st = cls.abyss_state(player)
+        st["corruption"] = max(0, st.get("corruption", 0) + amount)
+        return st["corruption"]
+
+    @classmethod
+    def clear_abyss_corruption(cls, player: dict, amount: int) -> int:
+        st = cls.abyss_state(player)
+        before = st.get("corruption", 0)
+        st["corruption"] = max(0, before - amount)
+        return before - st["corruption"]
+
+    @classmethod
+    def get_abyss_corruption(cls, player: dict) -> int:
+        return cls.abyss_state(player).get("corruption", 0)
+
+    @classmethod
+    def add_abyss_pity(cls, player: dict, amount: int = 1) -> int:
+        st = cls.abyss_state(player)
+        st["pity"] = max(0, st.get("pity", 0) + amount)
+        return st["pity"]
+
+    @classmethod
+    def reset_abyss_pity(cls, player: dict) -> None:
+        cls.abyss_state(player)["pity"] = 0
+
+    @classmethod
+    def get_abyss_pity(cls, player: dict) -> int:
+        return cls.abyss_state(player).get("pity", 0)
+
+    @classmethod
+    def add_abyss_crystal(cls, player: dict, amount: int) -> int:
+        st = cls.abyss_state(player)
+        st["crystal"] = max(0, st.get("crystal", 0) + amount)
+        return st["crystal"]
+
+    @classmethod
+    def get_abyss_crystal(cls, player: dict) -> int:
+        return cls.abyss_state(player).get("crystal", 0)
 
     # ----------------------------- 邀请 -----------------------------
     @staticmethod

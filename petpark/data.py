@@ -526,6 +526,15 @@ ITEMS = {
         "desc": "使用后永久增加 100 点生命（上限）并回满。",
         "effect": {"add_hp_max": 100},
     },
+    # ---- 深渊道具 ----
+    "净化药水": {
+        "price": 500,
+        "currency": CURRENCY_JIFEN,
+        "category": "药品",
+        "usable": True,
+        "desc": "清除 5 点深渊侵蚀，恢复理智后再战深渊。",
+        "effect": {"clear_abyss_corruption": 5},
+    },
     # ---- 精力瓶（恢复精力，钻石计价）----
     "中精力瓶": {
         "price": 20,
@@ -890,6 +899,78 @@ DAILY_ACTIONS = {
     },
     "冥想": {"energy": 30, "desc": "永久增加随机属性值（需定制宠物才行）"},
 }
+
+# ----------------------------------------------------------------------------
+# 深渊秘境
+# ----------------------------------------------------------------------------
+ABYSS_LEVEL_REQ = 20
+ABYSS_BASE_ENERGY = 20
+ABYSS_BASE_COOLDOWN = 300  # 5 分钟
+ABYSS_MAX_ENERGY = 80
+ABYSS_MAX_COOLDOWN = 1800  # 30 分钟
+ABYSS_CORRUPTION_DECAY_INTERVAL = 1200  # 20 分钟
+ABYSS_CORRUPTION_DECAY_AMOUNT = 1
+ABYSS_EXP_BASE = 100
+ABYSS_EXP_PER_LEVEL = 80
+
+
+def exp_to_next(level: int) -> int:
+    """升到下一级所需经验，与 pet.py 中的 _exp_to_next 保持一致。"""
+    return ABYSS_EXP_BASE + level * ABYSS_EXP_PER_LEVEL
+
+
+# 深渊秘境事件池（每次进入抽一个事件）
+ABYSS_EVENTS = [
+    {
+        "id": "guard",
+        "name": "🗡️ 深渊守卫",
+        "weight": 30,
+        "exp_mult": 0.3,
+        "crystal": (1, 3),
+        "power_mult": 0.5,
+    },
+    {
+        "id": "chest",
+        "name": "🎁 深渊宝箱",
+        "weight": 25,
+        "exp_mult": 0.2,
+        "crystal": (1, 2),
+        "mimic_chance": 0.2,
+        "mimic_exp_mult": 0.5,
+        "power_mult": 0.35,
+    },
+    {
+        "id": "turbulence",
+        "name": "⚡ 深渊乱流",
+        "weight": 15,
+    },
+    {
+        "id": "altar",
+        "name": "🌀 古老祭坛",
+        "weight": 15,
+        "exp_mult_safe": 0.2,
+        "exp_mult_sacrifice": 0.6,
+        "hp_sacrifice_pct": 0.15,
+    },
+    {
+        "id": "blessing",
+        "name": "✨ 深渊赐福",
+        "weight": 10,
+        "exp_mult": 1.0,
+        "crystal": (2, 4),
+        "heal": True,
+        "power_mult": 0.0,  # 直接奖励，无战斗
+    },
+    {
+        "id": "lord",
+        "name": "👹 深渊领主",
+        "weight": 5,
+        "exp_mult": 1.5,
+        "crystal": (3, 5),
+        "power_mult": 1.2,
+    },
+]
+
 
 # ----------------------------------------------------------------------------
 # 签到称号：(累计签到天数门槛, 称号名)，按累计天数从高到低匹配。

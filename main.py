@@ -137,6 +137,7 @@ KNOWN_COMMANDS = {
     # 副本 / 剧情
     "宠物副本",
     "进入副本",
+    "深渊秘境",
     "宠物剧情任务",
     "我的剧情任务",
     "取消剧情任务",
@@ -810,6 +811,8 @@ class PetParkPlugin(Star):
             return self._dungeon_list()
         if cmd == "进入副本":
             return self._enter_dungeon(player, tokens)
+        if cmd == "深渊秘境":
+            return self._abyss_dungeon(player)
 
         # ---- 剧情任务 ----
         if cmd == "宠物剧情任务":
@@ -1838,6 +1841,7 @@ class PetParkPlugin(Star):
             f"🪙 **金币**　{player.get('coin', 0)}",
             f"💎 **积分**　{player.get('jifen', 0)}",
             f"💠 **钻石**　{player.get('diamond', 0)}",
+            f"🌀 **深渊结晶**　{self.store.get_abyss_crystal(player)}",
         ]
         active = self.store.active_events()
         if active:
@@ -2604,6 +2608,16 @@ class PetParkPlugin(Star):
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
         eff = it.get("effect", {})
+        # 深渊净化药水：先处理再消耗
+        if "clear_abyss_corruption" in eff:
+            cleared = self.store.clear_abyss_corruption(
+                player, eff["clear_abyss_corruption"] * count
+            )
+            self.store.remove_item(player, name, count)
+            return (
+                f"使用『{name}』x{count}：清除 {cleared} 点深渊侵蚀，"
+                f"当前侵蚀 {self.store.get_abyss_corruption(player)} 点。"
+            )
         # 条件性物品：条件不满足则不消耗
         if eff.get("revive") and not petmod.is_dead(p):
             return "宠物还活着，无需复活。"
@@ -3630,6 +3644,238 @@ class PetParkPlugin(Star):
             "┗-★---信☆息---★-┛"
         )
         return f"{head}\n{desc}\n{body}"
+
+    # =====================================================================
+    # 深渊秘境
+    # =====================================================================
+    def _abyss_dungeon(self, player: dict) -> str:
+        """深渊秘境：高频、高运气、无次数上限，但越打侵蚀越高。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        if p["level"] < data.ABYSS_LEVEL_REQ:
+            return f"深渊秘境需要宠物达到 Lv{data.ABYSS_LEVEL_REQ}，当前 Lv{p['level']}。"
+        busy = self._busy_reason(p)
+        if busy:
+            return busy
+
+        # 刷新侵蚀（每日清零 + 自然衰减）
+        self.store.refresh_abyss(player)
+        corruption = self.store.get_abyss_corruption(player)
+        pity = self.store.get_abyss_pity(player)
+
+        # 动态成本与冷却
+        energy_cost = min(data.ABYSS_MAX_ENERGY, data.ABYSS_BASE_ENERGY + corruption * 3)
+        cooldown = min(data.ABYSS_MAX_COOLDOWN, data.ABYSS_BASE_COOLDOWN + corruption * 60)
+
+        petmod.refresh_energy(p)
+        if p["energy"] < energy_cost:
+            return (
+                f"精力不足，进入深渊秘境需要 {energy_cost} 点精力"
+                f"（当前 {p['energy']}/{p['energy_max']}）。"
+            )
+        cd = self._cooldown_block(player, "深渊秘境", "深渊秘境")
+        if cd:
+            return cd
+
+        # 扣除并记录
+        p["energy"] -= energy_cost
+        self.store.set_cooldown(player, "深渊秘境", cooldown)
+        self.store.add_abyss_corruption(player, 1)
+        corruption_after = self.store.get_abyss_corruption(player)
+
+        # 抽取事件：怜悯值会提高大奖概率
+        events = list(data.ABYSS_EVENTS)
+        weights = [e.get("weight", 1) for e in events]
+        bonus = pity * 0.5
+        for i, e in enumerate(events):
+            if e["id"] in ("blessing", "lord"):
+                weights[i] += bonus
+        event = random.choices(events, weights=weights, k=1)[0]
+
+        exp_to_next = data.exp_to_next(p["level"])
+        corruption_factor = max(0.1, 1.0 - corruption * 0.04)
+        base_power = petmod.battle_power(p)
+        nick = p["nickname"]
+
+        # 玩家战力浮动（侵蚀越高，下限越低）
+        low = max(0.3, 0.8 - corruption * 0.02)
+        roll = int(base_power * random.uniform(low, 1.8))
+
+        lines = [
+            f"## 🌀 深渊秘境 · 第 {corruption_after} 层侵蚀",
+            f"当前侵蚀：**{corruption}** → **{corruption_after}** 点",
+            f"经验收益倍率：**{int(corruption_factor * 100)}%**",
+        ]
+        if pity:
+            lines.append(f"深渊怜悯：**{pity}**（大奖概率提升）")
+        lines.append("")
+
+        reward_lines: list[str] = []
+
+        def _add_exp(mult: float) -> int:
+            amt = max(1, int(exp_to_next * mult * corruption_factor))
+            petmod.add_exp(p, amt)
+            return amt
+
+        def _hurt(dmg_pct: float) -> bool:
+            dmg = max(1, int(p["hp_max"] * dmg_pct))
+            p["hp"] = max(0, p["hp"] - dmg)
+            if petmod.is_dead(p):
+                p["status"] = "死亡"
+                p["mood"] = max(1, p.get("mood", 5) - 1)
+                reward_lines.append(f"💀 『{nick}』伤势过重不幸阵亡，心情降至 {p['mood']} 星。")
+                return True
+            reward_lines.append(f"❤️‍🩹 『{nick}』受到深渊伤害，HP -{dmg}（{p['hp']}/{p['hp_max']}）。")
+            return False
+
+        def _random_status() -> None:
+            status = random.choice(["中毒", "沉眠", "麻痹", "亢奋", "虚弱", "肌饿"])
+            p["status"] = status
+            reward_lines.append(f"☠️ 深渊诅咒降临，宠物陷入『{status}』状态。")
+
+        # ---------- 事件分支 ----------
+        if event["id"] == "guard":
+            monster_power = int(base_power * event.get("power_mult", 0.5) * (1 + corruption * 0.06))
+            lines.append(f"🗡️ 你遭遇了 **{event['name']}**！")
+            lines.append(f"● 你的战力：{roll}　VS　守卫战力：{monster_power}")
+            if roll >= monster_power:
+                exp = _add_exp(event["exp_mult"])
+                jifen = 50 + p["level"] * 2
+                crystal = random.randint(*event.get("crystal", (1, 3)))
+                self.store.add_currency(player, "积分", jifen)
+                self.store.add_abyss_crystal(player, crystal)
+                reward_lines.extend(
+                    [
+                        f"经验 +{exp}",
+                        f"积分 +{jifen}",
+                        f"深渊结晶 +{crystal}",
+                    ]
+                )
+                lines.append(f"✅ 激战之后，你击退了深渊守卫！")
+            else:
+                exp = _add_exp(event["exp_mult"] * 0.1)
+                died = _hurt(0.3)
+                reward_lines.append(f"经验 +{exp}（战败保底）")
+                if not died:
+                    lines.append(f"❌ 守卫太过强大，『{nick}』只能狼狈撤退。")
+
+        elif event["id"] == "chest":
+            lines.append(f"🎁 你发现了一个古老的 **{event['name']}**！")
+            if random.random() < event.get("mimic_chance", 0.2):
+                monster_power = int(base_power * event.get("power_mult", 0.35) * (1 + corruption * 0.06))
+                lines.append(f"⚠️ 宝箱突然张开血盆大口，原来是宝箱怪！")
+                lines.append(f"● 你的战力：{roll}　VS　宝箱怪战力：{monster_power}")
+                if roll >= monster_power:
+                    exp = _add_exp(event["mimic_exp_mult"])
+                    crystal = random.randint(2, 4)
+                    self.store.add_abyss_crystal(player, crystal)
+                    reward_lines.extend([f"经验 +{exp}", f"深渊结晶 +{crystal}"])
+                    lines.append(f"✅ 你险胜宝箱怪，收获了额外战利品！")
+                else:
+                    _hurt(0.2)
+                    lines.append(f"❌ 宝箱怪狠狠咬了你一口，空手而逃。")
+            else:
+                exp = _add_exp(event["exp_mult"])
+                crystal = random.randint(*event.get("crystal", (1, 2)))
+                self.store.add_abyss_crystal(player, crystal)
+                reward_lines.extend([f"经验 +{exp}", f"深渊结晶 +{crystal}"])
+                lines.append(f"✅ 你小心翼翼地打开宝箱， safely 拿走了里面的东西。")
+
+        elif event["id"] == "turbulence":
+            lines.append(f"⚡ 你踏入了 **{event['name']}**，周围空间开始扭曲……")
+            outcome = random.choice(["低语", "暗影", "能量", "异象"])
+            if outcome == "低语":
+                cleared = self.store.clear_abyss_corruption(player, 2)
+                heal = max(1, int(p["hp_max"] * 0.2))
+                p["hp"] = min(p["hp_max"], p["hp"] + heal)
+                reward_lines.append(f"🌟 深渊的低语抚慰了你：侵蚀 -{cleared}，HP +{heal}。")
+            elif outcome == "暗影":
+                self.store.add_abyss_corruption(player, 1)
+                _random_status()
+                lines[-1] = lines[-1].replace("……", "，阴影正在侵蚀你的宠物！")
+            elif outcome == "能量":
+                exp = _add_exp(0.1)
+                reward_lines.append(f"经验 +{exp}（乱流中捕捉到一丝能量）")
+            else:  # 异象
+                jifen = 20 + p["level"]
+                self.store.add_currency(player, "积分", jifen)
+                reward_lines.append(f"积分 +{jifen}（你看到了无法理解的景象）")
+
+        elif event["id"] == "altar":
+            lines.append(f"🌀 一座 **{event['name']}** 挡在面前，上面刻着献祭符文。")
+            safe_mult = event.get("exp_mult_safe", 0.2)
+            sac_mult = event.get("exp_mult_sacrifice", 0.6)
+            sac_pct = event.get("hp_sacrifice_pct", 0.15)
+            if p["hp"] > p["hp_max"] * 0.3:
+                p["hp"] = max(1, int(p["hp"] - p["hp_max"] * sac_pct))
+                exp = _add_exp(sac_mult)
+                reward_lines.append(f"你献祭了 {int(sac_pct * 100)}% HP，深渊回报了你 {exp} 经验。")
+                lines.append(f"✅ 宠物忍痛完成献祭，获得了丰厚回报。")
+            else:
+                exp = _add_exp(safe_mult)
+                reward_lines.append(f"经验 +{exp}（状态不佳，只取了保底祝福）")
+                lines.append(f"⚠️ 宠物状态不佳，你不敢献祭，只取走了保底祝福。")
+
+        elif event["id"] == "blessing":
+            lines.append(f"✨ **{event['name']}** 降临！深渊意志向你微笑。")
+            exp = _add_exp(event["exp_mult"])
+            crystal = random.randint(*event.get("crystal", (2, 4)))
+            jifen = 100 + p["level"] * 3
+            p["hp"] = p["hp_max"]
+            self.store.add_currency(player, "积分", jifen)
+            self.store.add_abyss_crystal(player, crystal)
+            self.store.reset_abyss_pity(player)
+            reward_lines.extend(
+                [
+                    f"经验 +{exp}",
+                    f"积分 +{jifen}",
+                    f"深渊结晶 +{crystal}",
+                    "血量已回满",
+                ]
+            )
+            lines.append(f"🎉 这是深渊罕见的恩赐！")
+
+        elif event["id"] == "lord":
+            monster_power = int(base_power * event.get("power_mult", 1.2) * (1 + corruption * 0.06))
+            lines.append(f"👹 **{event['name']}** 降临！恐怖的威压笼罩四周。")
+            lines.append(f"● 你的战力：{roll}　VS　领主战力：{monster_power}")
+            if roll >= monster_power:
+                exp = _add_exp(event["exp_mult"])
+                crystal = random.randint(*event.get("crystal", (3, 5)))
+                self.store.add_abyss_crystal(player, crystal)
+                reward_lines.extend([f"经验 +{exp}", f"深渊结晶 +{crystal}"])
+                if random.random() < 0.3:
+                    self.store.add_item(player, "万能宝石", 1)
+                    reward_lines.append("万能宝石 ×1")
+                self.store.reset_abyss_pity(player)
+                lines.append(f"🏆 你击败了深渊领主，名扬秘境！")
+            else:
+                died = _hurt(0.5)
+                lines.append(f"❌ 领主的力量碾压了你，『{nick}』惨败。")
+
+        # 怜悯值结算：只有大奖事件会清零
+        if event["id"] not in ("blessing", "lord"):
+            self.store.add_abyss_pity(player, 1)
+
+        # 组装奖励展示
+        if reward_lines:
+            lines.append("")
+            lines.append("**本次收获**")
+            lines.extend(f"• {r}" for r in reward_lines)
+
+        # 下次成本提示
+        next_corruption = self.store.get_abyss_corruption(player)
+        next_energy = min(data.ABYSS_MAX_ENERGY, data.ABYSS_BASE_ENERGY + next_corruption * 3)
+        next_cd = min(data.ABYSS_MAX_COOLDOWN, data.ABYSS_BASE_COOLDOWN + next_corruption * 60)
+        lines.append("")
+        lines.append(
+            f"> 下次挑战：消耗 {next_energy} 精力，冷却 {self._fmt_duration(next_cd)}"
+        )
+        if next_corruption >= 15:
+            lines.append("⚠️ 侵蚀已非常高，建议先休息或使用『净化药水』清理。")
+
+        return "\n".join(lines) + self._auto_level_note(player, p)
 
     def _quest_list(self) -> str:
         lines = [
