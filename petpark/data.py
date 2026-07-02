@@ -264,12 +264,12 @@ ITEMS = {
         "effect": {"heal_hp": 300},
     },
     "蓝药水": {
-        "price": 300,
+        "price": 1000,
         "currency": CURRENCY_COIN,
         "category": "药品",
         "usable": True,
-        "desc": "恢复宠物 100 点精力。",
-        "effect": {"heal_energy": 100},
+        "desc": "恢复宠物 10 点精力。",
+        "effect": {"heal_energy": 10},
     },
     "改名卡": {
         "price": 2000,
