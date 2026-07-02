@@ -2366,7 +2366,7 @@ class PetParkPlugin(Star):
                 "**⚔️ 对战 / 排行**",
                 "宠物攻击 用户ID · 跨群挑战宠物 [群号 用户ID] · 宠物排行（本群） · 宠物神榜（全服） · 领取神榜奖励",
                 "",
-                "**🏰 副本 / 任务**（副本 10 分钟冷却）",
+                "**🏰 副本 / 任务**（副本 15 分钟冷却）",
                 "宠物副本 · 进入副本 名称 · 深渊秘境 · 深渊介绍 · 深渊商店 · 深渊祝福 · 宠物剧情任务 · 领取任务 名称 · 提交任务 名称 · 我的剧情任务 · 取消剧情任务",
                 "",
                 "**💕 姻缘**",
@@ -3626,7 +3626,7 @@ class PetParkPlugin(Star):
     def _dungeon_list(self) -> str:
         lines = [
             "## 🏰 宠物副本",
-            "> 进入方式：`进入副本 副本名称`（冷却 10 分钟）",
+            "> 进入方式：`进入副本 副本名称`（冷却 15 分钟）",
             "",
         ]
         for n, d in data.DUNGEONS.items():
@@ -3693,7 +3693,7 @@ class PetParkPlugin(Star):
         minutes = random.randint(0, 5)
         next_time = time.strftime(
             "%Y/%m/%d %H:%M:%S",
-            time.localtime(time.time() + data.DUNGEON_COOLDOWN * 60),
+            time.localtime(time.time() + data.DUNGEON_COOLDOWN),
         )
         nick = p["nickname"]
         head = f"## ⚔ {nick} VS {monster}"

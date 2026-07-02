@@ -835,10 +835,11 @@ _DUNGEON_DEFS = [
 # - 经验 ≈ 升到下一级所需经验的 35%，避免一次副本连升数级。
 #   _exp_to_next(lv) = 100 + lv * 80，因此经验 = int((100 + lv * 80) * 0.35)。
 # - 积分 ≈ 100 + lv * 8，保持为日常打工/修炼的 1~2 倍，但不再远超商城物价。
+# 副本统一精力消耗 10，降低日常门槛；经验/积分已重平衡，避免单局收益过高。
 DUNGEONS = {
     name: {
         "level_req": lv,
-        "energy": min(60, 18 + lv // 10 * 2),
+        "energy": 10,
         "monster": monster,
         "power": lv * 1000,
         "exp": int((100 + lv * 80) * 0.35),
@@ -880,7 +881,7 @@ ATTACK_ENERGY = 10
 
 # 各类行为冷却（秒）。日常活动为 [下限, 上限] 随机区间。
 EGG_COOLDOWN = 60  # 砸蛋冷却 1 分钟
-DUNGEON_COOLDOWN = 600  # 进入副本冷却 10 分钟
+DUNGEON_COOLDOWN = 900  # 进入副本冷却 15 分钟
 DAILY_COOLDOWN_RANGE = (600, 1200)  # 修炼等日常活动冷却 10~20 分钟随机
 
 # 各日常活动：精力消耗 + 说明
