@@ -139,6 +139,9 @@ KNOWN_COMMANDS = {
     "进入副本",
     "深渊秘境",
     "深渊介绍",
+    "深渊商店",
+    "深渊购买",
+    "深渊祝福",
     "宠物剧情任务",
     "我的剧情任务",
     "取消剧情任务",
@@ -816,6 +819,12 @@ class PetParkPlugin(Star):
             return self._abyss_dungeon(player)
         if cmd == "深渊介绍":
             return self._abyss_intro()
+        if cmd == "深渊商店":
+            return self._abyss_shop(player)
+        if cmd == "深渊购买":
+            return self._abyss_buy(player, tokens)
+        if cmd == "深渊祝福":
+            return self._abyss_blessing(player, tokens)
 
         # ---- 剧情任务 ----
         if cmd == "宠物剧情任务":
@@ -2358,7 +2367,7 @@ class PetParkPlugin(Star):
                 "宠物攻击 用户ID · 跨群挑战宠物 [群号 用户ID] · 宠物排行（本群） · 宠物神榜（全服） · 领取神榜奖励",
                 "",
                 "**🏰 副本 / 任务**（副本 10 分钟冷却）",
-                "宠物副本 · 进入副本 名称 · 深渊秘境 · 深渊介绍 · 宠物剧情任务 · 领取任务 名称 · 提交任务 名称 · 我的剧情任务 · 取消剧情任务",
+                "宠物副本 · 进入副本 名称 · 深渊秘境 · 深渊介绍 · 深渊商店 · 深渊祝福 · 宠物剧情任务 · 领取任务 名称 · 提交任务 名称 · 我的剧情任务 · 取消剧情任务",
                 "",
                 "**💕 姻缘**",
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
@@ -3756,16 +3765,31 @@ class PetParkPlugin(Star):
         # 扣除并记录
         p["energy"] -= energy_cost
         self.store.set_cooldown(player, "深渊秘境", cooldown)
-        self.store.add_abyss_corruption(player, 1)
+
+        # 读取祝福与一次性 Buff
+        blessing = self.store.get_abyss_blessing(player)
+        buffs = self.store.get_abyss_buffs(player)
+        no_corruption = blessing == "侵蚀压制" or buffs.get("no_corruption", 0) > 0
+        if no_corruption:
+            if buffs.get("no_corruption", 0) > 0:
+                self.store.consume_abyss_buff(player, "no_corruption")
+            # 侵蚀压制祝福在结算时统一清除
+        else:
+            self.store.add_abyss_corruption(player, 1)
         corruption_after = self.store.get_abyss_corruption(player)
 
-        # 抽取事件：怜悯值会提高大奖概率
+        # 经验加成倍率（祝福）
+        exp_bonus = 1.2 if blessing == "幸运之星" else 1.0
+        # 大奖概率加成（祝福）
+        blessing_jackpot_bonus = 10 if blessing == "怜悯加速" else 0
+
+        # 抽取事件：怜悯值 + 祝福会提高大奖概率
         events = list(data.ABYSS_EVENTS)
         weights = [e.get("weight", 1) for e in events]
-        bonus = pity * 0.5
+        pity_bonus = pity * 0.5
         for i, e in enumerate(events):
             if e["id"] in ("blessing", "lord"):
-                weights[i] += bonus
+                weights[i] += pity_bonus + blessing_jackpot_bonus
         event = random.choices(events, weights=weights, k=1)[0]
 
         exp_to_next = data.exp_to_next(p["level"])
@@ -3782,6 +3806,8 @@ class PetParkPlugin(Star):
             f"当前侵蚀：**{corruption}** → **{corruption_after}** 点",
             f"经验收益倍率：**{int(corruption_factor * 100)}%**",
         ]
+        if blessing:
+            lines.append(f"✨ 本次祝福：**{blessing}**")
         if pity:
             lines.append(f"深渊怜悯：**{pity}**（大奖概率提升）")
         lines.append("")
@@ -3789,13 +3815,21 @@ class PetParkPlugin(Star):
         reward_lines: list[str] = []
 
         def _add_exp(mult: float) -> int:
-            amt = max(1, int(exp_to_next * mult * corruption_factor))
+            amt = max(1, int(exp_to_next * mult * corruption_factor * exp_bonus))
             petmod.add_exp(p, amt)
             return amt
 
         def _hurt(dmg_pct: float) -> bool:
             dmg = max(1, int(p["hp_max"] * dmg_pct))
             p["hp"] = max(0, p["hp"] - dmg)
+            # 深渊回春石：死亡时自动复活
+            if petmod.is_dead(p) and self.store.consume_abyss_buff(player, "revive"):
+                p["status"] = "正常"
+                p["hp"] = max(1, int(p["hp_max"] * 0.3))
+                reward_lines.append(
+                    f"💎 深渊回春石触发，『{nick}』从死亡边缘复活！HP 恢复至 {p['hp']}/{p['hp_max']}。"
+                )
+                return False
             if petmod.is_dead(p):
                 p["status"] = "死亡"
                 p["mood"] = max(1, p.get("mood", 5) - 1)
@@ -3950,6 +3984,16 @@ class PetParkPlugin(Star):
         if next_corruption >= 15:
             lines.append("⚠️ 侵蚀已非常高，建议先休息或使用『净化药水』清理。")
 
+        # 精力回收祝福：返还 50% 精力
+        if blessing == "精力回收":
+            refund = max(1, energy_cost // 2)
+            p["energy"] = min(p["energy_max"], p["energy"] + refund)
+            lines.append(f"♻️ 『精力回收』生效，返还 {refund} 点精力。")
+
+        # 一次性祝福使用完毕
+        if blessing:
+            self.store.clear_abyss_blessing(player)
+
         return "\n".join(lines) + self._auto_level_note(player, p)
 
     def _abyss_intro(self) -> str:
@@ -3968,7 +4012,12 @@ class PetParkPlugin(Star):
             "- 每次进入都会 +1 点侵蚀\n"
             "- 侵蚀越高：经验收益越低、怪物越强、你越容易获得负面状态\n"
             "- 侵蚀每 20 分钟自然 -1，每日 0 点清零\n"
-            "- 道具商城购买『净化药水』可清除 5 点侵蚀\n"
+            "- 道具商城可用 **5000 积分** 购买『净化药水』，清除 5 点侵蚀\n"
+            "- 深渊商店可用 **5 结晶** 购买『净化药水』\n"
+            "\n"
+            "**深渊结晶用途**\n"
+            "- `深渊商店` — 用结晶购买净化药水、深渊护符、深渊回春石\n"
+            "- `深渊祝福` — 购买一次性祝福（幸运之星/侵蚀压制/怜悯加速/精力回收）\n"
             "\n"
             "**可能遇到的事件**\n"
             "- 🗡️ 深渊守卫：普通战斗\n"
@@ -3980,11 +4029,105 @@ class PetParkPlugin(Star):
             "\n"
             "**相关指令**\n"
             "- `深渊秘境` — 进入副本\n"
+            "- `深渊商店` — 结晶商店\n"
+            "- `深渊购买 商品名` — 购买商品\n"
+            "- `深渊祝福` / `深渊祝福 祝福名` — 购买/查看祝福\n"
             "- `深渊介绍` — 查看本介绍\n"
             "- `使用 净化药水` — 清除侵蚀\n"
             "- `我的信息` — 查看深渊结晶数量\n"
             "\n"
-            "> 💡 小贴士：前几次收益最高，侵蚀高了建议先休息或净化，别硬赌。"
+            "> 💡 小贴士：前几次收益最高，侵蚀高了建议先休息、净化，或买祝福压制。"
+        )
+
+    def _abyss_shop(self, player: dict) -> str:
+        """深渊结晶商店。"""
+        crystal = self.store.get_abyss_crystal(player)
+        lines = [
+            "## 🏪 深渊商店",
+            f"> 当前拥有深渊结晶：**{crystal}**",
+            "",
+            "**一次性道具**（购买后自动生效/入包）",
+            "| 商品 | 结晶 | 说明 |",
+            "|---|---|---|",
+        ]
+        for name, info in data.ABYSS_SHOP.items():
+            lines.append(f"| {name} | {info['cost']} | {info['desc']} |")
+        lines.append("")
+        lines.append("**战前祝福**（购买后下一次挑战生效）")
+        lines.append("| 祝福 | 结晶 | 说明 |")
+        lines.append("|---|---|---|")
+        for name, info in data.ABYSS_BLESSINGS.items():
+            lines.append(f"| {name} | {info['cost']} | {info['desc']} |")
+        lines.append("")
+        lines.append("> 购买方式：`深渊购买 商品名` · `深渊祝福 祝福名`"
+        )
+        return "\n".join(lines)
+
+    def _abyss_buy(self, player: dict, tokens: list[str]) -> str:
+        """用深渊结晶购买深渊商店商品。"""
+        if len(tokens) < 2:
+            return "⚠️ 用法：`深渊购买 商品名`（例如：深渊购买 净化药水）"
+        name = tokens[1]
+        if name not in data.ABYSS_SHOP:
+            return f"❌ 深渊商店没有『{name}』。发送 `深渊商店` 查看列表。"
+        info = data.ABYSS_SHOP[name]
+        cost = info["cost"]
+        crystal = self.store.get_abyss_crystal(player)
+        if crystal < cost:
+            return f"❌ 深渊结晶不足（需要 {cost}，当前 {crystal}）。"
+        self.store.add_abyss_crystal(player, -cost)
+        if info["type"] == "item":
+            self.store.add_item(player, info["give"], 1)
+            return (
+                f"✅ 花费 {cost} 深渊结晶购买『{name}』，"
+                f"已放入背包。剩余结晶 {self.store.get_abyss_crystal(player)}。"
+            )
+        if info["type"] == "buff":
+            self.store.add_abyss_buff(player, info["buff"], 1)
+            return (
+                f"✅ 花费 {cost} 深渊结晶购买『{name}』，"
+                f"下一次挑战自动生效。剩余结晶 {self.store.get_abyss_crystal(player)}。"
+            )
+        return "❌ 商品类型异常，购买失败。"
+
+    def _abyss_blessing(self, player: dict, tokens: list[str]) -> str:
+        """购买/查看深渊祝福。"""
+        crystal = self.store.get_abyss_crystal(player)
+        active = self.store.get_abyss_blessing(player)
+        if len(tokens) < 2:
+            lines = [
+                "## ✨ 深渊祝福",
+                f"> 当前结晶：**{crystal}**",
+            ]
+            if active:
+                lines.append(f"> 已购买祝福：**{active}**（下次挑战生效）")
+            else:
+                lines.append("> 当前无祝福，购买后下一次挑战生效")
+            lines.append("")
+            lines.append("| 祝福 | 结晶 | 说明 |")
+            lines.append("|---|---|---|")
+            for name, info in data.ABYSS_BLESSINGS.items():
+                lines.append(f"| {name} | {info['cost']} | {info['desc']} |")
+            lines.append("")
+            lines.append("> 用法：`深渊祝福 祝福名`")
+            return "\n".join(lines)
+        name = tokens[1]
+        if name not in data.ABYSS_BLESSINGS:
+            return f"❌ 没有『{name}』祝福。发送 `深渊祝福` 查看列表。"
+        info = data.ABYSS_BLESSINGS[name]
+        cost = info["cost"]
+        if crystal < cost:
+            return f"❌ 深渊结晶不足（需要 {cost}，当前 {crystal}）。"
+        if active and active != name:
+            return (
+                f"⚠️ 你已拥有祝福『{active}』，本次挑战会先消耗它。"
+                f"如需更换，请先发送一次 `深渊秘境` 消耗掉当前祝福。"
+            )
+        self.store.add_abyss_crystal(player, -cost)
+        self.store.set_abyss_blessing(player, name)
+        return (
+            f"✅ 花费 {cost} 深渊结晶购买祝福『{name}』，"
+            f"下一次 `深渊秘境` 自动生效。剩余结晶 {self.store.get_abyss_crystal(player)}。"
         )
 
     def _quest_list(self) -> str:

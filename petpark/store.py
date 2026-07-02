@@ -414,6 +414,8 @@ class PetStore:
         st.setdefault("crystal", player.get("abyss_crystal", 0))
         st.setdefault("last_decay", player.get("abyss_last_decay", 0))
         st.setdefault("last_reset", player.get("abyss_last_reset", ""))
+        st.setdefault("buffs", {})
+        st.setdefault("blessing", "")
         return st
 
     @classmethod
@@ -483,6 +485,38 @@ class PetStore:
     @classmethod
     def get_abyss_crystal(cls, player: dict) -> int:
         return cls.abyss_state(player).get("crystal", 0)
+
+    @classmethod
+    def get_abyss_buffs(cls, player: dict) -> dict:
+        return cls.abyss_state(player).setdefault("buffs", {})
+
+    @classmethod
+    def add_abyss_buff(cls, player: dict, key: str, count: int = 1) -> int:
+        buffs = cls.get_abyss_buffs(player)
+        buffs[key] = max(0, buffs.get(key, 0) + count)
+        return buffs[key]
+
+    @classmethod
+    def consume_abyss_buff(cls, player: dict, key: str) -> bool:
+        buffs = cls.get_abyss_buffs(player)
+        if buffs.get(key, 0) > 0:
+            buffs[key] -= 1
+            if buffs[key] <= 0:
+                buffs.pop(key, None)
+            return True
+        return False
+
+    @classmethod
+    def get_abyss_blessing(cls, player: dict) -> str:
+        return cls.abyss_state(player).get("blessing", "")
+
+    @classmethod
+    def set_abyss_blessing(cls, player: dict, name: str) -> None:
+        cls.abyss_state(player)["blessing"] = name
+
+    @classmethod
+    def clear_abyss_blessing(cls, player: dict) -> None:
+        cls.abyss_state(player)["blessing"] = ""
 
     # ----------------------------- 邀请 -----------------------------
     @staticmethod
