@@ -29,6 +29,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from . import data
+
 
 class PetStore:
     def __init__(
@@ -213,7 +215,7 @@ class PetStore:
 
     @classmethod
     def normalize_rewards(cls, rewards: dict) -> dict:
-        """清洗套餐奖励：仅保留 金币/积分/钻石 中数额 > 0 的项。"""
+        """清洗货币奖励：仅保留 金币/积分/钻石 中数额 > 0 的项。"""
         out: dict[str, int] = {}
         for cur, amt in (rewards or {}).items():
             if cur in cls.CURRENCY_KEYS:
@@ -225,14 +227,37 @@ class PetStore:
                     out[cur] = n
         return out
 
+    @classmethod
+    def normalize_items(cls, items: dict) -> dict:
+        """清洗道具奖励：仅保留系统中存在且数量 > 0 的项。"""
+        out: dict[str, int] = {}
+        valid = set(getattr(data, "ITEMS", {}))
+        for name, cnt in (items or {}).items():
+            if name not in valid:
+                continue
+            try:
+                n = int(cnt)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                out[name] = n
+        return out
+
     @staticmethod
     def card_rewards(card: dict) -> dict:
-        """读取卡密奖励，兼容旧版单一货币格式 {currency, amount}。"""
+        """读取卡密货币奖励，兼容旧版单一货币格式 {currency, amount}。"""
         if isinstance(card.get("rewards"), dict):
             return {k: int(v) for k, v in card["rewards"].items() if int(v) > 0}
         cur = card.get("currency")
         amt = int(card.get("amount", 0) or 0)
         return {cur: amt} if cur and amt > 0 else {}
+
+    @staticmethod
+    def card_items(card: dict) -> dict:
+        """读取卡密道具奖励。"""
+        if isinstance(card.get("items"), dict):
+            return {k: int(v) for k, v in card["items"].items() if int(v) > 0}
+        return {}
 
     def create_cards(
         self, currency: str, amount: int, count: int = 1, prefix: str = ""
@@ -240,51 +265,59 @@ class PetStore:
         """批量生成单一货币卡密（向后兼容）。currency ∈ {金币, 积分, 钻石}。"""
         if currency not in self.CURRENCY_KEYS:
             raise ValueError("货币类型必须为 金币 / 积分 / 钻石")
-        return self.create_combo_cards({currency: int(amount)}, count, prefix)
+        return self.create_combo_cards({currency: int(amount)}, count=count, prefix=prefix)
 
     def create_combo_cards(
-        self, rewards: dict, count: int = 1, prefix: str = ""
+        self, rewards: dict, items: Optional[dict] = None, count: int = 1, prefix: str = ""
     ) -> list[str]:
-        """批量生成套餐卡密：一张卡密可同时含 金币/积分/钻石 多种奖励。"""
+        """批量生成套餐卡密：可同时含 金币/积分/钻石 以及系统道具。"""
         rewards = self.normalize_rewards(rewards)
-        if not rewards:
-            raise ValueError("请至少为 金币 / 积分 / 钻石 中的一项填写正数面额")
+        items = self.normalize_items(items)
+        if not rewards and not items:
+            raise ValueError("请至少填写 金币/积分/钻石 中的一项，或选择一种道具及数量")
         count = max(1, int(count))
         cards = self.cards()
         created: list[str] = []
         now = int(time.time())
         for _ in range(count):
             code = self.gen_card_code(prefix)
-            cards[code] = {
-                "rewards": dict(rewards),
+            card: dict[str, Any] = {
                 "used": False,
                 "used_by": None,
                 "used_at": None,
                 "created_at": now,
             }
+            if rewards:
+                card["rewards"] = dict(rewards)
+            if items:
+                card["items"] = dict(items)
+            cards[code] = card
             created.append(code)
         return created
 
     def redeem_card(self, code: str, player: dict, used_by: str):
-        """兑换卡密：成功返回 (rewards字典, None)，失败返回 (None, 原因)。"""
+        """兑换卡密：成功返回 (货币奖励字典, 道具奖励字典, None)，失败返回 (None, None, 原因)。"""
         code = str(code).strip().upper()
         cards = self.cards()
         card = cards.get(code)
         if card is None:
-            return None, "卡密不存在或输入有误"
+            return None, None, "卡密不存在或输入有误"
         if int(card.get("auth_days", 0) or 0) > 0:
-            return None, "这是群授权卡，请用『授权 卡密』兑换"
+            return None, None, "这是群授权卡，请用『授权 卡密』兑换"
         if card.get("used"):
-            return None, "该卡密已被使用"
+            return None, None, "该卡密已被使用"
         rewards = self.card_rewards(card)
-        if not rewards:
-            return None, "该卡密无有效奖励"
+        items = self.card_items(card)
+        if not rewards and not items:
+            return None, None, "该卡密无有效奖励"
         card["used"] = True
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
         for cur, amt in rewards.items():
             self.add_currency(player, cur, int(amt))
-        return rewards, None
+        for name, cnt in items.items():
+            self.add_item(player, name, int(cnt))
+        return rewards, items, None
 
     def create_auth_cards(
         self, days: int, count: int = 1, prefix: str = ""

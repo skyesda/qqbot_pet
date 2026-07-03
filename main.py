@@ -2062,19 +2062,20 @@ class PetParkPlugin(Star):
             return "⚠️ 用法：`兑换 卡密`（例如：兑换 ABCD23XY...）"
         code = tokens[1].strip()
         used_by = self.store.make_key(group_id, qq)
-        rewards, err = self.store.redeem_card(code, player, used_by)
-        if rewards is None:
+        rewards, items, err = self.store.redeem_card(code, player, used_by)
+        if rewards is None and items is None:
             return f"❌ 兑换失败：{err}"
         lines = [
             "## 🎉 兑换成功",
             "━━━━━━━━━━━━━━",
             f"🎟 **卡密**　`{code.upper()}`",
         ]
-        for cur, amt in rewards.items():
+        for cur, amt in (rewards or {}).items():
             lines.append(f"✅ **获得**　{cur} +{amt}")
-        lines.append("━━━━━━━━━━━━━━")
-        for cur in rewards:
             lines.append(f"💼 **当前{cur}**　{self.store.get_currency(player, cur)}")
+        for name, cnt in (items or {}).items():
+            lines.append(f"📦 **获得道具**　{name} ×{cnt}")
+        lines.append("━━━━━━━━━━━━━━")
         return "\n".join(lines)
 
     def _pay_link(self) -> str:
@@ -2085,7 +2086,7 @@ class PetParkPlugin(Star):
             "📌 **购买后请复制卡密，然后在本群发送**：\n"
             "```\n兑换 你的卡密\n```\n"
             "例如：`兑换 ABCD1234EFGH`\n\n"
-            "卡密可兑换金币、积分、钻石等，具体以商品说明为准。"
+            "卡密可兑换金币、积分、钻石或系统道具，具体以商品说明为准。"
         )
 
     def _admin_adjust(

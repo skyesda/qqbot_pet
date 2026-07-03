@@ -212,8 +212,12 @@ class WebAdmin:
                 if not isinstance(rewards, dict):
                     # 兼容旧版单一货币入参
                     rewards = {body.get("currency", ""): body.get("amount", 0)}
+                items = body.get("items")
+                if not isinstance(items, dict):
+                    items = None
                 codes = self.store.create_combo_cards(
                     rewards=rewards,
+                    items=items,
                     count=int(body.get("count", 1)),
                     prefix=body.get("prefix", ""),
                 )
@@ -357,11 +361,13 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <main>
 <div id="cardgen" style="display:none">
 <div class="cards-stat" id="cardstats"></div>
-<div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合（金币+钻石、金币+积分、三种一起…）。空或 0 表示不含该项。<b>填写「授权天数」则生成群授权卡（忽略货币）。</b></div>
+<div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合（金币+钻石、金币+道具、纯道具…）。空或 0 表示不含该项。<b>填写「授权天数」则生成群授权卡（忽略货币/道具）。</b></div>
 <div class="bar">
 <input id="amt_coin" type="number" placeholder="金币面额" style="width:120px">
 <input id="amt_jifen" type="number" placeholder="积分面额" style="width:120px">
 <input id="amt_diamond" type="number" placeholder="钻石面额" style="width:120px">
+<input id="amt_item" list="itemlist" placeholder="道具名（可选）" style="width:140px">
+<input id="amt_item_count" type="number" placeholder="数量" value="1" style="width:80px">
 <input id="amt_authdays" type="number" placeholder="授权天数(群授权卡)" style="width:160px">
 <input id="cnt" type="number" placeholder="数量" value="10" style="width:80px">
 <input id="pre" placeholder="前缀(可选,如VIP)" style="width:130px">
@@ -456,14 +462,28 @@ function cardRewards(v){
  if(v.currency&&v.amount)return {[v.currency]:v.amount};
  return {};
 }
+function cardItems(v){
+ if(v.items&&typeof v.items==='object')return v.items;
+ return {};
+}
 function rewardsHtml(r){
  const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(`<span class="${CUR_CLS[c]}">${c} +${r[c]}</span>`);
+ return parts.length?parts.join(' ＋ '):'';
+}
+function itemsHtml(items){
+ const parts=[];for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(`<span class="muted">📦 ${name} ×${cnt}</span>`);
+ return parts.join(' ＋ ');
+}
+function packageHtml(v){
+ const r=rewardsHtml(cardRewards(v));
+ const i=itemsHtml(cardItems(v));
+ const parts=[];if(r)parts.push(r);if(i)parts.push(i);
  return parts.length?parts.join(' ＋ '):'<span class="muted">—</span>';
 }
 function cardContentHtml(v){
  const days=+(v.auth_days||0);
  if(days>0)return `<span class="diamond">🔐 群授权 ${days} 天</span>`;
- return rewardsHtml(cardRewards(v));
+ return packageHtml(v);
 }
 function renderCards(){
  let total=0,used=0;
@@ -815,8 +835,12 @@ async function genCards(){
  }else{
   const rewards={};const c=+g('amt_coin').value||0,j=+g('amt_jifen').value||0,d=+g('amt_diamond').value||0;
   if(c>0)rewards['金币']=c;if(j>0)rewards['积分']=j;if(d>0)rewards['钻石']=d;
-  if(!Object.keys(rewards).length){alert('请填写金币/积分/钻石面额，或填写授权天数生成群授权卡');return;}
-  payload={rewards:rewards,count:+g('cnt').value,prefix:g('pre').value};
+  const itemName=g('amt_item').value.trim();
+  const itemCount=+g('amt_item_count').value||0;
+  const items={};
+  if(itemName&&itemCount>0)items[itemName]=itemCount;
+  if(!Object.keys(rewards).length&&!Object.keys(items).length){alert('请填写金币/积分/钻石面额，或选择道具及数量，或填写授权天数生成群授权卡');return;}
+  payload={rewards:rewards,items:items,count:+g('cnt').value,prefix:g('pre').value};
  }
  const r=await api('/api/cards/generate',payload);
  if(!r.ok){alert(r.msg||'生成失败');return;}
@@ -824,7 +848,7 @@ async function genCards(){
  load();
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天';}else{const r=cardRewards(v);pkg=['金币','积分','钻石'].filter(c=>r[c]).map(c=>c+'+'+r[c]).join('/');}lines.push(`${k}\\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天';}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(c+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }
