@@ -322,6 +322,7 @@ class PlayerPortal:
         code = str(body.get("code", "")).strip()
         nickname = str(body.get("nickname", "")).strip() or "神秘训练家"
         show_qq = str(body.get("show_qq", "")).strip() or (account.get("qq") if account else sess.get("aid", ""))
+        logger.info(f"[petpark] 收到定制解锁请求 group={group_id} qq={qq} code={code}")
         if not group_id or not qq or not code:
             return web.json_response({"ok": False, "msg": "参数不完整"})
         owner = self.store.account_for_pet(group_id, qq)
@@ -335,8 +336,8 @@ class PlayerPortal:
         if err:
             return web.json_response({"ok": False, "msg": err})
         await self.store.save()
-        # 全授权群通报
-        broadcast_result = None
+        # 全授权群通报（异步后台执行，不阻塞 HTTP 响应）
+        broadcast_submitted = False
         if self.broadcast_callback:
             try:
                 pet_nick = pet.get("nickname", "宠物") if pet else "宠物"
@@ -353,27 +354,27 @@ class PlayerPortal:
                 logger.info(f"[petpark] 准备发送定制解锁全服广播，训练家：{nickname}，宠物：{pet_nick}")
                 task = self.broadcast_callback(text)
                 if task:
-                    try:
-                        broadcast_result = await asyncio.wait_for(task, timeout=10)
-                        logger.info(f"[petpark] 定制解锁全服广播结果：{broadcast_result}")
-                    except asyncio.TimeoutError:
-                        logger.warning("[petpark] 定制解锁全服广播等待超时")
-                        broadcast_result = {"timeout": True}
-                    except Exception as e:
-                        logger.exception(f"[petpark] 定制解锁广播任务异常：{e}")
-                        broadcast_result = {"error": str(e)}
+                    def _log_broadcast(t):
+                        try:
+                            result = t.result()
+                            logger.info(f"[petpark] 定制解锁全服广播结果：{result}")
+                        except Exception as e:
+                            logger.exception(f"[petpark] 定制解锁广播任务异常：{e}")
+                    task.add_done_callback(_log_broadcast)
+                    broadcast_submitted = True
+                    logger.info("[petpark] 定制解锁全服广播已提交后台执行")
                 else:
                     logger.warning("[petpark] broadcast_callback 未返回广播任务")
-                    broadcast_result = {"error": "broadcast_callback returned None"}
-                logger.info("[petpark] 定制解锁全服广播已提交")
             except Exception as e:
                 logger.exception(f"[petpark] 定制解锁广播失败：{e}")
-                broadcast_result = {"error": str(e)}
         else:
             logger.warning("[petpark] 未配置 broadcast_callback，无法发送定制解锁广播")
-        resp = {"ok": True, "msg": "定制权限已解锁", "pet": self._format_pet(player, group_id, qq)}
-        if broadcast_result is not None:
-            resp["broadcast"] = broadcast_result
+        resp = {
+            "ok": True,
+            "msg": "定制权限已解锁" + ("，全服祝贺已发送" if broadcast_submitted else ""),
+            "pet": self._format_pet(player, group_id, qq),
+            "broadcast_submitted": broadcast_submitted,
+        }
         return web.json_response(resp)
 
     async def _api_custom_submit(self, request: web.Request) -> web.Response:
