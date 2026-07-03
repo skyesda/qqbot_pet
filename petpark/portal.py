@@ -175,7 +175,7 @@ class PlayerPortal:
         sess = self._current_session(request)
         csrf = sess.get("csrf") if sess else secrets.token_urlsafe(24)
         html = _PORTAL_HTML.replace("{{CSRF_TOKEN}}", csrf)
-        response = web.Response(text=html, content_type="text/html; charset=utf-8")
+        response = web.Response(text=html, content_type="text/html")
         if sess:
             # 刷新 Cookie 过期时间
             self._set_session(response, sess["aid"], csrf)
