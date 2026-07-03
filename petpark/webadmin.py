@@ -61,10 +61,10 @@ class WebAdmin:
         app.router.add_post("/api/portal_accounts/reset_password", self._api_portal_reset_password)
         app.router.add_post("/api/portal_accounts/delete", self._api_portal_delete_account)
         app.router.add_post("/api/portal_accounts/unbind", self._api_portal_unbind)
-        app.router.add_get("/api/custom_reviews", self._api_custom_reviews)
+        app.router.add_post("/api/custom_reviews", self._api_custom_reviews)
         app.router.add_post("/api/custom_reviews/approve", self._api_custom_review_approve)
         app.router.add_post("/api/custom_reviews/reject", self._api_custom_review_reject)
-        app.router.add_get("/api/custom_pets", self._api_custom_pets)
+        app.router.add_post("/api/custom_pets", self._api_custom_pets)
         app.router.add_post("/api/custom_pets/cancel", self._api_custom_pet_cancel)
 
         portal = PlayerPortal(self.store, broadcast_callback=self._broadcast_callback)
@@ -248,7 +248,8 @@ class WebAdmin:
 
     async def _api_custom_reviews(self, request):
         self._require(request)
-        status = request.query.get("status", "")
+        body = await request.json()
+        status = body.get("status", "")
         reviews = list(self.store.custom_reviews().values())
         if status:
             reviews = [r for r in reviews if r.get("status") == status]
