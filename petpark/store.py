@@ -63,6 +63,9 @@ class PetStore:
         self._data.setdefault("players", {})
         self._data.setdefault("groups", {})
         self._data.setdefault("cards", {})
+        self._data.setdefault("events", {})
+        self._data.setdefault("accounts", {})
+        self._data.setdefault("portal_secret", "".join(random.choices("abcdef0123456789", k=32)))
         self._migrate_group_keys()
 
     @staticmethod
@@ -559,6 +562,81 @@ class PetStore:
         inviter.setdefault("invited_users", []).append(
             {"qq": str(invitee.get("qq", "")), "at": int(time.time())}
         )
+
+    # ----------------------------- 玩家门户账号 -----------------------------
+    def portal_secret(self) -> str:
+        """用于签名门户会话 Cookie 的密钥，首次自动随机生成。"""
+        secret = self._data.get("portal_secret")
+        if not secret:
+            secret = "".join(random.choices("abcdef0123456789", k=32))
+            self._data["portal_secret"] = secret
+        return secret
+
+    def accounts(self) -> dict:
+        return self._data.setdefault("accounts", {})
+
+    def get_account(self, account_id: str) -> Optional[dict]:
+        return self.accounts().get(str(account_id))
+
+    def get_account_by_qq(self, qq: str) -> Optional[dict]:
+        qq = str(qq)
+        for acc in self.accounts().values():
+            if acc.get("qq") == qq:
+                return acc
+        return None
+
+    def create_account(self, qq: str, password_hash: str, salt: str) -> dict:
+        """创建门户账号。调用方需确保 QQ 未被注册。"""
+        qq = str(qq)
+        account_id = self.gen_card_code("U")  # 复用卡密生成器产生随机 ID
+        account = {
+            "id": account_id,
+            "qq": qq,
+            "password_hash": password_hash,
+            "salt": salt,
+            "bound_pets": [],  # [{group, qq, nick?}]
+            "created_at": int(time.time()),
+            "last_login": None,
+        }
+        self.accounts()[account_id] = account
+        return account
+
+    def account_for_pet(self, group_id: str, qq: str) -> Optional[str]:
+        """查询某个群+QQ 的宠物已被绑定到哪个账号 ID。"""
+        target = {"group": str(group_id), "qq": str(qq)}
+        for acc_id, acc in self.accounts().items():
+            for bp in acc.get("bound_pets", []):
+                if bp.get("group") == target["group"] and bp.get("qq") == target["qq"]:
+                    return acc_id
+        return None
+
+    def bind_pet_to_account(
+        self, account_id: str, group_id: str, qq: str
+    ) -> tuple[bool, str]:
+        """绑定宠物到账号。返回 (是否成功, 提示)。"""
+        account = self.get_account(account_id)
+        if not account:
+            return False, "账号不存在"
+        group_id, qq = str(group_id), str(qq)
+        key = self.make_key(group_id, qq)
+        if key not in self._data.get("players", {}):
+            return False, "该群聊与用户 ID 下不存在宠物"
+        existing = self.account_for_pet(group_id, qq)
+        if existing and existing != account_id:
+            return False, "该宠物已被其他账号绑定"
+        bound = account.setdefault("bound_pets", [])
+        for bp in bound:
+            if bp.get("group") == group_id and bp.get("qq") == qq:
+                return True, "已经绑定过该宠物"
+        player = self._data["players"][key]
+        pet = player.get("pet") or {}
+        bound.append({
+            "group": group_id,
+            "qq": qq,
+            "nickname": pet.get("nickname", "未命名"),
+            "species": pet.get("species", "未知"),
+        })
+        return True, "绑定成功"
 
     @staticmethod
     def get_invited_users(player: dict) -> list[dict]:

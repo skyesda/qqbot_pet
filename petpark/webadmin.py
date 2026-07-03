@@ -17,6 +17,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from .portal import PlayerPortal
+
 COOKIE = "pp_session"
 TABLES = ("players", "groups", "cards", "events")
 
@@ -55,6 +57,9 @@ class WebAdmin:
         app.router.add_post("/api/delete", self._api_delete)
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
         app.router.add_post("/api/boss_respawn", self._api_boss_respawn)
+
+        portal = PlayerPortal(self.store)
+        portal.setup(app)
 
         runner = web.AppRunner(app)
         await runner.setup()
