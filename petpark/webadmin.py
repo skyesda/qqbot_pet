@@ -57,6 +57,10 @@ class WebAdmin:
         app.router.add_post("/api/delete", self._api_delete)
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
         app.router.add_post("/api/boss_respawn", self._api_boss_respawn)
+        app.router.add_get("/api/portal_accounts", self._api_portal_accounts)
+        app.router.add_post("/api/portal_accounts/reset_password", self._api_portal_reset_password)
+        app.router.add_post("/api/portal_accounts/delete", self._api_portal_delete_account)
+        app.router.add_post("/api/portal_accounts/unbind", self._api_portal_unbind)
 
         portal = PlayerPortal(self.store)
         portal.setup(app)
@@ -283,6 +287,67 @@ class WebAdmin:
                 logger.exception("[petpark] 后台复活 Boss 广播失败")
         return self._json({"ok": True, "msg": f"Boss {bname} 已复活并全服播报"})
 
+    # --------------------------- 网页账号管理 ---------------------------
+    async def _api_portal_accounts(self, request):
+        self._require(request)
+        accounts = self.store.accounts()
+        data = []
+        for aid, acc in accounts.items():
+            data.append(
+                {
+                    "id": aid,
+                    "qq": acc.get("qq"),
+                    "created_at": acc.get("created_at"),
+                    "last_login": acc.get("last_login"),
+                    "bound_pets": acc.get("bound_pets", []),
+                }
+            )
+        return self._json({"ok": True, "data": data})
+
+    async def _api_portal_reset_password(self, request):
+        self._require(request)
+        body = await request.json()
+        aid = str(body.get("account_id", "")).strip()
+        new_pwd = str(body.get("new_password", ""))
+        if len(new_pwd) < 6:
+            return self._json({"ok": False, "msg": "密码长度至少 6 位"})
+        acc = self.store.get_account(aid)
+        if not acc:
+            return self._json({"ok": False, "msg": "账号不存在"})
+        salt = PlayerPortal._make_salt()
+        acc["password_hash"] = PlayerPortal._hash_password(new_pwd, salt)
+        acc["salt"] = salt
+        await self.store.save()
+        return self._json({"ok": True, "msg": "密码已重置"})
+
+    async def _api_portal_delete_account(self, request):
+        self._require(request)
+        body = await request.json()
+        aid = str(body.get("account_id", "")).strip()
+        accounts = self.store.accounts()
+        if aid in accounts:
+            del accounts[aid]
+            await self.store.save()
+        return self._json({"ok": True})
+
+    async def _api_portal_unbind(self, request):
+        self._require(request)
+        body = await request.json()
+        aid = str(body.get("account_id", "")).strip()
+        group = str(body.get("group", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        acc = self.store.get_account(aid)
+        if not acc:
+            return self._json({"ok": False, "msg": "账号不存在"})
+        bound = acc.get("bound_pets", [])
+        acc["bound_pets"] = [
+            bp
+            for bp in bound
+            if not (bp.get("group") == group and bp.get("qq") == qq)
+        ]
+        await self.store.save()
+        return self._json({"ok": True})
+
 
 LOGIN_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -362,6 +427,7 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <button data-t="groups" onclick="tab('groups')">群设置</button>
 <button data-t="cards" onclick="tab('cards')">卡密</button>
 <button data-t="events" onclick="tab('events')">活动</button>
+<button data-t="portal_accounts" onclick="tab('portal_accounts')">网页账号</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -382,7 +448,7 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <div id="genout" class="muted" style="margin-bottom:8px"></div>
 </div>
 <div class="bar">
-<button class="act" onclick="addRow()">＋ 新增</button>
+<button class="act" id="addBtn" onclick="addRow()">＋ 新增</button>
 <input id="q" placeholder="搜索…" oninput="render()" style="flex:1;min-width:160px">
 <button class="ghost act" onclick="load()">刷新</button>
 <span class="muted" id="count"></span>
@@ -401,8 +467,69 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <button class="act ghost" onclick="closeModal()">取消</button>
 <button class="act" onclick="saveRow()">保存</button>
 </div></div></div>
+<div class="modal" id="pamodal"><div class="card">
+<h3 id="patitle">网页账号详情</h3>
+<div id="pabody"></div>
+<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
+<button class="act ghost" onclick="closePaModal()">关闭</button>
+</div>
+</div></div>
 <script>
 let cur='players', cache={}, editKey=null, META={};
+let paCache=[];
+
+async function loadPortalAccounts(){
+ const r=await (await fetch('/api/portal_accounts')).json();
+ paCache=r.data||[];
+ renderPortalAccounts();
+}
+function renderPortalAccounts(){
+ const q=(document.getElementById('q').value||'').toLowerCase();
+ let rows='';
+ for(const a of paCache){
+  if(q && !a.id.toLowerCase().includes(q) && !String(a.qq).toLowerCase().includes(q)) continue;
+  rows+=`<tr>
+   <td class="k">${esc(a.id)}</td>
+   <td class="num">${esc(a.qq||'')}</td>
+   <td class="num">${(a.bound_pets||[]).length}</td>
+   <td class="muted">${fdate(a.last_login)}</td>
+   <td class="muted">${fdate(a.created_at)}</td>
+   <td style="white-space:nowrap"><button class="act" onclick='paDetail(${tj(a.id)})'>查看</button> <button class="act" onclick='paResetPwd(${tj(a.id)})'>重置密码</button> <button class="act del" onclick='paDelete(${tj(a.id)})'>删除</button></td>
+  </tr>`;
+ }
+ document.getElementById('count').textContent='共 '+paCache.length+' 个账号';
+ document.getElementById('extrawrap').innerHTML='';
+ document.getElementById('tablewrap').innerHTML = rows
+   ? `<table><thead><tr><th>ID</th><th>QQ</th><th>绑定宠物</th><th>最后登录</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+   : `<div class="empty">暂无网页账号</div>`;
+}
+function paDetail(aid){
+ const a=paCache.find(x=>x.id===aid); if(!a) return;
+ let pets='';
+ for(const p of (a.bound_pets||[])){
+  pets+=`<div class="row" style="align-items:center;margin:6px 0;padding:8px;border:1px solid #334155;border-radius:8px">
+   <div style="flex:1"><div class="muted">群号 / 用户ID</div>${esc(p.group||'')} / ${esc(p.qq||'')}</div>
+   <div style="flex:1"><div class="muted">宠物</div>${esc(p.nickname||'未命名')} · ${esc(p.species||'未知')}</div>
+   <div><button class="act del" onclick='paUnbind(${tj(aid)},${tj(p.group)},${tj(p.qq)})'>解绑</button></div>
+  </div>`;
+ }
+ if(!pets) pets='<div class="muted">未绑定任何宠物</div>';
+ g('patitle').textContent='账号详情：'+esc(a.qq||a.id);
+ g('pabody').innerHTML=`
+  <div class="row"><div><label class="fld">ID</label><input readonly value="${esc(a.id)}"></div><div><label class="fld">QQ</label><input readonly value="${esc(a.qq||'')}"></div></div>
+  <div class="sec">已绑定宠物</div>${pets}`;
+ g('pamodal').style.display='flex';
+}
+function closePaModal(){ g('pamodal').style.display='none'; }
+async function paResetPwd(aid){
+ const pwd=prompt('请输入新密码（至少6位）：'); if(!pwd) return;
+ if(pwd.length<6){ alert('密码长度至少 6 位'); return; }
+ const r=await api('/api/portal_accounts/reset_password',{account_id:aid,new_password:pwd});
+ alert(r.ok?(r.msg||'重置成功'):(r.msg||'重置失败'));
+}
+async function paDelete(aid){ if(!confirm('确认删除账号 '+aid+'？绑定关系也会清空。')) return; await api('/api/portal_accounts/delete',{account_id:aid}); loadPortalAccounts(); }
+async function paUnbind(aid,group,qq){ if(!confirm(`确认解绑 ${group} / ${qq}？`)) return; await api('/api/portal_accounts/unbind',{account_id:aid,group, qq}); loadPortalAccounts(); paDetail(aid); }
+
 const PET_FIELDS=[
  ['nickname','昵称','text'],['species','种类','sel','species'],
  ['quality','品质','sel','qualities'],['element','元素','sel','elements'],
@@ -419,9 +546,15 @@ const PET_DEF={nickname:'宝宝',species:'幼龙',quality:'普通',element:'金'
 async function loadMeta(){try{const r=await api('/api/meta',{});META=r.data||{};}catch(e){META={};}}
 function escA(s){return esc(s).replace(/"/g,'&quot;');}
 function optHtml(list,val,empty){let h='';const L=(list||[]).map(String);if(empty!==undefined)h+=`<option value="">${esc(empty)}</option>`;for(const o of L)h+=`<option ${String(o)===String(val)?'selected':''}>${esc(o)}</option>`;if(val!==undefined&&val!==null&&val!==''&&!L.includes(String(val)))h+=`<option selected>${esc(val)}</option>`;return h;}
-function tab(t){cur=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';load();}
+function tab(t){
+ cur=t;
+ document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
+ document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts')?'none':'';
+ if(t==='portal_accounts') loadPortalAccounts(); else load();
+}
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -430,6 +563,7 @@ function render(){
  if(cur==='players')renderPlayers();
  else if(cur==='groups')renderGroups();
  else if(cur==='events')renderEvents();
+ else if(cur==='portal_accounts')renderPortalAccounts();
  else renderCards();
 }
 function shell(head,rows,cols){

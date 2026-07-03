@@ -403,6 +403,17 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 .bind-row{display:flex;flex-wrap:wrap;gap:8px}
 .bind-row input{flex:1 1 120px;min-width:0}
 .bind-row button{flex:0 0 auto}
+.bind-help{margin-top:8px;font-size:12px;color:var(--muted);line-height:1.5}
+.bind-open{text-align:center;margin-top:14px}
+
+/* 弹窗 */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+.modal.show{display:flex}
+.modal .sheet{background:linear-gradient(145deg,#181818,#0d0d0d);border:1px solid rgba(255,176,0,.25);border-radius:18px;padding:22px;width:min(440px,100%);box-shadow:0 24px 70px rgba(0,0,0,.85)}
+.modal .sheet h3{color:var(--amber);margin:0 0 14px}
+.modal .sheet .bind-row{margin-bottom:10px}
+.modal .sheet .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
+.pet-source{margin-top:12px;text-align:center;color:var(--muted);font-size:12px;word-break:break-all}
 
 /* 动画 */
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -424,6 +435,20 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
     <div class="screen-wrap">
       <div id="screen" class="screen on">
         <noscript>请启用 JavaScript 以使用玩家中心。</noscript>
+      </div>
+    </div>
+  </div>
+  <div class="modal" id="bindModal">
+    <div class="sheet">
+      <h3>＋ 绑定新宠物</h3>
+      <div class="bind-row">
+        <input id="bindGroup" type="text" placeholder="群号">
+        <input id="bindQQ" type="text" inputmode="numeric" placeholder="绑定用户ID">
+      </div>
+      <p class="bind-help">输入你在群内使用宠物乐园的群号和用户 ID，即可查看该群宠物。</p>
+      <div class="actions">
+        <button class="ghost" onclick="closeBindModal()">取消</button>
+        <button id="bindBtn">绑定</button>
       </div>
     </div>
   </div>
@@ -522,26 +547,28 @@ function renderDashboard(){
       </div>
       <div class="pet-selector">${chips || '<span class="muted">暂无绑定宠物</span>'}</div>
       <div id="main"></div>
-      <div class="bind-box">
-        <h3>＋ 绑定新宠物</h3>
-        <div class="bind-row">
-          <input id="bindGroup" type="text" placeholder="群号">
-          <input id="bindQQ" type="text" inputmode="numeric" placeholder="绑定用户ID">
-          <button id="bindBtn">绑定</button>
-        </div>
-        <p class="muted" style="margin:8px 0 0">输入你在群内使用宠物乐园的群号和用户 ID，即可查看该群宠物。</p>
+      <div class="bind-open">
+        <button id="openBindBtn" style="padding:12px 22px">＋ 绑定新宠物</button>
+        <p class="muted" style="margin:8px 0 0">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
       </div>
     </div>`;
   document.querySelectorAll('.pet-chip').forEach(c=>c.onclick=()=>loadPet(state.pets[+c.dataset.idx]));
   document.getElementById('logoutBtn').onclick = async ()=>{ await api('/api/portal/logout','POST'); viewLogin(); };
-  document.getElementById('bindBtn').onclick = async ()=>{
-    const g = document.getElementById('bindGroup').value.trim();
-    const q = document.getElementById('bindQQ').value.trim();
-    const r = await api('/api/portal/bind','POST',{group_id:g, qq:q});
-    if(r && r.ok){ msg(r.msg,'ok'); await initDashboard(); }
-    else { msg((r&&r.msg)||'绑定失败'); }
-  };
+  document.getElementById('openBindBtn').onclick = openBindModal;
 }
+
+function openBindModal(){ document.getElementById('bindModal').classList.add('show'); }
+function closeBindModal(){ document.getElementById('bindModal').classList.remove('show'); }
+
+document.getElementById('bindBtn').onclick = async ()=>{
+  const g = document.getElementById('bindGroup').value.trim();
+  const q = document.getElementById('bindQQ').value.trim();
+  if(!g || !q){ msg('群号和用户 ID 不能为空'); return; }
+  const r = await api('/api/portal/bind','POST',{group_id:g, qq:q});
+  if(r && r.ok){ msg(r.msg,'ok'); closeBindModal(); document.getElementById('bindGroup').value=''; document.getElementById('bindQQ').value=''; await initDashboard(); }
+  else { msg((r&&r.msg)||'绑定失败'); }
+};
+document.getElementById('bindModal').onclick = e=>{ if(e.target.id==='bindModal') closeBindModal(); };
 
 async function loadPet(petMeta){
   state.current = petMeta;
@@ -593,7 +620,8 @@ function renderPet(container, d){
       <div class="coin"><div class="label">深渊结晶</div><div class="value">${fmt(d.abyss.crystal||0)}</div></div>
     </div>
     <h3>背包</h3>
-    <div class="bag">${bag}</div>`;
+    <div class="bag">${bag}</div>
+    <div class="pet-source">群号：${esc(d.group_id)} &nbsp;|&nbsp; 用户ID：${esc(d.qq)}</div>`;
 }
 
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
