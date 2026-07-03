@@ -696,7 +696,7 @@ class PetStore:
         card["used"] = True
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
-        return pet, "宠物定制权限已解锁，品质已晋升为【混沌】"
+        return pet, None
 
     def unlock_pet_custom(self, player: dict) -> tuple[bool, str]:
         """直接为当前宠物解锁定制权限（内部/测试用）。"""
