@@ -313,69 +313,83 @@ class PlayerPortal:
         return web.json_response({"ok": True, **self._player_summary(group_id, qq)})
 
     async def _api_custom_redeem(self, request: web.Request) -> web.Response:
-        self._check_csrf(request)
-        sess = self._require_session(request)
-        account = self.store.get_account(sess.get("aid", ""))
-        body = await request.json()
-        group_id = str(body.get("group_id", "")).strip()
-        qq = str(body.get("qq", "")).strip()
-        code = str(body.get("code", "")).strip()
-        nickname = str(body.get("nickname", "")).strip() or "神秘训练家"
-        show_qq = str(body.get("show_qq", "")).strip() or (account.get("qq") if account else sess.get("aid", ""))
-        logger.info(f"[petpark] 收到定制解锁请求 group={group_id} qq={qq} code={code}")
-        if not group_id or not qq or not code:
-            return web.json_response({"ok": False, "msg": "参数不完整"})
-        owner = self.store.account_for_pet(group_id, qq)
-        if owner != sess.get("aid"):
-            raise web.HTTPForbidden(text="你没有绑定该宠物")
-        key = self.store.make_key(group_id, qq)
-        player = self.store._data["players"].get(key)
-        if not player:
-            return web.json_response({"ok": False, "msg": "未找到该宠物"})
-        pet, err = self.store.redeem_custom_card(code, player, sess.get("aid"))
-        if err:
-            return web.json_response({"ok": False, "msg": err})
-        await self.store.save()
-        # 全授权群通报（异步后台执行，不阻塞 HTTP 响应）
-        broadcast_submitted = False
-        if self.broadcast_callback:
-            try:
-                pet_nick = pet.get("nickname", "宠物") if pet else "宠物"
-                species = pet.get("custom_species_name") or pet.get("species", "神秘生物") if pet else "神秘生物"
-                text = (
-                    "🎉 **全服贺电！宠物乐园迎来全新混沌定制大师！** 🎉\n\n"
-                    f"👑 尊贵的训练家 **{nickname}**（QQ：{show_qq}）\n"
-                    f"为心爱的 **{pet_nick}** 解锁了【混沌定制】权限！\n\n"
-                    f"✨ **{pet_nick}** 已褪去凡躯，化身为独一无二的 **{species}**，\n"
-                    "品质晋升为【混沌】，傲视群宠，闪耀全服！\n\n"
-                    "💎 这是实力与热爱的象征，让我们共同祝贺这位大师登上宠物乐园的巅峰！\n"
-                    "🚀 各位训练家也快去努力，打造属于自己的专属传奇宠物吧！"
-                )
-                logger.info(f"[petpark] 准备发送定制解锁全服广播，训练家：{nickname}，宠物：{pet_nick}")
-                task = self.broadcast_callback(text)
-                if task:
-                    def _log_broadcast(t):
-                        try:
-                            result = t.result()
-                            logger.info(f"[petpark] 定制解锁全服广播结果：{result}")
-                        except Exception as e:
-                            logger.exception(f"[petpark] 定制解锁广播任务异常：{e}")
-                    task.add_done_callback(_log_broadcast)
-                    broadcast_submitted = True
-                    logger.info("[petpark] 定制解锁全服广播已提交后台执行")
-                else:
-                    logger.warning("[petpark] broadcast_callback 未返回广播任务")
-            except Exception as e:
-                logger.exception(f"[petpark] 定制解锁广播失败：{e}")
-        else:
-            logger.warning("[petpark] 未配置 broadcast_callback，无法发送定制解锁广播")
-        resp = {
-            "ok": True,
-            "msg": "定制权限已解锁" + ("，全服祝贺已发送" if broadcast_submitted else ""),
-            "pet": self._format_pet(player, group_id, qq),
-            "broadcast_submitted": broadcast_submitted,
-        }
-        return web.json_response(resp)
+        try:
+            self._check_csrf(request)
+            sess = self._require_session(request)
+            account = self.store.get_account(sess.get("aid", ""))
+            body = await request.json()
+            group_id = str(body.get("group_id", "")).strip()
+            qq = str(body.get("qq", "")).strip()
+            code = str(body.get("code", "")).strip()
+            nickname = str(body.get("nickname", "")).strip() or "神秘训练家"
+            show_qq = str(body.get("show_qq", "")).strip() or (account.get("qq") if account else sess.get("aid", ""))
+            logger.info(f"[petpark] 收到定制解锁请求 group={group_id} qq={qq} code={code}")
+            if not group_id or not qq or not code:
+                return web.json_response({"ok": False, "msg": "参数不完整"})
+            logger.info(f"[petpark] 定制解锁：参数校验通过，owner={sess.get('aid')}")
+            owner = self.store.account_for_pet(group_id, qq)
+            if owner != sess.get("aid"):
+                logger.warning(f"[petpark] 定制解锁：无权操作，owner={owner} aid={sess.get('aid')}")
+                raise web.HTTPForbidden(text="你没有绑定该宠物")
+            key = self.store.make_key(group_id, qq)
+            player = self.store._data["players"].get(key)
+            if not player:
+                logger.warning(f"[petpark] 定制解锁：未找到玩家 {key}")
+                return web.json_response({"ok": False, "msg": "未找到该宠物"})
+            logger.info(f"[petpark] 定制解锁：找到玩家，准备兑换卡密")
+            pet, err = self.store.redeem_custom_card(code, player, sess.get("aid"))
+            if err:
+                logger.warning(f"[petpark] 定制解锁：卡密兑换失败 {err}")
+                return web.json_response({"ok": False, "msg": err})
+            logger.info(f"[petpark] 定制解锁：卡密兑换成功，宠物={pet.get('nickname')}")
+            await self.store.save()
+            logger.info("[petpark] 定制解锁：数据已保存")
+            # 全授权群通报（异步后台执行，不阻塞 HTTP 响应）
+            broadcast_submitted = False
+            logger.info(f"[petpark] 定制解锁：broadcast_callback 是否配置={bool(self.broadcast_callback)}")
+            if self.broadcast_callback:
+                try:
+                    pet_nick = pet.get("nickname", "宠物") if pet else "宠物"
+                    species = pet.get("custom_species_name") or pet.get("species", "神秘生物") if pet else "神秘生物"
+                    text = (
+                        "🎉 **全服贺电！宠物乐园迎来全新混沌定制大师！** 🎉\n\n"
+                        f"👑 尊贵的训练家 **{nickname}**（QQ：{show_qq}）\n"
+                        f"为心爱的 **{pet_nick}** 解锁了【混沌定制】权限！\n\n"
+                        f"✨ **{pet_nick}** 已褪去凡躯，化身为独一无二的 **{species}**，\n"
+                        "品质晋升为【混沌】，傲视群宠，闪耀全服！\n\n"
+                        "💎 这是实力与热爱的象征，让我们共同祝贺这位大师登上宠物乐园的巅峰！\n"
+                        "🚀 各位训练家也快去努力，打造属于自己的专属传奇宠物吧！"
+                    )
+                    logger.info(f"[petpark] 准备发送定制解锁全服广播，训练家：{nickname}，宠物：{pet_nick}")
+                    task = self.broadcast_callback(text)
+                    logger.info(f"[petpark] broadcast_callback 返回任务={task}")
+                    if task:
+                        def _log_broadcast(t):
+                            try:
+                                result = t.result()
+                                logger.info(f"[petpark] 定制解锁全服广播结果：{result}")
+                            except Exception as e:
+                                logger.exception(f"[petpark] 定制解锁广播任务异常：{e}")
+                        task.add_done_callback(_log_broadcast)
+                        broadcast_submitted = True
+                        logger.info("[petpark] 定制解锁全服广播已提交后台执行")
+                    else:
+                        logger.warning("[petpark] broadcast_callback 未返回广播任务")
+                except Exception as e:
+                    logger.exception(f"[petpark] 定制解锁广播失败：{e}")
+            else:
+                logger.warning("[petpark] 未配置 broadcast_callback，无法发送定制解锁广播")
+            resp = {
+                "ok": True,
+                "msg": "定制权限已解锁" + ("，全服祝贺已发送" if broadcast_submitted else ""),
+                "pet": self._format_pet(player, group_id, qq),
+                "broadcast_submitted": broadcast_submitted,
+            }
+            logger.info(f"[petpark] 定制解锁：返回响应 {resp.get('msg')}")
+            return web.json_response(resp)
+        except Exception as e:
+            logger.exception(f"[petpark] 定制解锁接口未捕获异常：{e}")
+            return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
 
     async def _api_custom_submit(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
