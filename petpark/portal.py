@@ -429,8 +429,7 @@ async function api(path, method='GET', body=null){
   if(body){opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body)}
   const r = await fetch(path, opts);
   if(r.status === 401 || r.status === 403){
-    location.reload();
-    return null;
+    return {unauthorized:true};
   }
   return r.json().catch(()=>null);
 }
