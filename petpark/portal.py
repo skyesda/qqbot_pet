@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -335,6 +336,7 @@ class PlayerPortal:
             return web.json_response({"ok": False, "msg": err})
         await self.store.save()
         # 全授权群通报
+        broadcast_result = None
         if self.broadcast_callback:
             try:
                 pet_nick = pet.get("nickname", "宠物") if pet else "宠物"
@@ -349,17 +351,30 @@ class PlayerPortal:
                     "🚀 各位训练家也快去努力，打造属于自己的专属传奇宠物吧！"
                 )
                 logger.info(f"[petpark] 准备发送定制解锁全服广播，训练家：{nickname}，宠物：{pet_nick}")
-                self.broadcast_callback(text)
+                task = self.broadcast_callback(text)
+                if task:
+                    try:
+                        broadcast_result = await asyncio.wait_for(task, timeout=10)
+                        logger.info(f"[petpark] 定制解锁全服广播结果：{broadcast_result}")
+                    except asyncio.TimeoutError:
+                        logger.warning("[petpark] 定制解锁全服广播等待超时")
+                        broadcast_result = {"timeout": True}
+                    except Exception as e:
+                        logger.exception(f"[petpark] 定制解锁广播任务异常：{e}")
+                        broadcast_result = {"error": str(e)}
+                else:
+                    logger.warning("[petpark] broadcast_callback 未返回广播任务")
+                    broadcast_result = {"error": "broadcast_callback returned None"}
                 logger.info("[petpark] 定制解锁全服广播已提交")
             except Exception as e:
                 logger.exception(f"[petpark] 定制解锁广播失败：{e}")
+                broadcast_result = {"error": str(e)}
         else:
             logger.warning("[petpark] 未配置 broadcast_callback，无法发送定制解锁广播")
-        return web.json_response({
-            "ok": True,
-            "msg": "定制权限已解锁",
-            "pet": self._format_pet(player, group_id, qq),
-        })
+        resp = {"ok": True, "msg": "定制权限已解锁", "pet": self._format_pet(player, group_id, qq)}
+        if broadcast_result is not None:
+            resp["broadcast"] = broadcast_result
+        return web.json_response(resp)
 
     async def _api_custom_submit(self, request: web.Request) -> web.Response:
         self._check_csrf(request)

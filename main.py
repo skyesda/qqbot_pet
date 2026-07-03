@@ -1160,36 +1160,69 @@ class PetParkPlugin(Star):
         return f"{head}\n{desc}\n{body}"
 
     # --------------------------- Boss 全服广播 -----------------------------
-    def _broadcast_to_authorized_groups(self, text: str) -> None:
-        """向所有已授权且记录过 UMO 的群主动推送一条文本消息。"""
+    def _broadcast_to_authorized_groups(self, text: str):
+        """向所有已授权且记录过 UMO 的群主动推送一条文本消息，返回可等待的任务。"""
         try:
+            logger.info(f"[petpark] 提交全服广播任务，文本长度 {len(text)} 字符")
             task = asyncio.get_running_loop().create_task(self._do_broadcast(text))
             self._broadcast_tasks.add(task)
             task.add_done_callback(self._broadcast_tasks.discard)
+            return task
         except RuntimeError:
-            pass
+            logger.warning("[petpark] 提交广播任务时未找到运行中的事件循环")
+            return None
 
-    async def _do_broadcast(self, text: str) -> None:
+    async def _do_broadcast(self, text: str) -> dict:
         from astrbot.api.event import MessageChain
 
         groups = self.store._data.get("groups", {})
-        targets = [
-            (gid, g.get("umo"))
-            for gid, g in groups.items()
-            if self._is_group_authorized(gid) and g.get("umo")
-        ]
+        all_gids = list(groups.keys())
+        authorized = [gid for gid in all_gids if self._is_group_authorized(gid)]
+        with_umo = [gid for gid in authorized if groups[gid].get("umo")]
+        targets = [(gid, groups[gid].get("umo")) for gid in with_umo]
+
+        result = {
+            "total_groups": len(all_gids),
+            "authorized_groups": len(authorized),
+            "umo_ready_groups": len(with_umo),
+            "targets": len(targets),
+            "sent": 0,
+            "failed": 0,
+            "errors": [],
+        }
+
         if not targets:
-            logger.info("[petpark] 没有可广播的授权群（UMO 未记录）")
-            return
-        logger.info(f"[petpark] 开始向 {len(targets)} 个授权群广播 Boss 消息")
+            logger.warning(
+                f"[petpark] 没有可广播的授权群（总群 {len(all_gids)}，授权 {len(authorized)}，有 UMO {len(with_umo)}）"
+            )
+            return result
+
+        logger.info(f"[petpark] 开始向 {len(targets)} 个授权群广播消息")
         for gid, umo in targets:
             try:
+                logger.info(f"[petpark] 正在向群 {gid} 广播消息")
                 await self.context.send_message(
                     umo, MessageChain().message(text).use_markdown(True)
                 )
-                logger.info(f"[petpark] 已向群 {gid} 广播 Boss 消息")
-            except Exception:
-                logger.exception(f"[petpark] 向群 {gid} 主动推送失败")
+                result["sent"] += 1
+                logger.info(f"[petpark] 已向群 {gid} 广播消息成功")
+            except Exception as e:
+                logger.warning(f"[petpark] 向群 {gid} Markdown 广播失败：{e}，尝试纯文本降级")
+                try:
+                    await self.context.send_message(
+                        umo, MessageChain().message(text)
+                    )
+                    result["sent"] += 1
+                    logger.info(f"[petpark] 已向群 {gid} 纯文本广播成功")
+                except Exception as e2:
+                    result["failed"] += 1
+                    result["errors"].append(f"{gid}: {e2}")
+                    logger.exception(f"[petpark] 向群 {gid} 主动推送失败")
+
+        logger.info(
+            f"[petpark] 全服广播完成：目标 {result['targets']}，成功 {result['sent']}，失败 {result['failed']}"
+        )
+        return result
 
     def _event_boss_state(self, cfg: dict) -> dict:
         """初始化/返回活动 Boss 的共享状态。编辑活动时若只改非血量字段，应保持当前血量。"""
