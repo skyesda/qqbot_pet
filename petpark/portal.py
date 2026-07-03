@@ -319,7 +319,7 @@ html,body{height:100%;margin:0;background:radial-gradient(circle at 50% 30%,#1a1
 
 /* LCD 屏幕 */
 .screen-wrap{background:#050505;border-radius:18px;padding:18px 16px 22px;box-shadow:inset 0 0 18px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.04)}
-.screen{position:relative;background:var(--lcd);border-radius:10px;min-height:420px;overflow:hidden;box-shadow:inset 0 0 40px rgba(0,0,0,.6);padding:18px}
+.screen{position:relative;background:var(--lcd);border-radius:10px;min-height:320px;overflow:hidden;box-shadow:inset 0 0 40px rgba(0,0,0,.6);padding:18px}
 .screen::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px);pointer-events:none;z-index:10}
 .screen.on{background:var(--lcd-on)}
 
@@ -354,13 +354,13 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 .dashboard{display:none;animation:fadeIn .7s ease both}
 .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
 .account{font-size:13px;color:var(--muted)}
-.pet-selector{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;margin-bottom:14px}
-.pet-chip{flex:0 0 auto;background:rgba(0,0,0,.4);border:1px solid rgba(255,176,0,.15);border-radius:12px;padding:8px 12px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:8px}
+.pet-selector{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.pet-chip{background:rgba(0,0,0,.4);border:1px solid rgba(255,176,0,.15);border-radius:12px;padding:8px 12px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:8px;min-width:0}
 .pet-chip:hover,.pet-chip.active{border-color:var(--amber);background:rgba(255,176,0,.08)}
-.pet-chip img{width:36px;height:36px;border-radius:50%;object-fit:cover;background:#000}
-.pet-chip .info{line-height:1.2}
-.pet-chip .name{font-size:14px;color:var(--amber-glow)}
-.pet-chip .sub{font-size:11px;color:var(--muted)}
+.pet-chip img{width:36px;height:36px;border-radius:50%;object-fit:cover;background:#000;flex:0 0 auto}
+.pet-chip .info{line-height:1.2;min-width:0}
+.pet-chip .name{font-size:14px;color:var(--amber-glow);word-break:break-all;overflow-wrap:anywhere}
+.pet-chip .sub{font-size:11px;color:var(--muted);word-break:break-all}
 
 /* 宠物卡片 */
 .pet-card{display:flex;flex-direction:column;align-items:center;background:rgba(255,176,0,.05);border:1px solid rgba(255,176,0,.2);border-radius:16px;padding:16px;margin-bottom:14px;position:relative;overflow:hidden}
@@ -515,10 +515,10 @@ function renderDashboard(){
         <h3>＋ 绑定新宠物</h3>
         <div class="bind-row">
           <input id="bindGroup" type="text" placeholder="群号">
-          <input id="bindQQ" type="text" inputmode="numeric" placeholder="用户 QQ">
+          <input id="bindQQ" type="text" inputmode="numeric" placeholder="绑定用户ID">
           <button id="bindBtn">绑定</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">输入你在群内使用宠物乐园的群号和 QQ 号，即可查看该群宠物。</p>
+        <p class="muted" style="margin:8px 0 0">输入你在群内使用宠物乐园的群号和用户 ID，即可查看该群宠物。</p>
       </div>
     </div>`;
   document.querySelectorAll('.pet-chip').forEach(c=>c.onclick=()=>loadPet(state.pets[+c.dataset.idx]));
