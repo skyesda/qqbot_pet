@@ -756,6 +756,8 @@ class PetStore:
             return None, "该账号下没有宠物"
         if not pet.get("custom"):
             return None, "该宠物尚未解锁定制权限"
+        if self.get_pet_custom_reviews(group_id, qq, status="pending"):
+            return None, "当前已有待审核的修改，请等待审核完成后再提交"
         want_image = bool(changes.get("image"))
         want_name = bool(changes.get("species_name"))
         if not want_image and not want_name:

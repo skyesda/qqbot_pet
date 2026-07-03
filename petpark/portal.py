@@ -569,6 +569,19 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 .modal .sheet h3{color:var(--amber);margin:0 0 14px}
 .modal .sheet .bind-row{margin-bottom:10px}
 .modal .sheet .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
+/* 定制弹窗美化 */
+.custom-sheet{width:min(480px,100%)}
+.modal-head{text-align:center;margin-bottom:18px}
+.modal-icon{font-size:36px;line-height:1;margin-bottom:6px}
+.modal-head h3{margin:0 0 6px}
+.modal-sub{font-size:13px;color:var(--muted);margin:0}
+.upload-zone{border:2px dashed rgba(255,176,0,.35);border-radius:14px;padding:22px;text-align:center;cursor:pointer;transition:.2s;background:rgba(255,176,0,.05);margin-bottom:12px}
+.upload-zone:hover{border-color:rgba(255,176,0,.65);background:rgba(255,176,0,.1)}
+.upload-plus{font-size:32px;color:var(--amber);line-height:1;margin-bottom:4px}
+.upload-text{font-size:15px;color:var(--text);margin-bottom:4px}
+.upload-hint{font-size:12px;color:var(--muted)}
+.crop-preview{margin-bottom:12px;text-align:center}
+.crop-preview img{max-width:160px;max-height:160px;border-radius:10px;border:1px solid rgba(255,176,0,.25)}
 .pet-source{margin-top:12px;text-align:center;color:var(--muted);font-size:12px;word-break:break-all}
 .custom-box{margin-top:14px;padding:14px;background:rgba(0,0,0,.3);border-radius:12px;border:1px dashed rgba(255,176,0,.25)}
 .custom-badge{color:var(--amber-glow);font-size:14px;margin-bottom:8px}
@@ -613,15 +626,23 @@ input[type="file"]{padding:10px;background:rgba(0,0,0,.45);border:1px solid rgba
     </div>
   </div>
   <div class="modal" id="customModal">
-    <div class="sheet">
-      <h3>修改宠物形象</h3>
+    <div class="sheet custom-sheet">
+      <div class="modal-head">
+        <div class="modal-icon">✨</div>
+        <h3>修改宠物形象</h3>
+        <p class="modal-sub">定制专属形象与种类名称，审核通过后生效</p>
+      </div>
       <label class="fld">种类名称（显示名称）</label>
       <input id="customSpeciesName" type="text" placeholder="例如：灭世魔龙">
       <label class="fld">宠物图片</label>
       <input id="customImage" type="file" accept="image/*" style="display:none">
-      <button type="button" class="ghost" id="pickImageBtn" style="margin-bottom:8px">选择图片</button>
-      <div id="cropPreview" class="muted"></div>
-      <p class="bind-help">图片将裁剪为 512×512 像素（与其它宠物图片一致），每月图片和名称各限 3 次，提交后需管理员审核，预计 3 个工作日内完成。</p>
+      <div class="upload-zone" id="pickImageBtn">
+        <div class="upload-plus">+</div>
+        <div class="upload-text">点击选择图片</div>
+        <div class="upload-hint">支持 jpg / png / gif / webp，将裁剪为 512×512</div>
+      </div>
+      <div id="cropPreview" class="crop-preview"></div>
+      <p class="bind-help">每月图片和名称各限 3 次，提交后需管理员审核，预计 3 个工作日内完成。审核期间无法再次提交。</p>
       <div class="actions">
         <button class="ghost" onclick="closeCustomModal()">取消</button>
         <button id="submitCustomBtn">提交审核</button>
@@ -847,7 +868,8 @@ cropCanvas.addEventListener('touchend', cropEndDrag);
 document.getElementById('saveCropBtn').onclick = ()=>{
   cropCanvas.toBlob(blob=>{
     cropState.blob = blob;
-    document.getElementById('cropPreview').textContent = '已裁剪 512×512 图片';
+    const url = URL.createObjectURL(blob);
+    document.getElementById('cropPreview').innerHTML = `<img src="${url}" alt="预览">`;
     closeCropModal();
   }, 'image/jpeg', 0.92);
 };
@@ -858,19 +880,25 @@ document.getElementById('submitCustomBtn').onclick = async ()=>{
   const species = document.getElementById('customSpeciesName').value.trim();
   const file = cropState.blob;
   if(!species && !file){ msg('请至少修改名称或上传图片'); return; }
-  const fd = new FormData();
-  fd.append('group_id', state.current.group_id);
-  fd.append('qq', state.current.qq);
-  if(species) fd.append('species_name', species);
-  if(file) fd.append('image', file, 'custom.jpg');
-  const r = await fetch('/api/portal/custom_submit', {
-    method:'POST',
-    headers:{'X-CSRF-Token':CSRF_TOKEN},
-    body:fd
-  });
-  const data = await r.json().catch(()=>null);
-  if(data && data.ok){ msg(data.msg,'ok'); closeCustomModal(); resetCrop(); await loadPet(state.current); }
-  else { msg((data&&data.msg)||'提交失败'); }
+  const btn = document.getElementById('submitCustomBtn');
+  btn.disabled = true; btn.textContent = '提交中…';
+  try {
+    const fd = new FormData();
+    fd.append('group_id', state.current.group_id);
+    fd.append('qq', state.current.qq);
+    if(species) fd.append('species_name', species);
+    if(file) fd.append('image', file, 'custom.jpg');
+    const r = await fetch('/api/portal/custom_submit', {
+      method:'POST',
+      headers:{'X-CSRF-Token':CSRF_TOKEN},
+      body:fd
+    });
+    const data = await r.json().catch(()=>null);
+    if(data && data.ok){ msg(data.msg,'ok'); closeCustomModal(); resetCrop(); await loadPet(state.current); }
+    else { msg((data&&data.msg)||'提交失败'); }
+  } finally {
+    btn.disabled = false; btn.textContent = '提交审核';
+  }
 };
 document.getElementById('customModal').onclick = e=>{ if(e.target.id==='customModal') closeCustomModal(); };
 
@@ -917,10 +945,10 @@ function renderPet(container, d){
   const pet = d.pet;
   const petHtml = pet.exists ? `
     <div class="pet-card">
-      <img class="pet-img" src="${pet.image_url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}" alt="${esc(pet.species||'宠物')}">
+      <img class="pet-img" src="${pet.image_url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}" alt="${esc(pet.custom_species_name || pet.species || '宠物')}">
       <div class="pet-title">
         <div class="name">${esc(pet.nickname||'未命名')} <span style="font-size:14px;color:var(--muted)">Lv${pet.level}</span></div>
-        <div class="meta">${esc(pet.species||'未知')} · ${esc(pet.quality)} · ${esc(pet.stage)} · ${esc(pet.element_cn)}</div>
+        <div class="meta">${esc(pet.custom_species_name || pet.species || '未知')} · ${esc(pet.quality)} · ${esc(pet.stage)} · ${esc(pet.element_cn)}</div>
       </div>
       <div class="badges">
         <span class="badge">战力 ${fmt(pet.battle_power)}</span>

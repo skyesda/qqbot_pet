@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -2603,11 +2604,24 @@ class PetParkPlugin(Star):
             return "宠物心情低落（1颗星），无法参加活动，请先恢复心情（玩耍 / 喂食 / 使用道具）。"
         return None
 
+    def _custom_image_md(self, pet: dict) -> str | None:
+        """如果宠物有已审核通过的定制图，返回可在 QQ Markdown 里使用的图片语法串。"""
+        filename = pet.get("custom_image")
+        if not filename:
+            return None
+        host = str(self.config.get("web_host", "103.38.83.146"))
+        if host in ("0.0.0.0", "127.0.0.1", "localhost"):
+            host = "103.38.83.146"
+        port = int(self.config.get("web_port", 7799))
+        url = f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
+        return f"![定制形象 #{images._IMG_DISPLAY} #{images._IMG_DISPLAY}]({url})"
+
     def _my_pet(self, player: dict):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
-        return petmod.render_pet(p), images.pet_image_md(p.get("species"))
+        image_md = self._custom_image_md(p) or images.pet_image_md(p.get("species"))
+        return petmod.render_pet(p), image_md
 
     def _inspect(self, group_id: str, tokens: list[str]):
         target = self._arg(tokens, 1)
@@ -2619,7 +2633,8 @@ class PetParkPlugin(Star):
         if not tp.get("pet"):
             return "对方还没有宠物。"
         pet = tp["pet"]
-        return petmod.render_pet(pet), images.pet_image_md(pet.get("species"))
+        image_md = self._custom_image_md(pet) or images.pet_image_md(pet.get("species"))
+        return petmod.render_pet(pet), image_md
 
     def _gift_pet(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)

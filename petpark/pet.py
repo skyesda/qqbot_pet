@@ -293,11 +293,12 @@ def render_pet(pet: dict) -> str:
     artifact = pet.get("artifact") or "无"
     talent = pet.get("talent") or "未觉醒"
     need = _exp_to_next(pet["level"])
+    species_display = pet.get("custom_species_name") or pet.get("species")
     lines = [
         "┏━─★─ 宠 ☆ 物 ─★─┓",
         f"● **等级**：Lv{pet['level']}/{level_cap(pet)}",
         f"● **昵称**：{pet['nickname']}",
-        f"● **种类**：{pet['species']}",
+        f"● **种类**：{species_display}",
         f"● **属性**：{pet['element']}",
         f"● **阶段**：{pet['stage']}",
         f"● **级别**：{pet['quality']}",
