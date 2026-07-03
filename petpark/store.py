@@ -25,9 +25,12 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Optional
+
+from . import images
 
 from . import data
 
@@ -44,6 +47,8 @@ class PetStore:
     ):
         self.path = data_path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.custom_images_dir = self.path.parent / "custom_images"
+        self.custom_images_dir.mkdir(parents=True, exist_ok=True)
         self.start_coin = start_coin
         self.start_jifen = start_jifen
         self.start_diamond = start_diamond
@@ -65,6 +70,7 @@ class PetStore:
         self._data.setdefault("cards", {})
         self._data.setdefault("events", {})
         self._data.setdefault("accounts", {})
+        self._data.setdefault("custom_reviews", {})
         self._data.setdefault("portal_secret", "".join(random.choices("abcdef0123456789", k=32)))
         self._migrate_group_keys()
 
@@ -637,6 +643,192 @@ class PetStore:
             "species": pet.get("species", "未知"),
         })
         return True, "绑定成功"
+
+    # ----------------------------- 宠物定制 -----------------------------
+    def custom_reviews(self) -> dict:
+        return self._data.setdefault("custom_reviews", {})
+
+    def custom_image_path(self, filename: str) -> Path:
+        return self.custom_images_dir / filename
+
+    def create_custom_cards(self, count: int = 1, prefix: str = "") -> list[str]:
+        """批量生成宠物定制卡密：兑换后为当前宠物解锁定制权限并晋升为混沌品质。"""
+        count = max(1, int(count))
+        cards = self.cards()
+        created: list[str] = []
+        now = int(time.time())
+        for _ in range(count):
+            code = self.gen_card_code(prefix)
+            cards[code] = {
+                "custom_pet": True,
+                "used": False,
+                "used_by": None,
+                "used_at": None,
+                "created_at": now,
+            }
+            created.append(code)
+        return created
+
+    def redeem_custom_card(
+        self, code: str, player: dict, used_by: str
+    ) -> tuple[Optional[dict], Optional[str]]:
+        """兑换宠物定制卡：成功返回 (宠物数据, None)，失败返回 (None, 原因)。"""
+        code = str(code).strip().upper()
+        cards = self.cards()
+        card = cards.get(code)
+        if card is None:
+            return None, "卡密不存在或输入有误"
+        if not card.get("custom_pet"):
+            return None, "这不是宠物定制卡"
+        if card.get("used"):
+            return None, "该卡密已被使用"
+        pet = player.get("pet")
+        if not pet:
+            return None, "你没有宠物，无法使用定制卡"
+        if pet.get("custom"):
+            return None, "该宠物已解锁定制权限"
+        from . import pet as petmod
+        if pet.get("quality") != "混沌":
+            ok, msg = petmod.upgrade_quality(pet, "混沌")
+            if not ok:
+                return None, msg
+        pet["custom"] = True
+        card["used"] = True
+        card["used_by"] = used_by
+        card["used_at"] = int(time.time())
+        return pet, "宠物定制权限已解锁，品质已晋升为【混沌】"
+
+    def unlock_pet_custom(self, player: dict) -> tuple[bool, str]:
+        """直接为当前宠物解锁定制权限（内部/测试用）。"""
+        pet = player.get("pet")
+        if not pet:
+            return False, "你没有宠物"
+        if pet.get("custom"):
+            return False, "该宠物已解锁定制权限"
+        from . import pet as petmod
+        if pet.get("quality") != "混沌":
+            ok, msg = petmod.upgrade_quality(pet, "混沌")
+            if not ok:
+                return False, msg
+        pet["custom"] = True
+        return True, "宠物定制权限已解锁，品质已晋升为【混沌】"
+
+    @staticmethod
+    def _month_key(ts: int) -> str:
+        return time.strftime("%Y-%m", time.localtime(ts))
+
+    def custom_change_counts(self, player: dict, typ: str) -> list[int]:
+        return player.setdefault(f"custom_{typ}_changes", [])
+
+    def can_custom_change(self, player: dict, typ: str, limit: int = 3) -> bool:
+        month = self._month_key(int(time.time()))
+        return (
+            sum(
+                1
+                for ts in self.custom_change_counts(player, typ)
+                if self._month_key(ts) == month
+            )
+            < limit
+        )
+
+    def remaining_custom_changes(self, player: dict, typ: str, limit: int = 3) -> int:
+        month = self._month_key(int(time.time()))
+        used = sum(
+            1
+            for ts in self.custom_change_counts(player, typ)
+            if self._month_key(ts) == month
+        )
+        return max(0, limit - used)
+
+    def create_custom_review(
+        self,
+        account_id: str,
+        group_id: str,
+        qq: str,
+        changes: dict,
+    ) -> tuple[Optional[dict], str]:
+        """提交一次定制修改审核。changes 可含 image（文件名）和 species_name。"""
+        player = self._data["players"].get(self.make_key(group_id, qq))
+        if not player:
+            return None, "未找到该宠物"
+        pet = player.get("pet")
+        if not pet:
+            return None, "该账号下没有宠物"
+        if not pet.get("custom"):
+            return None, "该宠物尚未解锁定制权限"
+        want_image = bool(changes.get("image"))
+        want_name = bool(changes.get("species_name"))
+        if not want_image and not want_name:
+            return None, "请至少修改一项内容"
+        if want_image and not self.can_custom_change(player, "image"):
+            return None, "本月宠物图片修改次数已达 3 次上限"
+        if want_name and not self.can_custom_change(player, "species_name"):
+            return None, "本月宠物种类名称修改次数已达 3 次上限"
+        review_id = secrets.token_hex(8)
+        now = int(time.time())
+        old_image = pet.get("custom_image") or images.pet_image_url(pet.get("species"))
+        old_name = pet.get("custom_species_name") or pet.get("species")
+        review = {
+            "id": review_id,
+            "account_id": account_id,
+            "group": group_id,
+            "qq": qq,
+            "old": {"image": old_image, "species_name": old_name},
+            "new": {
+                "image": changes.get("image") or old_image,
+                "species_name": changes.get("species_name") or old_name,
+            },
+            "status": "pending",
+            "reason": "",
+            "created_at": now,
+        }
+        self.custom_reviews()[review_id] = review
+        return review, "已提交审核，预计 3 个工作日内处理完毕"
+
+    def apply_custom_review(self, review_id: str) -> tuple[bool, str]:
+        review = self.custom_reviews().get(review_id)
+        if not review:
+            return False, "审核记录不存在"
+        player = self._data["players"].get(self.make_key(review["group"], review["qq"]))
+        if not player:
+            return False, "玩家不存在"
+        pet = player.get("pet")
+        if not pet:
+            return False, "宠物不存在"
+        now = int(time.time())
+        new = review["new"]
+        old = review["old"]
+        if new.get("image") and new["image"] != old.get("image"):
+            pet["custom_image"] = new["image"]
+            self.custom_change_counts(player, "image").append(now)
+        if new.get("species_name") and new["species_name"] != old.get("species_name"):
+            pet["custom_species_name"] = new["species_name"]
+            self.custom_change_counts(player, "species_name").append(now)
+        review["status"] = "approved"
+        review["reviewed_at"] = now
+        return True, "审核已通过并生效"
+
+    def reject_custom_review(self, review_id: str, reason: str) -> tuple[bool, str]:
+        review = self.custom_reviews().get(review_id)
+        if not review:
+            return False, "审核记录不存在"
+        review["status"] = "rejected"
+        review["reason"] = str(reason or "不符合定制规范")
+        review["reviewed_at"] = int(time.time())
+        return True, "已拒绝"
+
+    def get_pet_custom_reviews(
+        self, group_id: str, qq: str, status: Optional[str] = None
+    ) -> list[dict]:
+        out = []
+        key = self.make_key(group_id, qq)
+        for r in self.custom_reviews().values():
+            if self.make_key(r.get("group", ""), r.get("qq", "")) != key:
+                continue
+            if status and r.get("status") != status:
+                continue
+            out.append(r)
+        return out
 
     @staticmethod
     def get_invited_users(player: dict) -> list[dict]:

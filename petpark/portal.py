@@ -16,6 +16,7 @@ import hmac
 import json
 import secrets
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from aiohttp import web
@@ -133,12 +134,18 @@ class PlayerPortal:
             return {"exists": False}
         species = pet.get("species")
         level = pet.get("level", 1)
-        pet["image_url"] = images.pet_image_url(species)
+        custom_image = pet.get("custom_image")
+        if custom_image:
+            pet["image_url"] = f"/custom_images/{custom_image}"
+        else:
+            pet["image_url"] = images.pet_image_url(species)
         pet["battle_power"] = battle_power(pet)
         pet["exp_to_next"] = data.exp_to_next(level)
         pet["element_cn"] = pet.get("element", "未知")
         pet["quality"] = pet.get("quality", "普通")
         pet["stage"] = pet.get("stage", "幼年期")
+        pet["custom"] = bool(pet.get("custom"))
+        pet["custom_species_name"] = pet.get("custom_species_name")
         # 隐藏内部对象，避免前端误用
         pet.pop("skills", None)
         pet.pop("rune", None)
@@ -149,6 +156,10 @@ class PlayerPortal:
         player = self.store._data["players"].get(key)
         if not player:
             raise web.HTTPNotFound(text="未找到该宠物")
+        pending = self.store.get_pet_custom_reviews(group_id, qq, status="pending")
+        rejected = self.store.get_pet_custom_reviews(group_id, qq, status="rejected")
+        # 只返回最近一条拒绝原因
+        last_rejected = sorted(rejected, key=lambda x: x.get("created_at", 0), reverse=True)[:1]
         return {
             "group_id": group_id,
             "qq": qq,
@@ -159,6 +170,12 @@ class PlayerPortal:
             "abyss": dict(self.store.abyss_state(player)),
             "stats": dict(player.get("stats", {})),
             "pet": self._format_pet(player, group_id, qq),
+            "custom_pending": pending,
+            "custom_rejected": last_rejected,
+            "custom_remaining": {
+                "image": self.store.remaining_custom_changes(player, "image"),
+                "species_name": self.store.remaining_custom_changes(player, "species_name"),
+            },
         }
 
     # --------------------------- 路由 ---------------------------
@@ -170,6 +187,13 @@ class PlayerPortal:
         app.router.add_get("/api/portal/me", self._api_me)
         app.router.add_post("/api/portal/bind", self._api_bind)
         app.router.add_get("/api/portal/pet", self._api_pet)
+        app.router.add_post("/api/portal/custom_redeem", self._api_custom_redeem)
+        app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
+        app.router.add_static(
+            "/custom_images",
+            path=self.store.custom_images_dir,
+            name="custom_images",
+        )
 
     async def _portal_page(self, request: web.Request) -> web.Response:
         sess = self._current_session(request)
@@ -284,6 +308,82 @@ class PlayerPortal:
         if owner != sess.get("aid"):
             raise web.HTTPForbidden(text="你没有绑定该宠物")
         return web.json_response({"ok": True, **self._player_summary(group_id, qq)})
+
+    async def _api_custom_redeem(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        body = await request.json()
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        code = str(body.get("code", "")).strip()
+        if not group_id or not qq or not code:
+            return web.json_response({"ok": False, "msg": "参数不完整"})
+        owner = self.store.account_for_pet(group_id, qq)
+        if owner != sess.get("aid"):
+            raise web.HTTPForbidden(text="你没有绑定该宠物")
+        key = self.store.make_key(group_id, qq)
+        player = self.store._data["players"].get(key)
+        if not player:
+            return web.json_response({"ok": False, "msg": "未找到该宠物"})
+        pet, err = self.store.redeem_custom_card(code, player, sess.get("aid"))
+        if err:
+            return web.json_response({"ok": False, "msg": err})
+        await self.store.save()
+        return web.json_response({
+            "ok": True,
+            "msg": "定制权限已解锁",
+            "pet": self._format_pet(player, group_id, qq),
+        })
+
+    async def _api_custom_submit(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        reader = await request.multipart()
+        fields: dict[str, str] = {}
+        file_data: Optional[bytes] = None
+        filename: Optional[str] = None
+        async for part in reader:
+            if part.filename:
+                file_data = await part.read()
+                filename = part.filename
+            else:
+                fields[part.name] = await part.text()
+        group_id = str(fields.get("group_id", "")).strip()
+        qq = str(fields.get("qq", "")).strip()
+        species_name = str(fields.get("species_name", "")).strip()
+        if not group_id or not qq:
+            return web.json_response({"ok": False, "msg": "参数不完整"})
+        owner = self.store.account_for_pet(group_id, qq)
+        if owner != sess.get("aid"):
+            raise web.HTTPForbidden(text="你没有绑定该宠物")
+        key = self.store.make_key(group_id, qq)
+        player = self.store._data["players"].get(key)
+        if not player:
+            return web.json_response({"ok": False, "msg": "未找到该宠物"})
+        pet = player.get("pet")
+        if not pet or not pet.get("custom"):
+            return web.json_response({"ok": False, "msg": "该宠物未解锁定制权限"})
+        changes: dict[str, str] = {}
+        current_name = pet.get("custom_species_name") or pet.get("species") or ""
+        if species_name and species_name != current_name:
+            changes["species_name"] = species_name
+        if file_data:
+            ext = Path(filename).suffix.lower() if filename else ".jpg"
+            if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+                return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+            new_filename = f"{secrets.token_hex(8)}{ext}"
+            path = self.store.custom_image_path(new_filename)
+            path.write_bytes(file_data)
+            changes["image"] = new_filename
+        review, err = self.store.create_custom_review(sess["aid"], group_id, qq, changes)
+        if err:
+            return web.json_response({"ok": False, "msg": err})
+        await self.store.save()
+        return web.json_response({
+            "ok": True,
+            "msg": "已提交审核，预计 3 个工作日内处理完毕",
+            "review": review,
+        })
 
 
 # --------------------------- 前端页面 ---------------------------
@@ -414,6 +514,10 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 .modal .sheet .bind-row{margin-bottom:10px}
 .modal .sheet .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
 .pet-source{margin-top:12px;text-align:center;color:var(--muted);font-size:12px;word-break:break-all}
+.custom-box{margin-top:14px;padding:14px;background:rgba(0,0,0,.3);border-radius:12px;border:1px dashed rgba(255,176,0,.25)}
+.custom-badge{color:var(--amber-glow);font-size:14px;margin-bottom:8px}
+.custom-remaining{font-size:12px;color:var(--muted);margin-bottom:10px}
+input[type="file"]{padding:10px;background:rgba(0,0,0,.45);border:1px solid rgba(255,176,0,.2);color:var(--text);border-radius:8px;width:100%}
 
 /* 动画 */
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -449,6 +553,40 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
       <div class="actions">
         <button class="ghost" onclick="closeBindModal()">取消</button>
         <button id="bindBtn">绑定</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal" id="customModal">
+    <div class="sheet">
+      <h3>修改宠物形象</h3>
+      <label class="fld">种类名称（显示名称）</label>
+      <input id="customSpeciesName" type="text" placeholder="例如：灭世魔龙">
+      <label class="fld">宠物图片</label>
+      <input id="customImage" type="file" accept="image/*" style="display:none">
+      <button type="button" class="ghost" id="pickImageBtn" style="margin-bottom:8px">选择图片</button>
+      <div id="cropPreview" class="muted"></div>
+      <p class="bind-help">图片将裁剪为 512×512 像素（与其它宠物图片一致），每月图片和名称各限 3 次，提交后需管理员审核，预计 3 个工作日内完成。</p>
+      <div class="actions">
+        <button class="ghost" onclick="closeCustomModal()">取消</button>
+        <button id="submitCustomBtn">提交审核</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal" id="cropModal">
+    <div class="sheet" style="width:min(560px,100%)">
+      <h3>裁剪图片</h3>
+      <div style="display:flex;justify-content:center;margin:10px 0">
+        <canvas id="cropCanvas" width="512" height="512" style="max-width:100%;height:auto;border-radius:12px;border:1px solid rgba(255,176,0,.2);cursor:grab"></canvas>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin:10px 0">
+        <span class="muted">缩小</span>
+        <input id="cropZoom" type="range" min="100" max="300" value="100" style="flex:1">
+        <span class="muted">放大</span>
+      </div>
+      <p class="muted">拖动图片调整位置，滑动缩放，最终输出 512×512。</p>
+      <div class="actions">
+        <button class="ghost" onclick="closeCropModal()">取消</button>
+        <button id="saveCropBtn">保存裁剪</button>
       </div>
     </div>
   </div>
@@ -570,6 +708,116 @@ document.getElementById('bindBtn').onclick = async ()=>{
 };
 document.getElementById('bindModal').onclick = e=>{ if(e.target.id==='bindModal') closeBindModal(); };
 
+function openCustomModal(){ document.getElementById('customModal').classList.add('show'); }
+function closeCustomModal(){ document.getElementById('customModal').classList.remove('show'); }
+
+let cropState = {img:null, scale:1, x:0, y:0, dragging:false, lastX:0, lastY:0, blob:null};
+const cropCanvas = document.getElementById('cropCanvas');
+const cropCtx = cropCanvas.getContext('2d');
+
+function drawCrop(){
+  if(!cropState.img) return;
+  const W = 512, H = 512;
+  cropCtx.clearRect(0,0,W,H);
+  const img = cropState.img;
+  const drawW = img.naturalWidth * cropState.scale;
+  const drawH = img.naturalHeight * cropState.scale;
+  cropCtx.drawImage(img, cropState.x, cropState.y, drawW, drawH);
+}
+
+function resetCrop(){
+  cropState.img = null; cropState.scale = 1; cropState.x = 0; cropState.y = 0; cropState.blob = null;
+  document.getElementById('customImage').value = '';
+  document.getElementById('cropPreview').textContent = '';
+}
+
+function openCropper(file){
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = ()=>{
+    cropState.img = img;
+    // 初始缩放让图片短边填满 512
+    const scale = Math.max(512 / img.naturalWidth, 512 / img.naturalHeight);
+    cropState.scale = scale;
+    cropState.x = (512 - img.naturalWidth * scale) / 2;
+    cropState.y = (512 - img.naturalHeight * scale) / 2;
+    document.getElementById('cropZoom').value = 100;
+    drawCrop();
+    document.getElementById('cropModal').classList.add('show');
+  };
+  img.src = url;
+}
+
+function closeCropModal(){ document.getElementById('cropModal').classList.remove('show'); }
+
+document.getElementById('pickImageBtn').onclick = ()=> document.getElementById('customImage').click();
+document.getElementById('customImage').onchange = e=>{
+  const f = e.target.files[0];
+  if(f) openCropper(f);
+};
+document.getElementById('cropZoom').oninput = e=>{
+  if(!cropState.img) return;
+  const oldScale = cropState.scale;
+  const ratio = (+e.target.value) / 100;
+  const base = Math.max(512 / cropState.img.naturalWidth, 512 / cropState.img.naturalHeight);
+  cropState.scale = base * ratio;
+  // 以画布中心为锚点缩放
+  const cx = 256, cy = 256;
+  cropState.x = cx - (cx - cropState.x) * (cropState.scale / oldScale);
+  cropState.y = cy - (cy - cropState.y) * (cropState.scale / oldScale);
+  drawCrop();
+};
+function cropStartDrag(ex,ey){
+  cropState.dragging = true;
+  cropState.lastX = ex; cropState.lastY = ey;
+  cropCanvas.style.cursor = 'grabbing';
+}
+function cropMoveDrag(ex,ey){
+  if(!cropState.dragging) return;
+  cropState.x += ex - cropState.lastX;
+  cropState.y += ey - cropState.lastY;
+  cropState.lastX = ex; cropState.lastY = ey;
+  drawCrop();
+}
+function cropEndDrag(){ cropState.dragging = false; cropCanvas.style.cursor = 'grab'; }
+cropCanvas.addEventListener('mousedown', e=>cropStartDrag(e.offsetX * (512 / cropCanvas.clientWidth), e.offsetY * (512 / cropCanvas.clientHeight)));
+cropCanvas.addEventListener('mousemove', e=>cropMoveDrag(e.offsetX * (512 / cropCanvas.clientWidth), e.offsetY * (512 / cropCanvas.clientHeight)));
+cropCanvas.addEventListener('mouseup', cropEndDrag);
+cropCanvas.addEventListener('mouseleave', cropEndDrag);
+cropCanvas.addEventListener('touchstart', e=>{ const t=e.touches[0]; const r=cropCanvas.getBoundingClientRect(); cropStartDrag((t.clientX-r.left)*(512/r.width),(t.clientY-r.top)*(512/r.height)); },{passive:false});
+cropCanvas.addEventListener('touchmove', e=>{ e.preventDefault(); const t=e.touches[0]; const r=cropCanvas.getBoundingClientRect(); cropMoveDrag((t.clientX-r.left)*(512/r.width),(t.clientY-r.top)*(512/r.height)); },{passive:false});
+cropCanvas.addEventListener('touchend', cropEndDrag);
+
+document.getElementById('saveCropBtn').onclick = ()=>{
+  cropCanvas.toBlob(blob=>{
+    cropState.blob = blob;
+    document.getElementById('cropPreview').textContent = '已裁剪 512×512 图片';
+    closeCropModal();
+  }, 'image/jpeg', 0.92);
+};
+document.getElementById('cropModal').onclick = e=>{ if(e.target.id==='cropModal') closeCropModal(); };
+
+document.getElementById('submitCustomBtn').onclick = async ()=>{
+  if(!state.current){ msg('请先选择宠物'); return; }
+  const species = document.getElementById('customSpeciesName').value.trim();
+  const file = cropState.blob;
+  if(!species && !file){ msg('请至少修改名称或上传图片'); return; }
+  const fd = new FormData();
+  fd.append('group_id', state.current.group_id);
+  fd.append('qq', state.current.qq);
+  if(species) fd.append('species_name', species);
+  if(file) fd.append('image', file, 'custom.jpg');
+  const r = await fetch('/api/portal/custom_submit', {
+    method:'POST',
+    headers:{'X-CSRF-Token':CSRF_TOKEN},
+    body:fd
+  });
+  const data = await r.json().catch(()=>null);
+  if(data && data.ok){ msg(data.msg,'ok'); closeCustomModal(); resetCrop(); await loadPet(state.current); }
+  else { msg((data&&data.msg)||'提交失败'); }
+};
+document.getElementById('customModal').onclick = e=>{ if(e.target.id==='customModal') closeCustomModal(); };
+
 async function loadPet(petMeta){
   state.current = petMeta;
   renderDashboard();
@@ -579,6 +827,28 @@ async function loadPet(petMeta){
   if(!d || !d.ok){ main.innerHTML='<div class="empty">加载失败</div>'; return; }
   state.data = d;
   renderPet(main, d);
+}
+
+function renderCustom(d){
+  const pet = d.pet;
+  if(!pet.exists) return '';
+  const pending = (d.custom_pending || []).map(r=>`<div class="msg ok">已提交审核，预计 3 个工作日内完成。${r.new.species_name?'名称：'+esc(r.new.species_name):''} ${r.new.image?'图片':''}</div>`).join('');
+  const rejected = (d.custom_rejected || []).map(r=>`<div class="msg err">审核未通过：${esc(r.reason||'未说明原因')}</div>`).join('');
+  if(!pet.custom){
+    return `<div class="custom-box">
+      <div class="bind-row">
+        <input id="customCode" type="text" placeholder="定制卡密">
+        <button id="redeemCustomBtn">解锁定制</button>
+      </div>
+      <p class="muted">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为混沌。</p>
+    </div>`;
+  }
+  return `<div class="custom-box">
+      <div class="custom-badge">✨ 定制权限已解锁（混沌品质）</div>
+      <div class="custom-remaining">本月剩余次数：图片 ${d.custom_remaining.image} 次 / 名称 ${d.custom_remaining.species_name} 次</div>
+      <button id="editCustomBtn">修改形象 / 名称</button>
+      ${pending}${rejected}
+    </div>`;
 }
 
 function renderPet(container, d){
@@ -611,7 +881,7 @@ function renderPet(container, d){
     Object.entries(d.bag).map(([k,v])=>`<div class="item">${esc(k)}<span class="count">×${v}</span></div>`).join('')
     : '<div class="empty">背包空空如也</div>';
 
-  container.innerHTML = petHtml + `
+  container.innerHTML = petHtml + renderCustom(d) + `
     <h3>我的财产</h3>
     <div class="wallet">
       <div class="coin"><div class="label">金币</div><div class="value">${fmt(d.coin)}</div></div>
@@ -622,6 +892,24 @@ function renderPet(container, d){
     <h3>背包</h3>
     <div class="bag">${bag}</div>
     <div class="pet-source">群号：${esc(d.group_id)} &nbsp;|&nbsp; 用户ID：${esc(d.qq)}</div>`;
+  const redeemBtn = document.getElementById('redeemCustomBtn');
+  if(redeemBtn){
+    redeemBtn.onclick = async ()=>{
+      const code = document.getElementById('customCode').value.trim();
+      if(!code){ msg('请输入定制卡密'); return; }
+      const r = await api('/api/portal/custom_redeem','POST',{group_id:d.group_id, qq:d.qq, code});
+      if(r && r.ok){ msg(r.msg,'ok'); await loadPet(state.current); }
+      else { msg((r&&r.msg)||'解锁失败'); }
+    };
+  }
+  const editBtn = document.getElementById('editCustomBtn');
+  if(editBtn){
+    editBtn.onclick = ()=>{
+      resetCrop();
+      document.getElementById('customSpeciesName').value = d.pet.custom_species_name || d.pet.species || '';
+      document.getElementById('customModal').classList.add('show');
+    };
+  }
 }
 
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

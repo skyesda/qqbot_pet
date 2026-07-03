@@ -61,6 +61,9 @@ class WebAdmin:
         app.router.add_post("/api/portal_accounts/reset_password", self._api_portal_reset_password)
         app.router.add_post("/api/portal_accounts/delete", self._api_portal_delete_account)
         app.router.add_post("/api/portal_accounts/unbind", self._api_portal_unbind)
+        app.router.add_get("/api/custom_reviews", self._api_custom_reviews)
+        app.router.add_post("/api/custom_reviews/approve", self._api_custom_review_approve)
+        app.router.add_post("/api/custom_reviews/reject", self._api_custom_review_reject)
 
         portal = PlayerPortal(self.store)
         portal.setup(app)
@@ -209,8 +212,14 @@ class WebAdmin:
         self._require(request)
         body = await request.json()
         auth_days = int(body.get("auth_days", 0) or 0)
+        card_type = str(body.get("card_type", "")).strip()
         try:
-            if auth_days > 0:
+            if card_type == "custom_pet":
+                codes = self.store.create_custom_cards(
+                    count=int(body.get("count", 1)),
+                    prefix=body.get("prefix", ""),
+                )
+            elif auth_days > 0:
                 codes = self.store.create_auth_cards(
                     days=auth_days,
                     count=int(body.get("count", 1)),
@@ -235,6 +244,35 @@ class WebAdmin:
         await self.store.save()
         return self._json({"ok": True, "codes": codes})
 
+    async def _api_custom_reviews(self, request):
+        self._require(request)
+        status = request.query.get("status", "")
+        reviews = list(self.store.custom_reviews().values())
+        if status:
+            reviews = [r for r in reviews if r.get("status") == status]
+        data = sorted(reviews, key=lambda x: x.get("created_at", 0), reverse=True)
+        return self._json({"ok": True, "data": data})
+
+    async def _api_custom_review_approve(self, request):
+        self._require(request)
+        body = await request.json()
+        rid = str(body.get("id", "")).strip()
+        ok, msg = self.store.apply_custom_review(rid)
+        if ok:
+            await self.store.save()
+        return self._json({"ok": ok, "msg": msg})
+
+    async def _api_custom_review_reject(self, request):
+        self._require(request)
+        body = await request.json()
+        rid = str(body.get("id", "")).strip()
+        reason = str(body.get("reason", "")).strip()
+        if not reason:
+            return self._json({"ok": False, "msg": "请填写拒绝原因"})
+        ok, msg = self.store.reject_custom_review(rid, reason)
+        if ok:
+            await self.store.save()
+        return self._json({"ok": ok, "msg": msg})
 
     async def _api_boss_respawn(self, request):
         """管理后台：立即复活指定活动的 Boss，并向所有授权群播报。
@@ -428,12 +466,17 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <button data-t="cards" onclick="tab('cards')">卡密</button>
 <button data-t="events" onclick="tab('events')">活动</button>
 <button data-t="portal_accounts" onclick="tab('portal_accounts')">网页账号</button>
+<button data-t="custom_reviews" onclick="tab('custom_reviews')">定制审核</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
 <div class="cards-stat" id="cardstats"></div>
-<div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合（金币+钻石、金币+道具、纯道具…）。空或 0 表示不含该项。<b>填写「授权天数」则生成群授权卡（忽略货币/道具）。</b></div>
+<div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合。空或 0 表示不含该项。<b>选择「宠物定制卡」将生成可解锁宠物定制权限的卡密。</b></div>
 <div class="bar">
+<select id="card_type" onchange="cardTypeChange()" style="width:130px">
+ <option value="">货币/道具卡</option>
+ <option value="custom_pet">宠物定制卡</option>
+</select>
 <input id="amt_coin" type="number" placeholder="金币面额" style="width:120px">
 <input id="amt_jifen" type="number" placeholder="积分面额" style="width:120px">
 <input id="amt_diamond" type="number" placeholder="钻石面额" style="width:120px">
@@ -528,7 +571,53 @@ async function paResetPwd(aid){
  alert(r.ok?(r.msg||'重置成功'):(r.msg||'重置失败'));
 }
 async function paDelete(aid){ if(!confirm('确认删除账号 '+aid+'？绑定关系也会清空。')) return; await api('/api/portal_accounts/delete',{account_id:aid}); loadPortalAccounts(); }
+function crImgUrl(img){ if(!img) return ''; if(img.startsWith('http') || img.startsWith('/')) return esc(img); return '/custom_images/'+esc(img); }
+function crImgBox(img,label){
+ if(!img) return '';
+ return `<div><div class="muted">${label}</div><div style="width:160px;height:160px;overflow:auto;border-radius:8px;border:1px solid #334155"><img src="${crImgUrl(img)}" style="width:512px;height:512px;object-fit:contain;display:block"></div></div>`;
+}
 async function paUnbind(aid,group,qq){ if(!confirm(`确认解绑 ${group} / ${qq}？`)) return; await api('/api/portal_accounts/unbind',{account_id:aid,group, qq}); loadPortalAccounts(); paDetail(aid); }
+
+let crCache=[], crStatus='pending';
+async function loadCustomReviews(status='pending'){
+ crStatus=status;
+ const r=await api('/api/custom_reviews',{status});
+ crCache=r.data||[];
+ renderCustomReviews();
+}
+function renderCustomReviews(){
+ const q=(document.getElementById('q').value||'').toLowerCase();
+ let rows='';
+ for(const r of crCache){
+  if(q && !r.id.toLowerCase().includes(q) && !String(r.qq).toLowerCase().includes(q) && !String(r.group).toLowerCase().includes(q)) continue;
+  const oldImg=r.old.image||'';
+  const newImg=r.new.image||'';
+  const oldName=esc(r.old.species_name||'');
+  const newName=esc(r.new.species_name||'');
+  rows+=`<tr>
+   <td class="k">${esc(r.id)}</td>
+   <td class="num">${esc(r.qq||'')}</td>
+   <td class="num">${esc(r.group||'')}</td>
+   <td>${r.new.species_name?`<div class="muted">旧：${oldName}</div><div>新：${newName}</div>`:'—'}</td>
+   <td>${r.new.image||oldImg?`<div style="display:flex;gap:8px">${crImgBox(oldImg,'旧')}${crImgBox(r.new.image,'新')}</div>`:'—'}</td>
+   <td class="muted">${fdate(r.created_at)}</td>
+   <td>${r.status==='pending'?`<button class="act" onclick='crApprove(${tj(r.id)})'>通过</button> <button class="act del" onclick='crReject(${tj(r.id)})'>拒绝</button>`:`<span class="tag ${r.status==='approved'?'on':'off'}">${r.status==='approved'?'已通过':'已拒绝'}</span><div class="muted">${esc(r.reason||'')}</div>`}</td>
+  </tr>`;
+ }
+ document.getElementById('count').textContent='共 '+crCache.length+' 条';
+ document.getElementById('extrawrap').innerHTML=`
+  <div class="bar" style="margin-bottom:8px">
+   <button class="act ${crStatus==='pending'?'':'ghost'}" onclick="loadCustomReviews('pending')">待审核</button>
+   <button class="act ${crStatus==='approved'?'':'ghost'}" onclick="loadCustomReviews('approved')">已通过</button>
+   <button class="act ${crStatus==='rejected'?'':'ghost'}" onclick="loadCustomReviews('rejected')">已拒绝</button>
+   <button class="act ${crStatus===''?'':'ghost'}" onclick="loadCustomReviews('')">全部</button>
+  </div>`;
+ document.getElementById('tablewrap').innerHTML = rows
+   ? `<table><thead><tr><th>ID</th><th>QQ</th><th>群号</th><th>名称</th><th>图片</th><th>提交时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+   : `<div class="empty">暂无审核记录</div>`;
+}
+async function crApprove(id){ if(!confirm('确认通过该定制申请？')) return; const r=await api('/api/custom_reviews/approve',{id}); alert(r.ok?(r.msg||'已通过'):(r.msg||'操作失败')); loadCustomReviews(crStatus); }
+async function crReject(id){ const reason=prompt('请输入拒绝原因：'); if(!reason) return; const r=await api('/api/custom_reviews/reject',{id,reason}); alert(r.ok?(r.msg||'已拒绝'):(r.msg||'操作失败')); loadCustomReviews(crStatus); }
 
 const PET_FIELDS=[
  ['nickname','昵称','text'],['species','种类','sel','species'],
@@ -550,11 +639,13 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts')?'none':'';
- if(t==='portal_accounts') loadPortalAccounts(); else load();
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews')?'none':'';
+ if(t==='portal_accounts') loadPortalAccounts();
+ else if(t==='custom_reviews') loadCustomReviews();
+ else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -564,6 +655,7 @@ function render(){
  else if(cur==='groups')renderGroups();
  else if(cur==='events')renderEvents();
  else if(cur==='portal_accounts')renderPortalAccounts();
+ else if(cur==='custom_reviews')renderCustomReviews();
  else renderCards();
 }
 function shell(head,rows,cols){
@@ -967,24 +1059,33 @@ async function saveRow(){
 function closeModal(){g('modal').style.display='none';editKey=null;}
 async function delRow(k){if(!confirm('确认删除 '+k+' ?'))return;await api('/api/delete',{table:cur,key:k});load();}
 async function genCards(){
- const authdays=+g('amt_authdays').value||0;
+ const cardType=g('card_type').value;
  let payload;
- if(authdays>0){
-  payload={auth_days:authdays,count:+g('cnt').value,prefix:g('pre').value};
+ if(cardType==='custom_pet'){
+  payload={card_type:'custom_pet',count:+g('cnt').value,prefix:g('pre').value};
  }else{
-  const rewards={};const c=+g('amt_coin').value||0,j=+g('amt_jifen').value||0,d=+g('amt_diamond').value||0;
-  if(c>0)rewards['金币']=c;if(j>0)rewards['积分']=j;if(d>0)rewards['钻石']=d;
-  const itemName=g('amt_item').value.trim();
-  const itemCount=+g('amt_item_count').value||0;
-  const items={};
-  if(itemName&&itemCount>0)items[itemName]=itemCount;
-  if(!Object.keys(rewards).length&&!Object.keys(items).length){alert('请填写金币/积分/钻石面额，或选择道具及数量，或填写授权天数生成群授权卡');return;}
-  payload={rewards:rewards,items:items,count:+g('cnt').value,prefix:g('pre').value};
+  const authdays=+g('amt_authdays').value||0;
+  if(authdays>0){
+   payload={auth_days:authdays,count:+g('cnt').value,prefix:g('pre').value};
+  }else{
+   const rewards={};const c=+g('amt_coin').value||0,j=+g('amt_jifen').value||0,d=+g('amt_diamond').value||0;
+   if(c>0)rewards['金币']=c;if(j>0)rewards['积分']=j;if(d>0)rewards['钻石']=d;
+   const itemName=g('amt_item').value.trim();
+   const itemCount=+g('amt_item_count').value||0;
+   const items={};
+   if(itemName&&itemCount>0)items[itemName]=itemCount;
+   if(!Object.keys(rewards).length&&!Object.keys(items).length){alert('请填写金币/积分/钻石面额，或选择道具及数量，或填写授权天数生成群授权卡');return;}
+   payload={rewards:rewards,items:items,count:+g('cnt').value,prefix:g('pre').value};
+  }
  }
  const r=await api('/api/cards/generate',payload);
  if(!r.ok){alert(r.msg||'生成失败');return;}
  g('genout').innerHTML='✅ 已生成 '+r.codes.length+' 张：<br>'+r.codes.map(esc).join('<br>');
  load();
+}
+function cardTypeChange(){
+ const isCustom=g('card_type').value==='custom_pet';
+ ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays'].forEach(id=>{const el=g(id);if(el)el.style.display=isCustom?'none':'';});
 }
 function exportUnused(){
  const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天';}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(c+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
