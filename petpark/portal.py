@@ -313,7 +313,9 @@ html,body{height:100%;margin:0;background:radial-gradient(circle at 50% 30%,#1a1
 #app{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
 
 /* 掌机外壳 */
-.console{width:100%;max-width:480px;background:linear-gradient(145deg,#181818,#0d0d0d);border-radius:36px;padding:28px 22px 34px;box-shadow:0 30px 80px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.06),0 0 0 4px #111;position:relative}
+.console{width:100%;max-width:480px;background:linear-gradient(145deg,#181818,#0d0d0d);border-radius:36px;padding:28px 22px 34px;box-shadow:0 30px 80px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.06),0 0 0 4px #111;position:relative;transition:max-width .3s ease,padding .3s ease}
+.console.wide{max-width:min(1100px,100% - 40px)}
+.console.wide .screen{min-height:min(70vh,600px);padding:22px}
 .console::before{content:'';position:absolute;inset:10px;border-radius:28px;border:1px solid rgba(255,255,255,.04);pointer-events:none}
 .brand{text-align:center;font-family:'Press Start 2P',cursive;font-size:12px;color:var(--amber-dim);letter-spacing:2px;margin-bottom:14px;text-shadow:0 0 8px rgba(255,176,0,.25)}
 
@@ -352,7 +354,7 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 
 /* 仪表盘 */
 .dashboard{display:none;animation:fadeIn .7s ease both}
-.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px}
 .account{font-size:13px;color:var(--muted)}
 .pet-selector{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px}
 .pet-chip{background:rgba(0,0,0,.4);border:1px solid rgba(255,176,0,.15);border-radius:12px;padding:8px 12px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:8px;min-width:0}
@@ -373,19 +375,19 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 .badge{font-size:12px;background:rgba(0,0,0,.45);padding:4px 10px;border-radius:20px;border:1px solid rgba(255,176,0,.2);color:var(--amber)}
 
 /* 属性网格 */
-.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:14px}
 .stat{background:rgba(0,0,0,.35);border:1px solid rgba(255,176,0,.1);border-radius:10px;padding:10px 12px}
 .stat .label{font-size:12px;color:var(--muted)}
 .stat .value{font-size:18px;color:var(--amber-glow);margin-top:2px}
 
 /* 财产 */
-.wallet{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.wallet{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px;margin-bottom:14px}
 .coin{text-align:center;background:rgba(0,0,0,.35);border:1px solid rgba(255,176,0,.1);border-radius:10px;padding:12px 6px}
 .coin .label{font-size:11px;color:var(--muted)}
 .coin .value{font-size:16px;color:var(--amber-glow);margin-top:4px;word-break:break-all}
 
 /* 背包 */
-.bag{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:220px;overflow-y:auto;padding-right:4px}
+.bag{display:grid;grid-template-columns:repeat(auto-fill,minmax(95px,1fr));gap:8px;max-height:280px;overflow-y:auto;padding-right:4px}
 .item{background:rgba(0,0,0,.35);border:1px solid rgba(255,176,0,.1);border-radius:10px;padding:10px 6px;text-align:center;font-size:13px;color:var(--text)}
 .item .count{display:block;margin-top:4px;color:var(--amber);font-weight:700}
 .empty{text-align:center;color:var(--muted);padding:30px 0;font-size:14px}
@@ -393,8 +395,9 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 /* 绑定表单 */
 .bind-box{margin-top:14px;padding:14px;background:rgba(0,0,0,.3);border-radius:12px;border:1px dashed rgba(255,176,0,.25)}
 .bind-box h3{margin-bottom:10px}
-.bind-row{display:flex;gap:8px}
-.bind-row input{flex:1}
+.bind-row{display:flex;flex-wrap:wrap;gap:8px}
+.bind-row input{flex:1 1 120px;min-width:0}
+.bind-row button{flex:0 0 auto}
 
 /* 动画 */
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -443,6 +446,7 @@ function msg(text, type='err'){
 }
 
 function viewLogin(){
+  document.querySelector('.console').classList.remove('wide');
   screen.innerHTML = `
     <h1>玩家中心</h1>
     <p class="muted">绑定你的 QQ 宠物，随时随地查看状态</p>
@@ -466,6 +470,7 @@ function viewLogin(){
 }
 
 function viewRegister(){
+  document.querySelector('.console').classList.remove('wide');
   screen.innerHTML = `
     <h1>注册账号</h1>
     <form class="form" id="regForm">
@@ -498,6 +503,7 @@ async function initDashboard(){
 }
 
 function renderDashboard(){
+  document.querySelector('.console').classList.add('wide');
   const chips = state.pets.map((p,i)=>`
     <div class="pet-chip ${state.current && state.current.group_id===p.group_id && state.current.qq===p.qq?'active':''}" data-idx="${i}">
       <img src="${p.image_url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}" alt="">
