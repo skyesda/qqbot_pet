@@ -65,7 +65,7 @@ class WebAdmin:
         app.router.add_post("/api/custom_reviews/approve", self._api_custom_review_approve)
         app.router.add_post("/api/custom_reviews/reject", self._api_custom_review_reject)
 
-        portal = PlayerPortal(self.store)
+        portal = PlayerPortal(self.store, broadcast_callback=self._broadcast_callback)
         portal.setup(app)
 
         runner = web.AppRunner(app)

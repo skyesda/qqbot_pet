@@ -31,8 +31,9 @@ _LOGIN_MAX_ATTEMPTS = 5
 
 
 class PlayerPortal:
-    def __init__(self, store):
+    def __init__(self, store, broadcast_callback=None):
         self.store = store
+        self.broadcast_callback = broadcast_callback
         self._attempts: dict[str, dict] = {}
 
     # --------------------------- 工具：密码与会话 ---------------------------
@@ -316,6 +317,8 @@ class PlayerPortal:
         group_id = str(body.get("group_id", "")).strip()
         qq = str(body.get("qq", "")).strip()
         code = str(body.get("code", "")).strip()
+        nickname = str(body.get("nickname", "")).strip() or "神秘训练家"
+        show_qq = str(body.get("show_qq", "")).strip() or (sess.get("aid") or "")
         if not group_id or not qq or not code:
             return web.json_response({"ok": False, "msg": "参数不完整"})
         owner = self.store.account_for_pet(group_id, qq)
@@ -329,6 +332,23 @@ class PlayerPortal:
         if err:
             return web.json_response({"ok": False, "msg": err})
         await self.store.save()
+        # 全授权群通报
+        if self.broadcast_callback:
+            try:
+                pet_nick = pet.get("nickname", "宠物") if pet else "宠物"
+                species = pet.get("custom_species_name") or pet.get("species", "神秘生物") if pet else "神秘生物"
+                text = (
+                    "🎉 **全服贺电！宠物乐园迎来全新混沌定制大师！** 🎉\n\n"
+                    f"👑 尊贵的训练家 **{nickname}**（QQ：{show_qq}）\n"
+                    f"为心爱的 **{pet_nick}** 解锁了【混沌定制】权限！\n\n"
+                    f"✨ **{pet_nick}** 已褪去凡躯，化身为独一无二的 **{species}**，\n"
+                    "品质晋升为【混沌】，傲视群宠，闪耀全服！\n\n"
+                    "💎 这是实力与热爱的象征，让我们共同祝贺这位大师登上宠物乐园的巅峰！\n"
+                    "🚀 各位训练家也快去努力，打造属于自己的专属传奇宠物吧！"
+                )
+                self.broadcast_callback(text)
+            except Exception:
+                pass
         return web.json_response({
             "ok": True,
             "msg": "定制权限已解锁",
@@ -838,9 +858,15 @@ function renderCustom(d){
     return `<div class="custom-box">
       <div class="bind-row">
         <input id="customCode" type="text" placeholder="定制卡密">
-        <button id="redeemCustomBtn">解锁定制</button>
       </div>
-      <p class="muted">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为混沌。</p>
+      <p class="muted" style="margin:8px 0 0">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为混沌。</p>
+      <div class="sec" style="margin-top:12px">全群祝贺信息</div>
+      <div class="bind-row">
+        <input id="customNickname" type="text" placeholder="你的 QQ 昵称" style="flex:1">
+        <input id="customShowQQ" type="text" inputmode="numeric" placeholder="显示 QQ 号" style="flex:1">
+      </div>
+      <p class="bind-help">填写昵称和 QQ 号用于解锁后向所有授权群发送祝贺，让全服见证你的专属宠物！</p>
+      <button id="redeemCustomBtn" style="margin-top:8px">解锁定制</button>
     </div>`;
   }
   return `<div class="custom-box">
@@ -896,8 +922,11 @@ function renderPet(container, d){
   if(redeemBtn){
     redeemBtn.onclick = async ()=>{
       const code = document.getElementById('customCode').value.trim();
+      const nickname = document.getElementById('customNickname').value.trim();
+      const showQQ = document.getElementById('customShowQQ').value.trim();
       if(!code){ msg('请输入定制卡密'); return; }
-      const r = await api('/api/portal/custom_redeem','POST',{group_id:d.group_id, qq:d.qq, code});
+      if(!nickname || !showQQ){ msg('请填写昵称和 QQ 号，用于全群祝贺'); return; }
+      const r = await api('/api/portal/custom_redeem','POST',{group_id:d.group_id, qq:d.qq, code, nickname, show_qq:showQQ});
       if(r && r.ok){ msg(r.msg,'ok'); await loadPet(state.current); }
       else { msg((r&&r.msg)||'解锁失败'); }
     };
