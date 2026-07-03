@@ -313,12 +313,13 @@ class PlayerPortal:
     async def _api_custom_redeem(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
         sess = self._require_session(request)
+        account = self.store.get_account(sess.get("aid", ""))
         body = await request.json()
         group_id = str(body.get("group_id", "")).strip()
         qq = str(body.get("qq", "")).strip()
         code = str(body.get("code", "")).strip()
         nickname = str(body.get("nickname", "")).strip() or "神秘训练家"
-        show_qq = str(body.get("show_qq", "")).strip() or (sess.get("aid") or "")
+        show_qq = str(body.get("show_qq", "")).strip() or (account.get("qq") if account else sess.get("aid", ""))
         if not group_id or not qq or not code:
             return web.json_response({"ok": False, "msg": "参数不完整"})
         owner = self.store.account_for_pet(group_id, qq)
