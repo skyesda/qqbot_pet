@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from aiohttp import web
+from astrbot.api import logger
 
 from . import data, images
 from .pet import battle_power
@@ -347,9 +348,13 @@ class PlayerPortal:
                     "💎 这是实力与热爱的象征，让我们共同祝贺这位大师登上宠物乐园的巅峰！\n"
                     "🚀 各位训练家也快去努力，打造属于自己的专属传奇宠物吧！"
                 )
+                logger.info(f"[petpark] 准备发送定制解锁全服广播，训练家：{nickname}，宠物：{pet_nick}")
                 self.broadcast_callback(text)
-            except Exception:
-                pass
+                logger.info("[petpark] 定制解锁全服广播已提交")
+            except Exception as e:
+                logger.exception(f"[petpark] 定制解锁广播失败：{e}")
+        else:
+            logger.warning("[petpark] 未配置 broadcast_callback，无法发送定制解锁广播")
         return web.json_response({
             "ok": True,
             "msg": "定制权限已解锁",

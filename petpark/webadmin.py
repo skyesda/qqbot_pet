@@ -64,6 +64,8 @@ class WebAdmin:
         app.router.add_get("/api/custom_reviews", self._api_custom_reviews)
         app.router.add_post("/api/custom_reviews/approve", self._api_custom_review_approve)
         app.router.add_post("/api/custom_reviews/reject", self._api_custom_review_reject)
+        app.router.add_get("/api/custom_pets", self._api_custom_pets)
+        app.router.add_post("/api/custom_pets/cancel", self._api_custom_pet_cancel)
 
         portal = PlayerPortal(self.store, broadcast_callback=self._broadcast_callback)
         portal.setup(app)
@@ -274,6 +276,51 @@ class WebAdmin:
             await self.store.save()
         return self._json({"ok": ok, "msg": msg})
 
+    async def _api_custom_pets(self, request):
+        self._require(request)
+        accounts = self.store.accounts()
+        account_map = {}
+        for aid, acc in accounts.items():
+            for bp in acc.get("bound_pets", []):
+                account_map[self.store.make_key(bp.get("group", ""), bp.get("qq", ""))] = acc.get("qq", aid)
+        data = []
+        for key, player in self.store._data.get("players", {}).items():
+            pet = player.get("pet")
+            if not pet or not pet.get("custom"):
+                continue
+            group, qq = key.split("\x1f", 1)
+            data.append({
+                "group": group,
+                "qq": qq,
+                "account_qq": account_map.get(key, "—"),
+                "nickname": pet.get("nickname", "未命名"),
+                "species": pet.get("species", "未知"),
+                "custom_species_name": pet.get("custom_species_name"),
+                "custom_image": pet.get("custom_image"),
+                "quality": pet.get("quality", "普通"),
+            })
+        data.sort(key=lambda x: x["group"])
+        return self._json({"ok": True, "data": data})
+
+    async def _api_custom_pet_cancel(self, request):
+        self._require(request)
+        body = await request.json()
+        group = str(body.get("group", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        if not group or not qq:
+            return self._json({"ok": False, "msg": "参数不完整"})
+        player = self.store._data.get("players", {}).get(self.store.make_key(group, qq))
+        if not player:
+            return self._json({"ok": False, "msg": "未找到玩家"})
+        pet = player.get("pet")
+        if not pet or not pet.get("custom"):
+            return self._json({"ok": False, "msg": "该宠物未开启定制"})
+        pet["custom"] = False
+        pet.pop("custom_image", None)
+        pet.pop("custom_species_name", None)
+        await self.store.save()
+        return self._json({"ok": True, "msg": "已取消该宠物的定制权限"})
+
     async def _api_boss_respawn(self, request):
         """管理后台：立即复活指定活动的 Boss，并向所有授权群播报。
 
@@ -467,6 +514,7 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <button data-t="events" onclick="tab('events')">活动</button>
 <button data-t="portal_accounts" onclick="tab('portal_accounts')">网页账号</button>
 <button data-t="custom_reviews" onclick="tab('custom_reviews')">定制审核</button>
+<button data-t="custom_pets" onclick="tab('custom_pets')">定制管理</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -619,6 +667,37 @@ function renderCustomReviews(){
 async function crApprove(id){ if(!confirm('确认通过该定制申请？')) return; const r=await api('/api/custom_reviews/approve',{id}); alert(r.ok?(r.msg||'已通过'):(r.msg||'操作失败')); loadCustomReviews(crStatus); }
 async function crReject(id){ const reason=prompt('请输入拒绝原因：'); if(!reason) return; const r=await api('/api/custom_reviews/reject',{id,reason}); alert(r.ok?(r.msg||'已拒绝'):(r.msg||'操作失败')); loadCustomReviews(crStatus); }
 
+let cpCache=[];
+async function loadCustomPets(){
+ const r=await api('/api/custom_pets',{});
+ cpCache=r.data||[];
+ renderCustomPets();
+}
+function renderCustomPets(){
+ const q=(document.getElementById('q').value||'').toLowerCase();
+ let rows='';
+ for(const p of cpCache){
+  if(q && !String(p.group).toLowerCase().includes(q) && !String(p.qq).toLowerCase().includes(q) && !String(p.account_qq).toLowerCase().includes(q) && !String(p.nickname).toLowerCase().includes(q)) continue;
+  const img=p.custom_image?`<img src="/custom_images/${esc(p.custom_image)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #334155">`:'—';
+  rows+=`<tr>
+   <td class="num">${esc(p.group)}</td>
+   <td class="num">${esc(p.qq)}</td>
+   <td class="num">${esc(p.account_qq)}</td>
+   <td>${esc(p.nickname)}</td>
+   <td>${esc(p.custom_species_name||p.species)}</td>
+   <td>${esc(p.quality)}</td>
+   <td>${img}</td>
+   <td style="white-space:nowrap"><button class="act del" onclick='cpCancel(${tj(p.group)},${tj(p.qq)})'>取消定制</button></td>
+  </tr>`;
+ }
+ document.getElementById('count').textContent='共 '+cpCache.length+' 个';
+ document.getElementById('extrawrap').innerHTML='';
+ document.getElementById('tablewrap').innerHTML = rows
+   ? `<table><thead><tr><th>群号</th><th>用户ID</th><th>账号QQ</th><th>宠物昵称</th><th>种类名称</th><th>品质</th><th>定制图</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+   : `<div class="empty">暂无已解锁定制的宠物</div>`;
+}
+async function cpCancel(group,qq){ if(!confirm('确认取消该宠物的定制权限？将移除定制图和自定义名称。')) return; const r=await api('/api/custom_pets/cancel',{group,qq}); alert(r.ok?(r.msg||'已取消'):(r.msg||'操作失败')); loadCustomPets(); }
+
 const PET_FIELDS=[
  ['nickname','昵称','text'],['species','种类','sel','species'],
  ['quality','品质','sel','qualities'],['element','元素','sel','elements'],
@@ -639,13 +718,14 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
+ else if(t==='custom_pets') loadCustomPets();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -656,6 +736,7 @@ function render(){
  else if(cur==='events')renderEvents();
  else if(cur==='portal_accounts')renderPortalAccounts();
  else if(cur==='custom_reviews')renderCustomReviews();
+ else if(cur==='custom_pets')renderCustomPets();
  else renderCards();
 }
 function shell(head,rows,cols){
