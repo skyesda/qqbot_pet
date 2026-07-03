@@ -198,6 +198,7 @@ class PlayerPortal:
         salt = self._make_salt()
         phash = self._hash_password(password, salt)
         account = self.store.create_account(qq, phash, salt)
+        await self.store.save()
         self._reset_rate(f"{ip}:{qq}")
         return web.json_response({"ok": True, "msg": "注册成功", "account_id": account["id"]})
 
@@ -215,6 +216,7 @@ class PlayerPortal:
         if account["password_hash"] != self._hash_password(password, account["salt"]):
             return web.json_response({"ok": False, "msg": "账号或密码错误"})
         account["last_login"] = int(time.time())
+        await self.store.save()
         self._reset_rate(f"{ip}:{qq}")
         csrf = secrets.token_urlsafe(24)
         resp = web.json_response({"ok": True, "msg": "登录成功"})
@@ -265,6 +267,8 @@ class PlayerPortal:
         if not ok:
             return web.json_response({"ok": False, "msg": msg})
         success, msg2 = self.store.bind_pet_to_account(sess["aid"], group_id, qq)
+        if success:
+            await self.store.save()
         self._reset_rate(f"{ip}:bind:{qq}") if success else None
         return web.json_response({"ok": success, "msg": msg2})
 
@@ -309,7 +313,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
   --muted:#888;
 }
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:radial-gradient(circle at 50% 30%,#1a1505 0%,#0d0d0d 70%);color:var(--text);font-family:'ZCOOL KuaiLe','Microsoft YaHei',sans-serif;overflow:hidden}
+html,body{height:100%;margin:0;background:radial-gradient(circle at 50% 30%,#1a1505 0%,#0d0d0d 70%);color:var(--text);font-family:'ZCOOL KuaiLe','Microsoft YaHei',sans-serif;overflow-x:hidden;overflow-y:auto}
 #app{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
 
 /* 掌机外壳 */
@@ -321,7 +325,8 @@ html,body{height:100%;margin:0;background:radial-gradient(circle at 50% 30%,#1a1
 
 /* LCD 屏幕 */
 .screen-wrap{background:#050505;border-radius:18px;padding:18px 16px 22px;box-shadow:inset 0 0 18px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.04)}
-.screen{position:relative;background:var(--lcd);border-radius:10px;min-height:320px;overflow:hidden;box-shadow:inset 0 0 40px rgba(0,0,0,.6);padding:18px}
+.screen{position:relative;background:var(--lcd);border-radius:10px;min-height:320px;overflow:hidden auto;box-shadow:inset 0 0 40px rgba(0,0,0,.6);padding:18px}
+.console.wide .screen{min-height:0;max-height:min(760px,calc(90vh - 120px))}
 .screen::after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px);pointer-events:none;z-index:10}
 .screen.on{background:var(--lcd-on)}
 
@@ -462,7 +467,7 @@ function viewLogin(){
     e.preventDefault();
     const f = e.target;
     const r = await api('/api/portal/login','POST',{qq:f.qq.value, password:f.password.value});
-    if(r && r.ok){ msg('登录成功','ok'); await initDashboard(); }
+    if(r && r.ok){ msg('登录成功','ok'); location.reload(); }
     else { msg((r&&r.msg)||'登录失败'); }
   };
   document.getElementById('toRegister').onclick = e=>{e.preventDefault(); viewRegister()};
