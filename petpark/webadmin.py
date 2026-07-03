@@ -299,6 +299,7 @@ class WebAdmin:
                 "custom_species_name": pet.get("custom_species_name"),
                 "custom_image": pet.get("custom_image"),
                 "quality": pet.get("quality", "普通"),
+                "tags": pet.get("tags", []),
             })
         data.sort(key=lambda x: x["group"])
         return self._json({"ok": True, "data": data})
@@ -319,6 +320,7 @@ class WebAdmin:
         pet["custom"] = False
         pet.pop("custom_image", None)
         pet.pop("custom_species_name", None)
+        self.store.remove_pet_tag(pet, "定制")
         await self.store.save()
         return self._json({"ok": True, "msg": "已取消该宠物的定制权限"})
 
@@ -479,7 +481,8 @@ input,select{padding:9px;border-radius:8px;border:1px solid #334155;background:#
 label.fld{display:block;margin:10px 0 4px;font-size:13px;color:#94a3b8}
 button.act{padding:9px 15px;border:0;border-radius:8px;background:#6366f1;color:#fff;cursor:pointer;font-size:13px}
 button.act:hover{background:#4f46e5}
-button.del{background:#dc2626}button.del:hover{background:#b91c1c}
+button.del{background:#dc2626}button.del:hover{background:#b91d1d}
+.tag{display:inline-block;font-size:11px;background:rgba(99,102,241,.15);color:#818cf8;border:1px solid rgba(99,102,241,.35);border-radius:999px;padding:2px 8px;margin:1px}
 button.ghost{background:#475569}button.ghost:hover{background:#64748b}
 table{width:100%;border-collapse:collapse;font-size:13px;background:#1e293b;border-radius:12px}
 th,td{padding:11px 12px;border-bottom:1px solid #334155;text-align:left}
@@ -680,6 +683,7 @@ function renderCustomPets(){
  for(const p of cpCache){
   if(q && !String(p.group).toLowerCase().includes(q) && !String(p.qq).toLowerCase().includes(q) && !String(p.account_qq).toLowerCase().includes(q) && !String(p.nickname).toLowerCase().includes(q)) continue;
   const img=p.custom_image?`<img src="/custom_images/${esc(p.custom_image)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #334155">`:'—';
+  const tags=(p.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join(' ');
   rows+=`<tr>
    <td class="num">${esc(p.group)}</td>
    <td class="num">${esc(p.qq)}</td>
@@ -687,6 +691,7 @@ function renderCustomPets(){
    <td>${esc(p.nickname)}</td>
    <td>${esc(p.custom_species_name||p.species)}</td>
    <td>${esc(p.quality)}</td>
+   <td>${tags}</td>
    <td>${img}</td>
    <td style="white-space:nowrap"><button class="act del" onclick='cpCancel(${tj(p.group)},${tj(p.qq)})'>取消定制</button></td>
   </tr>`;
@@ -694,7 +699,7 @@ function renderCustomPets(){
  document.getElementById('count').textContent='共 '+cpCache.length+' 个';
  document.getElementById('extrawrap').innerHTML='';
  document.getElementById('tablewrap').innerHTML = rows
-   ? `<table><thead><tr><th>群号</th><th>用户ID</th><th>账号QQ</th><th>宠物昵称</th><th>种类名称</th><th>品质</th><th>定制图</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+   ? `<table><thead><tr><th>群号</th><th>用户ID</th><th>账号QQ</th><th>宠物昵称</th><th>种类名称</th><th>品质</th><th>标签</th><th>定制图</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无已解锁定制的宠物</div>`;
 }
 async function cpCancel(group,qq){ if(!confirm('确认取消该宠物的定制权限？将移除定制图和自定义名称。')) return; const r=await api('/api/custom_pets/cancel',{group,qq}); alert(r.ok?(r.msg||'已取消'):(r.msg||'操作失败')); loadCustomPets(); }

@@ -149,6 +149,7 @@ class PlayerPortal:
         pet["stage"] = pet.get("stage", "幼年期")
         pet["custom"] = bool(pet.get("custom"))
         pet["custom_species_name"] = pet.get("custom_species_name")
+        pet["tags"] = pet.get("tags", [])
         # 隐藏内部对象，避免前端误用
         pet.pop("skills", None)
         pet.pop("rune", None)
@@ -531,7 +532,9 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 .pet-img{width:160px;height:160px;border-radius:14px;object-fit:cover;background:#000;border:2px solid var(--amber-dim);box-shadow:0 0 20px rgba(255,176,0,.15);animation:popIn .5s ease both}
 .pet-title{margin-top:12px;text-align:center}
 .pet-title .name{font-size:22px;color:var(--amber-glow)}
-.pet-title .meta{font-size:13px;color:var(--muted)}
+.pet-title .meta{font-size:13px;color:var(--muted);margin-top:4px}
+.pet-tags{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:6px}
+.pet-tag{font-size:11px;background:linear-gradient(135deg,rgba(255,176,0,.25),rgba(255,120,0,.15));color:var(--amber);border:1px solid rgba(255,176,0,.35);border-radius:999px;padding:2px 8px}
 .badges{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;justify-content:center}
 .badge{font-size:12px;background:rgba(0,0,0,.45);padding:4px 10px;border-radius:20px;border:1px solid rgba(255,176,0,.2);color:var(--amber)}
 
@@ -949,6 +952,7 @@ function renderPet(container, d){
       <div class="pet-title">
         <div class="name">${esc(pet.nickname||'未命名')} <span style="font-size:14px;color:var(--muted)">Lv${pet.level}</span></div>
         <div class="meta">${esc(pet.custom_species_name || pet.species || '未知')} · ${esc(pet.quality)} · ${esc(pet.stage)} · ${esc(pet.element_cn)}</div>
+        ${pet.tags && pet.tags.length ? `<div class="pet-tags">${pet.tags.map(t=>`<span class="pet-tag">${esc(t)}</span>`).join('')}</div>` : ''}
       </div>
       <div class="badges">
         <span class="badge">战力 ${fmt(pet.battle_power)}</span>

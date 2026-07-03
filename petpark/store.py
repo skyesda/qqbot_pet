@@ -696,6 +696,7 @@ class PetStore:
         card["used"] = True
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
+        self.add_pet_tag(pet, "定制")
         return pet, None
 
     def unlock_pet_custom(self, player: dict) -> tuple[bool, str]:
@@ -711,7 +712,22 @@ class PetStore:
             if not ok:
                 return False, msg
         pet["custom"] = True
+        self.add_pet_tag(pet, "定制")
         return True, "宠物定制权限已解锁，品质已晋升为【混沌】"
+
+    @staticmethod
+    def add_pet_tag(pet: dict, tag: str) -> None:
+        tags = pet.setdefault("tags", [])
+        if tag not in tags:
+            tags.append(tag)
+
+    @staticmethod
+    def remove_pet_tag(pet: dict, tag: str) -> None:
+        tags = pet.get("tags", [])
+        if tag in tags:
+            tags.remove(tag)
+        if not tags:
+            pet.pop("tags", None)
 
     @staticmethod
     def _month_key(ts: int) -> str:
@@ -808,6 +824,7 @@ class PetStore:
             self.custom_change_counts(player, "species_name").append(now)
         review["status"] = "approved"
         review["reviewed_at"] = now
+        self.add_pet_tag(pet, "定制")
         return True, "审核已通过并生效"
 
     def reject_custom_review(self, review_id: str, reason: str) -> tuple[bool, str]:

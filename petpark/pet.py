@@ -318,6 +318,9 @@ def render_pet(pet: dict) -> str:
     ]
     if pet.get("love_target"):
         lines.append(f"● **伴侣**：`{pet['love_target']}`　好感度 {pet.get('favor', 0)}")
+    tags = pet.get("tags", [])
+    if tags:
+        lines.append(f"● **标签**：{' '.join(f'[{t}]' for t in tags)}")
     lines.append("┗━─★─ 信 ☆ 息 ─★─┛")
     if is_frozen(pet):
         lines.append(f"> ⚠️ 假死/惊魂中，剩余约 **{frozen_remain_min(pet)}** 分钟无法操作")
