@@ -55,6 +55,7 @@ KNOWN_COMMANDS = {
     "签到",
     "兑换",
     "卡密兑换",
+    "我要氪金",
     "查看说明",
     # 群授权
     "授权",
@@ -706,6 +707,8 @@ class PetParkPlugin(Star):
         # ---- 卡密兑换 ----
         if cmd in ("兑换", "卡密兑换"):
             return self._redeem(player, group_id, qq, tokens)
+        if cmd == "我要氪金":
+            return self._pay_link()
 
         # ---- 获取宠物 ----
         if cmd == "砸蛋":
@@ -2074,6 +2077,17 @@ class PetParkPlugin(Star):
             lines.append(f"💼 **当前{cur}**　{self.store.get_currency(player, cur)}")
         return "\n".join(lines)
 
+    def _pay_link(self) -> str:
+        return (
+            "## 💎 宠物乐园 · 充值中心\n"
+            "━━━━━━━━━━━━━━\n"
+            "🛒 **商店链接**：https://pay.ldxp.cn/shop/2P5XIVMD\n\n"
+            "📌 **购买后请复制卡密，然后在本群发送**：\n"
+            "```\n兑换 你的卡密\n```\n"
+            "例如：`兑换 ABCD1234EFGH`\n\n"
+            "卡密可兑换金币、积分、钻石等，具体以商品说明为准。"
+        )
+
     def _admin_adjust(
         self, event, qq: str, group_id: str, cmd: str, tokens: list[str]
     ) -> str:
@@ -2383,7 +2397,7 @@ class PetParkPlugin(Star):
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**📇 个人**",
-                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 兑换 卡密（卡密充值金币/积分/钻石） · 赠送金币 用户ID 数量 · 赠送积分 用户ID 数量 · 赠送钻石 用户ID 数量 · 我的邀请情况 · 受邀 用户ID",
+                "我的信息（查看 QQ号/群号/金币/积分/钻石/活动代币） · 签到（每日领积分金币） · 我要氪金（获取充值链接与卡密使用方法） · 兑换 卡密（卡密充值金币/积分/钻石） · 赠送金币 用户ID 数量 · 赠送积分 用户ID 数量 · 赠送钻石 用户ID 数量 · 我的邀请情况 · 受邀 用户ID",
                 "",
                 "📖 图鉴查询",
                 "宠物种类（加名称看单个种类及图片，如 宠物种类 皮卡丘） · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋 · 查看说明 名称",
