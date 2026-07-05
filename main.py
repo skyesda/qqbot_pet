@@ -740,7 +740,11 @@ class PetParkPlugin(Star):
             return self._transfer_item(player, group_id, tokens)
 
         # ---- 以下指令大多需要拥有宠物 ----
-        if cmd in ("我的宠物", "查看宠物", "宠物图"):
+        if cmd in ("我的宠物", "宠物图"):
+            return self._my_pet(player)
+        if cmd == "查看宠物":
+            if len(tokens) > 1:
+                return self._inspect(group_id, tokens)
             return self._my_pet(player)
         if cmd == "宠物侦查":
             return self._inspect(group_id, tokens)
