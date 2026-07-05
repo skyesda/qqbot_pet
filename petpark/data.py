@@ -1132,10 +1132,27 @@ TOMB_EXTRA_TOKEN = "棺椁令"
 TOMB_EXTRA_TOKEN_COST = 200  # 冥币
 TOMB_COOLDOWN = 300  # 每次摸金结束后冷却秒数（5分钟）
 
-# 难度配置：尺寸、怪物数、宝箱数、陷阱数、祭坛数、时间(秒)、需带回冥币、精力消耗、等级要求
+# 摸金独立等级系统
+TOMB_MAX_LEVEL = 30
+
+
+def tomb_exp_to_next(level: int) -> int:
+    """升到下一摸金等级所需经验。满级 30 级。"""
+    if level >= TOMB_MAX_LEVEL:
+        return 0
+    return 80 + level * 40
+
+
+# 摸金等级经验奖励：成功 / 失败（超时、死亡、放弃均算失败）
+TOMB_XP_REWARD = {
+    "success": {1: 30, 2: 60, 3: 110, 4: 180},
+    "failure": {1: 10, 2: 20, 3: 35, 4: 60},
+}
+
+# 难度配置：尺寸、怪物数、宝箱数、陷阱数、祭坛数、时间(秒)、需带回冥币、精力消耗、摸金等级要求
 TOMB_DIFFICULTIES = {
     1: {
-        "name": "初探古墓",
+        "name": "简单",
         "size": (9, 9),
         "monsters": 2,
         "chests": 3,
@@ -1144,14 +1161,14 @@ TOMB_DIFFICULTIES = {
         "time": 600,
         "required": 80,
         "energy": 15,
-        "level_req": 15,
+        "tomb_level_req": 1,
         "entry_tokens": 0,
         "monster_mult": 0.35,
         "chest_mingbi": (15, 30),
         "monster_mingbi": (10, 20),
     },
     2: {
-        "name": "深入地宫",
+        "name": "普通",
         "size": (13, 13),
         "monsters": 4,
         "chests": 5,
@@ -1160,14 +1177,14 @@ TOMB_DIFFICULTIES = {
         "time": 720,
         "required": 200,
         "energy": 25,
-        "level_req": 35,
+        "tomb_level_req": 5,
         "entry_tokens": 0,
         "monster_mult": 0.55,
         "chest_mingbi": (30, 60),
         "monster_mingbi": (20, 35),
     },
     3: {
-        "name": "幽冥皇陵",
+        "name": "困难",
         "size": (17, 17),
         "monsters": 7,
         "chests": 7,
@@ -1176,14 +1193,14 @@ TOMB_DIFFICULTIES = {
         "time": 900,
         "required": 450,
         "energy": 40,
-        "level_req": 60,
+        "tomb_level_req": 10,
         "entry_tokens": 1,
         "monster_mult": 0.80,
         "chest_mingbi": (60, 120),
         "monster_mingbi": (35, 60),
     },
     4: {
-        "name": "九幽帝冢",
+        "name": "噩梦",
         "size": (21, 21),
         "monsters": 10,
         "chests": 9,
@@ -1192,7 +1209,7 @@ TOMB_DIFFICULTIES = {
         "time": 1200,
         "required": 900,
         "energy": 60,
-        "level_req": 90,
+        "tomb_level_req": 15,
         "entry_tokens": 2,
         "monster_mult": 1.10,
         "chest_mingbi": (120, 240),

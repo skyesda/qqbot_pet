@@ -136,6 +136,8 @@ class PetStore:
                 "abyss_last_reset": "",
                 "tomb": {
                     "mingbi": 0,
+                    "level": 1,
+                    "exp": 0,
                     "stats": {
                         "raids": 0,
                         "success": 0,
@@ -575,12 +577,20 @@ class PetStore:
     @staticmethod
     def tomb_state(player: dict) -> dict:
         """返回玩家摸金状态，自动 lazy init 所需字段。"""
-        return player.setdefault("tomb", {
+        st = player.setdefault("tomb", {
             "mingbi": 0,
+            "level": 1,
+            "exp": 0,
             "stats": {"raids": 0, "success": 0, "fail": 0, "total_mingbi": 0},
             "daily": {"reset": "", "count": 0},
             "inventory": {},
         })
+        # 兼容旧数据：补上缺少的摸金等级字段
+        if "level" not in st:
+            st["level"] = 1
+        if "exp" not in st:
+            st["exp"] = 0
+        return st
 
     @classmethod
     def refresh_tomb_daily(cls, player: dict) -> dict:
@@ -639,6 +649,33 @@ class PetStore:
     @classmethod
     def get_tomb_token_count(cls, player: dict) -> int:
         return cls.tomb_state(player).get("inventory", {}).get(data.TOMB_EXTRA_TOKEN, 0)
+
+    @classmethod
+    def get_tomb_level(cls, player: dict) -> int:
+        return cls.tomb_state(player).get("level", 1)
+
+    @classmethod
+    def get_tomb_exp(cls, player: dict) -> int:
+        return cls.tomb_state(player).get("exp", 0)
+
+    @classmethod
+    def add_tomb_exp(cls, player: dict, amount: int) -> tuple[int, int]:
+        """增加摸金经验，自动升级直到满级。返回 (当前等级, 当前经验)。"""
+        st = cls.tomb_state(player)
+        level = st.get("level", 1)
+        exp = st.get("exp", 0) + max(0, amount)
+        while level < data.TOMB_MAX_LEVEL:
+            need = data.tomb_exp_to_next(level)
+            if exp < need:
+                break
+            exp -= need
+            level += 1
+        if level >= data.TOMB_MAX_LEVEL:
+            level = data.TOMB_MAX_LEVEL
+            exp = 0
+        st["level"] = level
+        st["exp"] = exp
+        return level, exp
 
     # ----------------------------- 邀请 -----------------------------
     @staticmethod

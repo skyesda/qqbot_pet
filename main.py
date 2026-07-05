@@ -4464,13 +4464,16 @@ class PetParkPlugin(Star):
             "在独立墓穴中探索、战斗、开箱，并在时限内把指定数量的『冥币』带到出口撤离。\n\n"
             "**核心规则**\n"
             "- 完全独立的财富：冥币、摸金背包，不影响金币/积分/钻石/主背包。\n"
-            "- 难度 1、2 全天免费进入；难度 3 需消耗 1 张『棺椁令』，难度 4 需消耗 2 张。\n"
+            "- 摸金拥有独立等级（满级 30 级），每次成功或失败都会获得摸金经验。\n"
+            "- 难度 **简单/普通** 全天免费进入；**困难** 需消耗 1 张『棺椁令』，**噩梦** 需消耗 2 张。\n"
             f"- 『棺椁令』可在摸金商店购买，每张 {data.TOMB_EXTRA_TOKEN_COST} 冥币。\n"
             f"- 每次摸金结束后有 {data.TOMB_COOLDOWN // 60} 分钟冷却时间，冷却结束后才能再次进入。\n"
             "- 超时未撤离或宠物死亡则失败，本局冥币大部分损失。\n\n"
+            "**难度与摸金等级要求**\n"
+            "• 简单：摸金 Lv1　普通：摸金 Lv5　困难：摸金 Lv10　噩梦：摸金 Lv15\n\n"
             "**常用指令**\n"
             "`摸金商店` · `购买摸金道具 道具名` · `我的摸金`\n"
-            "`进入摸金 难度(1~4)` · `摸金移动 上/下/左/右` · `摸金探索`\n"
+            "`进入摸金 难度(简单/普通/困难/噩梦 或 1~4)` · `摸金移动 上/下/左/右` · `摸金探索`\n"
             "`摸金开箱` · `摸金使用 道具名` · `摸金撤离` · `放弃摸金`"
         )
 
@@ -4503,6 +4506,10 @@ class PetParkPlugin(Star):
         stats = st.get("stats", {})
         token = data.TOMB_EXTRA_TOKEN
         token_count = st.get("inventory", {}).get(token, 0)
+        level = st.get("level", 1)
+        exp = st.get("exp", 0)
+        need = data.tomb_exp_to_next(level)
+        exp_text = f"{exp}/{need}" if level < data.TOMB_MAX_LEVEL else "已满级"
         cooldown_ts = st.get("cooldown", 0)
         now = int(time.time())
         if cooldown_ts > now:
@@ -4513,9 +4520,10 @@ class PetParkPlugin(Star):
             cd_text = "可进入"
         return (
             f"## 🏺 我的摸金\n"
+            f"● 摸金等级：Lv{level}/{data.TOMB_MAX_LEVEL}　经验：{exp_text}\n"
             f"● 冥币：**{st.get('mingbi', 0)}**\n"
             f"● 摸金背包：{inv_text}\n"
-            f"● 棺椁令：{token_count} 张（难度3需1张，难度4需2张）\n"
+            f"● 棺椁令：{token_count} 张（困难需1张，噩梦需2张）\n"
             f"● 状态：{cd_text}\n"
             f"● 总次数：{stats.get('raids', 0)}　成功：{stats.get('success', 0)}　失败：{stats.get('fail', 0)}\n"
             f"● 历史带出冥币：{stats.get('total_mingbi', 0)}"
@@ -4531,18 +4539,31 @@ class PetParkPlugin(Star):
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
         if key in self._tomb_sessions:
             return "你已经在一次摸金探险中，发送『摸金状态』查看。", None
+
+        # 难度解析：支持数字 1~4 或名称 简单/普通/困难/噩梦
+        name_to_diff = {cfg["name"]: d for d, cfg in data.TOMB_DIFFICULTIES.items()}
         difficulty = 1
         if len(tokens) > 1:
-            try:
-                difficulty = int(tokens[1])
-            except ValueError:
-                return "用法：进入摸金 难度(1~4)", None
+            raw = tokens[1]
+            if raw in name_to_diff:
+                difficulty = name_to_diff[raw]
+            else:
+                try:
+                    difficulty = int(raw)
+                except ValueError:
+                    return "用法：进入摸金 难度(简单/普通/困难/噩梦 或 1~4)", None
         if difficulty not in data.TOMB_DIFFICULTIES:
             return "难度只能是 1~4。", None
         cfg = data.TOMB_DIFFICULTIES[difficulty]
-        if p["level"] < cfg["level_req"]:
-            return f"该难度需要宠物等级达到 Lv{cfg['level_req']}。", None
+
         st = self.store.tomb_state(player)
+        tomb_level = st.get("level", 1)
+        if tomb_level < cfg["tomb_level_req"]:
+            return (
+                f"【{cfg['name']}】需要摸金等级达到 Lv{cfg['tomb_level_req']}，"
+                f"你当前只有 Lv{tomb_level}。多下墓积累经验吧！"
+            ), None
+
         now = int(time.time())
         cooldown_ts = st.get("cooldown", 0)
         if cooldown_ts > now:
@@ -4554,7 +4575,7 @@ class PetParkPlugin(Star):
         if tokens_needed > 0:
             if token_count < tokens_needed:
                 return (
-                    f"难度 {difficulty} 需要 {tokens_needed} 张『{data.TOMB_EXTRA_TOKEN}』，"
+                    f"难度【{cfg['name']}】需要 {tokens_needed} 张『{data.TOMB_EXTRA_TOKEN}』，"
                     f"当前只有 {token_count} 张。可发送『购买摸金道具 {data.TOMB_EXTRA_TOKEN}』购买。"
                 ), None
             self.store.consume_tomb_token(player, tokens_needed)
@@ -4816,6 +4837,16 @@ class PetParkPlugin(Star):
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         st["cooldown"] = int(time.time()) + data.TOMB_COOLDOWN
+
+        # 摸金经验结算：成功 / 失败（超时、死亡、放弃均算失败）
+        old_level = self.store.get_tomb_level(player)
+        xp = data.TOMB_XP_REWARD["success" if reason == "success" else "failure"].get(session["difficulty"], 0)
+        new_level, new_exp = self.store.add_tomb_exp(player, xp)
+        level_up_text = ""
+        if new_level > old_level:
+            level_up_text = f"　🆙 摸金等级提升至 Lv{new_level}！"
+        xp_text = f"摸金经验 +{xp}{level_up_text}"
+
         if reason == "success":
             gained = session["mingbi"]
             self.store.add_tomb_mingbi(player, gained)
@@ -4826,6 +4857,7 @@ class PetParkPlugin(Star):
             self._tomb_sessions.pop(key, None)
             return (
                 f"🏆 撤离成功！带出 **{gained}** 冥币，已永久到账。\n"
+                f"● {xp_text}\n"
                 f"● 宠物经验 +{exp_gain}\n"
                 f"● 累计成功 {stats['success']} 次，总带出冥币 {stats['total_mingbi']}"
             )
@@ -4834,9 +4866,10 @@ class PetParkPlugin(Star):
             stats["fail"] = stats.get("fail", 0) + 1
             p["hp"] = max(1, int(p["hp"] * 0.7))
             return (
-                "⏰ 墓穴坍塌，撤离失败！\n"
-                "● 本局冥币全部损失\n"
-                "● 宠物 HP -30%"
+                f"⏰ 墓穴坍塌，撤离失败！\n"
+                f"● {xp_text}\n"
+                f"● 本局冥币全部损失\n"
+                f"● 宠物 HP -30%"
             )
         if reason == "death":
             kept = int(session["mingbi"] * (0.5 if session["buffs"].get("revive") else 0.2))
@@ -4847,6 +4880,7 @@ class PetParkPlugin(Star):
                 self._tomb_sessions.pop(key, None)
                 return (
                     f"🧧 招魂幡触发，宠物在濒死之际被强行送出墓穴！\n"
+                    f"● {xp_text}\n"
                     f"● 保留 {kept} 冥币\n"
                     f"● 宠物 HP 降至 1"
                 )
@@ -4855,6 +4889,7 @@ class PetParkPlugin(Star):
             self._tomb_sessions.pop(key, None)
             return (
                 f"💀 宠物力竭身亡，撤离失败！\n"
+                f"● {xp_text}\n"
                 f"● 仅保留 {kept} 冥币\n"
                 f"● 宠物 HP=1，状态变为虚弱"
             )
@@ -4864,6 +4899,7 @@ class PetParkPlugin(Star):
         self._tomb_sessions.pop(key, None)
         return (
             f"🏃 你已放弃本次摸金，仅保留 {kept} 冥币。\n"
+            f"● {xp_text}\n"
             f"● 损失 {session['mingbi'] - kept} 冥币"
         )
 
