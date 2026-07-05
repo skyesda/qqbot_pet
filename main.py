@@ -501,7 +501,8 @@ class PetParkPlugin(Star):
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
             reply = f"宠物乐园处理出错：{e}"
-        # 部分指令返回 (文本, Markdown图片串) 二元组，把宠物图片随消息一起展示。
+        # 部分指令返回 (文本, Markdown图片串) 二元组，把图片以 Markdown 语法内嵌到文本最前，
+        # 与宠物图片发送方式保持一致（![alt #width #height](url)）。
         image_md = None
         if isinstance(reply, tuple):
             reply, image_md = reply
@@ -509,11 +510,6 @@ class PetParkPlugin(Star):
             return
         await self.store.save()
         event.stop_event()
-        # QQ 官方机器人(qq_official)一条消息要么是原生 Markdown(msg_type=2，渲染
-        # ## / **)，要么是富媒体图片(msg_type=7，文本只当纯文本)——带 Image 组件就会
-        # 丢掉 markdown。所以这里不再附加 Image 组件，而是把宠物图片以 Markdown 图片
-        # 语法内嵌到文本最前(images.pet_image_md)，整条消息仍是纯文本走 msg_type=2，
-        # 让图片与渲染后的文本同处一条消息。QQ 服务端会按 URL(jsDelivr CDN)拉取图片。
         if image_md:
             reply = f"{image_md}\n{reply}"
         # 在合适的地方附加 QQ 官方消息按钮，方便用户快捷发送指令
@@ -4568,13 +4564,22 @@ class PetParkPlugin(Star):
         p["energy"] -= cfg["energy"]
         # 生成地图
         cells = self._tomb_generate_map(difficulty)
+        # 找到随机入口位置
+        entrance_pos = {"x": 1, "y": 1}
+        for ey, row in enumerate(cells):
+            for ex, c in enumerate(row):
+                if c == "E":
+                    entrance_pos = {"x": ex, "y": ey}
+                    break
+            if entrance_pos != {"x": 1, "y": 1}:
+                break
         now = int(time.time())
         session = {
             "started_at": now,
             "difficulty": difficulty,
             "map": {"w": len(cells[0]), "h": len(cells), "cells": cells},
-            "player_pos": {"x": 1, "y": 1},
-            "visited": {(1, 1)},
+            "player_pos": entrance_pos,
+            "visited": {(entrance_pos["x"], entrance_pos["y"])},
             "hp_snapshot": p["hp_max"],
             "required": cfg["required"],
             "time_limit": cfg["time"],
@@ -4590,14 +4595,15 @@ class PetParkPlugin(Star):
         self._tomb_sessions[key] = session
         st = self.store.tomb_state(player)
         st.setdefault("stats", {})["raids"] = st["stats"].get("raids", 0) + 1
-        image_md = self._tomb_player_map_md(session)
+        image_url = self._tomb_player_map_url(session)
+        ex, ey = entrance_pos["x"], entrance_pos["y"]
         text = (
             f"## 🏺 进入【{cfg['name']}】\n"
             f"● 需在 {cfg['time'] // 60} 分钟内带回 **{cfg['required']}** 冥币并撤离\n"
-            f"● 起点：(1,1)　出口：见地图红菱标记\n"
+            f"● 起点：({ex},{ey})　出口：见地图红菱标记\n"
             f"● 图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛\n"
             f"● 操作：摸金移动 上/下/左/右　摸金探索　摸金状态\n"
-            f"> 你当前在 (1,1)，剩余时间 {cfg['time'] // 60}:00"
+            f"> 你当前在 ({ex},{ey})，剩余时间 {cfg['time'] // 60}:00"
         )
         return text, image_md
 
@@ -4981,8 +4987,25 @@ class PetParkPlugin(Star):
                     dq.append((nx, ny))
         return None
 
+    @staticmethod
+    def _tomb_bfs_distances(
+        cells: list[list[str]], sx: int, sy: int
+    ) -> dict[tuple[int, int], int]:
+        """返回从 (sx,sy) 到所有可达格子的最短距离。"""
+        h, w = len(cells), len(cells[0])
+        dist = {(sx, sy): 0}
+        dq = deque([(sx, sy)])
+        while dq:
+            x, y = dq.popleft()
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in dist and cells[ny][nx] != "#":
+                    dist[(nx, ny)] = dist[(x, y)] + 1
+                    dq.append((nx, ny))
+        return dist
+
     def _tomb_generate_map(self, difficulty: int) -> list[list[str]]:
-        """生成迷宫式地图：墙为 #，通路为 .，入口 E，出口 X。"""
+        """生成复杂迷宫：墙为 #，通路为 .，随机入口 E，最远出口 X，并带少量环路。"""
         cfg = data.TOMB_DIFFICULTIES[difficulty]
         w, h = cfg["size"]
         # 迷宫算法需要奇数尺寸；配置里已保持奇数，这里做保险处理
@@ -5012,17 +5035,37 @@ class PetParkPlugin(Star):
             if not found:
                 stack.pop()
 
-        cells[1][1] = "E"
         floors = [(x, y) for y in range(1, h - 1) for x in range(1, w - 1) if cells[y][x] == "."]
         if not floors:
             cells[h - 2][w - 2] = "X"
             return cells
 
-        exit_pos = max(floors, key=lambda pos: abs(pos[0] - 1) + abs(pos[1] - 1))
+        # 随机选择入口，并把出口设在迷宫最远端
+        entrance = random.choice(floors)
+        dist_map = self._tomb_bfs_distances(cells, entrance[0], entrance[1])
+        exit_pos = max(floors, key=lambda pos: dist_map.get(pos, 0))
+        ex, ey = entrance
+        cells[ey][ex] = "E"
         ex, ey = exit_pos
         cells[ey][ex] = "X"
 
-        available = [pos for pos in floors if pos not in ((1, 1), exit_pos)]
+        # 增加少量环路，让迷宫更复杂（打通一些分隔通道的墙）
+        loops = difficulty * 2
+        candidates = []
+        for y in range(2, h - 2):
+            for x in range(2, w - 2):
+                if cells[y][x] != "#":
+                    continue
+                # 只打通左右或上下两侧都是通道的墙
+                lr = cells[y][x - 1] != "#" and cells[y][x + 1] != "#"
+                ud = cells[y - 1][x] != "#" and cells[y + 1][x] != "#"
+                if lr or ud:
+                    candidates.append((x, y))
+        if candidates:
+            for wx, wy in random.sample(candidates, min(loops, len(candidates))):
+                cells[wy][wx] = "."
+
+        available = [pos for pos in floors if pos not in (entrance, exit_pos)]
         need = cfg["monsters"] + cfg["chests"] + cfg["traps"] + cfg["altars"]
         if len(available) < need:
             need = len(available)
@@ -5184,22 +5227,30 @@ class PetParkPlugin(Star):
         img.save(path, "PNG")
         return filename
 
-    def _tomb_image_md(self, filename: str) -> str:
-        """返回 Markdown 图片语法，与宠物图片输出方式一致。"""
+    def _tomb_image_url(self, filename: str) -> str:
+        """返回图片的完整 HTTP URL。"""
         host = str(self.config.get("web_host", "103.38.83.146"))
         if host in ("0.0.0.0", "127.0.0.1", "localhost"):
             host = "103.38.83.146"
         port = int(self.config.get("web_port", 7799))
-        url = f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
-        return f"![摸金地图]({url})"
+        return f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
+
+    def _tomb_image_md(self, filename: str) -> str:
+        """返回与宠物图片一致的 Markdown 图片语法，带尺寸标记，确保手机端可渲染。"""
+        url = self._tomb_image_url(filename)
+        return f"![摸金地图 #{images._IMG_DISPLAY} #{images._IMG_DISPLAY}]({url})"
 
     def _tomb_player_map_md(self, session: dict) -> str:
-        """生成带迷雾的玩家视角地图：只照亮周围几格，其余漆黑。"""
+        """生成带迷雾的玩家视角地图，返回 Markdown 图片串。"""
+        return self._tomb_image_md(self._save_player_map(session))
+
+    def _save_player_map(self, session: dict) -> str:
+        """生成带迷雾的玩家视角地图文件，返回文件名。"""
         base_path = self.store.custom_images_dir / session["image"]
         try:
             img = Image.open(base_path).convert("RGB")
         except Exception:
-            return self._tomb_image_md(session["image"])
+            return session["image"]
 
         cells = session["map"]["cells"]
         h, w = len(cells), len(cells[0])
@@ -5235,7 +5286,7 @@ class PetParkPlugin(Star):
         filename = f"tomb_p_{uuid.uuid4().hex}.png"
         path = self.store.custom_images_dir / filename
         fog.save(path, "PNG")
-        return self._tomb_image_md(filename)
+        return filename
 
     def _tomb_format_surroundings(self, session: dict, radius: int = 1) -> str:
         cells = session["map"]["cells"]
