@@ -4595,7 +4595,7 @@ class PetParkPlugin(Star):
         self._tomb_sessions[key] = session
         st = self.store.tomb_state(player)
         st.setdefault("stats", {})["raids"] = st["stats"].get("raids", 0) + 1
-        image_url = self._tomb_player_map_url(session)
+        image_md = self._tomb_player_map_md(session)
         ex, ey = entrance_pos["x"], entrance_pos["y"]
         text = (
             f"## 🏺 进入【{cfg['name']}】\n"
