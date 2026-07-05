@@ -4698,6 +4698,7 @@ class PetParkPlugin(Star):
             gain = int(gain * 1.3)
         session["mingbi"] += gain
         cells[y][x] = "."
+        self._tomb_refresh_map(session)
         extra = ""
         if random.random() < 0.2:
             item = random.choice([n for n in data.TOMB_ITEMS if data.TOMB_ITEMS[n].get("effect") != "token"])
@@ -4881,10 +4882,13 @@ class PetParkPlugin(Star):
         self, player: dict, p: dict, session: dict, avoid_monster: bool = False
     ) -> str:
         x, y = session["player_pos"]["x"], session["player_pos"]["y"]
-        cell = session["map"]["cells"][y][x]
+        cells = session["map"]["cells"]
+        cell = cells[y][x]
         if cell == "X":
             return "🚪 你到达了出口，发送『摸金撤离』可结算离开。"
         if cell == "T":
+            cells[y][x] = "."
+            self._tomb_refresh_map(session)
             if random.random() < 0.5:
                 session["stunned"] = session.get("stunned", 0) + 1
                 dmg = max(1, int(p["hp_max"] * 0.15))
@@ -4892,7 +4896,10 @@ class PetParkPlugin(Star):
                 return f"☠️ 触发陷阱！HP -{dmg}，眩晕 1 回合。"
             return "🪤 你险险避开了一个陷阱。"
         if cell == "S":
-            return self._tomb_altar_event(player, p, session)
+            result = self._tomb_altar_event(player, p, session)
+            cells[y][x] = "."
+            self._tomb_refresh_map(session)
+            return result
         if cell == "M" and not avoid_monster:
             return self._tomb_battle(player, p, session)
         if cell == "C":
@@ -4920,6 +4927,13 @@ class PetParkPlugin(Star):
         self, player: dict, p: dict, session: dict, summoned: bool = False, forced_win: bool = False
     ) -> str:
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
+        cells = session["map"]["cells"]
+        x, y = session["player_pos"]["x"], session["player_pos"]["y"]
+
+        if not summoned and cells[y][x] == "M":
+            cells[y][x] = "."
+            self._tomb_refresh_map(session)
+
         if forced_win or session["buffs"].pop("auto_win", False):
             gain_min, gain_max = cfg["monster_mingbi"]
             gain = random.randint(gain_min, gain_max)
@@ -4942,16 +4956,16 @@ class PetParkPlugin(Star):
             hp_loss = max(1, int(p["hp_max"] * 0.15))
             p["hp"] = max(1, p["hp"] - hp_loss)
             return f"⚔️ 小胜！获得 {gain} 冥币，HP -{hp_loss}。"
-        # 失败侧
+        # 失败侧（怪物已在战斗开始前被从地图上移除）
         if random.random() < 0.3:
             hp_loss = max(1, int(p["hp_max"] * 0.25))
             p["hp"] = max(1, p["hp"] - hp_loss)
-            return f"⚔️ 你受伤撤退，HP -{hp_loss}，怪物仍守在原地。"
+            return f"⚔️ 你受伤撤退，HP -{hp_loss}。"
         hp_loss = max(1, int(p["hp_max"] * 0.5))
         p["hp"] = max(1, p["hp"] - hp_loss)
         if p["hp"] <= 1:
             return self._tomb_settle(player, p, session, "death")
-        return f"⚔️ 你惨败，HP -{hp_loss}，怪物仍守在原地。"
+        return f"⚔️ 你惨败，HP -{hp_loss}。"
 
     # ---- 地图生成与绘图 ----
     @staticmethod
@@ -5287,6 +5301,10 @@ class PetParkPlugin(Star):
         path = self.store.custom_images_dir / filename
         fog.save(path, "PNG")
         return filename
+
+    def _tomb_refresh_map(self, session: dict) -> None:
+        """重新绘制基础地图（用于宝箱/怪物/陷阱/祭坛被交互后从地图上消失）。"""
+        session["image"] = self._tomb_draw_map(session)
 
     def _tomb_format_surroundings(self, session: dict, radius: int = 1) -> str:
         cells = session["map"]["cells"]
