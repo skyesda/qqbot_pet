@@ -247,27 +247,33 @@ def _drop_text(dropped: dict) -> str:
 
 
 def ascend(pet: dict) -> tuple[bool, str]:
-    """飞升：超究极体 -> 飞升。"""
+    """飞升：超究极体 -> 飞升。等级保持不变，属性翻倍。"""
     if pet.get("stage") != "超究极体":
         return False, "只有【超究极体】的宠物才能飞升。"
     if pet["level"] < level_cap(pet):
         return False, f"飞升需先升满当前阶段（Lv{level_cap(pet)}）。"
     leftover_exp = pet.get("exp", 0)
     pet["stage"] = "飞升"
-    pet["level"] = 1
     pet["exp"] = leftover_exp % data.ASCEND_XIANYUAN_PER_EXP
     pet["xianyuan"] = leftover_exp // data.ASCEND_XIANYUAN_PER_EXP
     pet["ascended"] = True
-    pet["atk"] = int(pet["atk"] * 1.5)
-    pet["def"] = int(pet["def"] * 1.5)
+    pet["hp_max"] = int(pet["hp_max"] * 2)
     pet["hp"] = pet["hp_max"]
-    return True, "🕊️ **飞升成功！**进入【飞升】阶段，可使用幻境寻宝、宠物神仙劫等指令。" + (
-        f"\n> 剩余经验已折算为 {pet['xianyuan']} 仙元（1 仙元=10w 经验）。" if pet['xianyuan'] else ""
+    pet["atk"] = int(pet["atk"] * 2)
+    pet["def"] = int(pet["def"] * 2)
+    pet["intel"] = int(pet["intel"] * 2)
+    return True, (
+        f"🕊️ **飞升成功！**进入【飞升】阶段，等级保持 Lv{pet['level']}，"
+        f"生命/攻击/防御/智力全部翻倍！\n"
+        f"> 剩余经验已折算为 {pet['xianyuan']} 仙元（1 仙元=10w 经验）。"
+        if pet['xianyuan'] else
+        f"🕊️ **飞升成功！**进入【飞升】阶段，等级保持 Lv{pet['level']}，"
+        f"生命/攻击/防御/智力全部翻倍！"
     )
 
 
 def tribulation(pet: dict) -> tuple[bool, str]:
-    """渡劫：飞升 -> 渡劫。"""
+    """渡劫：飞升 -> 渡劫。等级保持不变，属性再翻倍。"""
     if pet.get("stage") != "飞升":
         return False, "只有【飞升】阶段的宠物才能渡劫。"
     if pet["level"] < level_cap(pet):
@@ -275,13 +281,19 @@ def tribulation(pet: dict) -> tuple[bool, str]:
     if random.random() < 0.3:
         pet["hp"] = max(1, pet["hp_max"] // 2)
         return False, "💥 **渡劫失败！**天劫降下，宠物身受重伤，请恢复后再试。"
+    leftover_exp = pet.get("exp", 0)
     pet["stage"] = "渡劫"
-    pet["level"] = 1
-    pet["exp"] = 0
+    pet["exp"] = leftover_exp % data.ASCEND_XIANYUAN_PER_EXP
+    pet["xianyuan"] = pet.get("xianyuan", 0) + leftover_exp // data.ASCEND_XIANYUAN_PER_EXP
+    pet["hp_max"] = int(pet["hp_max"] * 2)
+    pet["hp"] = pet["hp_max"]
     pet["atk"] = int(pet["atk"] * 2)
     pet["def"] = int(pet["def"] * 2)
-    pet["hp"] = pet["hp_max"]
-    return True, "⚡ **渡劫成功！**进入【渡劫】阶段，满级 Lv999，从此超凡入圣！"
+    pet["intel"] = int(pet["intel"] * 2)
+    return True, (
+        f"⚡ **渡劫成功！**进入【渡劫】阶段，等级保持 Lv{pet['level']}，"
+        f"生命/攻击/防御/智力再次翻倍！"
+    )
 
 
 # --------------------------------------------------------------------------
