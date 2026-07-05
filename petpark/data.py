@@ -897,10 +897,23 @@ def ascend_xianyuan_to_next(level: int) -> int:
 # 飞升后才能用的幻境寻宝 / 神仙劫奖励范围
 ASCEND_TREASURE = {
     "energy": 60,
-    "jifen": (20000, 80000),
-    "xianyuan": (30, 80),  # 直接获得仙元
+    "jifen": (500, 3000),  # 积分基础范围
+    "jifen_chance": 0.5,   # 50% 概率获得积分
+    "xianyuan": (3, 6),    # 每级系数，实际 = 等级 × 系数 + 基础
+    "xianyuan_base": 10,
     "cooldown": (600, 900),  # 10~15 分钟随机冷却
 }
+
+
+def ascend_treasure_xianyuan(level: int) -> tuple[int, int]:
+    """幻境寻宝随等级提升的仙元奖励范围。
+
+    Lv1 约 13~26 仙元（足够升 1~2 级），Lv100 约 310~620 仙元，
+    Lv220 约 670~1340 仙元，整体与 `ascend_xianyuan_to_next(level)` 保持平衡。
+    """
+    low = max(1, level * ASCEND_TREASURE["xianyuan"][0] + ASCEND_TREASURE["xianyuan_base"])
+    high = max(low, level * ASCEND_TREASURE["xianyuan"][1] + ASCEND_TREASURE["xianyuan_base"])
+    return low, high
 
 # ----------------------------------------------------------------------------
 # 婚恋

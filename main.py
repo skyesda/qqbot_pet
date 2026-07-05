@@ -3186,13 +3186,16 @@ class PetParkPlugin(Star):
         if p["energy"] < data.ASCEND_TREASURE["energy"]:
             return f"精力不足（需 {data.ASCEND_TREASURE['energy']}）。"
         p["energy"] -= data.ASCEND_TREASURE["energy"]
-        j = random.randint(*data.ASCEND_TREASURE["jifen"])
-        x = random.randint(*data.ASCEND_TREASURE["xianyuan"])
-        cooldown = random.randint(*data.ASCEND_TREASURE["cooldown"])
-        self.store.add_currency(player, "积分", j)
+        x = random.randint(*data.ascend_treasure_xianyuan(p["level"]))
+        jifen_text = ""
+        if random.random() < data.ASCEND_TREASURE.get("jifen_chance", 1.0):
+            j = random.randint(*data.ASCEND_TREASURE["jifen"])
+            self.store.add_currency(player, "积分", j)
+            jifen_text = f"积分 +{j}，"
         petmod.add_xianyuan(p, x)
+        cooldown = random.randint(*data.ASCEND_TREASURE["cooldown"])
         self.store.set_cooldown(player, "fantasy_treasure", cooldown)
-        return f"✨ 幻境寻宝：积分 +{j}，仙元 +{x}！下次可探索时间：{self._fmt_duration(cooldown)}后。"
+        return f"✨ 幻境寻宝：{jifen_text}仙元 +{x}！下次可探索时间：{self._fmt_duration(cooldown)}后。"
 
     def _immortal_calamity(self, player: dict) -> str:
         p = self._need_pet(player)
