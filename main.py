@@ -4588,7 +4588,7 @@ class PetParkPlugin(Star):
         )
         return text, image_md
 
-    def _tomb_move(self, player: dict, tokens: list[str]) -> str:
+    def _tomb_move(self, player: dict, tokens: list[str]) -> tuple[str, str] | str:
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
@@ -4625,14 +4625,16 @@ class PetParkPlugin(Star):
         event_text = self._tomb_trigger_cell(player, p, session, avoid)
         remain = self._tomb_time_left(session)
         surroundings = self._tomb_format_surroundings(session)
-        return (
+        image_md = self._tomb_player_map_md(session)
+        text = (
             f"你向**{direction}**移动到了 ({x},{y})。\n"
             f"{event_text}\n"
             f"{surroundings}\n"
             f"> 当前背负 {session['mingbi']} / {session['required']} 冥币，剩余时间 {remain}"
         )
+        return text, image_md
 
-    def _tomb_explore(self, player: dict) -> str:
+    def _tomb_explore(self, player: dict) -> tuple[str, str] | str:
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
@@ -4646,12 +4648,14 @@ class PetParkPlugin(Star):
         surroundings = self._tomb_format_surroundings(session, radius=1)
         remain = self._tomb_time_left(session)
         pos = session["player_pos"]
-        return (
+        image_md = self._tomb_player_map_md(session)
+        text = (
             f"## 🏺 摸金探索\n"
             f"你当前在 ({pos['x']},{pos['y']})。\n"
             f"{surroundings}\n"
             f"> 当前背负 {session['mingbi']} / {session['required']} 冥币，剩余时间 {remain}"
         )
+        return text, image_md
 
     def _tomb_open_chest(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -4747,7 +4751,7 @@ class PetParkPlugin(Star):
             )
         return self._tomb_settle(player, p, session, "success")
 
-    def _tomb_status(self, player: dict) -> str:
+    def _tomb_status(self, player: dict) -> tuple[str, str] | str:
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
@@ -4763,7 +4767,8 @@ class PetParkPlugin(Star):
         inv_text = "、".join(f"{k}×{v}" for k, v in inv.items() if v > 0) or "空"
         remain = self._tomb_time_left(session)
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
-        return (
+        image_md = self._tomb_player_map_md(session)
+        text = (
             f"## 🏺 摸金状态 · {cfg['name']}\n"
             f"● 位置：({pos['x']},{pos['y']})\n"
             f"● 背负冥币：{session['mingbi']} / {session['required']}\n"
@@ -4772,6 +4777,7 @@ class PetParkPlugin(Star):
             f"● 剩余时间：{remain}\n"
             f"● 眩晕回合：{session.get('stunned', 0)}"
         )
+        return text, image_md
 
     def _tomb_forfeit(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -5041,14 +5047,19 @@ class PetParkPlugin(Star):
         img = Image.new("RGB", (img_w, img_h), data.TOMB_COLORS["bg"])
         draw = ImageDraw.Draw(img)
 
-        # 尝试加载可显示英文/数字的字体，失败则使用默认字体
+        # 优先加载中文字体；服务器若未安装会显示方框，需要安装 fonts-wqy-zenhei 等
         font = None
         small_font = None
         for font_path in (
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansMonoCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/source-han-sans/SourceHanSansCN-Regular.otf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/PingFang.ttc",
         ):
             try:
                 font = ImageFont.truetype(font_path, 18)
@@ -5057,8 +5068,8 @@ class PetParkPlugin(Star):
             except Exception:
                 continue
 
-        # 顶部标题
-        title = f"TOMB RAID  Lv{session['difficulty']}  {cfg['name']}"
+        # 顶部标题（全中文，避免英文）
+        title = f"摸金地图  难度{session['difficulty']}  {cfg['name']}"
         if font:
             draw.text((pad, 12), title, fill=data.TOMB_COLORS["text"], font=font)
         else:
@@ -5144,10 +5155,10 @@ class PetParkPlugin(Star):
                     ]
                     draw.polygon(flame, fill=(220, 240, 255))
 
-        # 底部图例（使用英文/符号，避免服务器缺少中文字体时显示方框）
+        # 底部图例
         legend = (
-            f"EXIT=red diamond  CHEST=gold  MONSTER=skull  "
-            f"TRAP=spike  ALTAR=blue orb  NEED {cfg['required']} mingbi"
+            f"红菱=出口  金箱=宝箱  白骷髅=怪物  "
+            f"紫刺=陷阱  蓝珠=祭坛  需带回 {cfg['required']} 冥币"
         )
         if small_font:
             draw.text((pad, oy + h * cell + 10), legend, fill=(170, 170, 170), font=small_font)
@@ -5167,6 +5178,32 @@ class PetParkPlugin(Star):
         port = int(self.config.get("web_port", 7799))
         url = f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
         return f"![摸金地图]({url})"
+
+    def _tomb_player_map_md(self, session: dict) -> str:
+        """在基础地图上加盖玩家当前位置标记，返回 Markdown 图片。"""
+        base_path = self.store.custom_images_dir / session["image"]
+        try:
+            img = Image.open(base_path).convert("RGB")
+        except Exception:
+            return self._tomb_image_md(session["image"])
+        draw = ImageDraw.Draw(img)
+        cells = session["map"]["cells"]
+        h, w = len(cells), len(cells[0])
+        cell = data.TOMB_CELL_SIZE
+        pad = data.TOMB_PADDING
+        header_h = 44
+        ox, oy = pad, pad + header_h
+        px, py = session["player_pos"]["x"], session["player_pos"]["y"]
+        cx = ox + px * cell + cell // 2
+        cy = oy + py * cell + cell // 2
+        r = cell // 3
+        # 青色定位环 + 中心点
+        draw.ellipse([cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2], outline=(0, 255, 255), width=3)
+        draw.ellipse([cx - r // 2, cy - r // 2, cx + r // 2, cy + r // 2], fill=(0, 255, 255))
+        filename = f"tomb_p_{uuid.uuid4().hex}.png"
+        path = self.store.custom_images_dir / filename
+        img.save(path, "PNG")
+        return self._tomb_image_md(filename)
 
     def _tomb_format_surroundings(self, session: dict, radius: int = 1) -> str:
         cells = session["map"]["cells"]
