@@ -4496,6 +4496,9 @@ class PetParkPlugin(Star):
         if self.store.get_tomb_mingbi(player) < total:
             return f"冥币不足（需 {total}，当前 {self.store.get_tomb_mingbi(player)}）。"
         self.store.add_tomb_mingbi(player, -total)
+        if data.TOMB_ITEMS[name].get("effect") == "main_bag_item":
+            self.store.add_item(player, name, count)
+            return f"🏺 已购买『{name}』×{count}，消耗 {total} 冥币（已进入主背包）。"
         self.store.add_tomb_item(player, name, count)
         return f"🏺 已购买『{name}』×{count}，消耗 {total} 冥币。"
 
