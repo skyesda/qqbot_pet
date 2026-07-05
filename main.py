@@ -181,6 +181,10 @@ KNOWN_COMMANDS = {
     "我的摸金",
     "进入摸金",
     "摸金移动",
+    "上",
+    "下",
+    "左",
+    "右",
     "摸金探索",
     "摸金开箱",
     "摸金使用",
@@ -890,6 +894,8 @@ class PetParkPlugin(Star):
             return self._tomb_enter(player, tokens)
         if cmd == "摸金移动":
             return self._tomb_move(player, tokens)
+        if cmd in ("上", "下", "左", "右"):
+            return self._tomb_move(player, ["摸金移动", cmd])
         if cmd == "摸金探索":
             return self._tomb_explore(player)
         if cmd == "摸金开箱":
