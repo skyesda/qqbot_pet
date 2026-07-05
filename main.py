@@ -4590,7 +4590,7 @@ class PetParkPlugin(Star):
         self._tomb_sessions[key] = session
         st = self.store.tomb_state(player)
         st.setdefault("stats", {})["raids"] = st["stats"].get("raids", 0) + 1
-        image_md = self._tomb_image_md(filename)
+        image_md = self._tomb_player_map_md(session)
         text = (
             f"## 🏺 进入【{cfg['name']}】\n"
             f"● 需在 {cfg['time'] // 60} 分钟内带回 **{cfg['required']}** 冥币并撤离\n"
@@ -5194,13 +5194,13 @@ class PetParkPlugin(Star):
         return f"![摸金地图]({url})"
 
     def _tomb_player_map_md(self, session: dict) -> str:
-        """在基础地图上加盖玩家当前位置标记，返回 Markdown 图片。"""
+        """生成带迷雾的玩家视角地图：只照亮周围几格，其余漆黑。"""
         base_path = self.store.custom_images_dir / session["image"]
         try:
             img = Image.open(base_path).convert("RGB")
         except Exception:
             return self._tomb_image_md(session["image"])
-        draw = ImageDraw.Draw(img)
+
         cells = session["map"]["cells"]
         h, w = len(cells), len(cells[0])
         cell = data.TOMB_CELL_SIZE
@@ -5210,13 +5210,31 @@ class PetParkPlugin(Star):
         px, py = session["player_pos"]["x"], session["player_pos"]["y"]
         cx = ox + px * cell + cell // 2
         cy = oy + py * cell + cell // 2
+
+        # 全黑底图
+        fog = Image.new("RGB", img.size, (5, 5, 5))
+        # 视野遮罩：内圈清晰，外圈微亮，之外全黑
+        mask = Image.new("L", img.size, 0)
+        draw_mask = ImageDraw.Draw(mask)
+        draw_mask.ellipse(
+            [cx - cell * 3, cy - cell * 3, cx + cell * 3, cy + cell * 3],
+            fill=90,
+        )
+        draw_mask.ellipse(
+            [cx - cell * 2, cy - cell * 2, cx + cell * 2, cy + cell * 2],
+            fill=255,
+        )
+        fog.paste(img, (0, 0), mask)
+
+        # 玩家定位标记
+        draw = ImageDraw.Draw(fog)
         r = cell // 3
-        # 青色定位环 + 中心点
         draw.ellipse([cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2], outline=(0, 255, 255), width=3)
         draw.ellipse([cx - r // 2, cy - r // 2, cx + r // 2, cy + r // 2], fill=(0, 255, 255))
+
         filename = f"tomb_p_{uuid.uuid4().hex}.png"
         path = self.store.custom_images_dir / filename
-        img.save(path, "PNG")
+        fog.save(path, "PNG")
         return self._tomb_image_md(filename)
 
     def _tomb_format_surroundings(self, session: dict, radius: int = 1) -> str:
