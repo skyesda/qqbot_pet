@@ -632,9 +632,9 @@ class PetStore:
         return cls.add_tomb_item(player, data.TOMB_EXTRA_TOKEN, count)
 
     @classmethod
-    def consume_tomb_token(cls, player: dict) -> bool:
-        """消耗一枚棺椁令，返回是否成功。"""
-        return cls.remove_tomb_item(player, data.TOMB_EXTRA_TOKEN, 1)
+    def consume_tomb_token(cls, player: dict, count: int = 1) -> bool:
+        """消耗 count 枚棺椁令，返回是否成功。"""
+        return cls.remove_tomb_item(player, data.TOMB_EXTRA_TOKEN, count)
 
     @classmethod
     def get_tomb_token_count(cls, player: dict) -> int:

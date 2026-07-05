@@ -4468,8 +4468,9 @@ class PetParkPlugin(Star):
             "在独立墓穴中探索、战斗、开箱，并在时限内把指定数量的『冥币』带到出口撤离。\n\n"
             "**核心规则**\n"
             "- 完全独立的财富：冥币、摸金背包，不影响金币/积分/钻石/主背包。\n"
-            f"- 每日免费 {data.TOMB_DAILY_FREE} 次入场；超出可花 {data.TOMB_EXTRA_TOKEN_COST} 冥币购买『{data.TOMB_EXTRA_TOKEN}』再进。\n"
-            "- 四个难度：怪物、宝箱、时限、需带回冥币都随难度增加。\n"
+            "- 难度 1、2 全天免费进入；难度 3 需消耗 1 张『棺椁令』，难度 4 需消耗 2 张。\n"
+            f"- 『棺椁令』可在摸金商店购买，每张 {data.TOMB_EXTRA_TOKEN_COST} 冥币。\n"
+            f"- 每次摸金结束后有 {data.TOMB_COOLDOWN // 60} 分钟冷却时间，冷却结束后才能再次进入。\n"
             "- 超时未撤离或宠物死亡则失败，本局冥币大部分损失。\n\n"
             "**常用指令**\n"
             "`摸金商店` · `购买摸金道具 道具名` · `我的摸金`\n"
@@ -4504,13 +4505,22 @@ class PetParkPlugin(Star):
         inv = st.get("inventory", {})
         inv_text = "、".join(f"{k}×{v}" for k, v in inv.items() if v > 0) or "空"
         stats = st.get("stats", {})
-        daily = self.store.refresh_tomb_daily(player)["daily"]
-        free_left = max(0, data.TOMB_DAILY_FREE - daily.get("count", 0))
+        token = data.TOMB_EXTRA_TOKEN
+        token_count = st.get("inventory", {}).get(token, 0)
+        cooldown_ts = st.get("cooldown", 0)
+        now = int(time.time())
+        if cooldown_ts > now:
+            remain = cooldown_ts - now
+            m, s = divmod(remain, 60)
+            cd_text = f"冷却中：{m}分{s:02d}秒后可再次进入"
+        else:
+            cd_text = "可进入"
         return (
             f"## 🏺 我的摸金\n"
             f"● 冥币：**{st.get('mingbi', 0)}**\n"
             f"● 摸金背包：{inv_text}\n"
-            f"● 今日免费次数：{free_left}/{data.TOMB_DAILY_FREE}\n"
+            f"● 棺椁令：{token_count} 张（难度3需1张，难度4需2张）\n"
+            f"● 状态：{cd_text}\n"
             f"● 总次数：{stats.get('raids', 0)}　成功：{stats.get('success', 0)}　失败：{stats.get('fail', 0)}\n"
             f"● 历史带出冥币：{stats.get('total_mingbi', 0)}"
         )
@@ -4536,22 +4546,25 @@ class PetParkPlugin(Star):
         cfg = data.TOMB_DIFFICULTIES[difficulty]
         if p["level"] < cfg["level_req"]:
             return f"该难度需要宠物等级达到 Lv{cfg['level_req']}。", None
-        self.store.refresh_tomb_daily(player)
-        daily = self.store.tomb_state(player)["daily"]
-        has_token = self.store.get_tomb_token_count(player) > 0
-        if daily.get("count", 0) >= data.TOMB_DAILY_FREE and not has_token:
-            return (
-                f"今日免费次数已用完（{data.TOMB_DAILY_FREE} 次）。"
-                f"可发送『购买摸金道具 {data.TOMB_EXTRA_TOKEN}』购买入场券。"
-            ), None
+        st = self.store.tomb_state(player)
+        now = int(time.time())
+        cooldown_ts = st.get("cooldown", 0)
+        if cooldown_ts > now:
+            remain = cooldown_ts - now
+            m, s = divmod(remain, 60)
+            return f"冷却中，还需 {m}分{s:02d}秒 才能再次进入摸金。", None
+        tokens_needed = cfg.get("entry_tokens", 0)
+        token_count = self.store.get_tomb_token_count(player)
+        if tokens_needed > 0:
+            if token_count < tokens_needed:
+                return (
+                    f"难度 {difficulty} 需要 {tokens_needed} 张『{data.TOMB_EXTRA_TOKEN}』，"
+                    f"当前只有 {token_count} 张。可发送『购买摸金道具 {data.TOMB_EXTRA_TOKEN}』购买。"
+                ), None
+            self.store.consume_tomb_token(player, tokens_needed)
         petmod.refresh_energy(p)
         if p["energy"] < cfg["energy"]:
             return f"精力不足（需 {cfg['energy']}，当前 {p['energy']}）。", None
-        # 扣门票
-        if daily.get("count", 0) < data.TOMB_DAILY_FREE:
-            daily["count"] = daily.get("count", 0) + 1
-        else:
-            self.store.consume_tomb_token(player)
         p["energy"] -= cfg["energy"]
         # 生成地图
         cells = self._tomb_generate_map(difficulty)
@@ -4795,6 +4808,7 @@ class PetParkPlugin(Star):
         stats = st.setdefault("stats", {})
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
+        st["cooldown"] = int(time.time()) + data.TOMB_COOLDOWN
         if reason == "success":
             gained = session["mingbi"]
             self.store.add_tomb_mingbi(player, gained)

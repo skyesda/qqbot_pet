@@ -1127,9 +1127,10 @@ ABYSS_BLESSINGS = {
 # 宠物摸金（独立财富系统）
 # ----------------------------------------------------------------------------
 TOMB_CURRENCY = "冥币"
-TOMB_DAILY_FREE = 3
+TOMB_DAILY_FREE = 3  # 已废弃，保留兼容
 TOMB_EXTRA_TOKEN = "棺椁令"
 TOMB_EXTRA_TOKEN_COST = 200  # 冥币
+TOMB_COOLDOWN = 300  # 每次摸金结束后冷却秒数（5分钟）
 
 # 难度配置：尺寸、怪物数、宝箱数、陷阱数、祭坛数、时间(秒)、需带回冥币、精力消耗、等级要求
 TOMB_DIFFICULTIES = {
@@ -1144,6 +1145,7 @@ TOMB_DIFFICULTIES = {
         "required": 80,
         "energy": 15,
         "level_req": 15,
+        "entry_tokens": 0,
         "monster_mult": 0.35,
         "chest_mingbi": (15, 30),
         "monster_mingbi": (10, 20),
@@ -1159,6 +1161,7 @@ TOMB_DIFFICULTIES = {
         "required": 200,
         "energy": 25,
         "level_req": 35,
+        "entry_tokens": 0,
         "monster_mult": 0.55,
         "chest_mingbi": (30, 60),
         "monster_mingbi": (20, 35),
@@ -1174,6 +1177,7 @@ TOMB_DIFFICULTIES = {
         "required": 450,
         "energy": 40,
         "level_req": 60,
+        "entry_tokens": 1,
         "monster_mult": 0.80,
         "chest_mingbi": (60, 120),
         "monster_mingbi": (35, 60),
@@ -1189,6 +1193,7 @@ TOMB_DIFFICULTIES = {
         "required": 900,
         "energy": 60,
         "level_req": 90,
+        "entry_tokens": 2,
         "monster_mult": 1.10,
         "chest_mingbi": (120, 240),
         "monster_mingbi": (60, 100),
