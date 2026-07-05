@@ -871,12 +871,67 @@ DUNGEONS = {
 # ----------------------------------------------------------------------------
 # 剧情任务
 # ----------------------------------------------------------------------------
+# req: 领取前提（可选）。stage 表示最低阶段索引，level 表示最低等级。
+# need: 领取后需要完成的统计增量（与现有 stats 机制一样，从领取时快照）。
+# reward: 支持 jifen（积分）、xianyuan（仙元）、exp（经验）、item（物品）、item_count（数量，默认 1）。
 QUESTS = {
+    # ---- 非飞升新手任务（保留给早期玩家） ----
     "初入江湖": {"need": {"battle_win": 1}, "reward": {"jifen": 2000, "exp": 1000}},
     "降妖除魔": {"need": {"battle_win": 10}, "reward": {"jifen": 20000, "exp": 10000}},
     "探索秘境": {
         "need": {"explore": 20},
         "reward": {"jifen": 30000, "item": "进化神石"},
+    },
+    # ---- 飞升后专属剧情任务「登仙之路」 ----
+    "初入飞升": {
+        "req": {"stage": "飞升"},
+        "need": {},
+        "reward": {"jifen": 5000, "xianyuan": 20, "item": "小精力瓶", "item_count": 1},
+    },
+    "仙元初聚": {
+        "req": {"stage": "飞升"},
+        "need": {"ascended_fantasy_treasure": 5},
+        "reward": {"jifen": 8000, "xianyuan": 40},
+    },
+    "劫火炼心": {
+        "req": {"stage": "飞升"},
+        "need": {"ascended_immortal_calamity": 3},
+        "reward": {"jifen": 10000, "xianyuan": 50, "item": "生命宝符", "item_count": 1},
+    },
+    "飞升·斩妖除魔": {
+        "req": {"stage": "飞升"},
+        "need": {"ascended_battle_win": 10},
+        "reward": {"jifen": 15000, "xianyuan": 80, "item": "攻击宝符", "item_count": 1},
+    },
+    "秘境探险家": {
+        "req": {"stage": "飞升"},
+        "need": {"ascended_dungeon_clear": 10},
+        "reward": {"jifen": 15000, "xianyuan": 60, "item": "防御宝符", "item_count": 1},
+    },
+    "深渊行者": {
+        "req": {"stage": "飞升"},
+        "need": {"ascended_abyss": 10},
+        "reward": {"jifen": 20000, "xianyuan": 100},
+    },
+    "神器再铸": {
+        "req": {"stage": "飞升"},
+        "need": {"forge_artifact": 1},
+        "reward": {"jifen": 25000, "xianyuan": 100, "item": "万能宝石", "item_count": 2},
+    },
+    "问道姻缘": {
+        "req": {"stage": "飞升"},
+        "need": {"shuangxiu": 5},
+        "reward": {"jifen": 10000, "xianyuan": 50, "item": "相思豆", "item_count": 3},
+    },
+    "百炼成钢": {
+        "req": {"stage": "飞升", "level": 50},
+        "need": {},
+        "reward": {"jifen": 30000, "xianyuan": 150},
+    },
+    "飞升圆满": {
+        "req": {"stage": "飞升", "level": 100},
+        "need": {},
+        "reward": {"jifen": 50000, "xianyuan": 200, "item": "生命仙符", "item_count": 1},
     },
 }
 

@@ -576,6 +576,11 @@ class PetParkPlugin(Star):
             return None, f"❌ 用户 `{qq}` 在本群不存在（对方需先在本群参与宠物乐园）。"
         return tp, None
 
+    @staticmethod
+    def _inc_stat(player: dict, key: str, n: int = 1) -> None:
+        """增加玩家统计计数（如剧情任务进度）。"""
+        player.setdefault("stats", {})[key] = player["stats"].get(key, 0) + n
+
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         # 配置里的管理员白名单优先
         if str(event.get_sender_id()) in self.admins:
@@ -847,7 +852,7 @@ class PetParkPlugin(Star):
 
         # ---- 剧情任务 ----
         if cmd == "宠物剧情任务":
-            return self._quest_list()
+            return self._quest_list(player)
         if cmd == "我的剧情任务":
             return self._my_quests(player)
         if cmd == "取消剧情任务":
@@ -3003,6 +3008,8 @@ class PetParkPlugin(Star):
             base = random.randint(80, 200) + p["level"] * 25
             exp = base * (2 if action == "双修" else 1)
             petmod.add_exp(p, exp)
+            if action == "双修":
+                self._inc_stat(player, "shuangxiu")
             return (
                 f"🧘 {action}完成，经验 +{exp}，当前经验 {p['exp']}。"
                 + self._auto_level_note(player, p)
@@ -3193,6 +3200,7 @@ class PetParkPlugin(Star):
             self.store.add_currency(player, "积分", j)
             jifen_text = f"积分 +{j}，"
         petmod.add_xianyuan(p, x)
+        self._inc_stat(player, "ascended_fantasy_treasure")
         cooldown = random.randint(*data.ASCEND_TREASURE["cooldown"])
         self.store.set_cooldown(player, "fantasy_treasure", cooldown)
         return f"✨ 幻境寻宝：{jifen_text}仙元 +{x}！下次可探索时间：{self._fmt_duration(cooldown)}后。"
@@ -3212,6 +3220,7 @@ class PetParkPlugin(Star):
         if random.random() < 0.5:
             e = random.randint(50000, 200000)
             petmod.add_exp(p, e)
+            self._inc_stat(player, "ascended_immortal_calamity")
             return f"⚡ 神仙劫渡过，经验 +{e}！"
         p["hp"] = max(1, p["hp"] // 2)
         return "⚡ 神仙劫失败，宠物身受重伤，恢复后再来。"
@@ -3246,6 +3255,7 @@ class PetParkPlugin(Star):
             player, cost.get("blueprint", "神器图纸"), cost.get("blueprint_count", 1)
         )
         self.store.add_item(player, name, 1)
+        self._inc_stat(player, "forge_artifact")
         return f"⚒ 打造成功！『{name}』已放入背包，可『佩戴神器 {name}』。"
 
     def _equip_artifact(self, player: dict, tokens: list[str]) -> str:
@@ -3613,6 +3623,8 @@ class PetParkPlugin(Star):
         ap_player.setdefault("stats", {})["battle_win"] = (
             ap_player["stats"].get("battle_win", 0) + 1
         )
+        if petmod._is_ascended(attacker):
+            self._inc_stat(ap_player, "ascended_battle_win")
         steal = ""
         # 妙手摘星：击杀偷物
         if (
@@ -3848,6 +3860,8 @@ class PetParkPlugin(Star):
             jifen_gain = max(1, int(d["jifen"] * random.uniform(0.8, 1.2)))
             petmod.add_exp(p, exp_gain)
             self.store.add_currency(player, "积分", jifen_gain)
+            if petmod._is_ascended(p):
+                self._inc_stat(player, "ascended_dungeon_clear")
             drop = ""
             if random.random() < 0.2:
                 self.store.add_item(player, "万能宝石", 1)
@@ -3910,6 +3924,8 @@ class PetParkPlugin(Star):
         # 扣除并记录
         p["energy"] -= energy_cost
         self.store.set_cooldown(player, "深渊秘境", cooldown)
+        if petmod._is_ascended(p):
+            self._inc_stat(player, "ascended_abyss")
 
         # 读取祝福与一次性 Buff
         blessing = self.store.get_abyss_blessing(player)
@@ -4275,16 +4291,63 @@ class PetParkPlugin(Star):
             f"下一次 `深渊秘境` 自动生效。剩余结晶 {self.store.get_abyss_crystal(player)}。"
         )
 
-    def _quest_list(self) -> str:
+    @staticmethod
+    def _quest_req_met(player: dict, quest: dict) -> bool:
+        """检查玩家是否满足任务的领取/提交前提。"""
+        p = player.get("pet")
+        if not p:
+            return False
+        req = quest.get("req", {})
+        stage = req.get("stage")
+        if stage and data.STAGES.index(p.get("stage", "")) < data.STAGES.index(stage):
+            return False
+        level = req.get("level")
+        if level and p.get("level", 0) < level:
+            return False
+        return True
+
+    @staticmethod
+    def _quest_req_text(quest: dict) -> str:
+        """把任务前提转成可读文本。"""
+        req = quest.get("req", {})
+        parts = []
+        if "stage" in req:
+            parts.append(f"阶段≥{req['stage']}")
+        if "level" in req:
+            parts.append(f"等级≥Lv{req['level']}")
+        return "、".join(parts) if parts else "无"
+
+    @staticmethod
+    def _quest_reward_text(reward: dict) -> str:
+        """把奖励字典转成可读文本。"""
+        parts = []
+        if "jifen" in reward:
+            parts.append(f"积分+{reward['jifen']}")
+        if "exp" in reward:
+            parts.append(f"经验+{reward['exp']}")
+        if "xianyuan" in reward:
+            parts.append(f"仙元+{reward['xianyuan']}")
+        if "item" in reward:
+            count = reward.get("item_count", 1)
+            parts.append(f"{reward['item']}×{count}")
+        return "、".join(parts) if parts else "无"
+
+    def _quest_list(self, player: dict) -> str:
         lines = [
             "## 📜 可领取剧情任务",
             "> `领取任务 任务名` 领取，完成后 `提交任务 任务名`",
             "",
         ]
         for n, q in data.QUESTS.items():
-            need = "、".join(f"{k}×{v}" for k, v in q["need"].items())
-            rwd = "、".join(f"{k}{v}" for k, v in q["reward"].items())
-            lines.append(f"- **{n}**\n　　🎯 {need}　🎁 {rwd}")
+            locked = not self._quest_req_met(player, q)
+            need = "、".join(f"{k}×{v}" for k, v in q["need"].items()) or "直接领取"
+            rwd = self._quest_reward_text(q.get("reward", {}))
+            req = self._quest_req_text(q)
+            lock_mark = "🔒 " if locked else ""
+            lines.append(
+                f"- **{lock_mark}{n}**\n"
+                f"　　🔒 前提：{req}　🎯 {need}　🎁 {rwd}"
+            )
         return "\n".join(lines)
 
     def _my_quests(self, player: dict) -> str:
@@ -4299,7 +4362,7 @@ class PetParkPlugin(Star):
             prog = "、".join(
                 f"{k} **{max(0, stats.get(k, 0) - base.get(k, 0))}**/{v}"
                 for k, v in need.items()
-            )
+            ) or "已完成前置，可直接提交"
             lines.append(f"- **{n}**：{prog}")
         return "\n".join(lines)
 
@@ -4309,9 +4372,13 @@ class PetParkPlugin(Star):
         name = tokens[1]
         if name not in data.QUESTS:
             return f"没有名为『{name}』的剧情任务。"
-        need = data.QUESTS[name]["need"]
+        quest = data.QUESTS[name]
+        need = quest["need"]
         stats = player.get("stats", {})
         if cmd == "领取任务":
+            if not self._quest_req_met(player, quest):
+                req = self._quest_req_text(quest)
+                return f"❌ 你尚未满足领取条件：{req}。"
             if name in player.get("quests", {}):
                 return f"『{name}』已在进行中。"
             # 记录领取时的进度快照，任务进度从领取时刻起算
@@ -4320,21 +4387,25 @@ class PetParkPlugin(Star):
         # 提交任务
         if name not in player.get("quests", {}):
             return f"你尚未领取『{name}』。"
+        if not self._quest_req_met(player, quest):
+            req = self._quest_req_text(quest)
+            return f"❌ 你尚未满足提交条件：{req}。"
         base = player["quests"][name]
         base = base if isinstance(base, dict) else {}
         if any(stats.get(k, 0) - base.get(k, 0) < v for k, v in need.items()):
             return "任务目标尚未完成。"
-        reward = data.QUESTS[name]["reward"]
+        reward = quest["reward"]
         for k, v in reward.items():
             if k == "jifen":
                 self.store.add_currency(player, "积分", v)
             elif k == "exp" and player.get("pet"):
                 petmod.add_exp(player["pet"], v)
+            elif k == "xianyuan" and player.get("pet"):
+                petmod.add_xianyuan(player["pet"], v)
             elif k == "item":
-                self.store.add_item(player, v, 1)
+                self.store.add_item(player, v, reward.get("item_count", 1))
         player["quests"].pop(name, None)
-        rwd = "、".join(f"{k}{v}" for k, v in reward.items())
-        return f"✅ 提交『{name}』成功！获得奖励：{rwd}。"
+        return f"✅ 提交『{name}』成功！获得奖励：{self._quest_reward_text(reward)}。"
 
     # =====================================================================
     # 婚恋
