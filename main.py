@@ -4577,11 +4577,12 @@ class PetParkPlugin(Star):
         self._tomb_sessions[key] = session
         st = self.store.tomb_state(player)
         st.setdefault("stats", {})["raids"] = st["stats"].get("raids", 0) + 1
-        image_md = self._tomb_image_url(filename)
+        image_md = self._tomb_image_md(filename)
         text = (
             f"## 🏺 进入【{cfg['name']}】\n"
             f"● 需在 {cfg['time'] // 60} 分钟内带回 **{cfg['required']}** 冥币并撤离\n"
             f"● 起点：(1,1)　出口：见地图红菱标记\n"
+            f"● 图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛\n"
             f"● 操作：摸金移动 上/下/左/右　摸金探索　摸金状态\n"
             f"> 你当前在 (1,1)，剩余时间 {cfg['time'] // 60}:00"
         )
@@ -4961,118 +4962,211 @@ class PetParkPlugin(Star):
         return None
 
     def _tomb_generate_map(self, difficulty: int) -> list[list[str]]:
+        """生成迷宫式地图：墙为 #，通路为 .，入口 E，出口 X。"""
         cfg = data.TOMB_DIFFICULTIES[difficulty]
         w, h = cfg["size"]
-        for _ in range(50):
-            cells = [["." for _ in range(w)] for _ in range(h)]
-            for y in range(h):
-                cells[y][0] = "#"
-                cells[y][w - 1] = "#"
-            for x in range(w):
-                cells[0][x] = "#"
-                cells[h - 1][x] = "#"
-            inner = [(x, y) for x in range(1, w - 1) for y in range(1, h - 1) if (x, y) != (1, 1)]
-            wall_count = max(1, int(len(inner) * 0.12))
-            if wall_count < len(inner):
-                for wx, wy in random.sample(inner, wall_count):
-                    cells[wy][wx] = "#"
-            reachable = self._tomb_reachable(cells, 1, 1)
-            if len(reachable) < 4:
-                continue
-            exit_pos = max(reachable, key=lambda pos: abs(pos[0] - 1) + abs(pos[1] - 1))
-            ex, ey = exit_pos
-            cells[ey][ex] = "X"
-            cells[1][1] = "E"
-            available = [pos for pos in reachable if pos not in ((1, 1), exit_pos)]
-            need = cfg["monsters"] + cfg["chests"] + cfg["traps"] + cfg["altars"]
-            if len(available) < need:
-                continue
-            chosen = random.sample(available, need)
-            i = 0
-            for _ in range(cfg["monsters"]):
+        # 迷宫算法需要奇数尺寸；配置里已保持奇数，这里做保险处理
+        if w % 2 == 0:
+            w += 1
+        if h % 2 == 0:
+            h += 1
+
+        cells = [["#" for _ in range(w)] for _ in range(h)]
+        stack = [(1, 1)]
+        cells[1][1] = "."
+        visited = {(1, 1)}
+        directions = [(0, -2), (0, 2), (-2, 0), (2, 0)]
+
+        while stack:
+            x, y = stack[-1]
+            found = False
+            for dx, dy in random.sample(directions, len(directions)):
+                nx, ny = x + dx, y + dy
+                if 0 < nx < w - 1 and 0 < ny < h - 1 and (nx, ny) not in visited:
+                    cells[ny][nx] = "."
+                    cells[y + dy // 2][x + dx // 2] = "."
+                    visited.add((nx, ny))
+                    stack.append((nx, ny))
+                    found = True
+                    break
+            if not found:
+                stack.pop()
+
+        cells[1][1] = "E"
+        floors = [(x, y) for y in range(1, h - 1) for x in range(1, w - 1) if cells[y][x] == "."]
+        if not floors:
+            cells[h - 2][w - 2] = "X"
+            return cells
+
+        exit_pos = max(floors, key=lambda pos: abs(pos[0] - 1) + abs(pos[1] - 1))
+        ex, ey = exit_pos
+        cells[ey][ex] = "X"
+
+        available = [pos for pos in floors if pos not in ((1, 1), exit_pos)]
+        need = cfg["monsters"] + cfg["chests"] + cfg["traps"] + cfg["altars"]
+        if len(available) < need:
+            need = len(available)
+        chosen = random.sample(available, need)
+        i = 0
+        for _ in range(cfg["monsters"]):
+            if i < len(chosen):
                 cells[chosen[i][1]][chosen[i][0]] = "M"
                 i += 1
-            for _ in range(cfg["chests"]):
+        for _ in range(cfg["chests"]):
+            if i < len(chosen):
                 cells[chosen[i][1]][chosen[i][0]] = "C"
                 i += 1
-            for _ in range(cfg["traps"]):
+        for _ in range(cfg["traps"]):
+            if i < len(chosen):
                 cells[chosen[i][1]][chosen[i][0]] = "T"
                 i += 1
-            for _ in range(cfg["altars"]):
+        for _ in range(cfg["altars"]):
+            if i < len(chosen):
                 cells[chosen[i][1]][chosen[i][0]] = "S"
                 i += 1
-            dist = self._tomb_bfs_dist(cells, 1, 1, ex, ey)
-            if dist is not None and dist >= w + h - 2:
-                return cells
-        # 兜底：返回一个简单通路
-        cells = [["." for _ in range(w)] for _ in range(h)]
-        for y in range(h):
-            cells[y][0] = "#"
-            cells[y][w - 1] = "#"
-        for x in range(w):
-            cells[0][x] = "#"
-            cells[h - 1][x] = "#"
-        cells[1][1] = "E"
-        cells[h - 2][w - 2] = "X"
         return cells
 
     def _tomb_draw_map(self, session: dict) -> str:
+        """绘制迷宫式地图，墙面带立体感，特殊格子使用更易辨识的图标。"""
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         cells = session["map"]["cells"]
         h, w = len(cells), len(cells[0])
         cell = data.TOMB_CELL_SIZE
         pad = data.TOMB_PADDING
+        header_h = 44
+        footer_h = 36
         img_w = w * cell + pad * 2
-        img_h = h * cell + pad * 2
+        img_h = h * cell + pad * 2 + header_h + footer_h
+
         img = Image.new("RGB", (img_w, img_h), data.TOMB_COLORS["bg"])
         draw = ImageDraw.Draw(img)
+
+        # 尝试加载可显示英文/数字的字体，失败则使用默认字体
+        font = None
+        small_font = None
+        for font_path in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ):
+            try:
+                font = ImageFont.truetype(font_path, 18)
+                small_font = ImageFont.truetype(font_path, 14)
+                break
+            except Exception:
+                continue
+
+        # 顶部标题
+        title = f"TOMB RAID  Lv{session['difficulty']}  {cfg['name']}"
+        if font:
+            draw.text((pad, 12), title, fill=data.TOMB_COLORS["text"], font=font)
+        else:
+            draw.text((pad, 12), title, fill=data.TOMB_COLORS["text"])
+
+        ox, oy = pad, pad + header_h
+
         for y in range(h):
             for x in range(w):
-                cx = pad + x * cell
-                cy = pad + y * cell
+                cx = ox + x * cell
+                cy = oy + y * cell
                 c = cells[y][x]
-                color = data.TOMB_COLORS["wall"] if c == "#" else data.TOMB_COLORS["floor"]
-                draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=color, outline=data.TOMB_COLORS["grid"])
+
+                if c == "#":
+                    # 石墙块：带高光与阴影，呈现立体墓穴墙壁
+                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=data.TOMB_COLORS["wall"])
+                    draw.line([(cx, cy), (cx + cell - 1, cy)], fill=(95, 90, 90), width=2)
+                    draw.line([(cx, cy), (cx, cy + cell - 1)], fill=(95, 90, 90), width=2)
+                    draw.line([(cx + cell - 1, cy), (cx + cell - 1, cy + cell - 1)], fill=(35, 32, 32), width=2)
+                    draw.line([(cx, cy + cell - 1), (cx + cell - 1, cy + cell - 1)], fill=(35, 32, 32), width=2)
+                else:
+                    # 地板：深色砖块，略微区分奇偶格
+                    base = data.TOMB_COLORS["floor"]
+                    alt = (34, 31, 31)
+                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=alt if (x + y) % 2 else base)
+                    # 细边框让通道更清晰
+                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], outline=(42, 39, 39), width=1)
+
                 cx_c = cx + cell // 2
                 cy_c = cy + cell // 2
                 r = cell // 3
+
                 if c == "E":
-                    draw.ellipse([cx_c - r, cy_c - r, cx_c + r, cy_c + r], fill=data.TOMB_COLORS["entrance"])
-                elif c == "X":
-                    draw.polygon(
-                        [(cx_c, cy_c - r), (cx_c + r, cy_c), (cx_c, cy_c + r), (cx_c - r, cy_c)],
-                        fill=data.TOMB_COLORS["exit"],
+                    draw.ellipse(
+                        [cx_c - r, cy_c - r, cx_c + r, cy_c + r],
+                        fill=data.TOMB_COLORS["entrance"],
+                        outline=(180, 255, 180),
+                        width=2,
                     )
+                elif c == "X":
+                    diamond = [(cx_c, cy_c - r), (cx_c + r, cy_c), (cx_c, cy_c + r), (cx_c - r, cy_c)]
+                    draw.polygon(diamond, fill=data.TOMB_COLORS["exit"], outline=(255, 200, 200), width=2)
+                    draw.line([(cx_c, cy_c - r), (cx_c, cy_c + r)], fill=(150, 50, 50), width=2)
+                    draw.line([(cx_c - r, cy_c), (cx_c + r, cy_c)], fill=(150, 50, 50), width=2)
                 elif c == "M":
-                    draw.ellipse([cx_c - r, cy_c - r * 1.5, cx_c + r, cy_c + r * 0.5], fill=data.TOMB_COLORS["monster"])
-                    draw.ellipse([cx_c - r // 3, cy_c - r // 2, cx_c - r // 6, cy_c - r // 4], fill=(0, 0, 0))
-                    draw.ellipse([cx_c + r // 6, cy_c - r // 2, cx_c + r // 3, cy_c - r // 4], fill=(0, 0, 0))
+                    # 白骷髅头 + 红眼窝，辨识度高
+                    rh = int(r * 0.7)
+                    draw.ellipse([cx_c - r, cy_c - rh, cx_c + r, cy_c + rh], fill=(235, 235, 235))
+                    draw.ellipse([cx_c - r // 2, cy_c - rh // 3, cx_c - r // 4, cy_c], fill=(160, 40, 40))
+                    draw.ellipse([cx_c + r // 4, cy_c - rh // 3, cx_c + r // 2, cy_c], fill=(160, 40, 40))
+                    draw.rectangle([cx_c - r // 2, cy_c + rh // 4, cx_c + r // 2, cy_c + rh], fill=data.TOMB_COLORS["monster"])
                 elif c == "C":
                     box = cell // 3
-                    draw.rectangle([cx_c - box, cy_c - box // 2, cx_c + box, cy_c + box // 2], fill=data.TOMB_COLORS["chest"])
+                    draw.rounded_rectangle(
+                        [cx_c - box, cy_c - box // 2, cx_c + box, cy_c + box // 2],
+                        radius=4,
+                        fill=data.TOMB_COLORS["chest"],
+                        outline=(255, 230, 150),
+                        width=2,
+                    )
+                    draw.rectangle([cx_c - box // 4, cy_c - box // 3, cx_c + box // 4, cy_c], fill=(100, 75, 25))
                 elif c == "T":
+                    # 八角尖刺陷阱
                     pts = [
-                        (cx_c, cy_c - r), (cx_c + r, cy_c + r), (cx_c - r, cy_c + r)
+                        (cx_c, cy_c - r),
+                        (cx_c + r * 0.4, cy_c - r * 0.4),
+                        (cx_c + r, cy_c),
+                        (cx_c + r * 0.4, cy_c + r * 0.4),
+                        (cx_c, cy_c + r),
+                        (cx_c - r * 0.4, cy_c + r * 0.4),
+                        (cx_c - r, cy_c),
+                        (cx_c - r * 0.4, cy_c - r * 0.4),
                     ]
-                    draw.polygon(pts, fill=data.TOMB_COLORS["trap"])
+                    draw.polygon(pts, fill=data.TOMB_COLORS["trap"], outline=(255, 200, 255), width=1)
                 elif c == "S":
-                    pts = []
-                    for k in range(6):
-                        ang = 3.1416 * k / 3
-                        pts.append((cx_c + r * 0.9 * (1 if k % 2 == 0 else 0.6) * (1 if k < 3 else -1) * (1 if k in (0, 3) else (0.5 if k in (1, 5) else -0.5)), cy_c + r * 0.9 * (0 if k in (0, 3) else (0.866 if k in (1, 2) else -0.866))))
-                    # 简化为菱形
-                    draw.polygon([(cx_c, cy_c - r), (cx_c + r, cy_c), (cx_c, cy_c + r), (cx_c - r, cy_c)], fill=data.TOMB_COLORS["altar"])
+                    # 蓝色祭坛宝珠
+                    draw.ellipse([cx_c - r, cy_c - r, cx_c + r, cy_c + r], fill=data.TOMB_COLORS["altar"], outline=(200, 230, 255), width=2)
+                    flame = [
+                        (cx_c, cy_c - r),
+                        (cx_c + r // 2, cy_c),
+                        (cx_c, cy_c + r // 3),
+                        (cx_c - r // 2, cy_c),
+                    ]
+                    draw.polygon(flame, fill=(220, 240, 255))
+
+        # 底部图例（使用英文/符号，避免服务器缺少中文字体时显示方框）
+        legend = (
+            f"EXIT=red diamond  CHEST=gold  MONSTER=skull  "
+            f"TRAP=spike  ALTAR=blue orb  NEED {cfg['required']} mingbi"
+        )
+        if small_font:
+            draw.text((pad, oy + h * cell + 10), legend, fill=(170, 170, 170), font=small_font)
+        else:
+            draw.text((pad, oy + h * cell + 10), legend, fill=(170, 170, 170))
+
         filename = f"tomb_{uuid.uuid4().hex}.png"
         path = self.store.custom_images_dir / filename
         img.save(path, "PNG")
         return filename
 
-    def _tomb_image_url(self, filename: str) -> str:
+    def _tomb_image_md(self, filename: str) -> str:
+        """返回 Markdown 图片语法，与宠物图片输出方式一致。"""
         host = str(self.config.get("web_host", "103.38.83.146"))
         if host in ("0.0.0.0", "127.0.0.1", "localhost"):
             host = "103.38.83.146"
         port = int(self.config.get("web_port", 7799))
-        return f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
+        url = f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
+        return f"![摸金地图]({url})"
 
     def _tomb_format_surroundings(self, session: dict, radius: int = 1) -> str:
         cells = session["map"]["cells"]

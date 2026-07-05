@@ -1135,7 +1135,7 @@ TOMB_EXTRA_TOKEN_COST = 200  # 冥币
 TOMB_DIFFICULTIES = {
     1: {
         "name": "初探古墓",
-        "size": (6, 6),
+        "size": (7, 7),
         "monsters": 2,
         "chests": 3,
         "traps": 1,
@@ -1150,7 +1150,7 @@ TOMB_DIFFICULTIES = {
     },
     2: {
         "name": "深入地宫",
-        "size": (7, 7),
+        "size": (9, 9),
         "monsters": 4,
         "chests": 4,
         "traps": 2,
@@ -1165,7 +1165,7 @@ TOMB_DIFFICULTIES = {
     },
     3: {
         "name": "幽冥皇陵",
-        "size": (8, 8),
+        "size": (11, 11),
         "monsters": 6,
         "chests": 5,
         "traps": 3,
@@ -1180,7 +1180,7 @@ TOMB_DIFFICULTIES = {
     },
     4: {
         "name": "九幽帝冢",
-        "size": (9, 9),
+        "size": (13, 13),
         "monsters": 8,
         "chests": 6,
         "traps": 4,
