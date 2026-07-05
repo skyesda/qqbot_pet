@@ -134,6 +134,17 @@ class PetStore:
                 "abyss_crystal": 0,
                 "abyss_last_decay": 0,
                 "abyss_last_reset": "",
+                "tomb": {
+                    "mingbi": 0,
+                    "stats": {
+                        "raids": 0,
+                        "success": 0,
+                        "fail": 0,
+                        "total_mingbi": 0,
+                    },
+                    "daily": {"reset": "", "count": 0},
+                    "inventory": {},
+                },
             }
         return players.get(key)
 
@@ -559,6 +570,75 @@ class PetStore:
     @classmethod
     def clear_abyss_blessing(cls, player: dict) -> None:
         cls.abyss_state(player)["blessing"] = ""
+
+    # ----------------------------- 宠物摸金（独立财富系统） -----------------------------
+    @staticmethod
+    def tomb_state(player: dict) -> dict:
+        """返回玩家摸金状态，自动 lazy init 所需字段。"""
+        return player.setdefault("tomb", {
+            "mingbi": 0,
+            "stats": {"raids": 0, "success": 0, "fail": 0, "total_mingbi": 0},
+            "daily": {"reset": "", "count": 0},
+            "inventory": {},
+        })
+
+    @classmethod
+    def refresh_tomb_daily(cls, player: dict) -> dict:
+        """刷新摸金每日次数。"""
+        today = time.strftime("%Y-%m-%d")
+        st = cls.tomb_state(player)
+        daily = st.setdefault("daily", {"reset": "", "count": 0})
+        if daily.get("reset") != today:
+            daily["reset"] = today
+            daily["count"] = 0
+        return st
+
+    @classmethod
+    def add_tomb_mingbi(cls, player: dict, amount: int) -> int:
+        """增加/扣除冥币（不会扣到负数）。"""
+        st = cls.tomb_state(player)
+        st["mingbi"] = max(0, st.get("mingbi", 0) + amount)
+        return st["mingbi"]
+
+    @classmethod
+    def get_tomb_mingbi(cls, player: dict) -> int:
+        return cls.tomb_state(player).get("mingbi", 0)
+
+    @classmethod
+    def add_tomb_item(cls, player: dict, name: str, count: int = 1) -> int:
+        """向摸金背包增加道具。"""
+        inv = cls.tomb_state(player).setdefault("inventory", {})
+        inv[name] = max(0, inv.get(name, 0) + count)
+        return inv[name]
+
+    @classmethod
+    def remove_tomb_item(cls, player: dict, name: str, count: int = 1) -> bool:
+        """从摸金背包扣除道具，返回是否成功。"""
+        inv = cls.tomb_state(player).get("inventory", {})
+        if inv.get(name, 0) < count:
+            return False
+        inv[name] -= count
+        if inv[name] <= 0:
+            inv.pop(name, None)
+        return True
+
+    @classmethod
+    def has_tomb_item(cls, player: dict, name: str, count: int = 1) -> bool:
+        return cls.tomb_state(player).get("inventory", {}).get(name, 0) >= count
+
+    @classmethod
+    def add_tomb_token(cls, player: dict, count: int = 1) -> int:
+        """增加额外入场券棺椁令。"""
+        return cls.add_tomb_item(player, data.TOMB_EXTRA_TOKEN, count)
+
+    @classmethod
+    def consume_tomb_token(cls, player: dict) -> bool:
+        """消耗一枚棺椁令，返回是否成功。"""
+        return cls.remove_tomb_item(player, data.TOMB_EXTRA_TOKEN, 1)
+
+    @classmethod
+    def get_tomb_token_count(cls, player: dict) -> int:
+        return cls.tomb_state(player).get("inventory", {}).get(data.TOMB_EXTRA_TOKEN, 0)
 
     # ----------------------------- 邀请 -----------------------------
     @staticmethod

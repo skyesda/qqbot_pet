@@ -1124,6 +1124,134 @@ ABYSS_BLESSINGS = {
 
 
 # ----------------------------------------------------------------------------
+# 宠物摸金（独立财富系统）
+# ----------------------------------------------------------------------------
+TOMB_CURRENCY = "冥币"
+TOMB_DAILY_FREE = 3
+TOMB_EXTRA_TOKEN = "棺椁令"
+TOMB_EXTRA_TOKEN_COST = 200  # 冥币
+
+# 难度配置：尺寸、怪物数、宝箱数、陷阱数、祭坛数、时间(秒)、需带回冥币、精力消耗、等级要求
+TOMB_DIFFICULTIES = {
+    1: {
+        "name": "初探古墓",
+        "size": (6, 6),
+        "monsters": 2,
+        "chests": 3,
+        "traps": 1,
+        "altars": 1,
+        "time": 600,
+        "required": 80,
+        "energy": 15,
+        "level_req": 15,
+        "monster_mult": 0.35,
+        "chest_mingbi": (15, 30),
+        "monster_mingbi": (10, 20),
+    },
+    2: {
+        "name": "深入地宫",
+        "size": (7, 7),
+        "monsters": 4,
+        "chests": 4,
+        "traps": 2,
+        "altars": 1,
+        "time": 480,
+        "required": 200,
+        "energy": 25,
+        "level_req": 35,
+        "monster_mult": 0.55,
+        "chest_mingbi": (30, 60),
+        "monster_mingbi": (20, 35),
+    },
+    3: {
+        "name": "幽冥皇陵",
+        "size": (8, 8),
+        "monsters": 6,
+        "chests": 5,
+        "traps": 3,
+        "altars": 2,
+        "time": 360,
+        "required": 450,
+        "energy": 40,
+        "level_req": 60,
+        "monster_mult": 0.80,
+        "chest_mingbi": (60, 120),
+        "monster_mingbi": (35, 60),
+    },
+    4: {
+        "name": "九幽帝冢",
+        "size": (9, 9),
+        "monsters": 8,
+        "chests": 6,
+        "traps": 4,
+        "altars": 2,
+        "time": 300,
+        "required": 900,
+        "energy": 60,
+        "level_req": 90,
+        "monster_mult": 1.10,
+        "chest_mingbi": (120, 240),
+        "monster_mingbi": (60, 100),
+    },
+}
+
+# 地图绘制配色
+TOMB_COLORS = {
+    "bg": (25, 22, 22),
+    "wall": (60, 55, 55),
+    "floor": (30, 28, 28),
+    "grid": (50, 48, 48),
+    "entrance": (80, 160, 80),
+    "exit": (220, 80, 80),
+    "monster": (180, 50, 50),
+    "chest": (200, 160, 60),
+    "trap": (150, 60, 150),
+    "altar": (60, 120, 180),
+    "text": (220, 220, 220),
+}
+
+TOMB_CELL_SIZE = 48
+TOMB_PADDING = 24
+
+# 摸金商店道具（与主背包隔离）
+TOMB_ITEMS = {
+    "引路香": {
+        "price": 50,
+        "desc": "下一次移动不触发怪物。",
+        "effect": "avoid_monster",
+    },
+    "镇尸钉": {
+        "price": 120,
+        "desc": "下一场战斗锁定必胜。",
+        "effect": "auto_win",
+    },
+    "洛阳铲": {
+        "price": 80,
+        "desc": "下一次开箱冥币+30%。",
+        "effect": "chest_bonus",
+    },
+    "招魂幡": {
+        "price": 300,
+        "desc": "宠物濒死时保留1HP并自动撤离（保留50%冥币）。",
+        "effect": "revive",
+    },
+    "回春散": {
+        "price": 60,
+        "desc": "恢复30% HP。",
+        "effect": "heal_30",
+    },
+    TOMB_EXTRA_TOKEN: {
+        "price": TOMB_EXTRA_TOKEN_COST,
+        "desc": "额外的摸金入场券。",
+        "effect": "token",
+    },
+}
+
+# 成功撤离后额外经验（不影响现有财富）
+TOMB_SUCCESS_EXP = {1: 2000, 2: 4000, 3: 7000, 4: 12000}
+
+
+# ----------------------------------------------------------------------------
 # 签到称号：(累计签到天数门槛, 称号名)，按累计天数从高到低匹配。
 # ----------------------------------------------------------------------------
 SIGN_TITLES = [
