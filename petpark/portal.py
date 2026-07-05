@@ -143,7 +143,14 @@ class PlayerPortal:
         else:
             pet["image_url"] = images.pet_image_url(species)
         pet["battle_power"] = battle_power(pet)
-        pet["exp_to_next"] = data.exp_to_next(level)
+        if data.STAGES.index(pet.get("stage", "")) >= data.STAGES.index("飞升"):
+            pet["ascended"] = True
+            pet["xianyuan"] = pet.get("xianyuan", 0)
+            pet["exp_to_next"] = data.ascend_xianyuan_to_next(level)
+        else:
+            pet["ascended"] = False
+            pet["xianyuan"] = 0
+            pet["exp_to_next"] = data.exp_to_next(level)
         pet["element_cn"] = pet.get("element", "未知")
         pet["quality"] = pet.get("quality", "普通")
         pet["stage"] = pet.get("stage", "幼年期")
@@ -535,6 +542,7 @@ button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
 .pet-title .meta{font-size:13px;color:var(--muted);margin-top:4px}
 .pet-tags{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:6px}
 .pet-tag{font-size:11px;background:linear-gradient(135deg,rgba(255,176,0,.25),rgba(255,120,0,.15));color:var(--amber);border:1px solid rgba(255,176,0,.35);border-radius:999px;padding:2px 8px}
+.pet-resource{font-size:12px;color:var(--muted);margin-top:6px}
 .badges{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;justify-content:center}
 .badge{font-size:12px;background:rgba(0,0,0,.45);padding:4px 10px;border-radius:20px;border:1px solid rgba(255,176,0,.2);color:var(--amber)}
 
@@ -953,6 +961,7 @@ function renderPet(container, d){
         <div class="name">${esc(pet.nickname||'未命名')} <span style="font-size:14px;color:var(--muted)">Lv${pet.level}</span></div>
         <div class="meta">${esc(pet.custom_species_name || pet.species || '未知')} · ${esc(pet.quality)} · ${esc(pet.stage)} · ${esc(pet.element_cn)}</div>
         ${pet.tags && pet.tags.length ? `<div class="pet-tags">${pet.tags.map(t=>`<span class="pet-tag">${esc(t)}</span>`).join('')}</div>` : ''}
+        <div class="pet-resource">${pet.ascended ? `仙元 ${fmt(pet.xianyuan||0)} / ${fmt(pet.exp_to_next||0)}（余 ${fmt(pet.exp||0)} 经验）` : `经验 ${fmt(pet.exp||0)} / ${fmt(pet.exp_to_next||0)}`}</div>
       </div>
       <div class="badges">
         <span class="badge">战力 ${fmt(pet.battle_power)}</span>

@@ -96,9 +96,27 @@ def level_cap(pet: dict) -> int:
     return data.STAGE_LEVEL_CAP.get(pet.get("stage", "幼年期"), 120)
 
 
+def _is_ascended(pet: dict) -> bool:
+    return data.STAGES.index(pet.get("stage", "")) >= data.STAGES.index("飞升")
+
+
 def add_exp(pet: dict, amount: int) -> int:
-    pet["exp"] = pet.get("exp", 0) + max(0, amount)
+    """增加经验。飞升后自动按 1仙元=10w经验 折算为仙元，余数保留在 exp 中。"""
+    amount = max(0, amount)
+    if _is_ascended(pet):
+        total = pet.get("exp", 0) + amount
+        xianyuan_gain = total // data.ASCEND_XIANYUAN_PER_EXP
+        pet["xianyuan"] = pet.get("xianyuan", 0) + xianyuan_gain
+        pet["exp"] = total % data.ASCEND_XIANYUAN_PER_EXP
+        return pet["xianyuan"]
+    pet["exp"] = pet.get("exp", 0) + amount
     return pet["exp"]
+
+
+def add_xianyuan(pet: dict, amount: int) -> int:
+    """直接增加仙元（飞升后玩法使用）。"""
+    pet["xianyuan"] = pet.get("xianyuan", 0) + max(0, amount)
+    return pet["xianyuan"]
 
 
 def _grow_on_levelup(pet: dict) -> None:
@@ -110,23 +128,39 @@ def _grow_on_levelup(pet: dict) -> None:
     pet["hp"] = pet["hp_max"]
 
 
+def _level_cost(pet: dict) -> tuple[int, str]:
+    """返回 (数值, 单位) 的下一级消耗。"""
+    if _is_ascended(pet):
+        return data.ascend_xianyuan_to_next(pet["level"]), "仙元"
+    return _exp_to_next(pet["level"]), "经验"
+
+
 def level_up(pet: dict, times: int = 1) -> tuple[int, str]:
-    """尝试升级 times 级，消耗经验与精力。返回 (实际升级数, 备注)。"""
+    """尝试升级 times 级，消耗经验/仙元与精力。返回 (实际升级数, 备注)。"""
     cap = level_cap(pet)
     leveled = 0
     note = ""
+    ascended = _is_ascended(pet)
     for _ in range(times):
         if pet["level"] >= cap:
             note = f"已达当前阶段满级 Lv{cap}"
             break
-        need = _exp_to_next(pet["level"])
-        if pet.get("exp", 0) < need:
-            note = f"经验不足（升级需 {need}，当前 {pet.get('exp', 0)}）"
-            break
+        need, unit = _level_cost(pet)
+        if ascended:
+            if pet.get("xianyuan", 0) < need:
+                note = f"仙元不足（升级需 {need}，当前 {pet.get('xianyuan', 0)}）"
+                break
+        else:
+            if pet.get("exp", 0) < need:
+                note = f"经验不足（升级需 {need}，当前 {pet.get('exp', 0)}）"
+                break
         if pet.get("energy", 0) < 1:
             note = "精力不足"
             break
-        pet["exp"] -= need
+        if ascended:
+            pet["xianyuan"] -= need
+        else:
+            pet["exp"] -= need
         pet["energy"] -= 1
         pet["level"] += 1
         _grow_on_levelup(pet)
@@ -146,9 +180,11 @@ def auto_level_up(pet: dict) -> int:
 
 
 def exp_enough_to_level(pet: dict) -> bool:
-    """经验是否已满足升下一级（且未到当前阶段满级）。"""
+    """经验/仙元是否已满足升下一级（且未到当前阶段满级）。"""
     if pet["level"] >= level_cap(pet):
         return False
+    if _is_ascended(pet):
+        return pet.get("xianyuan", 0) >= data.ascend_xianyuan_to_next(pet["level"])
     return pet.get("exp", 0) >= _exp_to_next(pet["level"])
 
 
@@ -216,14 +252,18 @@ def ascend(pet: dict) -> tuple[bool, str]:
         return False, "只有【超究极体】的宠物才能飞升。"
     if pet["level"] < level_cap(pet):
         return False, f"飞升需先升满当前阶段（Lv{level_cap(pet)}）。"
+    leftover_exp = pet.get("exp", 0)
     pet["stage"] = "飞升"
     pet["level"] = 1
-    pet["exp"] = 0
+    pet["exp"] = leftover_exp % data.ASCEND_XIANYUAN_PER_EXP
+    pet["xianyuan"] = leftover_exp // data.ASCEND_XIANYUAN_PER_EXP
     pet["ascended"] = True
     pet["atk"] = int(pet["atk"] * 1.5)
     pet["def"] = int(pet["def"] * 1.5)
     pet["hp"] = pet["hp_max"]
-    return True, "🕊️ **飞升成功！**进入【飞升】阶段，可使用幻境寻宝、宠物神仙劫等指令。"
+    return True, "🕊️ **飞升成功！**进入【飞升】阶段，可使用幻境寻宝、宠物神仙劫等指令。" + (
+        f"\n> 剩余经验已折算为 {pet['xianyuan']} 仙元（1 仙元=10w 经验）。" if pet['xianyuan'] else ""
+    )
 
 
 def tribulation(pet: dict) -> tuple[bool, str]:
@@ -292,7 +332,13 @@ def render_pet(pet: dict) -> str:
     skills = "、".join(pet.get("skills", [])) or "无"
     artifact = pet.get("artifact") or "无"
     talent = pet.get("talent") or "未觉醒"
-    need = _exp_to_next(pet["level"])
+    ascended = _is_ascended(pet)
+    if ascended:
+        need = data.ascend_xianyuan_to_next(pet["level"])
+        resource_line = f"● **仙元**：{pet.get('xianyuan', 0)}/{need}（余 {pet.get('exp', 0)} 经验）"
+    else:
+        need = _exp_to_next(pet["level"])
+        resource_line = f"● **经验**：{pet['exp']}/{need}"
     species_display = pet.get("custom_species_name") or pet.get("species")
     lines = [
         "┏━─★─ 宠 ☆ 物 ─★─┓",
@@ -314,7 +360,7 @@ def render_pet(pet: dict) -> str:
         f"● **心情**：{stars}",
         f"● **精力**：{pet['energy']}/{pet['energy_max']}",
         f"● **血量**：{pet['hp']}/{pet['hp_max']}",
-        f"● **经验**：{pet['exp']}/{need}",
+        resource_line,
     ]
     if pet.get("love_target"):
         lines.append(f"● **伴侣**：`{pet['love_target']}`　好感度 {pet.get('favor', 0)}")

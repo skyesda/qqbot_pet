@@ -3176,14 +3176,19 @@ class PetParkPlugin(Star):
             return busy
         if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
             return "宠物飞升后才能『幻境寻宝』。"
+        cd = self._cooldown_block(player, "fantasy_treasure", "幻境寻宝")
+        if cd:
+            return cd
         if p["energy"] < data.ASCEND_TREASURE["energy"]:
             return f"精力不足（需 {data.ASCEND_TREASURE['energy']}）。"
         p["energy"] -= data.ASCEND_TREASURE["energy"]
         j = random.randint(*data.ASCEND_TREASURE["jifen"])
-        e = random.randint(*data.ASCEND_TREASURE["exp"])
+        x = random.randint(*data.ASCEND_TREASURE["xianyuan"])
+        cooldown = random.randint(*data.ASCEND_TREASURE["cooldown"])
         self.store.add_currency(player, "积分", j)
-        petmod.add_exp(p, e)
-        return f"✨ 幻境寻宝：积分 +{j}，经验 +{e}！"
+        petmod.add_xianyuan(p, x)
+        self.store.set_cooldown(player, "fantasy_treasure", cooldown)
+        return f"✨ 幻境寻宝：积分 +{j}，仙元 +{x}！下次可探索时间：{self._fmt_duration(cooldown)}后。"
 
     def _immortal_calamity(self, player: dict) -> str:
         p = self._need_pet(player)
