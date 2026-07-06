@@ -138,6 +138,8 @@ class PetStore:
                     "mingbi": 0,
                     "level": 1,
                     "exp": 0,
+                    "equipped_weapon": "",
+                    "weapons": {},
                     "stats": {
                         "raids": 0,
                         "success": 0,
@@ -581,15 +583,21 @@ class PetStore:
             "mingbi": 0,
             "level": 1,
             "exp": 0,
+            "equipped_weapon": "",
+            "weapons": {},
             "stats": {"raids": 0, "success": 0, "fail": 0, "total_mingbi": 0},
             "daily": {"reset": "", "count": 0},
             "inventory": {},
         })
-        # 兼容旧数据：补上缺少的摸金等级字段
+        # 兼容旧数据：补上缺少的摸金等级/武器字段
         if "level" not in st:
             st["level"] = 1
         if "exp" not in st:
             st["exp"] = 0
+        if "equipped_weapon" not in st:
+            st["equipped_weapon"] = ""
+        if "weapons" not in st:
+            st["weapons"] = {}
         return st
 
     @classmethod
@@ -676,6 +684,57 @@ class PetStore:
         st["level"] = level
         st["exp"] = exp
         return level, exp
+
+    # ---- 摸金武器 ----
+    @classmethod
+    def get_tomb_weapons(cls, player: dict) -> dict:
+        """返回 {武器名: 剩余耐久}。"""
+        return cls.tomb_state(player).get("weapons", {})
+
+    @classmethod
+    def get_tomb_equipped_weapon(cls, player: dict) -> str:
+        return cls.tomb_state(player).get("equipped_weapon", "")
+
+    @classmethod
+    def add_tomb_weapon(cls, player: dict, name: str) -> int:
+        """获得/修复武器：耐久恢复到满。返回当前耐久。"""
+        st = cls.tomb_state(player)
+        weapons = st.setdefault("weapons", {})
+        weapons[name] = data.TOMB_WEAPONS[name]["durability"]
+        return weapons[name]
+
+    @classmethod
+    def equip_tomb_weapon(cls, player: dict, name: str) -> bool:
+        """装备一把已拥有的武器。"""
+        st = cls.tomb_state(player)
+        if name and name not in st.get("weapons", {}):
+            return False
+        st["equipped_weapon"] = name
+        return True
+
+    @classmethod
+    def decrement_tomb_weapon(cls, player: dict, name: str) -> int | None:
+        """武器耐久 -1，耐久归 0 则破碎消失。返回剩余耐久（None 表示武器不存在）。"""
+        st = cls.tomb_state(player)
+        weapons = st.get("weapons", {})
+        if name not in weapons:
+            return None
+        weapons[name] -= 1
+        remaining = weapons[name]
+        if remaining <= 0:
+            weapons.pop(name, None)
+            if st.get("equipped_weapon") == name:
+                st["equipped_weapon"] = ""
+            return 0
+        return remaining
+
+    @classmethod
+    def clear_tomb_loadout(cls, player: dict) -> None:
+        """阵亡掉落：清空所有带入物品（武器+摸金背包道具）。棺椁令也一并掉落。"""
+        st = cls.tomb_state(player)
+        st["weapons"] = {}
+        st["equipped_weapon"] = ""
+        st["inventory"] = {}
 
     # ----------------------------- 邀请 -----------------------------
     @staticmethod

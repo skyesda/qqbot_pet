@@ -176,21 +176,37 @@ KNOWN_COMMANDS = {
     # 摸金
     "摸金",
     "摸金介绍",
+    "摸",
     "摸金商店",
+    "摸店",
     "购买摸金道具",
+    "摸买",
     "我的摸金",
+    "摸我",
     "进入摸金",
+    "摸进",
     "摸金移动",
     "上",
     "下",
     "左",
     "右",
     "摸金探索",
+    "摸看",
     "摸金开箱",
+    "开箱",
     "摸金使用",
+    "摸用",
+    "摸装",
     "摸金撤离",
+    "摸撤",
     "摸金状态",
+    "摸态",
     "放弃摸金",
+    "摸弃",
+    "战斗",
+    "祭拜",
+    "逃跑",
+    "跳过",
 }
 
 
@@ -882,32 +898,42 @@ class PetParkPlugin(Star):
             return self._handle_quest(player, tokens, cmd)
 
         # ---- 宠物摸金 ----
-        if cmd in ("摸金", "摸金介绍"):
+        if cmd in ("摸金", "摸金介绍", "摸"):
             return self._tomb_intro()
-        if cmd == "摸金商店":
+        if cmd in ("摸金商店", "摸店"):
             return self._tomb_shop()
-        if cmd == "购买摸金道具":
+        if cmd in ("购买摸金道具", "摸买"):
             return self._tomb_buy(player, tokens)
-        if cmd == "我的摸金":
+        if cmd in ("我的摸金", "摸我"):
             return self._tomb_status_outside(player)
-        if cmd == "进入摸金":
+        if cmd in ("进入摸金", "摸进"):
             return self._tomb_enter(player, tokens)
         if cmd == "摸金移动":
             return self._tomb_move(player, tokens)
         if cmd in ("上", "下", "左", "右"):
             return self._tomb_move(player, ["摸金移动", cmd])
-        if cmd == "摸金探索":
+        if cmd in ("摸金探索", "摸看"):
             return self._tomb_explore(player)
-        if cmd == "摸金开箱":
+        if cmd in ("摸金开箱", "开箱"):
             return self._tomb_open_chest(player)
-        if cmd == "摸金使用":
+        if cmd in ("摸金使用", "摸用"):
             return self._tomb_use_item(player, tokens)
-        if cmd == "摸金撤离":
+        if cmd == "摸装":
+            return self._tomb_equip(player, tokens)
+        if cmd in ("摸金撤离", "摸撤"):
             return self._tomb_evacuate(player)
-        if cmd == "摸金状态":
+        if cmd in ("摸金状态", "摸态"):
             return self._tomb_status(player)
-        if cmd == "放弃摸金":
+        if cmd in ("放弃摸金", "摸弃"):
             return self._tomb_forfeit(player)
+        if cmd == "战斗":
+            return self._tomb_battle_cmd(player)
+        if cmd == "祭拜":
+            return self._tomb_altar_cmd(player)
+        if cmd == "逃跑":
+            return self._tomb_flee(player)
+        if cmd == "跳过":
+            return self._tomb_skip(player)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -4469,32 +4495,46 @@ class PetParkPlugin(Star):
             "## 🏺 宠物摸金\n"
             "在独立墓穴中探索、战斗、开箱，并在时限内把指定数量的『冥币』带到出口撤离。\n\n"
             "**核心规则**\n"
-            "- 完全独立的财富：冥币、摸金背包，不影响金币/积分/钻石/主背包。\n"
-            "- 摸金拥有独立等级（满级 30 级），每次成功或失败都会获得摸金经验。\n"
-            "- 难度 **简单/普通** 全天免费进入；**困难** 需消耗 1 张『棺椁令』，**噩梦** 需消耗 2 张。\n"
-            f"- 『棺椁令』可在摸金商店购买，每张 {data.TOMB_EXTRA_TOKEN_COST} 冥币。\n"
-            f"- 每次摸金结束后有 {data.TOMB_COOLDOWN // 60} 分钟冷却时间，冷却结束后才能再次进入。\n"
-            "- 超时未撤离或宠物死亡则失败，本局冥币大部分损失。\n\n"
-            "**难度与摸金等级要求**\n"
-            "• 简单：摸金 Lv1　普通：摸金 Lv5　困难：摸金 Lv10　噩梦：摸金 Lv15\n\n"
-            "**常用指令**\n"
-            "`摸金商店` · `购买摸金道具 道具名` · `我的摸金`\n"
-            "`进入摸金 难度(简单/普通/困难/噩梦 或 1~4)` · `摸金移动 上/下/左/右` · `摸金探索`\n"
-            "`摸金开箱` · `摸金使用 道具名` · `摸金撤离` · `放弃摸金`"
+            "- 摸金拥有独立血量（100）、独立战力（武器+摸金等级），不影响宠物本体。\n"
+            "- 摸金等级满级 30，每次成功/失败都获得经验。\n"
+            "- 难度 **简单/普通** 免费；**困难** 需1张棺椁令，**噩梦** 需2张。\n"
+            f"- 『棺椁令』商店购买，每张 {data.TOMB_EXTRA_TOKEN_COST} 冥币。\n"
+            f"- 每局结束后冷却 {data.TOMB_COOLDOWN // 60} 分钟。\n"
+            "- 阵亡（摸金HP归0）带入的武器和道具全部掉落！\n\n"
+            "**难度与摸金等级**\n"
+            "• 简单 Lv1　普通 Lv5　困难 Lv10　噩梦 Lv15\n\n"
+            "**简短指令**\n"
+            "`摸店` · `摸买 道具名` · `摸我`\n"
+            "`摸进 难度` · `上/下/左/右` · `摸看`\n"
+            "`开箱` · `战斗` · `祭拜` · `逃跑` · `跳过`\n"
+            "`摸用 道具名` · `摸装 武器名` · `摸撤` · `摸态` · `摸弃`"
         )
 
     def _tomb_shop(self) -> str:
-        lines = ["## 🏺 摸金商店（仅消耗冥币）", "> 道具仅用于摸金玩法，与主背包隔离", ""]
+        lines = ["## 🏺 摸金商店（仅消耗冥币）", ""]
+        lines.append("**武器**（决定摸金战力，有耐久，阵亡全丢）")
+        for name, info in data.TOMB_WEAPONS.items():
+            lines.append(f"• **{name}** — {info['price']} 冥币　攻击+{info['attack']}　耐久{info['durability']}")
+        lines.append("\n**道具**")
         for name, info in data.TOMB_ITEMS.items():
-            lines.append(f"• **{name}** — {info['price']} 冥币\n　　{info['desc']}")
-        lines.append(f"\n> 发送 `购买摸金道具 道具名 [数量]` 购买。当前货币：冥币")
+            lines.append(f"• **{name}** — {info['price']} 冥币　{info['desc']}")
+        lines.append("\n> `摸买 道具名 [数量]` 购买；武器用 `摸装 武器名` 装备。")
         return "\n".join(lines)
 
     def _tomb_buy(self, player: dict, tokens: list[str]) -> str:
         if len(tokens) < 2:
-            return "用法：购买摸金道具 道具名 [数量]"
+            return "用法：摸买 道具名 [数量]"
         name = tokens[1]
         count = self._parse_count(tokens, 2) if len(tokens) > 2 else 1
+        if name in data.TOMB_WEAPONS:
+            price = data.TOMB_WEAPONS[name]["price"]
+            total = price * count
+            if self.store.get_tomb_mingbi(player) < total:
+                return f"冥币不足（需 {total}，当前 {self.store.get_tomb_mingbi(player)}）。"
+            self.store.add_tomb_mingbi(player, -total)
+            for _ in range(count):
+                self.store.add_tomb_weapon(player, name)
+            return f"🗡 已购买『{name}』×{count}，消耗 {total} 冥币。发送 `摸装 {name}` 装备。"
         if name not in data.TOMB_ITEMS:
             return f"摸金商店没有『{name}』。"
         price = data.TOMB_ITEMS[name]["price"]
@@ -4519,6 +4559,10 @@ class PetParkPlugin(Star):
         exp = st.get("exp", 0)
         need = data.tomb_exp_to_next(level)
         exp_text = f"{exp}/{need}" if level < data.TOMB_MAX_LEVEL else "已满级"
+        equipped = st.get("equipped_weapon", "")
+        weapons = st.get("weapons", {})
+        wep_text = f"{equipped}（攻击+{data.TOMB_WEAPONS[equipped]['attack']}）" if equipped and equipped in data.TOMB_WEAPONS else "徒手"
+        weapons_text = "、".join(f"{k}(耐久{v})" for k, v in weapons.items()) or "无"
         cooldown_ts = st.get("cooldown", 0)
         now = int(time.time())
         if cooldown_ts > now:
@@ -4530,6 +4574,9 @@ class PetParkPlugin(Star):
         return (
             f"## 🏺 我的摸金\n"
             f"● 摸金等级：Lv{level}/{data.TOMB_MAX_LEVEL}　经验：{exp_text}\n"
+            f"● 摸金战力：{data.tomb_player_attack(level, data.TOMB_WEAPONS.get(equipped, {}).get('attack', 0) if equipped else 0)}\n"
+            f"● 装备武器：{wep_text}\n"
+            f"● 拥有武器：{weapons_text}\n"
             f"● 冥币：**{st.get('mingbi', 0)}**\n"
             f"● 摸金背包：{inv_text}\n"
             f"● 棺椁令：{token_count} 张（困难需1张，噩梦需2张）\n"
@@ -4547,7 +4594,7 @@ class PetParkPlugin(Star):
             return busy, None
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
         if key in self._tomb_sessions:
-            return "你已经在一次摸金探险中，发送『摸金状态』查看。", None
+            return "你已经在一次摸金探险中，发送『摸态』查看。", None
 
         # 难度解析：支持数字 1~4 或名称 简单/普通/困难/噩梦
         name_to_diff = {cfg["name"]: d for d, cfg in data.TOMB_DIFFICULTIES.items()}
@@ -4560,7 +4607,7 @@ class PetParkPlugin(Star):
                 try:
                     difficulty = int(raw)
                 except ValueError:
-                    return "用法：进入摸金 难度(简单/普通/困难/噩梦 或 1~4)", None
+                    return "用法：摸进 难度(简单/普通/困难/噩梦 或 1~4)", None
         if difficulty not in data.TOMB_DIFFICULTIES:
             return "难度只能是 1~4。", None
         cfg = data.TOMB_DIFFICULTIES[difficulty]
@@ -4585,7 +4632,7 @@ class PetParkPlugin(Star):
             if token_count < tokens_needed:
                 return (
                     f"难度【{cfg['name']}】需要 {tokens_needed} 张『{data.TOMB_EXTRA_TOKEN}』，"
-                    f"当前只有 {token_count} 张。可发送『购买摸金道具 {data.TOMB_EXTRA_TOKEN}』购买。"
+                    f"当前只有 {token_count} 张。可发送『摸买 {data.TOMB_EXTRA_TOKEN}』购买。"
                 ), None
             self.store.consume_tomb_token(player, tokens_needed)
         petmod.refresh_energy(p)
@@ -4603,36 +4650,50 @@ class PetParkPlugin(Star):
                     break
             if entrance_pos != {"x": 1, "y": 1}:
                 break
+        # 装备武器
+        equipped = st.get("equipped_weapon", "")
+        weapons = st.get("weapons", {})
+        weapon_attack = 0
+        if equipped and equipped in weapons and equipped in data.TOMB_WEAPONS:
+            weapon_attack = data.TOMB_WEAPONS[equipped]["attack"]
         now = int(time.time())
         session = {
             "started_at": now,
             "difficulty": difficulty,
             "map": {"w": len(cells[0]), "h": len(cells), "cells": cells},
             "player_pos": entrance_pos,
+            "prev_pos": dict(entrance_pos),
             "visited": {(entrance_pos["x"], entrance_pos["y"])},
-            "hp_snapshot": p["hp_max"],
+            "hp": data.TOMB_MAX_HP,
+            "hp_max": data.TOMB_MAX_HP,
+            "escapes": data.TOMB_ESCAPES_PER_RAID,
+            "weapon": equipped,
+            "weapon_attack": weapon_attack,
             "required": cfg["required"],
             "time_limit": cfg["time"],
             "deadline": now + cfg["time"],
             "mingbi": 0,
-            "inventory": {},
+            "inventory": dict(st.get("inventory", {})),
             "buffs": {},
+            "pending": None,
             "status": "exploring",
             "stunned": 0,
         }
         filename = self._tomb_draw_map(session)
         session["image"] = filename
         self._tomb_sessions[key] = session
-        st = self.store.tomb_state(player)
         st.setdefault("stats", {})["raids"] = st["stats"].get("raids", 0) + 1
         image_md = self._tomb_player_map_md(session)
         ex, ey = entrance_pos["x"], entrance_pos["y"]
+        power = data.tomb_player_attack(tomb_level, weapon_attack)
+        wep_text = f"{equipped}(攻+{weapon_attack})" if equipped else "徒手"
         text = (
             f"## 🏺 进入【{cfg['name']}】\n"
-            f"● 需在 {cfg['time'] // 60} 分钟内带回 **{cfg['required']}** 冥币并撤离\n"
+            f"● 摸金HP：{session['hp']}/{session['hp_max']}　战力：{power}　武器：{wep_text}\n"
+            f"● 逃跑次数：{session['escapes']}　需带回 **{cfg['required']}** 冥币并撤离\n"
             f"● 起点：({ex},{ey})　出口：见地图红菱标记\n"
             f"● 图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛\n"
-            f"● 操作：摸金移动 上/下/左/右　摸金探索　摸金状态\n"
+            f"● 操作：上/下/左/右　摸看　摸态\n"
             f"> 你当前在 ({ex},{ey})，剩余时间 {cfg['time'] // 60}:00"
         )
         return text, image_md
@@ -4644,7 +4705,7 @@ class PetParkPlugin(Star):
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
         session = self._tomb_sessions.get(key)
         if not session:
-            return "你没有进行中的摸金探险，发送『进入摸金 难度』开始。"
+            return "你没有进行中的摸金探险，发送『摸进 难度』开始。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -4652,7 +4713,7 @@ class PetParkPlugin(Star):
             session["stunned"] -= 1
             return f"😵 你仍处于眩晕中，本回合无法移动（还剩 {session['stunned']} 回合）。"
         if len(tokens) < 2:
-            return "用法：摸金移动 上/下/左/右"
+            return "用法：上/下/左/右"
         direction = tokens[1]
         dxdy = {"上": (0, -1), "下": (0, 1), "左": (-1, 0), "右": (1, 0)}
         if direction not in dxdy:
@@ -4665,13 +4726,18 @@ class PetParkPlugin(Star):
             return "🧱 前方是墓穴边界，无法通行。"
         if cells[y][x] == "#":
             return "🧱 前方是墙壁，无法通行。"
+        session["prev_pos"] = dict(session["player_pos"])
         session["player_pos"]["x"] = x
         session["player_pos"]["y"] = y
         session["visited"].add((x, y))
+        session["pending"] = None
         # 使用引路香效果
         avoid = session["buffs"].pop("avoid_monster", False)
         cell = cells[y][x]
-        event_text = self._tomb_trigger_cell(player, p, session, avoid)
+        event_text = self._tomb_encounter(player, p, session, cell, avoid)
+        # 战斗/陷阱可能已经结算导致 session 被移除
+        if key not in self._tomb_sessions:
+            return event_text
         remain = self._tomb_time_left(session)
         surroundings = self._tomb_format_surroundings(session)
         image_md = self._tomb_player_map_md(session)
@@ -4679,7 +4745,7 @@ class PetParkPlugin(Star):
             f"你向**{direction}**移动到了 ({x},{y})。\n"
             f"{event_text}\n"
             f"{surroundings}\n"
-            f"> 当前背负 {session['mingbi']} / {session['required']} 冥币，剩余时间 {remain}"
+            f"> 摸金HP {session['hp']}/{session['hp_max']}　背负 {session['mingbi']} / {session['required']} 冥币　剩余时间 {remain}"
         )
         return text, image_md
 
@@ -4699,10 +4765,10 @@ class PetParkPlugin(Star):
         pos = session["player_pos"]
         image_md = self._tomb_player_map_md(session)
         text = (
-            f"## 🏺 摸金探索\n"
+            f"## 🏺 摸看\n"
             f"你当前在 ({pos['x']},{pos['y']})。\n"
             f"{surroundings}\n"
-            f"> 当前背负 {session['mingbi']} / {session['required']} 冥币，剩余时间 {remain}"
+            f"> 摸金HP {session['hp']}/{session['hp_max']}　背负 {session['mingbi']} / {session['required']} 冥币　剩余时间 {remain}"
         )
         return text, image_md
 
@@ -4717,7 +4783,11 @@ class PetParkPlugin(Star):
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
-        x, y = session["player_pos"]["x"], session["player_pos"]["y"]
+        pending = session.get("pending")
+        if pending and pending.get("type") == "C":
+            x, y = pending["x"], pending["y"]
+        else:
+            x, y = session["player_pos"]["x"], session["player_pos"]["y"]
         cells = session["map"]["cells"]
         if cells[y][x] != "C":
             return "当前位置没有宝箱。"
@@ -4729,16 +4799,17 @@ class PetParkPlugin(Star):
         session["mingbi"] += gain
         cells[y][x] = "."
         self._tomb_refresh_map(session)
+        session["pending"] = None
         extra = ""
         if random.random() < 0.2:
-            item = random.choice([n for n in data.TOMB_ITEMS if data.TOMB_ITEMS[n].get("effect") != "token"])
+            item = random.choice([n for n in data.TOMB_ITEMS if data.TOMB_ITEMS[n].get("effect") not in ("token", "main_bag_item")])
             session.setdefault("inventory", {}).setdefault(item, 0)
             session["inventory"][item] += 1
             extra = f"，额外获得『{item}』×1"
         remain = self._tomb_time_left(session)
         return (
             f"🎁 开启宝箱，获得 **{gain}** 冥币{extra}。\n"
-            f"> 当前背负 {session['mingbi']} / {session['required']} 冥币，剩余时间 {remain}"
+            f"> 摸金HP {session['hp']}/{session['hp_max']}　背负 {session['mingbi']} / {session['required']} 冥币　剩余时间 {remain}"
         )
 
     def _tomb_use_item(self, player: dict, tokens: list[str]) -> str:
@@ -4750,21 +4821,30 @@ class PetParkPlugin(Star):
         if not session:
             return "你没有进行中的摸金探险。"
         if len(tokens) < 2:
-            return "用法：摸金使用 道具名"
+            return "用法：摸用 道具名"
         name = tokens[1]
         if name not in data.TOMB_ITEMS:
             return f"没有『{name}』这种摸金道具。"
         inv = session.get("inventory", {})
         if inv.get(name, 0) <= 0:
             return f"你的摸金背包中没有『{name}』。"
+        effect = data.TOMB_ITEMS[name]["effect"]
+        if effect in ("revive_tomb",):
+            return "💊 还魂丹会在摸金HP归0时自动触发，无需手动使用。"
+        if effect in ("token", "main_bag_item"):
+            return f"『{name}』不能在摸金中使用。"
+        # 消耗道具
         inv[name] -= 1
         if inv[name] <= 0:
             inv.pop(name, None)
-        effect = data.TOMB_ITEMS[name]["effect"]
-        if effect == "heal_30":
-            heal = max(1, int(p["hp_max"] * 0.3))
-            p["hp"] = min(p["hp_max"], p["hp"] + heal)
-            return f"💊 使用『{name}』，HP +{heal}（{p['hp']}/{p['hp_max']}）。"
+        if effect == "heal_tomb":
+            heal = data.TOMB_ITEMS[name].get("amount", 30)
+            session["hp"] = min(session["hp_max"], session["hp"] + heal)
+            return f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
+        if effect == "heal_tomb_pct":
+            heal = max(1, int(session["hp_max"] * data.TOMB_ITEMS[name].get("amount", 0.3)))
+            session["hp"] = min(session["hp_max"], session["hp"] + heal)
+            return f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
         if effect == "avoid_monster":
             session["buffs"]["avoid_monster"] = True
             return f"🕯 使用『{name}』，下一次移动不会触发怪物。"
@@ -4776,7 +4856,7 @@ class PetParkPlugin(Star):
             return f"⛏ 使用『{name}』，下一次开箱冥币 +30%。"
         if effect == "revive":
             session["buffs"]["revive"] = True
-            return f"🧧 使用『{name}』，濒死时自动保命撤离。"
+            return f"🧧 使用『{name}』，摸金HP归0时自动复活到1并强制撤离。"
         return f"已使用『{name}』。"
 
     def _tomb_evacuate(self, player: dict) -> str:
@@ -4818,14 +4898,25 @@ class PetParkPlugin(Star):
         remain = self._tomb_time_left(session)
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         image_md = self._tomb_player_map_md(session)
+        wep = session.get("weapon", "")
+        wep_text = f"{wep}(攻+{session.get('weapon_attack', 0)})" if wep else "徒手"
+        level = self.store.get_tomb_level(player)
+        power = data.tomb_player_attack(level, session.get("weapon_attack", 0))
+        pending = session.get("pending")
+        pending_text = ""
+        if pending:
+            pmap = {"C": "宝箱待开（开箱/跳过）", "M": "怪物待战（战斗/逃跑）", "S": "祭坛待祭拜（祭拜/跳过）"}
+            pending_text = f"\n● 当前：{pmap.get(pending['type'], '')}"
         text = (
-            f"## 🏺 摸金状态 · {cfg['name']}\n"
+            f"## 🏺 摸态 · {cfg['name']}\n"
             f"● 位置：({pos['x']},{pos['y']})\n"
+            f"● 摸金HP：{session['hp']}/{session['hp_max']}\n"
+            f"● 战力：{power}　武器：{wep_text}\n"
+            f"● 逃跑次数：{session.get('escapes', 0)}/{data.TOMB_ESCAPES_PER_RAID}\n"
             f"● 背负冥币：{session['mingbi']} / {session['required']}\n"
-            f"● 宠物 HP：{p['hp']}/{p['hp_max']}\n"
             f"● 摸金背包：{inv_text}\n"
-            f"● 剩余时间：{remain}\n"
-            f"● 眩晕回合：{session.get('stunned', 0)}"
+            f"● 剩余时间：{remain}　眩晕：{session.get('stunned', 0)}"
+            f"{pending_text}"
         )
         return text, image_md
 
@@ -4847,14 +4938,21 @@ class PetParkPlugin(Star):
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         st["cooldown"] = int(time.time()) + data.TOMB_COOLDOWN
 
-        # 摸金经验结算：成功 / 失败（超时、死亡、放弃均算失败）
+        # 摸金经验结算：成功 / 失败（超时、死亡、放弃、复活均算失败）
         old_level = self.store.get_tomb_level(player)
-        xp = data.TOMB_XP_REWARD["success" if reason == "success" else "failure"].get(session["difficulty"], 0)
+        is_success = reason == "success"
+        xp = data.TOMB_XP_REWARD["success" if is_success else "failure"].get(session["difficulty"], 0)
         new_level, new_exp = self.store.add_tomb_exp(player, xp)
         level_up_text = ""
         if new_level > old_level:
             level_up_text = f"　🆙 摸金等级提升至 Lv{new_level}！"
         xp_text = f"摸金经验 +{xp}{level_up_text}"
+
+        # 阵亡：带入的武器与道具全部掉落；其它结果写回剩余道具
+        if reason == "death":
+            self.store.clear_tomb_loadout(player)
+        else:
+            st["inventory"] = dict(session.get("inventory", {}))
 
         if reason == "success":
             gained = session["mingbi"]
@@ -4873,34 +4971,33 @@ class PetParkPlugin(Star):
         if reason == "timeout":
             self._tomb_sessions.pop(key, None)
             stats["fail"] = stats.get("fail", 0) + 1
-            p["hp"] = max(1, int(p["hp"] * 0.7))
             return (
                 f"⏰ 墓穴坍塌，撤离失败！\n"
                 f"● {xp_text}\n"
                 f"● 本局冥币全部损失\n"
-                f"● 宠物 HP -30%"
+                f"● 带入的武器和道具已带回"
             )
         if reason == "death":
-            kept = int(session["mingbi"] * (0.5 if session["buffs"].get("revive") else 0.2))
+            kept = int(session["mingbi"] * 0.2)
             self.store.add_tomb_mingbi(player, kept)
             stats["fail"] = stats.get("fail", 0) + 1
-            if session["buffs"].get("revive"):
-                p["hp"] = 1
-                self._tomb_sessions.pop(key, None)
-                return (
-                    f"🧧 招魂幡触发，宠物在濒死之际被强行送出墓穴！\n"
-                    f"● {xp_text}\n"
-                    f"● 保留 {kept} 冥币\n"
-                    f"● 宠物 HP 降至 1"
-                )
-            p["hp"] = 1
-            p["status"] = "虚弱"
             self._tomb_sessions.pop(key, None)
             return (
-                f"💀 宠物力竭身亡，撤离失败！\n"
+                f"💀 摸金角色阵亡，撤离失败！\n"
                 f"● {xp_text}\n"
-                f"● 仅保留 {kept} 冥币\n"
-                f"● 宠物 HP=1，状态变为虚弱"
+                f"● 带入的武器和道具全部掉落！\n"
+                f"● 仅保留 {kept} 冥币"
+            )
+        if reason == "revive":
+            kept = int(session["mingbi"] * 0.5)
+            self.store.add_tomb_mingbi(player, kept)
+            stats["fail"] = stats.get("fail", 0) + 1
+            self._tomb_sessions.pop(key, None)
+            return (
+                f"🧧 招魂幡触发，你在濒死之际被强行送出墓穴！\n"
+                f"● {xp_text}\n"
+                f"● 保留 {kept} 冥币\n"
+                f"● 带入的武器和道具已带回"
             )
         # forfeit
         kept = int(session["mingbi"] * 0.5)
@@ -4909,7 +5006,8 @@ class PetParkPlugin(Star):
         return (
             f"🏃 你已放弃本次摸金，仅保留 {kept} 冥币。\n"
             f"● {xp_text}\n"
-            f"● 损失 {session['mingbi'] - kept} 冥币"
+            f"● 损失 {session['mingbi'] - kept} 冥币\n"
+            f"● 带入的武器和道具已带回"
         )
 
     def _tomb_check_timeout(self, player: dict, p: dict, session: dict) -> str | None:
@@ -4923,47 +5021,84 @@ class PetParkPlugin(Star):
         return f"{m:02d}:{s:02d}"
 
     # ---- 摸金事件触发 ----
-    def _tomb_trigger_cell(
-        self, player: dict, p: dict, session: dict, avoid_monster: bool = False
+    def _tomb_encounter(
+        self, player: dict, p: dict, session: dict, cell: str, avoid_monster: bool = False
     ) -> str:
         x, y = session["player_pos"]["x"], session["player_pos"]["y"]
         cells = session["map"]["cells"]
-        cell = cells[y][x]
         if cell == "X":
-            return "🚪 你到达了出口，发送『摸金撤离』可结算离开。"
+            return "🚪 你到达了出口，发送『摸撤』可结算离开。"
+        if cell == "E":
+            return "🚪 你回到了入口，发送『摸撤』可撤离。"
         if cell == "T":
             cells[y][x] = "."
             self._tomb_refresh_map(session)
-            if random.random() < 0.5:
-                session["stunned"] = session.get("stunned", 0) + 1
-                dmg = max(1, int(p["hp_max"] * 0.15))
-                p["hp"] = max(1, p["hp"] - dmg)
-                return f"☠️ 触发陷阱！HP -{dmg}，眩晕 1 回合。"
-            return "🪤 你险险避开了一个陷阱。"
-        if cell == "S":
-            result = self._tomb_altar_event(player, p, session)
-            cells[y][x] = "."
-            self._tomb_refresh_map(session)
-            return result
-        if cell == "M" and not avoid_monster:
-            return self._tomb_battle(player, p, session)
+            return self._tomb_trap_event(player, p, session)
         if cell == "C":
-            return "🎁 这里有一个宝箱，发送『摸金开箱』打开它。"
+            session["pending"] = {"type": "C", "x": x, "y": y}
+            return "🎁 发现宝箱！发送『开箱』打开，或『跳过』离开。"
+        if cell == "M":
+            if avoid_monster:
+                return "🕯 引路香生效，你悄悄绕过怪物，怪物仍在原地。"
+            session["pending"] = {"type": "M", "x": x, "y": y}
+            return f"👹 遭遇怪物！发送『战斗』迎战，或『逃跑』（剩余 {session.get('escapes', 0)} 次）。"
+        if cell == "S":
+            session["pending"] = {"type": "S", "x": x, "y": y}
+            return "🌀 发现祭坛！发送『祭拜』互动，或『跳过』离开。"
         return "四周一片死寂。"
+
+    def _tomb_trap_event(self, player: dict, p: dict, session: dict) -> str:
+        outcomes = [o for o, _ in data.TOMB_TRAP_OUTCOMES]
+        weights = [w for _, w in data.TOMB_TRAP_OUTCOMES]
+        outcome = random.choices(outcomes, weights=weights, k=1)[0]
+        if outcome == "avoid":
+            return "🪤 你险险避开了一个陷阱。"
+        if outcome == "light":
+            dmg = 15
+            session["hp"] = max(0, session["hp"] - dmg)
+            death = self._tomb_after_damage(player, p, session)
+            if death:
+                return f"☠️ 触发陷阱！摸金HP -{dmg}。\n{death}"
+            return f"☠️ 触发陷阱！摸金HP -{dmg}。"
+        # heavy
+        dmg = 30
+        session["hp"] = max(0, session["hp"] - dmg)
+        session["stunned"] = session.get("stunned", 0) + 1
+        death = self._tomb_after_damage(player, p, session)
+        if death:
+            return f"☠️ 重伤陷阱！摸金HP -{dmg}，眩晕1回合。\n{death}"
+        return f"☠️ 重伤陷阱！摸金HP -{dmg}，眩晕1回合。"
+
+    def _tomb_after_damage(self, player: dict, p: dict, session: dict) -> str | None:
+        """摸金HP归0时的复活/死亡处理，返回提示文本（None 表示未阵亡）。"""
+        if session.get("hp", 0) > 0:
+            return None
+        inv = session.get("inventory", {})
+        if inv.get("还魂丹", 0) > 0:
+            inv["还魂丹"] -= 1
+            if inv["还魂丹"] <= 0:
+                inv.pop("还魂丹")
+            session["hp"] = 50
+            return "💊 还魂丹自动触发，摸金HP恢复到50！"
+        if session.get("buffs", {}).get("revive"):
+            session["buffs"].pop("revive")
+            session["hp"] = 1
+            return self._tomb_settle(player, p, session, "revive")
+        return self._tomb_settle(player, p, session, "death")
 
     def _tomb_altar_event(self, player: dict, p: dict, session: dict) -> str:
         roll = random.random()
         if roll < 0.4:
-            heal = max(1, int(p["hp_max"] * 0.2))
-            p["hp"] = min(p["hp_max"], p["hp"] + heal)
-            return f"✨ 祭坛赐福：HP +{heal}。"
+            heal = max(1, int(session["hp_max"] * 0.2))
+            session["hp"] = min(session["hp_max"], session["hp"] + heal)
+            return f"✨ 祭坛赐福：摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
         if roll < 0.7:
             gain = random.randint(10, 30)
             session["mingbi"] += gain
             return f"✨ 祭坛涌出冥币：+{gain}。"
         if roll < 0.9:
             return self._tomb_battle(player, p, session, summoned=True)
-        item = random.choice([n for n in data.TOMB_ITEMS if data.TOMB_ITEMS[n].get("effect") != "token"])
+        item = random.choice([n for n in data.TOMB_ITEMS if data.TOMB_ITEMS[n].get("effect") not in ("token", "main_bag_item")])
         session.setdefault("inventory", {}).setdefault(item, 0)
         session["inventory"][item] += 1
         return f"✨ 祭坛中藏着『{item}』×1。"
@@ -4975,6 +5110,16 @@ class PetParkPlugin(Star):
         cells = session["map"]["cells"]
         x, y = session["player_pos"]["x"], session["player_pos"]["y"]
 
+        # 武器耐久 -1
+        weapon = session.get("weapon", "")
+        broke_text = ""
+        if weapon:
+            remaining = self.store.decrement_tomb_weapon(player, weapon)
+            if remaining is not None and remaining == 0:
+                session["weapon"] = ""
+                session["weapon_attack"] = 0
+                broke_text = f"　⚠️『{weapon}』耐久耗尽破碎！"
+
         if not summoned and cells[y][x] == "M":
             cells[y][x] = "."
             self._tomb_refresh_map(session)
@@ -4983,34 +5128,155 @@ class PetParkPlugin(Star):
             gain_min, gain_max = cfg["monster_mingbi"]
             gain = random.randint(gain_min, gain_max)
             session["mingbi"] += gain
-            return f"⚔️ 你轻松镇压了怪物，获得 {gain} 冥币。"
-        my_power = int(petmod.battle_power(p) * random.uniform(0.9, 1.1))
-        monster_power = int(
-            petmod.battle_power(p) * cfg["monster_mult"] * random.uniform(0.85, 1.15)
-        )
-        diff = my_power - monster_power
-        if diff >= 0:
-            ratio = min(1.0, diff / max(1, monster_power))
-            gain_min, gain_max = cfg["monster_mingbi"]
-            gain = int(random.randint(gain_min, gain_max) * (1 + ratio))
+            return f"⚔️ 镇尸钉锁定必胜！获得 {gain} 冥币。{broke_text}"
+
+        level = self.store.get_tomb_level(player)
+        my_power = data.tomb_player_attack(level, session.get("weapon_attack", 0))
+        b = data.TOMB_BATTLE
+
+        # 闪避：免伤撤退，怪物仍在原地
+        if random.random() < b["dodge_chance"]:
+            return f"💨 你灵巧闪避，全身而退，怪物仍在原地。{broke_text}"
+
+        player_score = my_power * random.uniform(*b["player_luck"])
+        monster_score = cfg["monster_power"] * random.uniform(*b["monster_luck"])
+        events = []
+        if random.random() < b["miss_chance"]:
+            player_score *= b["miss_mult"]
+            events.append("失手")
+        if random.random() < b["crit_chance"]:
+            player_score *= b["crit_mult"]
+            events.append("暴击")
+        player_score = int(player_score)
+        monster_score = int(monster_score)
+        event_text = ("（" + "、".join(events) + "）") if events else ""
+        gain_min, gain_max = cfg["monster_mingbi"]
+
+        if player_score >= monster_score:
+            ratio = (player_score - monster_score) / max(1, monster_score)
+            gain = int(random.randint(gain_min, gain_max) * (1 + min(1.0, ratio)))
             session["mingbi"] += gain
-            if ratio >= 0.5:
-                hp_loss = max(1, int(p["hp_max"] * 0.05))
-                p["hp"] = max(1, p["hp"] - hp_loss)
-                return f"⚔️ 大胜！获得 {gain} 冥币，HP -{hp_loss}。"
-            hp_loss = max(1, int(p["hp_max"] * 0.15))
-            p["hp"] = max(1, p["hp"] - hp_loss)
-            return f"⚔️ 小胜！获得 {gain} 冥币，HP -{hp_loss}。"
-        # 失败侧（怪物已在战斗开始前被从地图上移除）
-        if random.random() < 0.3:
-            hp_loss = max(1, int(p["hp_max"] * 0.25))
-            p["hp"] = max(1, p["hp"] - hp_loss)
-            return f"⚔️ 你受伤撤退，HP -{hp_loss}。"
-        hp_loss = max(1, int(p["hp_max"] * 0.5))
-        p["hp"] = max(1, p["hp"] - hp_loss)
-        if p["hp"] <= 1:
-            return self._tomb_settle(player, p, session, "death")
-        return f"⚔️ 你惨败，HP -{hp_loss}。"
+            if player_score >= monster_score * 1.5:
+                hp_loss, tier = 5, "大胜"
+            else:
+                hp_loss, tier = 10, "小胜"
+            session["hp"] = max(0, session["hp"] - hp_loss)
+            death = self._tomb_after_damage(player, p, session)
+            if death:
+                return f"⚔️ {tier}！获得 {gain} 冥币，摸金HP -{hp_loss}。{event_text}{broke_text}\n{death}"
+            return (
+                f"⚔️ {tier}！获得 {gain} 冥币，摸金HP -{hp_loss}。{event_text}{broke_text}\n"
+                f"> 摸金HP {session['hp']}/{session['hp_max']}"
+            )
+        # 失败
+        if player_score <= monster_score * 0.5:
+            hp_loss, tier = 60, "碾压败"
+        else:
+            hp_loss, tier = 40, "惨败"
+        session["hp"] = max(0, session["hp"] - hp_loss)
+        death = self._tomb_after_damage(player, p, session)
+        if death:
+            return f"⚔️ {tier}！摸金HP -{hp_loss}。{event_text}{broke_text}\n{death}"
+        return (
+            f"⚔️ {tier}！摸金HP -{hp_loss}。{event_text}{broke_text}\n"
+            f"> 摸金HP {session['hp']}/{session['hp_max']}"
+        )
+
+    # ---- 摸金交互指令 ----
+    def _tomb_battle_cmd(self, player: dict) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        session = self._tomb_sessions.get(key)
+        if not session:
+            return "你没有进行中的摸金探险。"
+        settle = self._tomb_check_timeout(player, p, session)
+        if settle:
+            return settle
+        pending = session.get("pending")
+        if not pending or pending.get("type") != "M":
+            return "这里没有要战斗的怪物（移动到怪物格才会遭遇）。"
+        result = self._tomb_battle(player, p, session)
+        if key in self._tomb_sessions:
+            session["pending"] = None
+        return result
+
+    def _tomb_altar_cmd(self, player: dict) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        session = self._tomb_sessions.get(key)
+        if not session:
+            return "你没有进行中的摸金探险。"
+        settle = self._tomb_check_timeout(player, p, session)
+        if settle:
+            return settle
+        pending = session.get("pending")
+        if not pending or pending.get("type") != "S":
+            return "这里没有祭坛（移动到祭坛格才会发现）。"
+        x, y = pending["x"], pending["y"]
+        cells = session["map"]["cells"]
+        cells[y][x] = "."
+        self._tomb_refresh_map(session)
+        session["pending"] = None
+        return self._tomb_altar_event(player, p, session)
+
+    def _tomb_flee(self, player: dict) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        session = self._tomb_sessions.get(key)
+        if not session:
+            return "你没有进行中的摸金探险。"
+        settle = self._tomb_check_timeout(player, p, session)
+        if settle:
+            return settle
+        pending = session.get("pending")
+        if not pending or pending.get("type") != "M":
+            return "这里没有可以逃跑的怪物。"
+        if session.get("escapes", 0) <= 0:
+            return "🏃 逃跑次数已用完，只能战斗或使用道具。"
+        session["escapes"] -= 1
+        session["pending"] = None
+        session["player_pos"] = dict(session.get("prev_pos", session["player_pos"]))
+        return (
+            f"🏃 你成功逃脱，退回上一格，怪物仍在原地。"
+            f"剩余逃跑次数 {session['escapes']}/{data.TOMB_ESCAPES_PER_RAID}。"
+        )
+
+    def _tomb_skip(self, player: dict) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        session = self._tomb_sessions.get(key)
+        if not session:
+            return "你没有进行中的摸金探险。"
+        if not session.get("pending"):
+            return "当前没有待交互的对象。"
+        session["pending"] = None
+        return "你选择离开，对象保留在原地。可继续 上/下/左/右 移动。"
+
+    def _tomb_equip(self, player: dict, tokens: list[str]) -> str:
+        if len(tokens) < 2:
+            return "用法：摸装 武器名"
+        name = tokens[1]
+        if name not in data.TOMB_WEAPONS:
+            return "没有这种武器。"
+        weapons = self.store.get_tomb_weapons(player)
+        if name not in weapons:
+            return f"你还没有『{name}』，先发送 `摸店` 购买。"
+        self.store.equip_tomb_weapon(player, name)
+        atk = data.TOMB_WEAPONS[name]["attack"]
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        session = self._tomb_sessions.get(key)
+        if session:
+            session["weapon"] = name
+            session["weapon_attack"] = atk
+        return f"🗡 已装备『{name}』（攻击+{atk}，耐久{weapons[name]}）。"
 
     # ---- 地图生成与绘图 ----
     @staticmethod

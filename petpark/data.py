@@ -1135,6 +1135,45 @@ TOMB_COOLDOWN = 300  # 每次摸金结束后冷却秒数（5分钟）
 # 摸金独立等级系统
 TOMB_MAX_LEVEL = 30
 
+# 摸金独立角色系统
+TOMB_MAX_HP = 100
+TOMB_BASE_ATTACK = 10  # 摸金战力基础
+TOMB_LEVEL_ATTACK = 2  # 每级摸金等级提供的战力
+TOMB_ESCAPES_PER_RAID = 3  # 每局可逃跑次数
+
+
+def tomb_player_attack(tomb_level: int, weapon_attack: int = 0) -> int:
+    """摸金战力 = 基础 + 等级成长 + 武器攻击。"""
+    return TOMB_BASE_ATTACK + tomb_level * TOMB_LEVEL_ATTACK + weapon_attack
+
+
+# 摸金武器（带入摸金，决定摸金战力；有耐久，阵亡全丢）
+TOMB_WEAPONS = {
+    "木棍": {"attack": 5, "price": 30, "durability": 10},
+    "铁剑": {"attack": 15, "price": 100, "durability": 15},
+    "黑金匕": {"attack": 30, "price": 300, "durability": 20},
+    "镇墓刀": {"attack": 60, "price": 800, "durability": 25},
+    "冥火枪": {"attack": 100, "price": 2000, "durability": 30},
+}
+
+# 运气战斗常数
+TOMB_BATTLE = {
+    "player_luck": (0.8, 1.2),
+    "monster_luck": (0.85, 1.15),
+    "crit_chance": 0.15,
+    "crit_mult": 1.5,
+    "dodge_chance": 0.10,
+    "miss_chance": 0.10,
+    "miss_mult": 0.7,
+}
+
+# 陷阱运气结果权重：(结果, 权重)
+TOMB_TRAP_OUTCOMES = [
+    ("avoid", 40),   # 完全避开
+    ("light", 40),   # 轻伤 -15
+    ("heavy", 20),   # 重伤 -30 + 眩晕1
+]
+
 
 def tomb_exp_to_next(level: int) -> int:
     """升到下一摸金等级所需经验。满级 30 级。"""
@@ -1164,6 +1203,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 1,
         "entry_tokens": 0,
         "monster_mult": 0.35,
+        "monster_power": 15,
         "chest_mingbi": (15, 30),
         "monster_mingbi": (10, 20),
     },
@@ -1180,6 +1220,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 5,
         "entry_tokens": 0,
         "monster_mult": 0.55,
+        "monster_power": 35,
         "chest_mingbi": (30, 60),
         "monster_mingbi": (20, 35),
     },
@@ -1196,6 +1237,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 10,
         "entry_tokens": 1,
         "monster_mult": 0.80,
+        "monster_power": 70,
         "chest_mingbi": (60, 120),
         "monster_mingbi": (35, 60),
     },
@@ -1212,6 +1254,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 15,
         "entry_tokens": 2,
         "monster_mult": 1.10,
+        "monster_power": 120,
         "chest_mingbi": (120, 240),
         "monster_mingbi": (60, 100),
     },
@@ -1254,13 +1297,31 @@ TOMB_ITEMS = {
     },
     "招魂幡": {
         "price": 300,
-        "desc": "宠物濒死时保留1HP并自动撤离（保留50%冥币）。",
+        "desc": "摸金HP归0时自动复活到1并强制撤离（保留50%冥币）。",
         "effect": "revive",
     },
     "回春散": {
         "price": 60,
-        "desc": "恢复30% HP。",
-        "effect": "heal_30",
+        "desc": "恢复30%摸金HP。",
+        "effect": "heal_tomb_pct",
+        "amount": 0.3,
+    },
+    "绷带": {
+        "price": 20,
+        "desc": "恢复30点摸金HP。",
+        "effect": "heal_tomb",
+        "amount": 30,
+    },
+    "金创药": {
+        "price": 50,
+        "desc": "恢复60点摸金HP。",
+        "effect": "heal_tomb",
+        "amount": 60,
+    },
+    "还魂丹": {
+        "price": 200,
+        "desc": "摸金HP归0时自动复活到50HP。",
+        "effect": "revive_tomb",
     },
     TOMB_EXTRA_TOKEN: {
         "price": TOMB_EXTRA_TOKEN_COST,
