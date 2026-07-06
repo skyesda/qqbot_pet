@@ -4624,7 +4624,10 @@ class PetParkPlugin(Star):
         else:
             cd_text = "可进入"
         pending_exp = st.get("pending_pet_exp", 0)
-        pending_text = f"　待兑换宠物经验：{pending_exp}" if pending_exp > 0 else ""
+        if pending_exp > 0:
+            pending_text = f"　待兑换宠物经验：{pending_exp}（发送『摸金兑换』领取）"
+        else:
+            pending_text = ""
         return (
             f"## 🏺 我的摸金\n"
             f"● 摸金等级：Lv{level}　经验：{exp_text}{pending_text}\n"
