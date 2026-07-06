@@ -4513,7 +4513,7 @@ class PetParkPlugin(Star):
             "在独立墓穴中探索、战斗、开箱，并在时限内把指定数量的『冥币』带到出口撤离。\n\n"
             "**核心规则**\n"
             "- 摸金拥有独立血量（100）、独立战力（武器+摸金等级），不影响宠物本体。\n"
-            "- 摸金等级满级 30，每次成功/失败都获得经验。\n"
+            "- 摸金等级无上限，每次成功/失败都获得经验。\n"
             "- 难度 **简单/普通** 免费；**困难** 需1张棺椁令，**噩梦** 需2张。\n"
             f"- 『棺椁令』商店购买，每张 {data.TOMB_EXTRA_TOKEN_COST} 冥币。\n"
             f"- 每局结束后冷却 {data.TOMB_COOLDOWN // 60} 分钟。\n"
@@ -4578,7 +4578,7 @@ class PetParkPlugin(Star):
         level = st.get("level", 1)
         exp = st.get("exp", 0)
         need = data.tomb_exp_to_next(level)
-        exp_text = f"{exp}/{need}" if level < data.TOMB_MAX_LEVEL else "已满级"
+        exp_text = f"{exp}/{need}"
         equipped = st.get("equipped_weapon", "")
         weapons = st.get("weapons", {})
         wep_text = f"{equipped}（攻击+{data.TOMB_WEAPONS[equipped]['attack']}）" if equipped and equipped in data.TOMB_WEAPONS else "徒手"
@@ -4597,7 +4597,7 @@ class PetParkPlugin(Star):
             cd_text = "可进入"
         return (
             f"## 🏺 我的摸金\n"
-            f"● 摸金等级：Lv{level}/{data.TOMB_MAX_LEVEL}　经验：{exp_text}\n"
+            f"● 摸金等级：Lv{level}　经验：{exp_text}\n"
             f"● 摸金战力：{data.tomb_player_attack(level, data.TOMB_WEAPONS.get(equipped, {}).get('attack', 0) if equipped else 0)}\n"
             f"● 装备武器：{wep_text}\n"
             f"● 拥有武器：{weapons_text}\n"

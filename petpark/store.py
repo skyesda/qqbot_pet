@@ -707,19 +707,16 @@ class PetStore:
 
     @classmethod
     def add_tomb_exp(cls, player: dict, amount: int) -> tuple[int, int]:
-        """增加摸金经验，自动升级直到满级。返回 (当前等级, 当前经验)。"""
+        """增加摸金经验，自动升级（无等级上限）。返回 (当前等级, 当前经验)。"""
         st = cls.tomb_state(player)
         level = st.get("level", 1)
         exp = st.get("exp", 0) + max(0, amount)
-        while level < data.TOMB_MAX_LEVEL:
+        while True:
             need = data.tomb_exp_to_next(level)
             if exp < need:
                 break
             exp -= need
             level += 1
-        if level >= data.TOMB_MAX_LEVEL:
-            level = data.TOMB_MAX_LEVEL
-            exp = 0
         st["level"] = level
         st["exp"] = exp
         return level, exp

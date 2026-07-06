@@ -1132,8 +1132,8 @@ TOMB_EXTRA_TOKEN = "棺椁令"
 TOMB_EXTRA_TOKEN_COST = 200  # 冥币
 TOMB_COOLDOWN = 300  # 每次摸金结束后冷却秒数（5分钟）
 
-# 摸金独立等级系统
-TOMB_MAX_LEVEL = 30
+# 摸金独立等级系统（无等级上限）
+TOMB_MAX_LEVEL = None
 
 # 摸金独立角色系统
 TOMB_MAX_HP = 100
@@ -1176,9 +1176,7 @@ TOMB_TRAP_OUTCOMES = [
 
 
 def tomb_exp_to_next(level: int) -> int:
-    """升到下一摸金等级所需经验。满级 30 级。"""
-    if level >= TOMB_MAX_LEVEL:
-        return 0
+    """升到下一摸金等级所需经验（无等级上限，随等级线性增长）。"""
     return 80 + level * 40
 
 
