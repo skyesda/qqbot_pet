@@ -2799,6 +2799,8 @@ class PetParkPlugin(Star):
                 return "改名需要 10 点精力。"
             self.store.remove_item(player, "改名卡")
             p["energy"] -= 10
+            p["nickname"] = name
+            return f"改名成功！消耗『改名卡』x1、精力 10 点，现在它叫『{name}』。"
         p["nickname"] = name
         return f"改名成功！现在它叫『{name}』。"
 
@@ -2809,7 +2811,7 @@ class PetParkPlugin(Star):
         if not self.store.remove_item(player, "变性药水"):
             return "需要『变性药水』才能变性（可在宠物商城购买）。"
         p["gender"] = "女" if p["gender"] == "男" else "男"
-        return f"变性成功！『{p['nickname']}』现在是{p['gender']}生了。"
+        return f"变性成功！消耗『变性药水』x1，『{p['nickname']}』现在是{p['gender']}生了。"
 
     def _revive_self(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -2822,7 +2824,7 @@ class PetParkPlugin(Star):
         p["status"] = "正常"
         p["hp"] = p["hp_max"]
         p["mood"] = max(1, p["mood"])
-        return f"『{p['nickname']}』已满血复活！"
+        return f"『{p['nickname']}』已满血复活！消耗『九转还魂丹』x1。"
 
     def _status_text(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -2909,7 +2911,7 @@ class PetParkPlugin(Star):
                 p.setdefault("skills", []).append(name)
                 self.store.remove_item(player, name, 1)
                 petmod.refresh_energy(p)
-                return f"📜 参悟成功！习得秘技『{name}』，战力 +{s['power']}。"
+                return f"📜 参悟成功！消耗秘技书『{name}』x1，习得秘技『{name}』，战力 +{s['power']}。"
             return f"『{name}』不能直接使用。"
         count = self._parse_count(tokens, 2)
         if not self.store.has_item(player, name, count):
@@ -2941,7 +2943,7 @@ class PetParkPlugin(Star):
             for itx in before:
                 self.store.add_item(player, itx, 1)
             self.store.remove_item(player, name, 1)
-            return f"使用『{name}』：{msg}"
+            return f"使用『{name}』x1：{msg}"
         # 品质提升卡：每次 1 张，史诗及以上无法使用
         if "upgrade_quality" in eff:
             target = eff["upgrade_quality"]
@@ -2949,7 +2951,7 @@ class PetParkPlugin(Star):
             if not ok:
                 return msg
             self.store.remove_item(player, name, 1)
-            return f"使用『{name}』：{msg}"
+            return f"使用『{name}』x1：{msg}"
         msgs = []
         scaled: dict[str, Any] = {}
         for k, v in eff.items():
@@ -3370,7 +3372,12 @@ class PetParkPlugin(Star):
         )
         self.store.add_item(player, name, 1)
         self._inc_stat(player, "forge_artifact")
-        return f"⚒ 打造成功！『{name}』已放入背包，可『佩戴神器 {name}』。"
+        return (
+            f"⚒ 打造成功！消耗 {cost['jifen']} 积分、"
+            f"『{cost['material']}』x{cost['material_count']}、"
+            f"『{cost.get('blueprint', '神器图纸')}』x{cost.get('blueprint_count', 1)}，"
+            f"『{name}』已放入背包，可『佩戴神器 {name}』。"
+        )
 
     def _equip_artifact(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -3473,7 +3480,10 @@ class PetParkPlugin(Star):
         old = p.get("talent")
         p["talent"] = random.choice(pool)
         cover = f"（覆盖原天赋 {old}）" if old else ""
-        return f"🌟 觉醒成功！获得天赋【{p['talent']}】{cover}\n{data.TALENTS[p['talent']]['desc']}"
+        return (
+            f"🌟 觉醒成功！消耗 {c['exp']} 经验、{c['jifen']} 积分、{c['energy']} 点精力，"
+            f"获得天赋【{p['talent']}】{cover}\n{data.TALENTS[p['talent']]['desc']}"
+        )
 
     def _make_rune(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -3496,7 +3506,10 @@ class PetParkPlugin(Star):
         p["energy"] -= c["energy"]
         rune = f"{p['talent']}符"
         self.store.add_item(player, rune, 1)
-        return f"🪬 制符成功！获得『{rune}』，可『使用天赋符 {p['talent']}』赋予其它宠物该天赋。"
+        return (
+            f"🪬 制符成功！消耗 {c['jifen']} 积分、{c['exp']} 经验、{c['energy']} 点精力，"
+            f"获得『{rune}』，可『使用天赋符 {p['talent']}』赋予其它宠物该天赋。"
+        )
 
     def _use_rune(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -3527,7 +3540,10 @@ class PetParkPlugin(Star):
         old = p.get("talent")
         p["talent"] = talent
         cover = f"（覆盖原天赋 {old}）" if old else ""
-        return f"🪬 使用天赋符成功，宠物获得天赋【{talent}】{cover}。"
+        return (
+            f"🪬 使用天赋符成功！消耗 {c['jifen']} 积分、{c['exp']} 经验、{c['energy']} 点精力"
+            f"与『{rune}』x1，宠物获得天赋【{talent}】{cover}。"
+        )
 
     def _refine_elixir(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -3550,7 +3566,10 @@ class PetParkPlugin(Star):
         p["energy"] -= c["energy"]
         elixir = random.choice(data.ELIXIR_NAMES)
         self.store.add_item(player, elixir, 1)
-        return f"⚗ 炼丹成功，提炼出『{elixir}』x1！\n{data.ELIXIRS[elixir]['desc']}"
+        return (
+            f"⚗ 炼丹成功！消耗 {c['exp']} 经验、{c['jifen']} 积分、{c['energy']} 点精力，"
+            f"提炼出『{elixir}』x1！\n{data.ELIXIRS[elixir]['desc']}"
+        )
 
     def _use_elixir(self, player: dict, group_id: str, tokens: list[str]) -> str:
         # 使用仙丹 仙丹名 用户ID 数量
@@ -5940,7 +5959,7 @@ class PetParkPlugin(Star):
             if not self.store.remove_item(player, "永恒钻戒"):
                 return "你没有『永恒钻戒』。"
             tp.setdefault("pending", {})["marry"] = player["qq"]
-            return f"💍 已向 {target} 求婚，等待对方『同意求婚 {player['qq']}』。"
+            return f"💍 已向 {target} 求婚，消耗『永恒钻戒』x1，等待对方『同意求婚 {player['qq']}』。"
         if cmd == "同意求婚":
             pend = player.get("pending", {}).get("marry")
             if pend != target:
