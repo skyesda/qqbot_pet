@@ -5330,10 +5330,14 @@ class PetParkPlugin(Star):
         if session.get("escapes", 0) <= 0:
             return "🏃 逃跑次数已用完，只能战斗或使用道具。"
         session["escapes"] -= 1
+        x, y = pending["x"], pending["y"]
+        cells = session["map"]["cells"]
+        cells[y][x] = "."
+        self._tomb_refresh_map(session)
         session["pending"] = None
         session["player_pos"] = dict(session.get("prev_pos", session["player_pos"]))
         return (
-            f"🏃 你成功逃脱，退回上一格，怪物仍在原地。"
+            f"🏃 你成功逃脱，退回上一格，怪物已消失在墓道中。"
             f"剩余逃跑次数 {session['escapes']}/{data.TOMB_ESCAPES_PER_RAID}。"
         )
 
@@ -5347,8 +5351,13 @@ class PetParkPlugin(Star):
             return "你没有进行中的摸金探险。"
         if not session.get("pending"):
             return "当前没有待交互的对象。"
+        pending = session["pending"]
+        x, y = pending["x"], pending["y"]
+        cells = session["map"]["cells"]
+        cells[y][x] = "."
+        self._tomb_refresh_map(session)
         session["pending"] = None
-        return "你选择离开，对象保留在原地。可继续 上/下/左/右 移动。"
+        return "你选择离开，目标已消失在墓道中。可继续 上/下/左/右 移动。"
 
     def _tomb_equip(self, player: dict, tokens: list[str]) -> str:
         if self._tomb_in_raid(player):

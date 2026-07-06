@@ -532,7 +532,7 @@ textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-rad
 <input id="amt_coin" type="number" placeholder="金币面额" style="width:120px">
 <input id="amt_jifen" type="number" placeholder="积分面额" style="width:120px">
 <input id="amt_diamond" type="number" placeholder="钻石面额" style="width:120px">
-<input id="amt_item" list="itemlist" placeholder="道具名（可选）" style="width:140px">
+<select id="amt_item" style="width:140px"></select>
 <input id="amt_item_count" type="number" placeholder="数量" value="1" style="width:80px">
 <input id="amt_authdays" type="number" placeholder="授权天数(群授权卡)" style="width:160px">
 <input id="cnt" type="number" placeholder="数量" value="10" style="width:80px">
@@ -717,7 +717,7 @@ const PET_FIELDS=[
  ['artifact','神器','sel','artifacts','无'],['talent','天赋','sel','talents','无'],
 ];
 const PET_DEF={nickname:'宝宝',species:'幼龙',quality:'普通',element:'金',gender:'男',stage:'幼年期',level:1,exp:0,hp:800,hp_max:800,atk:50,def:40,intel:30,mood:5,energy:100,energy_max:100,status:'正常',love_state:'单身',love_target:null,favor:0,artifact:null,talent:null,custom:false,skills:[],ascended:false,frozen_until:0};
-async function loadMeta(){try{const r=await api('/api/meta',{});META=r.data||{};}catch(e){META={};}}
+async function loadMeta(){try{const r=await api('/api/meta',{});META=r.data||{};}catch(e){META={};} const am=g('amt_item'); if(am) am.innerHTML=optHtml(META.items||[],'', '道具名（可选）');}
 function escA(s){return esc(s).replace(/"/g,'&quot;');}
 function optHtml(list,val,empty){let h='';const L=(list||[]).map(String);if(empty!==undefined)h+=`<option value="">${esc(empty)}</option>`;for(const o of L)h+=`<option ${String(o)===String(val)?'selected':''}>${esc(o)}</option>`;if(val!==undefined&&val!==null&&val!==''&&!L.includes(String(val)))h+=`<option selected>${esc(val)}</option>`;return h;}
 function tab(t){
