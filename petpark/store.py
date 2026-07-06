@@ -140,6 +140,8 @@ class PetStore:
                     "exp": 0,
                     "equipped_weapon": "",
                     "weapons": {},
+                    "storage_items": {},
+                    "equip_items": {},
                     "stats": {
                         "raids": 0,
                         "success": 0,
@@ -585,11 +587,13 @@ class PetStore:
             "exp": 0,
             "equipped_weapon": "",
             "weapons": {},
+            "storage_items": {},
+            "equip_items": {},
             "stats": {"raids": 0, "success": 0, "fail": 0, "total_mingbi": 0},
             "daily": {"reset": "", "count": 0},
             "inventory": {},
         })
-        # 兼容旧数据：补上缺少的摸金等级/武器字段
+        # 兼容旧数据
         if "level" not in st:
             st["level"] = 1
         if "exp" not in st:
@@ -598,6 +602,15 @@ class PetStore:
             st["equipped_weapon"] = ""
         if "weapons" not in st:
             st["weapons"] = {}
+        # 旧 inventory 迁移到储物柜（安全区）
+        if "storage_items" not in st:
+            st["storage_items"] = dict(st.get("inventory", {}))
+        if "equip_items" not in st:
+            st["equip_items"] = {}
+        # 旧武器结构 {name: 耐久} 迁移为 {name: {durability, location}}
+        for wname, wval in st.get("weapons", {}).items():
+            if isinstance(wval, int):
+                st["weapons"][wname] = {"durability": wval, "location": "equip"}
         return st
 
     @classmethod
@@ -623,16 +636,18 @@ class PetStore:
         return cls.tomb_state(player).get("mingbi", 0)
 
     @classmethod
-    def add_tomb_item(cls, player: dict, name: str, count: int = 1) -> int:
-        """向摸金背包增加道具。"""
-        inv = cls.tomb_state(player).setdefault("inventory", {})
+    def add_tomb_item(cls, player: dict, name: str, count: int = 1, location: str = "storage") -> int:
+        """向储物柜/装备背包增加道具。location: storage/equip。"""
+        key = "storage_items" if location == "storage" else "equip_items"
+        inv = cls.tomb_state(player).setdefault(key, {})
         inv[name] = max(0, inv.get(name, 0) + count)
         return inv[name]
 
     @classmethod
-    def remove_tomb_item(cls, player: dict, name: str, count: int = 1) -> bool:
-        """从摸金背包扣除道具，返回是否成功。"""
-        inv = cls.tomb_state(player).get("inventory", {})
+    def remove_tomb_item(cls, player: dict, name: str, count: int = 1, location: str = "storage") -> bool:
+        """从储物柜/装备背包扣除道具，返回是否成功。"""
+        key = "storage_items" if location == "storage" else "equip_items"
+        inv = cls.tomb_state(player).get(key, {})
         if inv.get(name, 0) < count:
             return False
         inv[name] -= count
@@ -642,21 +657,45 @@ class PetStore:
 
     @classmethod
     def has_tomb_item(cls, player: dict, name: str, count: int = 1) -> bool:
-        return cls.tomb_state(player).get("inventory", {}).get(name, 0) >= count
+        st = cls.tomb_state(player)
+        return st.get("storage_items", {}).get(name, 0) + st.get("equip_items", {}).get(name, 0) >= count
+
+    @classmethod
+    def move_tomb_item(cls, player: dict, name: str, count: int, src: str, dst: str) -> bool:
+        """在储物柜与装备背包之间移动道具。"""
+        if src == dst:
+            return False
+        src_key = "storage_items" if src == "storage" else "equip_items"
+        dst_key = "storage_items" if dst == "storage" else "equip_items"
+        st = cls.tomb_state(player)
+        src_inv = st.get(src_key, {})
+        if src_inv.get(name, 0) < count:
+            return False
+        src_inv[name] -= count
+        if src_inv[name] <= 0:
+            src_inv.pop(name, None)
+        dst_inv = st.setdefault(dst_key, {})
+        dst_inv[name] = dst_inv.get(name, 0) + count
+        return True
 
     @classmethod
     def add_tomb_token(cls, player: dict, count: int = 1) -> int:
-        """增加额外入场券棺椁令。"""
-        return cls.add_tomb_item(player, data.TOMB_EXTRA_TOKEN, count)
+        """增加额外入场券棺椁令（放入储物柜）。"""
+        return cls.add_tomb_item(player, data.TOMB_EXTRA_TOKEN, count, "storage")
 
     @classmethod
     def consume_tomb_token(cls, player: dict, count: int = 1) -> bool:
-        """消耗 count 枚棺椁令，返回是否成功。"""
-        return cls.remove_tomb_item(player, data.TOMB_EXTRA_TOKEN, count)
+        """消耗 count 枚棺椁令（先储物柜后装备背包），返回是否成功。"""
+        st = cls.tomb_state(player)
+        for loc in ("storage", "equip"):
+            if cls.remove_tomb_item(player, data.TOMB_EXTRA_TOKEN, count, loc):
+                return True
+        return False
 
     @classmethod
     def get_tomb_token_count(cls, player: dict) -> int:
-        return cls.tomb_state(player).get("inventory", {}).get(data.TOMB_EXTRA_TOKEN, 0)
+        st = cls.tomb_state(player)
+        return st.get("storage_items", {}).get(data.TOMB_EXTRA_TOKEN, 0) + st.get("equip_items", {}).get(data.TOMB_EXTRA_TOKEN, 0)
 
     @classmethod
     def get_tomb_level(cls, player: dict) -> int:
@@ -688,7 +727,7 @@ class PetStore:
     # ---- 摸金武器 ----
     @classmethod
     def get_tomb_weapons(cls, player: dict) -> dict:
-        """返回 {武器名: 剩余耐久}。"""
+        """返回 {武器名: {durability, location}}。"""
         return cls.tomb_state(player).get("weapons", {})
 
     @classmethod
@@ -696,18 +735,34 @@ class PetStore:
         return cls.tomb_state(player).get("equipped_weapon", "")
 
     @classmethod
-    def add_tomb_weapon(cls, player: dict, name: str) -> int:
-        """获得/修复武器：耐久恢复到满。返回当前耐久。"""
+    def add_tomb_weapon(cls, player: dict, name: str, location: str = "storage") -> int:
+        """获得/修复武器：耐久恢复到满，默认放入储物柜。返回当前耐久。"""
         st = cls.tomb_state(player)
         weapons = st.setdefault("weapons", {})
-        weapons[name] = data.TOMB_WEAPONS[name]["durability"]
-        return weapons[name]
+        weapons[name] = {"durability": data.TOMB_WEAPONS[name]["durability"], "location": location}
+        return weapons[name]["durability"]
+
+    @classmethod
+    def move_tomb_weapon(cls, player: dict, name: str, location: str) -> bool:
+        """在储物柜/装备背包之间移动武器。"""
+        st = cls.tomb_state(player)
+        weapons = st.get("weapons", {})
+        if name not in weapons:
+            return False
+        weapons[name]["location"] = location
+        # 装备的武器被移出装备背包时自动卸下
+        if location != "equip" and st.get("equipped_weapon") == name:
+            st["equipped_weapon"] = ""
+        return True
 
     @classmethod
     def equip_tomb_weapon(cls, player: dict, name: str) -> bool:
-        """装备一把已拥有的武器。"""
+        """装备一把已在装备背包的武器。"""
         st = cls.tomb_state(player)
-        if name and name not in st.get("weapons", {}):
+        weapons = st.get("weapons", {})
+        if name not in weapons:
+            return False
+        if weapons[name].get("location") != "equip":
             return False
         st["equipped_weapon"] = name
         return True
@@ -719,8 +774,8 @@ class PetStore:
         weapons = st.get("weapons", {})
         if name not in weapons:
             return None
-        weapons[name] -= 1
-        remaining = weapons[name]
+        weapons[name]["durability"] -= 1
+        remaining = weapons[name]["durability"]
         if remaining <= 0:
             weapons.pop(name, None)
             if st.get("equipped_weapon") == name:
@@ -730,11 +785,21 @@ class PetStore:
 
     @classmethod
     def clear_tomb_loadout(cls, player: dict) -> None:
-        """阵亡掉落：清空所有带入物品（武器+摸金背包道具）。棺椁令也一并掉落。"""
+        """撤离失败掉落：清空装备背包（带入的道具+武器），储物柜保留。"""
         st = cls.tomb_state(player)
-        st["weapons"] = {}
-        st["equipped_weapon"] = ""
-        st["inventory"] = {}
+        st["equip_items"] = {}
+        # 移除位于装备背包的武器
+        st["weapons"] = {
+            name: w for name, w in st.get("weapons", {}).items()
+            if w.get("location") != "equip"
+        }
+        if st.get("equipped_weapon") not in st["weapons"]:
+            st["equipped_weapon"] = ""
+
+    @classmethod
+    def writeback_tomb_equip(cls, player: dict, session_inventory: dict) -> None:
+        """把当局剩余道具写回装备背包。"""
+        cls.tomb_state(player)["equip_items"] = dict(session_inventory or {})
 
     # ----------------------------- 邀请 -----------------------------
     @staticmethod

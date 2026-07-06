@@ -197,6 +197,9 @@ KNOWN_COMMANDS = {
     "摸金使用",
     "摸用",
     "摸装",
+    "摸带",
+    "摸存",
+    "摸包",
     "摸金撤离",
     "摸撤",
     "摸金状态",
@@ -906,6 +909,8 @@ class PetParkPlugin(Star):
             return self._tomb_buy(player, tokens)
         if cmd in ("我的摸金", "摸我"):
             return self._tomb_status_outside(player)
+        if cmd == "摸包":
+            return self._tomb_pack(player)
         if cmd in ("进入摸金", "摸进"):
             return self._tomb_enter(player, tokens)
         if cmd == "摸金移动":
@@ -920,6 +925,10 @@ class PetParkPlugin(Star):
             return self._tomb_use_item(player, tokens)
         if cmd == "摸装":
             return self._tomb_equip(player, tokens)
+        if cmd == "摸带":
+            return self._tomb_move_item(player, tokens, "to_equip")
+        if cmd == "摸存":
+            return self._tomb_move_item(player, tokens, "to_storage")
         if cmd in ("摸金撤离", "摸撤"):
             return self._tomb_evacuate(player)
         if cmd in ("摸金状态", "摸态"):
@@ -4504,10 +4513,11 @@ class PetParkPlugin(Star):
             "**难度与摸金等级**\n"
             "• 简单 Lv1　普通 Lv5　困难 Lv10　噩梦 Lv15\n\n"
             "**简短指令**\n"
-            "`摸店` · `摸买 道具名` · `摸我`\n"
+            "`摸店` · `摸买 道具名` · `摸我` · `摸包`\n"
+            "`摸带 道具名` · `摸存 道具名` · `摸装 武器名`\n"
             "`摸进 难度` · `上/下/左/右` · `摸看`\n"
             "`开箱` · `战斗` · `祭拜` · `逃跑` · `跳过`\n"
-            "`摸用 道具名` · `摸装 武器名` · `摸撤` · `摸态` · `摸弃`"
+            "`摸用 道具名` · `摸撤` · `摸态` · `摸弃`"
         )
 
     def _tomb_shop(self) -> str:
@@ -4518,7 +4528,7 @@ class PetParkPlugin(Star):
         lines.append("\n**道具**")
         for name, info in data.TOMB_ITEMS.items():
             lines.append(f"• **{name}** — {info['price']} 冥币　{info['desc']}")
-        lines.append("\n> `摸买 道具名 [数量]` 购买；武器用 `摸装 武器名` 装备。")
+        lines.append("\n> `摸买 道具名 [数量]` 购买（默认存入储物柜）；`摸带 道具名` 带入装备背包；武器 `摸装 武器名` 装备。")
         return "\n".join(lines)
 
     def _tomb_buy(self, player: dict, tokens: list[str]) -> str:
@@ -4533,8 +4543,8 @@ class PetParkPlugin(Star):
                 return f"冥币不足（需 {total}，当前 {self.store.get_tomb_mingbi(player)}）。"
             self.store.add_tomb_mingbi(player, -total)
             for _ in range(count):
-                self.store.add_tomb_weapon(player, name)
-            return f"🗡 已购买『{name}』×{count}，消耗 {total} 冥币。发送 `摸装 {name}` 装备。"
+                self.store.add_tomb_weapon(player, name, "storage")
+            return f"🗡 已购买『{name}』×{count}，消耗 {total} 冥币（存入储物柜）。发送 `摸带 {name}` 带入装备背包，再 `摸装 {name}` 装备。"
         if name not in data.TOMB_ITEMS:
             return f"摸金商店没有『{name}』。"
         price = data.TOMB_ITEMS[name]["price"]
@@ -4545,16 +4555,16 @@ class PetParkPlugin(Star):
         if data.TOMB_ITEMS[name].get("effect") == "main_bag_item":
             self.store.add_item(player, name, count)
             return f"🏺 已购买『{name}』×{count}，消耗 {total} 冥币（已进入主背包）。"
-        self.store.add_tomb_item(player, name, count)
-        return f"🏺 已购买『{name}』×{count}，消耗 {total} 冥币。"
+        self.store.add_tomb_item(player, name, count, "storage")
+        return f"🏺 已购买『{name}』×{count}，消耗 {total} 冥币（存入储物柜）。发送 `摸带 {name}` 带入装备背包。"
 
     def _tomb_status_outside(self, player: dict) -> str:
         st = self.store.tomb_state(player)
-        inv = st.get("inventory", {})
-        inv_text = "、".join(f"{k}×{v}" for k, v in inv.items() if v > 0) or "空"
         stats = st.get("stats", {})
         token = data.TOMB_EXTRA_TOKEN
-        token_count = st.get("inventory", {}).get(token, 0)
+        storage = st.get("storage_items", {})
+        equip = st.get("equip_items", {})
+        token_count = storage.get(token, 0) + equip.get(token, 0)
         level = st.get("level", 1)
         exp = st.get("exp", 0)
         need = data.tomb_exp_to_next(level)
@@ -4562,7 +4572,11 @@ class PetParkPlugin(Star):
         equipped = st.get("equipped_weapon", "")
         weapons = st.get("weapons", {})
         wep_text = f"{equipped}（攻击+{data.TOMB_WEAPONS[equipped]['attack']}）" if equipped and equipped in data.TOMB_WEAPONS else "徒手"
-        weapons_text = "、".join(f"{k}(耐久{v})" for k, v in weapons.items()) or "无"
+        storage_text = "、".join(f"{k}×{v}" for k, v in storage.items() if v > 0) or "空"
+        equip_text = "、".join(f"{k}×{v}" for k, v in equip.items() if v > 0) or "空"
+        weapons_text = "、".join(
+            f"{k}(耐久{w.get('durability')})" for k, w in weapons.items()
+        ) or "无"
         cooldown_ts = st.get("cooldown", 0)
         now = int(time.time())
         if cooldown_ts > now:
@@ -4578,8 +4592,9 @@ class PetParkPlugin(Star):
             f"● 装备武器：{wep_text}\n"
             f"● 拥有武器：{weapons_text}\n"
             f"● 冥币：**{st.get('mingbi', 0)}**\n"
-            f"● 摸金背包：{inv_text}\n"
             f"● 棺椁令：{token_count} 张（困难需1张，噩梦需2张）\n"
+            f"● 🎒装备背包（带入摸金，失败掉落）：{equip_text}\n"
+            f"● 🗄储物柜（安全保管）：{storage_text}\n"
             f"● 状态：{cd_text}\n"
             f"● 总次数：{stats.get('raids', 0)}　成功：{stats.get('success', 0)}　失败：{stats.get('fail', 0)}\n"
             f"● 历史带出冥币：{stats.get('total_mingbi', 0)}"
@@ -4650,11 +4665,11 @@ class PetParkPlugin(Star):
                     break
             if entrance_pos != {"x": 1, "y": 1}:
                 break
-        # 装备武器
+        # 装备武器：只带装备背包里的武器
         equipped = st.get("equipped_weapon", "")
         weapons = st.get("weapons", {})
         weapon_attack = 0
-        if equipped and equipped in weapons and equipped in data.TOMB_WEAPONS:
+        if equipped and equipped in weapons and weapons[equipped].get("location") == "equip" and equipped in data.TOMB_WEAPONS:
             weapon_attack = data.TOMB_WEAPONS[equipped]["attack"]
         now = int(time.time())
         session = {
@@ -4673,7 +4688,7 @@ class PetParkPlugin(Star):
             "time_limit": cfg["time"],
             "deadline": now + cfg["time"],
             "mingbi": 0,
-            "inventory": dict(st.get("inventory", {})),
+            "inventory": dict(st.get("equip_items", {})),
             "buffs": {},
             "pending": None,
             "status": "exploring",
@@ -4948,11 +4963,11 @@ class PetParkPlugin(Star):
             level_up_text = f"　🆙 摸金等级提升至 Lv{new_level}！"
         xp_text = f"摸金经验 +{xp}{level_up_text}"
 
-        # 阵亡：带入的武器与道具全部掉落；其它结果写回剩余道具
-        if reason == "death":
+        # 撤离失败（阵亡/超时）：装备背包全部掉落；其它结果把剩余道具写回装备背包
+        if reason in ("death", "timeout"):
             self.store.clear_tomb_loadout(player)
         else:
-            st["inventory"] = dict(session.get("inventory", {}))
+            self.store.writeback_tomb_equip(player, session.get("inventory", {}))
 
         if reason == "success":
             gained = session["mingbi"]
@@ -4975,7 +4990,7 @@ class PetParkPlugin(Star):
                 f"⏰ 墓穴坍塌，撤离失败！\n"
                 f"● {xp_text}\n"
                 f"● 本局冥币全部损失\n"
-                f"● 带入的武器和道具已带回"
+                f"● 装备背包全部掉落！储物柜不受影响"
             )
         if reason == "death":
             kept = int(session["mingbi"] * 0.2)
@@ -4985,7 +5000,7 @@ class PetParkPlugin(Star):
             return (
                 f"💀 摸金角色阵亡，撤离失败！\n"
                 f"● {xp_text}\n"
-                f"● 带入的武器和道具全部掉落！\n"
+                f"● 装备背包全部掉落！储物柜不受影响\n"
                 f"● 仅保留 {kept} 冥币"
             )
         if reason == "revive":
@@ -5269,6 +5284,8 @@ class PetParkPlugin(Star):
         weapons = self.store.get_tomb_weapons(player)
         if name not in weapons:
             return f"你还没有『{name}』，先发送 `摸店` 购买。"
+        if weapons[name].get("location") != "equip":
+            return f"『{name}』在储物柜里，先发送 `摸带 {name}` 放入装备背包。"
         self.store.equip_tomb_weapon(player, name)
         atk = data.TOMB_WEAPONS[name]["attack"]
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
@@ -5276,7 +5293,51 @@ class PetParkPlugin(Star):
         if session:
             session["weapon"] = name
             session["weapon_attack"] = atk
-        return f"🗡 已装备『{name}』（攻击+{atk}，耐久{weapons[name]}）。"
+        return f"🗡 已装备『{name}』（攻击+{atk}，耐久{weapons[name].get('durability')}）。"
+
+    def _tomb_move_item(self, player: dict, tokens: list[str], direction: str) -> str:
+        """direction: 'to_equip' = 储物柜→装备背包；'to_storage' = 装备背包→储物柜。"""
+        if len(tokens) < 2:
+            return "用法：摸带 道具名 [数量]  或  摸存 道具名 [数量]"
+        name = tokens[1]
+        count = self._parse_count(tokens, 2) if len(tokens) > 2 else 1
+        if name in data.TOMB_WEAPONS:
+            if direction == "to_equip":
+                if not self.store.move_tomb_weapon(player, name, "equip"):
+                    return f"储物柜没有武器『{name}』。"
+                return f"🗡 『{name}』已放入装备背包（带入摸金）。"
+            if not self.store.move_tomb_weapon(player, name, "storage"):
+                return f"装备背包没有武器『{name}』。"
+            return f"🗡 『{name}』已放回储物柜（安全保管）。"
+        if name not in data.TOMB_ITEMS:
+            return f"没有『{name}』这种物品。"
+        if direction == "to_equip":
+            if not self.store.move_tomb_item(player, name, count, "storage", "equip"):
+                return f"储物柜中『{name}』不足。"
+            return f"🎒 已把『{name}』×{count} 放入装备背包（带入摸金）。"
+        if not self.store.move_tomb_item(player, name, count, "equip", "storage"):
+            return f"装备背包中『{name}』不足。"
+        return f"🗄 已把『{name}』×{count} 放回储物柜（安全保管）。"
+
+    def _tomb_pack(self, player: dict) -> str:
+        st = self.store.tomb_state(player)
+        storage = st.get("storage_items", {})
+        equip = st.get("equip_items", {})
+        weapons = st.get("weapons", {})
+        equip_text = "、".join(f"{k}×{v}" for k, v in equip.items() if v > 0) or "空"
+        storage_text = "、".join(f"{k}×{v}" for k, v in storage.items() if v > 0) or "空"
+        equip_weps = "、".join(f"{k}(耐久{w.get('durability')})" for k, w in weapons.items() if w.get("location") == "equip") or "无"
+        storage_weps = "、".join(f"{k}(耐久{w.get('durability')})" for k, w in weapons.items() if w.get("location") != "equip") or "无"
+        return (
+            f"## 🏺 摸金背包\n"
+            f"● 🎒装备背包（带入摸金，失败掉落）\n"
+            f"　道具：{equip_text}\n"
+            f"　武器：{equip_weps}\n"
+            f"● 🗄储物柜（安全保管）\n"
+            f"　道具：{storage_text}\n"
+            f"　武器：{storage_weps}\n"
+            f"> `摸带 道具名 数量` 带入　`摸存 道具名 数量` 取出"
+        )
 
     # ---- 地图生成与绘图 ----
     @staticmethod
