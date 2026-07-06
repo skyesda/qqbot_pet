@@ -4499,6 +4499,14 @@ class PetParkPlugin(Star):
     def _tomb_key(self, group_id: str, qq: str) -> str:
         return self.store.make_key(group_id, qq)
 
+    def _tomb_in_raid(self, player: dict) -> bool:
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        return key in self._tomb_sessions
+
+    def _tomb_pending_monster(self, session: dict) -> bool:
+        pending = session.get("pending")
+        return bool(pending and pending.get("type") == "M")
+
     def _tomb_intro(self) -> str:
         return (
             "## 🏺 宠物摸金\n"
@@ -4532,6 +4540,8 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _tomb_buy(self, player: dict, tokens: list[str]) -> str:
+        if self._tomb_in_raid(player):
+            return "摸金过程中不能购买东西，请先结束本局（摸撤/摸弃）。"
         if len(tokens) < 2:
             return "用法：摸买 道具名 [数量]"
         name = tokens[1]
@@ -4724,6 +4734,8 @@ class PetParkPlugin(Star):
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
+        if self._tomb_pending_monster(session):
+            return "👹 你遭遇了怪物，必须先『战斗』或『逃跑』才能离开！"
         if session.get("stunned", 0) > 0:
             session["stunned"] -= 1
             return f"😵 你仍处于眩晕中，本回合无法移动（还剩 {session['stunned']} 回合）。"
@@ -4885,6 +4897,8 @@ class PetParkPlugin(Star):
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
+        if self._tomb_pending_monster(session):
+            return "👹 你还有未处理的怪物，必须先『战斗』或『逃跑』才能撤离！"
         x, y = session["player_pos"]["x"], session["player_pos"]["y"]
         cells = session["map"]["cells"]
         if cells[y][x] != "E" and cells[y][x] != "X":
@@ -5276,6 +5290,8 @@ class PetParkPlugin(Star):
         return "你选择离开，对象保留在原地。可继续 上/下/左/右 移动。"
 
     def _tomb_equip(self, player: dict, tokens: list[str]) -> str:
+        if self._tomb_in_raid(player):
+            return "摸金过程中不能调整装备，请先结束本局（摸撤/摸弃）。"
         if len(tokens) < 2:
             return "用法：摸装 武器名"
         name = tokens[1]
@@ -5297,6 +5313,8 @@ class PetParkPlugin(Star):
 
     def _tomb_move_item(self, player: dict, tokens: list[str], direction: str) -> str:
         """direction: 'to_equip' = 储物柜→装备背包；'to_storage' = 装备背包→储物柜。"""
+        if self._tomb_in_raid(player):
+            return "摸金过程中不能调整背包，请先结束本局（摸撤/摸弃）。"
         if len(tokens) < 2:
             return "用法：摸带 道具名 [数量]  或  摸存 道具名 [数量]"
         name = tokens[1]
