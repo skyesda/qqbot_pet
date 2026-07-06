@@ -72,7 +72,9 @@ class PetStore:
         self._data.setdefault("accounts", {})
         self._data.setdefault("custom_reviews", {})
         self._data.setdefault("portal_secret", "".join(random.choices("abcdef0123456789", k=32)))
+        self._data.setdefault("tomb_players", {})
         self._migrate_group_keys()
+        self._migrate_tomb_to_global()
 
     @staticmethod
     def make_key(group_id: str, qq: str) -> str:
@@ -96,6 +98,57 @@ class PetStore:
             migrated[self.make_key(gid, qq)] = pl
         if changed:
             self._data["players"] = migrated
+
+    @staticmethod
+    def _default_tomb_state() -> dict:
+        """全局摸金状态默认值。"""
+        return {
+            "mingbi": 0,
+            "level": 1,
+            "exp": 0,
+            "equipped_weapon": "",
+            "weapons": {},
+            "storage_items": {},
+            "equip_items": {},
+            "stats": {"raids": 0, "success": 0, "fail": 0, "total_mingbi": 0},
+            "daily": {"reset": "", "count": 0},
+            "inventory": {},
+            "daily_gains": {},
+        }
+
+    def _migrate_tomb_to_global(self) -> None:
+        """把各群的摸金数据合并为按 QQ 全局一份，保留财富最多的那份。"""
+        global_tomb = self._data["tomb_players"]
+        for key, pl in list(self._data.get("players", {}).items()):
+            qq = str(pl.get("qq", ""))
+            if not qq:
+                continue
+            old_tomb = pl.get("tomb")
+            if not old_tomb or not isinstance(old_tomb, dict):
+                continue
+            # 应用默认值，避免旧字段缺失
+            merged = self._default_tomb_state()
+            merged.update(old_tomb)
+            existing = global_tomb.get(qq)
+            if existing is None:
+                global_tomb[qq] = merged
+            else:
+                # 保留财富更多（或等级更高）的一份
+                if merged.get("mingbi", 0) > existing.get("mingbi", 0):
+                    global_tomb[qq] = merged
+                elif merged.get("mingbi", 0) == existing.get("mingbi", 0) and merged.get("level", 1) > existing.get("level", 1):
+                    global_tomb[qq] = merged
+            # 删除玩家身上的 tomb，统一使用全局引用
+            pl.pop("tomb", None)
+        # 重新把全局引用挂到每个玩家身上
+        for key, pl in self._data.get("players", {}).items():
+            qq = str(pl.get("qq", ""))
+            if qq:
+                pl["tomb"] = global_tomb.setdefault(qq, self._default_tomb_state())
+
+    def _ensure_global_tomb(self, qq: str) -> dict:
+        """获取/创建某个 QQ 的全局摸金状态。"""
+        return self._data["tomb_players"].setdefault(qq, self._default_tomb_state())
 
     def _flush(self) -> None:
         tmp = self.path.with_suffix(".tmp")
@@ -134,25 +187,9 @@ class PetStore:
                 "abyss_crystal": 0,
                 "abyss_last_decay": 0,
                 "abyss_last_reset": "",
-                "tomb": {
-                    "mingbi": 0,
-                    "level": 1,
-                    "exp": 0,
-                    "equipped_weapon": "",
-                    "weapons": {},
-                    "storage_items": {},
-                    "equip_items": {},
-                    "stats": {
-                        "raids": 0,
-                        "success": 0,
-                        "fail": 0,
-                        "total_mingbi": 0,
-                    },
-                    "daily": {"reset": "", "count": 0},
-                    "inventory": {},
-                    "daily_gains": {},
-                },
             }
+            qq = str(qq)
+            players[key]["tomb"] = self._ensure_global_tomb(qq)
         return players.get(key)
 
     def all_players(self) -> dict[str, dict]:
@@ -579,22 +616,13 @@ class PetStore:
         cls.abyss_state(player)["blessing"] = ""
 
     # ----------------------------- 宠物摸金（独立财富系统） -----------------------------
-    @staticmethod
-    def tomb_state(player: dict) -> dict:
-        """返回玩家摸金状态，自动 lazy init 所需字段。"""
-        st = player.setdefault("tomb", {
-            "mingbi": 0,
-            "level": 1,
-            "exp": 0,
-            "equipped_weapon": "",
-            "weapons": {},
-            "storage_items": {},
-            "equip_items": {},
-            "stats": {"raids": 0, "success": 0, "fail": 0, "total_mingbi": 0},
-            "daily": {"reset": "", "count": 0},
-            "inventory": {},
-        })
-        # 兼容旧数据
+    @classmethod
+    def tomb_state(cls, player: dict) -> dict:
+        """返回玩家摸金状态（全局按 QQ 共享）。"""
+        st = player.get("tomb")
+        if not st or not isinstance(st, dict):
+            st = player.setdefault("tomb", cls._default_tomb_state())
+        # 兼容旧数据字段
         if "level" not in st:
             st["level"] = 1
         if "exp" not in st:
@@ -603,7 +631,6 @@ class PetStore:
             st["equipped_weapon"] = ""
         if "weapons" not in st:
             st["weapons"] = {}
-        # 旧 inventory 迁移到储物柜（安全区）
         if "storage_items" not in st:
             st["storage_items"] = dict(st.get("inventory", {}))
         if "equip_items" not in st:
@@ -848,20 +875,16 @@ class PetStore:
         if reward.get("date") == yesterday:
             return reward
         entries = []
-        for key, pl in self._data.get("players", {}).items():
-            gain = self.get_tomb_daily_gain(pl, yesterday)
+        for qq, st in self._data.get("tomb_players", {}).items():
+            gain = st.get("daily_gains", {}).get(yesterday, 0)
             if gain > 0:
-                entries.append({"key": key, "gain": gain})
+                entries.append({"key": str(qq), "gain": gain})
         entries.sort(key=lambda x: x["gain"], reverse=True)
         winners = []
         for w in entries[:3]:
-            parts = w["key"].split("\x1f")
-            group = parts[0] if len(parts) > 1 else ""
-            qq = parts[1] if len(parts) > 1 else parts[0]
             winners.append({
                 "key": w["key"],
-                "group": group,
-                "qq": qq,
+                "qq": w["key"],
                 "gain": w["gain"],
             })
         reward["date"] = yesterday
@@ -872,22 +895,22 @@ class PetStore:
     def claim_tomb_daily_reward(self, player: dict, group_id: str, qq: str) -> tuple[bool, int | None, str]:
         """尝试领取昨日神榜奖励。返回 (成功, 经验值, 提示)。"""
         from . import data
-        self_key = self.make_key(str(group_id), str(qq))
+        qq = str(qq)
         reward = self.get_or_compute_tomb_daily_reward()
         winners = reward.get("winners", [])
         rank = None
         for i, w in enumerate(winners, 1):
-            if w.get("key") == self_key:
+            if w.get("key") == qq:
                 rank = i
                 break
         if rank is None:
             return False, None, "只有昨日神榜前三名可领取奖励。"
         claimed = reward.setdefault("claimed", {})
-        if claimed.get(self_key):
+        if claimed.get(qq):
             return False, None, "今日已领取过摸金神榜奖励。"
         low, high = data.TOMB_DAILY_REWARD_EXP.get(rank, (5000, 15000))
         exp = random.randint(low, high)
-        claimed[self_key] = True
+        claimed[qq] = True
         return True, exp, ""
 
     # ----------------------------- 邀请 -----------------------------

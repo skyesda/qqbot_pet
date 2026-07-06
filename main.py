@@ -5381,28 +5381,24 @@ class PetParkPlugin(Star):
 
     # ---- 摸金排行 / 神榜 ----
     @staticmethod
-    def _tomb_player_name(pl: dict) -> str:
-        """取玩家展示名：优先宠物昵称，否则 QQ 号。"""
-        pet = pl.get("pet")
-        if pet:
-            nick = str(pet.get("nickname", "")).strip()
-            if nick:
-                return nick.replace("|", "丨")
-        return str(pl.get("qq", "未知")).replace("|", "丨")
+    def _tomb_display_qq(qq: str) -> str:
+        """摸金排行统一显示用户 ID（QQ）。"""
+        return str(qq or "未知").replace("|", "丨")
 
     def _tomb_rank(self, player: dict, group_id: str) -> str:
         """摸金财富全服排行（按永久冥币）。"""
         entries = []
-        for key, pl in self.store.all_players().items():
-            mingbi = self.store.get_tomb_mingbi(pl)
+        for qq, st in self.store._data.get("tomb_players", {}).items():
+            mingbi = st.get("mingbi", 0)
             if mingbi > 0:
-                entries.append((key, self._tomb_player_name(pl), mingbi))
+                entries.append((str(qq), self._tomb_display_qq(qq), mingbi))
         entries.sort(key=lambda x: x[2], reverse=True)
         if not entries:
             return "暂无玩家登上摸金排行。"
         lines = ["## 🏺 摸金排行（全服）"]
-        self_key = self.store.make_key(str(group_id), str(player.get("qq", "")))
-        my_mingbi = self.store.get_tomb_mingbi(player)
+        my_qq = str(player.get("qq", ""))
+        my_st = self.store._data.get("tomb_players", {}).get(my_qq, {})
+        my_mingbi = my_st.get("mingbi", 0)
         if my_mingbi > 0:
             my_rank = 1 + sum(1 for _, _, m in entries if m > my_mingbi)
             lines.append(f"> 我的排名：**{my_rank}**　·　我的冥币：**{my_mingbi}**")
@@ -5410,11 +5406,11 @@ class PetParkPlugin(Star):
             lines.append(f"> 我的冥币：**{my_mingbi}**（还未获得冥币）")
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines.append("")
-        lines.append("| 排名 | 昵称 | 冥币 |")
+        lines.append("| 排名 | 用户ID | 冥币 |")
         lines.append("|:--:|:--:|--:|")
-        for i, (_, nick, mingbi) in enumerate(entries[: self.rank_size], 1):
+        for i, (_, qq_text, mingbi) in enumerate(entries[: self.rank_size], 1):
             rk = medals.get(i, str(i))
-            lines.append(f"| {rk} | {nick} | {mingbi} |")
+            lines.append(f"| {rk} | {qq_text} | {mingbi} |")
         return "\n".join(lines)
 
     def _tomb_daily_rank(self, player: dict) -> str:
@@ -5422,10 +5418,10 @@ class PetParkPlugin(Star):
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
         entries = []
-        for key, pl in self.store.all_players().items():
-            gain = self.store.get_tomb_daily_gain(pl, today)
+        for qq, st in self.store._data.get("tomb_players", {}).items():
+            gain = st.get("daily_gains", {}).get(today, 0)
             if gain > 0:
-                entries.append((key, self._tomb_player_name(pl), gain))
+                entries.append((str(qq), self._tomb_display_qq(qq), gain))
         entries.sort(key=lambda x: x[2], reverse=True)
         if not entries:
             return "今日还没有玩家在摸金中获得冥币。"
@@ -5433,10 +5429,9 @@ class PetParkPlugin(Star):
             "## 🔥 今日摸金神榜",
             f"> 统计 {today} 00:00 至今全服摸金获得冥币情况，每日 0 点清空。",
         ]
-        self_key = self.store.make_key(
-            str(player.get("group", "")), str(player.get("qq", ""))
-        )
-        my_gain = self.store.get_tomb_daily_gain(player, today)
+        my_qq = str(player.get("qq", ""))
+        my_st = self.store._data.get("tomb_players", {}).get(my_qq, {})
+        my_gain = my_st.get("daily_gains", {}).get(today, 0)
         if my_gain > 0:
             my_rank = 1 + sum(1 for _, _, g in entries if g > my_gain)
             lines.append(f"> 我的排名：**{my_rank}**　·　今日获得：**{my_gain}** 冥币")
@@ -5444,11 +5439,11 @@ class PetParkPlugin(Star):
             lines.append(f"> 我今日获得：**{my_gain}** 冥币")
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines.append("")
-        lines.append("| 排名 | 昵称 | 今日获得冥币 |")
+        lines.append("| 排名 | 用户ID | 今日获得冥币 |")
         lines.append("|:--:|:--:|--:|")
-        for i, (_, nick, gain) in enumerate(entries[: self.rank_size], 1):
+        for i, (_, qq_text, gain) in enumerate(entries[: self.rank_size], 1):
             rk = medals.get(i, str(i))
-            lines.append(f"| {rk} | {nick} | {gain} |")
+            lines.append(f"| {rk} | {qq_text} | {gain} |")
         lines.append("")
         lines.append(
             "> 🎁 前三名可于次日 0 点后发送『领取摸金奖励』领取随机宠物经验（5000~50000）。"
@@ -5456,7 +5451,7 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _tomb_claim_daily_reward(self, player: dict, group_id: str) -> str:
-        """领取昨日今日摸金神榜前三奖励（宠物主经验）。"""
+        """领取昨日今日摸金神榜前三奖励（宠物主经验，发给当前群宠物）。"""
         p = player.get("pet")
         if not p:
             return "你还没有宠物，无法领取经验奖励。"
