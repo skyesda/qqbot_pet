@@ -5034,7 +5034,7 @@ class PetParkPlugin(Star):
         stored_pet_exp = base_pet_exp if is_success else (base_pet_exp // 2)
         if stored_pet_exp > 0:
             self.store.add_tomb_pending_pet_exp(player, stored_pet_exp)
-        pet_exp_text = f"宠物经验 +{stored_pet_exp}（已暂存，发送『摸金兑换』可发放到所有群聊宠物）" if stored_pet_exp > 0 else ""
+        pet_exp_text = f"宠物经验 +{stored_pet_exp}（已暂存，发送『摸金兑换』可发放到当前群宠物）" if stored_pet_exp > 0 else ""
 
         # 撤离失败（阵亡/超时）：装备背包全部掉落；其它结果把剩余道具写回装备背包
         if reason in ("death", "timeout"):
@@ -5515,28 +5515,16 @@ class PetParkPlugin(Star):
         )
 
     def _tomb_redeem_exp(self, player: dict) -> str:
-        """把暂存的摸金宠物经验兑换到该 QQ 所有群聊的宠物。"""
+        """把暂存的摸金宠物经验兑换到当前群宠物。"""
         pending = self.store.get_tomb_pending_pet_exp(player)
         if pending <= 0:
             return "你没有待兑换的摸金宠物经验。"
-        qq = str(player.get("qq", ""))
-        if not qq:
-            return "无法识别你的 QQ 号。"
-        self.store.clear_tomb_pending_pet_exp(player)
-        total_pets = 0
-        total_exp = 0
-        for key, pl in self.store.all_players().items():
-            if str(pl.get("qq", "")) != qq:
-                continue
-            p = pl.get("pet")
-            if not p:
-                continue
-            petmod.add_exp(p, pending)
-            total_pets += 1
-            total_exp += pending
-        if total_pets == 0:
+        p = player.get("pet")
+        if not p:
             return "你没有宠物，无法兑换经验。"
-        return f"🎁 摸金经验兑换成功！已为 {total_pets} 个群聊的宠物各 +{pending} 经验，合计 +{total_exp}。"
+        self.store.clear_tomb_pending_pet_exp(player)
+        petmod.add_exp(p, pending)
+        return f"🎁 摸金经验兑换成功！当前群宠物 +{pending} 经验。"
 
     # ---- 地图生成与绘图 ----
     @staticmethod
