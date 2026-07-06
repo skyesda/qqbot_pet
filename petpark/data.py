@@ -1202,7 +1202,7 @@ TOMB_DIFFICULTIES = {
         "entry_tokens": 0,
         "monster_mult": 0.35,
         "monster_power": 15,
-        "chest_mingbi": (15, 30),
+        "chest_mingbi": (27, 45),
         "monster_mingbi": (10, 20),
     },
     2: {
@@ -1219,7 +1219,7 @@ TOMB_DIFFICULTIES = {
         "entry_tokens": 0,
         "monster_mult": 0.55,
         "monster_power": 35,
-        "chest_mingbi": (30, 60),
+        "chest_mingbi": (40, 80),
         "monster_mingbi": (20, 35),
     },
     3: {
@@ -1236,7 +1236,7 @@ TOMB_DIFFICULTIES = {
         "entry_tokens": 1,
         "monster_mult": 0.80,
         "monster_power": 70,
-        "chest_mingbi": (60, 120),
+        "chest_mingbi": (65, 130),
         "monster_mingbi": (35, 60),
     },
     4: {
@@ -1253,7 +1253,7 @@ TOMB_DIFFICULTIES = {
         "entry_tokens": 2,
         "monster_mult": 1.10,
         "monster_power": 120,
-        "chest_mingbi": (120, 240),
+        "chest_mingbi": (100, 240),
         "monster_mingbi": (60, 100),
     },
 }
