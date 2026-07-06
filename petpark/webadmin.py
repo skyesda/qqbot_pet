@@ -915,6 +915,11 @@ function fieldHtml(){
    <div style="flex:1"><label class="fld">复活秒数</label><input id="f_boss_respawn" type="number" value="3600"></div>
    <div style="flex:1"><label class="fld">Boss攻击</label><input id="f_boss_damage" type="number" value="100" placeholder="每次反击宠物的基础伤害"></div>
   </div>
+  <div class="chk" style="margin-top:8px"><input id="f_boss_random_damage" type="checkbox"><label for="f_boss_random_damage">玩家伤害随机（不跟宠物战力挂钩）</label></div>
+  <div class="row">
+   <div style="flex:1"><label class="fld">随机最小伤害</label><input id="f_boss_random_min" type="number" value="1"></div>
+   <div style="flex:1"><label class="fld">随机最大伤害</label><input id="f_boss_random_max" type="number" value="10000"></div>
+  </div>
   <div class="sec" style="margin-top:10px">击杀奖励（每条奖励都会发放，可设置随机数量）</div>
   <div id="event_boss_rewards"></div>
   <button class="act ghost" type="button" onclick="eventAddBossReward()" style="margin-top:6px">＋ 添加击杀奖励</button>
@@ -989,6 +994,9 @@ function fillFields(v){
   g('f_boss_token_hit').value=bs.token_per_hit!==undefined?bs.token_per_hit:5;
   g('f_boss_respawn').value=bs.respawn_seconds!==undefined?bs.respawn_seconds:3600;
   g('f_boss_damage').value=bs.boss_damage!==undefined?bs.boss_damage:100;
+  g('f_boss_random_damage').checked=!!bs.random_damage;
+  g('f_boss_random_min').value=bs.random_damage_min!==undefined?bs.random_damage_min:1;
+  g('f_boss_random_max').value=bs.random_damage_max!==undefined?bs.random_damage_max:10000;
   eventRenderBossRewards(bs.kill_rewards||[]);
  }
  else{const r=cardRewards(v);g('f_r_coin').value=r['金币']||'';g('f_r_jifen').value=r['积分']||'';g('f_r_diamond').value=r['钻石']||'';g('f_authdays').value=v.auth_days||'';g('f_used').checked=!!v.used;}
@@ -1069,6 +1077,9 @@ function applyFields(v){
    token_per_hit:+g('f_boss_token_hit').value||0,
    respawn_seconds:+g('f_boss_respawn').value||3600,
    boss_damage:+g('f_boss_damage').value||100,
+   random_damage:!!g('f_boss_random_damage').checked,
+   random_damage_min:+g('f_boss_random_min').value||1,
+   random_damage_max:+g('f_boss_random_max').value||10000,
    kill_rewards:eventCollectBossRewards()
   };
  }
@@ -1121,7 +1132,7 @@ function openModal(k,v){
     '珊瑚洞穴':{monster:'巨蟹守卫',level_req:10,energy:15,cooldown:600,power:1500,exp:315,jifen:180,token_reward:10,reward:{item:'夏日冰饮',count:1}},
     '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:875,jifen:340,token_reward:25,reward:{item:'史诗卡',count:1}}
    },
-   boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,kill_rewards:[
+   boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,random_damage:true,random_damage_min:1,random_damage_max:10000,kill_rewards:[
     {weight:50,reward:{贝壳:100,贝壳_max:200},msg:'海量贝壳'},
     {weight:30,reward:{item:'夏日冰饮',count:1,count_max:3}},
     {weight:15,reward:{effect:{add_atk:50}}},

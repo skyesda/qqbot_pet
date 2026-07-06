@@ -1415,11 +1415,16 @@ class PetParkPlugin(Star):
         boss = cfg.get("boss", {})
         token = cfg.get("token", "代币")
         bname = boss.get("name", "活动Boss")
-        factor = float(boss.get("damage_factor", 0.1))
-        base_player_damage = int(
-            petmod.battle_power(p) * random.uniform(factor * 0.8, factor * 1.2)
-        )
-        player_damage = max(1, base_player_damage)
+        if boss.get("random_damage"):
+            dmg_min = max(1, int(boss.get("random_damage_min", 1)))
+            dmg_max = max(dmg_min, int(boss.get("random_damage_max", 10000)))
+            player_damage = random.randint(dmg_min, dmg_max)
+        else:
+            factor = float(boss.get("damage_factor", 0.1))
+            base_player_damage = int(
+                petmod.battle_power(p) * random.uniform(factor * 0.8, factor * 1.2)
+            )
+            player_damage = max(1, base_player_damage)
         # Boss 反击：对宠物造成伤害
         boss_base_damage = int(boss.get("boss_damage", 100))
         boss_damage = max(1, int(boss_base_damage * random.uniform(0.8, 1.2)))
