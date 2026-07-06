@@ -219,6 +219,9 @@ KNOWN_COMMANDS = {
     "领取摸金奖励",
     "摸金领奖",
     "摸领",
+    # 摸金经验兑换
+    "摸金兑换",
+    "摸兑",
 }
 
 
@@ -959,6 +962,9 @@ class PetParkPlugin(Star):
             return self._tomb_daily_rank(player)
         if cmd in ("领取摸金奖励", "摸金领奖", "摸领"):
             return self._tomb_claim_daily_reward(player, group_id)
+        # 摸金经验兑换
+        if cmd in ("摸金兑换", "摸兑"):
+            return self._tomb_redeem_exp(player)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -2544,7 +2550,7 @@ class PetParkPlugin(Star):
                 "",
                 "**🏺 宠物摸金**（独立财富系统）",
                 "摸金 · 摸金商店 · 购买摸金道具 道具名 · 我的摸金 · 进入摸金 难度(1~4) · 摸金移动 方向 · 摸金探索 · 摸金开箱 · 摸金使用 道具名 · 摸金撤离 · 放弃摸金",
-                "摸金排行（全服财富榜） · 今日摸金神榜（今日获得榜） · 领取摸金奖励（昨日前三领经验）",
+                "摸金排行（全服财富榜） · 今日摸金神榜（今日获得榜） · 领取摸金奖励（昨日前三领经验） · 摸金兑换（兑换暂存的宠物经验）",
                 "",
                 "**💕 姻缘**",
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
@@ -4617,9 +4623,11 @@ class PetParkPlugin(Star):
             cd_text = f"冷却中：{m}分{s:02d}秒后可再次进入"
         else:
             cd_text = "可进入"
+        pending_exp = st.get("pending_pet_exp", 0)
+        pending_text = f"　待兑换宠物经验：{pending_exp}" if pending_exp > 0 else ""
         return (
             f"## 🏺 我的摸金\n"
-            f"● 摸金等级：Lv{level}　经验：{exp_text}\n"
+            f"● 摸金等级：Lv{level}　经验：{exp_text}{pending_text}\n"
             f"● 摸金战力：{data.tomb_player_attack(level, data.TOMB_WEAPONS.get(equipped, {}).get('attack', 0) if equipped else 0)}\n"
             f"● 装备武器：{wep_text}\n"
             f"● 拥有武器：{weapons_text}\n"
@@ -4999,6 +5007,13 @@ class PetParkPlugin(Star):
             level_up_text = f"　🆙 摸金等级提升至 Lv{new_level}！"
         xp_text = f"摸金经验 +{xp}{level_up_text}"
 
+        # 宠物经验改为暂存，用户发送『摸金兑换』后统一发放到当前群宠物
+        base_pet_exp = data.TOMB_SUCCESS_EXP.get(session["difficulty"], 0)
+        stored_pet_exp = base_pet_exp if is_success else (base_pet_exp // 2)
+        if stored_pet_exp > 0:
+            self.store.add_tomb_pending_pet_exp(player, stored_pet_exp)
+        pet_exp_text = f"宠物经验 +{stored_pet_exp}（已暂存，发送『摸金兑换』领取）" if stored_pet_exp > 0 else ""
+
         # 撤离失败（阵亡/超时）：装备背包全部掉落；其它结果把剩余道具写回装备背包
         if reason in ("death", "timeout"):
             self.store.clear_tomb_loadout(player)
@@ -5010,13 +5025,11 @@ class PetParkPlugin(Star):
             self.store.add_tomb_mingbi(player, gained)
             stats["success"] = stats.get("success", 0) + 1
             stats["total_mingbi"] = stats.get("total_mingbi", 0) + gained
-            exp_gain = data.TOMB_SUCCESS_EXP.get(session["difficulty"], 0)
-            petmod.add_exp(p, exp_gain)
             self._tomb_sessions.pop(key, None)
             return (
                 f"🏆 撤离成功！带出 **{gained}** 冥币，已永久到账。\n"
                 f"● {xp_text}\n"
-                f"● 宠物经验 +{exp_gain}\n"
+                f"● {pet_exp_text}\n"
                 f"● 累计成功 {stats['success']} 次，总带出冥币 {stats['total_mingbi']}"
             )
         if reason == "timeout":
@@ -5025,6 +5038,7 @@ class PetParkPlugin(Star):
             return (
                 f"⏰ 墓穴坍塌，撤离失败！\n"
                 f"● {xp_text}\n"
+                f"● {pet_exp_text}\n"
                 f"● 本局冥币全部损失\n"
                 f"● 装备背包全部掉落！储物柜不受影响"
             )
@@ -5036,6 +5050,7 @@ class PetParkPlugin(Star):
             return (
                 f"💀 摸金角色阵亡，撤离失败！\n"
                 f"● {xp_text}\n"
+                f"● {pet_exp_text}\n"
                 f"● 装备背包全部掉落！储物柜不受影响\n"
                 f"● 仅保留 {kept} 冥币"
             )
@@ -5047,6 +5062,7 @@ class PetParkPlugin(Star):
             return (
                 f"🧧 招魂幡触发，你在濒死之际被强行送出墓穴！\n"
                 f"● {xp_text}\n"
+                f"● {pet_exp_text}\n"
                 f"● 保留 {kept} 冥币\n"
                 f"● 带入的武器和道具已带回"
             )
@@ -5057,6 +5073,7 @@ class PetParkPlugin(Star):
         return (
             f"🏃 你已放弃本次摸金，仅保留 {kept} 冥币。\n"
             f"● {xp_text}\n"
+            f"● {pet_exp_text}\n"
             f"● 损失 {session['mingbi'] - kept} 冥币\n"
             f"● 带入的武器和道具已带回"
         )
@@ -5465,6 +5482,19 @@ class PetParkPlugin(Star):
         return (
             f"🎁 昨日摸金神榜强者奖励到账！宠物经验 +{exp}。{level_note}"
         )
+
+    def _tomb_redeem_exp(self, player: dict) -> str:
+        """把暂存的摸金宠物经验兑换到当前群宠物。"""
+        p = player.get("pet")
+        if not p:
+            return "你还没有宠物，无法兑换经验。"
+        pending = self.store.get_tomb_pending_pet_exp(player)
+        if pending <= 0:
+            return "你没有待兑换的摸金宠物经验。"
+        self.store.clear_tomb_pending_pet_exp(player)
+        petmod.add_exp(p, pending)
+        level_note = self._auto_level_note(player, p)
+        return f"🎁 摸金经验兑换成功！宠物经验 +{pending}。{level_note}"
 
     # ---- 地图生成与绘图 ----
     @staticmethod

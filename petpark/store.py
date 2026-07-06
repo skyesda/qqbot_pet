@@ -114,6 +114,7 @@ class PetStore:
             "daily": {"reset": "", "count": 0},
             "inventory": {},
             "daily_gains": {},
+            "pending_pet_exp": 0,
         }
 
     def _migrate_tomb_to_global(self) -> None:
@@ -641,6 +642,8 @@ class PetStore:
                 st["weapons"][wname] = {"durability": wval, "location": "equip"}
         if "daily_gains" not in st:
             st["daily_gains"] = {}
+        if "pending_pet_exp" not in st:
+            st["pending_pet_exp"] = 0
         return st
 
     @classmethod
@@ -777,6 +780,21 @@ class PetStore:
         st["level"] = level
         st["exp"] = exp
         return level, exp
+
+    @classmethod
+    def add_tomb_pending_pet_exp(cls, player: dict, amount: int) -> int:
+        """暂存一笔待兑换的宠物经验。"""
+        st = cls.tomb_state(player)
+        st["pending_pet_exp"] = st.get("pending_pet_exp", 0) + max(0, amount)
+        return st["pending_pet_exp"]
+
+    @classmethod
+    def get_tomb_pending_pet_exp(cls, player: dict) -> int:
+        return cls.tomb_state(player).get("pending_pet_exp", 0)
+
+    @classmethod
+    def clear_tomb_pending_pet_exp(cls, player: dict) -> None:
+        cls.tomb_state(player)["pending_pet_exp"] = 0
 
     # ---- 摸金武器 ----
     @classmethod
