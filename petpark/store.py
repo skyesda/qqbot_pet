@@ -150,6 +150,7 @@ class PetStore:
                     },
                     "daily": {"reset": "", "count": 0},
                     "inventory": {},
+                    "daily_gains": {},
                 },
             }
         return players.get(key)
@@ -611,6 +612,8 @@ class PetStore:
         for wname, wval in st.get("weapons", {}).items():
             if isinstance(wval, int):
                 st["weapons"][wname] = {"durability": wval, "location": "equip"}
+        if "daily_gains" not in st:
+            st["daily_gains"] = {}
         return st
 
     @classmethod
@@ -626,10 +629,37 @@ class PetStore:
 
     @classmethod
     def add_tomb_mingbi(cls, player: dict, amount: int) -> int:
-        """增加/扣除冥币（不会扣到负数）。"""
+        """增加/扣除冥币（不会扣到负数）。增加时同步计入今日摸金获得。"""
         st = cls.tomb_state(player)
         st["mingbi"] = max(0, st.get("mingbi", 0) + amount)
+        if amount > 0:
+            cls._add_tomb_daily_gain(player, amount)
         return st["mingbi"]
+
+    @classmethod
+    def _add_tomb_daily_gain(cls, player: dict, amount: int) -> None:
+        """记录一笔今日摸金冥币获得，并清理过时日期（仅保留昨天和今天）。"""
+        from datetime import datetime, timedelta
+        st = cls.tomb_state(player)
+        daily_gains = st.setdefault("daily_gains", {})
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        # 清理早于昨天的记录
+        for d in list(daily_gains.keys()):
+            if d < yesterday:
+                daily_gains.pop(d, None)
+        daily_gains[today] = daily_gains.get(today, 0) + max(0, amount)
+
+    @classmethod
+    def get_tomb_daily_gain(cls, player: dict, date_str: str) -> int:
+        """获取玩家指定日期的摸金冥币获得量。"""
+        st = cls.tomb_state(player)
+        return st.get("daily_gains", {}).get(date_str, 0)
+
+    @classmethod
+    def get_tomb_today_gain(cls, player: dict) -> int:
+        from datetime import datetime
+        return cls.get_tomb_daily_gain(player, datetime.now().strftime("%Y-%m-%d"))
 
     @classmethod
     def get_tomb_mingbi(cls, player: dict) -> int:
@@ -797,6 +827,68 @@ class PetStore:
     def writeback_tomb_equip(cls, player: dict, session_inventory: dict) -> None:
         """把当局剩余道具写回装备背包。"""
         cls.tomb_state(player)["equip_items"] = dict(session_inventory or {})
+
+    # ----------------------------- 摸金每日神榜奖励 -----------------------------
+    def tomb_daily_reward(self) -> dict:
+        """全局：今日摸金神榜昨日前三奖励状态。"""
+        return self._data.setdefault("tomb_daily_reward", {
+            "date": "",
+            "winners": [],
+            "claimed": {},
+        })
+
+    def _tomb_yesterday_str(self) -> str:
+        from datetime import datetime, timedelta
+        return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    def get_or_compute_tomb_daily_reward(self) -> dict:
+        """懒计算并缓存昨日神榜前三。返回 {date, winners, claimed}。"""
+        yesterday = self._tomb_yesterday_str()
+        reward = self.tomb_daily_reward()
+        if reward.get("date") == yesterday:
+            return reward
+        entries = []
+        for key, pl in self._data.get("players", {}).items():
+            gain = self.get_tomb_daily_gain(pl, yesterday)
+            if gain > 0:
+                entries.append({"key": key, "gain": gain})
+        entries.sort(key=lambda x: x["gain"], reverse=True)
+        winners = []
+        for w in entries[:3]:
+            parts = w["key"].split("\x1f")
+            group = parts[0] if len(parts) > 1 else ""
+            qq = parts[1] if len(parts) > 1 else parts[0]
+            winners.append({
+                "key": w["key"],
+                "group": group,
+                "qq": qq,
+                "gain": w["gain"],
+            })
+        reward["date"] = yesterday
+        reward["winners"] = winners
+        reward["claimed"] = {}
+        return reward
+
+    def claim_tomb_daily_reward(self, player: dict, group_id: str, qq: str) -> tuple[bool, int | None, str]:
+        """尝试领取昨日神榜奖励。返回 (成功, 经验值, 提示)。"""
+        from . import data
+        self_key = self.make_key(str(group_id), str(qq))
+        reward = self.get_or_compute_tomb_daily_reward()
+        winners = reward.get("winners", [])
+        rank = None
+        for i, w in enumerate(winners, 1):
+            if w.get("key") == self_key:
+                rank = i
+                break
+        if rank is None:
+            return False, None, "只有昨日神榜前三名可领取奖励。"
+        claimed = reward.setdefault("claimed", {})
+        if claimed.get(self_key):
+            return False, None, "今日已领取过摸金神榜奖励。"
+        low, high = data.TOMB_DAILY_REWARD_EXP.get(rank, (5000, 15000))
+        exp = random.randint(low, high)
+        claimed[self_key] = True
+        return True, exp, ""
 
     # ----------------------------- 邀请 -----------------------------
     @staticmethod

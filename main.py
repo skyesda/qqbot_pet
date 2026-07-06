@@ -210,6 +210,15 @@ KNOWN_COMMANDS = {
     "祭拜",
     "逃跑",
     "跳过",
+    # 摸金排行 / 神榜
+    "摸金排行",
+    "摸排",
+    "今日摸金神榜",
+    "摸金神榜",
+    "摸榜",
+    "领取摸金奖励",
+    "摸金领奖",
+    "摸领",
 }
 
 
@@ -943,6 +952,13 @@ class PetParkPlugin(Star):
             return self._tomb_flee(player)
         if cmd == "跳过":
             return self._tomb_skip(player)
+        # 摸金排行 / 神榜
+        if cmd in ("摸金排行", "摸排"):
+            return self._tomb_rank(player, group_id)
+        if cmd in ("今日摸金神榜", "摸金神榜", "摸榜"):
+            return self._tomb_daily_rank(player)
+        if cmd in ("领取摸金奖励", "摸金领奖", "摸领"):
+            return self._tomb_claim_daily_reward(player, group_id)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -2523,6 +2539,7 @@ class PetParkPlugin(Star):
                 "",
                 "**🏺 宠物摸金**（独立财富系统）",
                 "摸金 · 摸金商店 · 购买摸金道具 道具名 · 我的摸金 · 进入摸金 难度(1~4) · 摸金移动 方向 · 摸金探索 · 摸金开箱 · 摸金使用 道具名 · 摸金撤离 · 放弃摸金",
+                "摸金排行（全服财富榜） · 今日摸金神榜（今日获得榜） · 领取摸金奖励（昨日前三领经验）",
                 "",
                 "**💕 姻缘**",
                 "宠物追求 用户ID · 同意追求 用户ID · 宠物求婚 用户ID · 同意求婚 用户ID · 宠物分手 · 宠物离婚 · 宠物恋情",
@@ -5355,6 +5372,98 @@ class PetParkPlugin(Star):
             f"　道具：{storage_text}\n"
             f"　武器：{storage_weps}\n"
             f"> `摸带 道具名 数量` 带入　`摸存 道具名 数量` 取出"
+        )
+
+    # ---- 摸金排行 / 神榜 ----
+    @staticmethod
+    def _tomb_player_name(pl: dict) -> str:
+        """取玩家展示名：优先宠物昵称，否则 QQ 号。"""
+        pet = pl.get("pet")
+        if pet:
+            nick = str(pet.get("nickname", "")).strip()
+            if nick:
+                return nick.replace("|", "丨")
+        return str(pl.get("qq", "未知")).replace("|", "丨")
+
+    def _tomb_rank(self, player: dict, group_id: str) -> str:
+        """摸金财富全服排行（按永久冥币）。"""
+        entries = []
+        for key, pl in self.store.all_players().items():
+            mingbi = self.store.get_tomb_mingbi(pl)
+            if mingbi > 0:
+                entries.append((key, self._tomb_player_name(pl), mingbi))
+        entries.sort(key=lambda x: x[2], reverse=True)
+        if not entries:
+            return "暂无玩家登上摸金排行。"
+        lines = ["## 🏺 摸金排行（全服）"]
+        self_key = self.store.make_key(str(group_id), str(player.get("qq", "")))
+        my_mingbi = self.store.get_tomb_mingbi(player)
+        if my_mingbi > 0:
+            my_rank = 1 + sum(1 for _, _, m in entries if m > my_mingbi)
+            lines.append(f"> 我的排名：**{my_rank}**　·　我的冥币：**{my_mingbi}**")
+        else:
+            lines.append(f"> 我的冥币：**{my_mingbi}**（还未获得冥币）")
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines.append("")
+        lines.append("| 排名 | 昵称 | 冥币 |")
+        lines.append("|:--:|:--:|--:|")
+        for i, (_, nick, mingbi) in enumerate(entries[: self.rank_size], 1):
+            rk = medals.get(i, str(i))
+            lines.append(f"| {rk} | {nick} | {mingbi} |")
+        return "\n".join(lines)
+
+    def _tomb_daily_rank(self, player: dict) -> str:
+        """今日摸金神榜（按今日获得冥币）。"""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        entries = []
+        for key, pl in self.store.all_players().items():
+            gain = self.store.get_tomb_daily_gain(pl, today)
+            if gain > 0:
+                entries.append((key, self._tomb_player_name(pl), gain))
+        entries.sort(key=lambda x: x[2], reverse=True)
+        if not entries:
+            return "今日还没有玩家在摸金中获得冥币。"
+        lines = [
+            "## 🔥 今日摸金神榜",
+            f"> 统计 {today} 00:00 至今全服摸金获得冥币情况，每日 0 点清空。",
+        ]
+        self_key = self.store.make_key(
+            str(player.get("group", "")), str(player.get("qq", ""))
+        )
+        my_gain = self.store.get_tomb_daily_gain(player, today)
+        if my_gain > 0:
+            my_rank = 1 + sum(1 for _, _, g in entries if g > my_gain)
+            lines.append(f"> 我的排名：**{my_rank}**　·　今日获得：**{my_gain}** 冥币")
+        else:
+            lines.append(f"> 我今日获得：**{my_gain}** 冥币")
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines.append("")
+        lines.append("| 排名 | 昵称 | 今日获得冥币 |")
+        lines.append("|:--:|:--:|--:|")
+        for i, (_, nick, gain) in enumerate(entries[: self.rank_size], 1):
+            rk = medals.get(i, str(i))
+            lines.append(f"| {rk} | {nick} | {gain} |")
+        lines.append("")
+        lines.append(
+            "> 🎁 前三名可于次日 0 点后发送『领取摸金奖励』领取随机宠物经验（5000~50000）。"
+        )
+        return "\n".join(lines)
+
+    def _tomb_claim_daily_reward(self, player: dict, group_id: str) -> str:
+        """领取昨日今日摸金神榜前三奖励（宠物主经验）。"""
+        p = player.get("pet")
+        if not p:
+            return "你还没有宠物，无法领取经验奖励。"
+        ok, exp, msg = self.store.claim_tomb_daily_reward(
+            player, str(group_id), str(player.get("qq", ""))
+        )
+        if not ok:
+            return msg
+        petmod.add_exp(p, exp)
+        level_note = self._auto_level_note(player, p)
+        return (
+            f"🎁 昨日摸金神榜强者奖励到账！宠物经验 +{exp}。{level_note}"
         )
 
     # ---- 地图生成与绘图 ----
