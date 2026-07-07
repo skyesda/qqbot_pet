@@ -4555,35 +4555,43 @@ class PetParkPlugin(Star):
         return bool(pending and pending.get("type") == "M")
 
     def _tomb_intro(self) -> str:
+        diffs = data.TOMB_DIFFICULTIES
         return (
-            "## 🏺 宠物摸金\n"
-            "在独立墓穴中探索、战斗、开箱，并在时限内把指定数量的『冥币』带到出口撤离。\n\n"
-            "**核心规则**\n"
-            "- 摸金拥有独立血量（100）、独立战力（武器+摸金等级），不影响宠物本体。\n"
-            "- 摸金等级无上限，每次成功/失败都获得经验。\n"
-            "- 难度 **简单/普通** 免费；**困难** 需1张棺椁令，**噩梦** 需2张。\n"
-            f"- 『棺椁令』商店购买，每张 {data.TOMB_EXTRA_TOKEN_COST} 冥币。\n"
-            f"- 每局结束后冷却 {data.TOMB_COOLDOWN // 60} 分钟。\n"
-            "- 阵亡（摸金HP归0）带入的武器和道具全部掉落！\n\n"
-            "**难度与摸金等级**\n"
-            "• 简单 Lv1　普通 Lv5　困难 Lv10　噩梦 Lv15\n\n"
-            "**简短指令**\n"
-            "`摸店` · `摸买 道具名` · `摸我` · `摸包`\n"
-            "`摸带 道具名` · `摸存 道具名` · `摸装 武器名`\n"
-            "`摸进 难度` · `上/下/左/右` · `摸看`\n"
-            "`开箱` · `战斗` · `祭拜` · `逃跑` · `跳过`\n"
-            "`摸用 道具名` · `摸撤` · `摸态` · `摸弃`"
+            "## 宠物摸金\n"
+            "在独立墓穴中探索、战斗、开箱，并在时限内把指定数量的「冥币」带到出口撤离。\n\n"
+            "【核心规则】\n"
+            "- 拥有独立血量与战力，不影响宠物本体\n"
+            "- 摸金等级无上限，每次成功或失败都获得经验\n"
+            f"- 简单/普通免费进入；困难需1张棺椁令；噩梦需2张\n"
+            f"- 棺椁令可在商店购买，每张 {data.TOMB_EXTRA_TOKEN_COST} 冥币\n"
+            f"- 每局结束后冷却 {data.TOMB_COOLDOWN // 60} 分钟\n"
+            "- 阵亡时，装备背包中的武器和道具全部掉落\n\n"
+            "【难度要求】\n"
+            f"- 简单：Lv{diffs[1]['tomb_level_req']}\n"
+            f"- 普通：Lv{diffs[2]['tomb_level_req']}\n"
+            f"- 困难：Lv{diffs[3]['tomb_level_req']}，需1张棺椁令\n"
+            f"- 噩梦：Lv{diffs[4]['tomb_level_req']}，需2张棺椁令\n\n"
+            "【常用指令】\n"
+            "准备：摸店  摸买  摸带  摸装  摸包\n"
+            "进入：摸进 难度\n"
+            "移动：上 / 下 / 左 / 右  或  摸看\n"
+            "交互：开箱  战斗  祭拜  逃跑  跳过  摸用\n"
+            "状态：摸态  摸撤  摸弃"
         )
 
     def _tomb_shop(self) -> str:
-        lines = ["## 🏺 摸金商店（仅消耗冥币）", ""]
-        lines.append("**武器**（决定摸金战力，有耐久，阵亡全丢）")
+        lines = ["## 摸金商店", "仅消耗冥币，与主背包完全隔离。", ""]
+        lines.append("【武器】决定摸金战力，有耐久，阵亡全部掉落")
         for name, info in data.TOMB_WEAPONS.items():
-            lines.append(f"• **{name}** — {info['price']} 冥币　攻击+{info['attack']}　耐久{info['durability']}")
-        lines.append("\n**道具**")
+            lines.append(f"- {name}：{info['price']} 冥币　攻击+{info['attack']}　耐久{info['durability']}")
+        lines.append("")
+        lines.append("【道具】")
         for name, info in data.TOMB_ITEMS.items():
-            lines.append(f"• **{name}** — {info['price']} 冥币　{info['desc']}")
-        lines.append("\n> `摸买 道具名 [数量]` 购买（默认存入储物柜）；`摸带 道具名` 带入装备背包；武器 `摸装 武器名` 装备。")
+            lines.append(f"- {name}：{info['price']} 冥币　{info['desc']}")
+        lines.append("")
+        lines.append("> 购买：「摸买 道具名 [数量]」\n"
+                     "> 道具默认存入储物柜，需「摸带 道具名」带入装备背包后才能在局内使用\n"
+                     "> 武器需「摸带 武器名」放入装备背包，再「摸装 武器名」装备")
         return "\n".join(lines)
 
     def _tomb_buy(self, player: dict, tokens: list[str]) -> str:
@@ -4625,41 +4633,50 @@ class PetParkPlugin(Star):
         level = st.get("level", 1)
         exp = st.get("exp", 0)
         need = data.tomb_exp_to_next(level)
-        exp_text = f"{exp}/{need}"
         equipped = st.get("equipped_weapon", "")
         weapons = st.get("weapons", {})
-        wep_text = f"{equipped}（攻击+{data.TOMB_WEAPONS[equipped]['attack']}）" if equipped and equipped in data.TOMB_WEAPONS else "徒手"
-        storage_text = "、".join(f"{k}×{v}" for k, v in storage.items() if v > 0) or "空"
-        equip_text = "、".join(f"{k}×{v}" for k, v in equip.items() if v > 0) or "空"
+        wep_text = (
+            f"{equipped}（攻击+{data.TOMB_WEAPONS[equipped]['attack']}）"
+            if equipped and equipped in data.TOMB_WEAPONS
+            else "徒手"
+        )
         weapons_text = "、".join(
             f"{k}(耐久{w.get('durability')})" for k, w in weapons.items()
         ) or "无"
+        storage_text = "、".join(f"{k}×{v}" for k, v in storage.items() if v > 0) or "空"
+        equip_text = "、".join(f"{k}×{v}" for k, v in equip.items() if v > 0) or "空"
         cooldown_ts = st.get("cooldown", 0)
         now = int(time.time())
         if cooldown_ts > now:
             remain = cooldown_ts - now
             m, s = divmod(remain, 60)
-            cd_text = f"冷却中：{m}分{s:02d}秒后可再次进入"
+            cd_text = f"冷却中，{m}分{s:02d}秒后可再次进入"
         else:
             cd_text = "可进入"
         pending_exp = st.get("pending_pet_exp", 0)
-        if pending_exp > 0:
-            pending_text = f"　待兑换宠物经验：{pending_exp}（发送『摸金兑换』领取）"
-        else:
-            pending_text = ""
+        pending_line = (
+            f"待兑换宠物经验：{pending_exp}（发送「摸金兑换」领取）\n"
+            if pending_exp > 0
+            else ""
+        )
         return (
-            f"## 🏺 我的摸金\n"
-            f"● 摸金等级：Lv{level}　经验：{exp_text}{pending_text}\n"
-            f"● 摸金战力：{data.tomb_player_attack(level, data.TOMB_WEAPONS.get(equipped, {}).get('attack', 0) if equipped else 0)}\n"
-            f"● 装备武器：{wep_text}\n"
-            f"● 拥有武器：{weapons_text}\n"
-            f"● 冥币：**{st.get('mingbi', 0)}**\n"
-            f"● 棺椁令：{token_count} 张（困难需1张，噩梦需2张）\n"
-            f"● 🎒装备背包（带入摸金，失败掉落）：{equip_text}\n"
-            f"● 🗄储物柜（安全保管）：{storage_text}\n"
-            f"● 状态：{cd_text}\n"
-            f"● 总次数：{stats.get('raids', 0)}　成功：{stats.get('success', 0)}　失败：{stats.get('fail', 0)}\n"
-            f"● 历史带出冥币：{stats.get('total_mingbi', 0)}"
+            "## 我的摸金\n"
+            f"等级：  Lv{level}（{exp}/{need}）\n"
+            f"战力：  {data.tomb_player_attack(level, data.TOMB_WEAPONS.get(equipped, {}).get('attack', 0) if equipped else 0)}\n"
+            f"状态：  {cd_text}\n"
+            f"冥币：  {st.get('mingbi', 0)}\n\n"
+            "【装备】\n"
+            f"当前武器：{wep_text}\n"
+            f"拥有武器：{weapons_text}\n\n"
+            "【背包】\n"
+            f"装备背包（带入墓中，失败掉落）：{equip_text}\n"
+            f"储物柜（安全保管）：{storage_text}\n\n"
+            "【道具】\n"
+            f"棺椁令：{token_count} 张（困难需1张，噩梦需2张）\n\n"
+            "【统计】\n"
+            f"总次数：{stats.get('raids', 0)}  成功：{stats.get('success', 0)}  失败：{stats.get('fail', 0)}\n"
+            f"历史带出冥币：{stats.get('total_mingbi', 0)}\n"
+            f"{pending_line}"
         )
 
     def _tomb_enter(self, player: dict, tokens: list[str]) -> tuple[str, str | None]:
@@ -5417,17 +5434,23 @@ class PetParkPlugin(Star):
         weapons = st.get("weapons", {})
         equip_text = "、".join(f"{k}×{v}" for k, v in equip.items() if v > 0) or "空"
         storage_text = "、".join(f"{k}×{v}" for k, v in storage.items() if v > 0) or "空"
-        equip_weps = "、".join(f"{k}(耐久{w.get('durability')})" for k, w in weapons.items() if w.get("location") == "equip") or "无"
-        storage_weps = "、".join(f"{k}(耐久{w.get('durability')})" for k, w in weapons.items() if w.get("location") != "equip") or "无"
+        equip_weps = "、".join(
+            f"{k}(耐久{w.get('durability')})" for k, w in weapons.items() if w.get("location") == "equip"
+        ) or "无"
+        storage_weps = "、".join(
+            f"{k}(耐久{w.get('durability')})" for k, w in weapons.items() if w.get("location") != "equip"
+        ) or "无"
         return (
-            f"## 🏺 摸金背包\n"
-            f"● 🎒装备背包（带入摸金，失败掉落）\n"
-            f"　道具：{equip_text}\n"
-            f"　武器：{equip_weps}\n"
-            f"● 🗄储物柜（安全保管）\n"
-            f"　道具：{storage_text}\n"
-            f"　武器：{storage_weps}\n"
-            f"> `摸带 道具名 数量` 带入　`摸存 道具名 数量` 取出"
+            "## 摸金背包\n\n"
+            "【装备背包】带入墓中，失败掉落\n"
+            f"道具：{equip_text}\n"
+            f"武器：{equip_weps}\n\n"
+            "【储物柜】安全保管\n"
+            f"道具：{storage_text}\n"
+            f"武器：{storage_weps}\n\n"
+            "操作：\n"
+            "- 带入：摸带 道具名 数量\n"
+            "- 取出：摸存 道具名 数量"
         )
 
     # ---- 摸金排行 / 神榜 ----
