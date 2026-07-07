@@ -4906,6 +4906,9 @@ class PetParkPlugin(Star):
             return f"没有『{name}』这种摸金道具。"
         inv = session.get("inventory", {})
         if inv.get(name, 0) <= 0:
+            st = self.store.tomb_state(player)
+            if st.get("storage_items", {}).get(name, 0) > 0:
+                return f"『{name}』在储物柜中，局内无法直接使用。请先结束本局，用『摸带 {name}』带入装备背包。"
             return f"你的摸金背包中没有『{name}』。"
         effect = data.TOMB_ITEMS[name]["effect"]
         if effect in ("revive_tomb",):
