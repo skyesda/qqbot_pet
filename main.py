@@ -2764,7 +2764,7 @@ class PetParkPlugin(Star):
             return f"购买『{species}』（{quality}）需 {cost} 积分，积分不足。"
         self.store.add_currency(player, "积分", -cost)
         player["pet"] = petmod.new_pet(species, quality)
-        return f"✅ **购买成功！**花费 {cost} 积分获得 【{quality}】品质的 **{species}**。"
+        return f"✅ **购买成功！** 花费 {cost} 积分获得 【{quality}】品质的 **{species}**。"
 
     def _compose_quality_card(self, player: dict, tokens: list[str]) -> str:
         """品质卡合成：10 张低一级卡合成 1 张高一级卡。"""
@@ -4017,7 +4017,7 @@ class PetParkPlugin(Star):
         if gained <= 0:
             return ""
         return (
-            f"\n⬆ **自动升级 +{gained} 级！**当前 "
+            f"\n⬆ **自动升级 +{gained} 级！** 当前 "
             f"Lv{p['level']}/{petmod.level_cap(p)}（剩余精力 {p['energy']}）"
         ) + self._grant_level60_reward(player, p, before)
 
@@ -4376,7 +4376,7 @@ class PetParkPlugin(Star):
         return (
             "## 🌀 深渊秘境 · 玩法简介\n"
             "\n"
-            "深渊秘境是一个**低门槛、高频次、看运气**的副本玩法。\n"
+            "深渊秘境是一个**低门槛、高频次、看运气** 的副本玩法。\n"
             "\n"
             "**基础规则**\n"
             "- 宠物达到 **Lv20** 即可进入\n"
@@ -5224,7 +5224,7 @@ class PetParkPlugin(Star):
         surroundings = self._tomb_format_surroundings(session)
         image_md = self._tomb_player_map_md(session)
         text = (
-            f"你向**{direction}**移动到了 ({x},{y})。\n"
+            f"你向 **{direction}** 移动到了 ({x},{y})。\n"
             f"{event_text}\n"
             f"{surroundings}\n"
             f"> 摸金HP {session['hp']}/{session['hp_max']}　背负 {session['mingbi']} / {session['required']} 冥币　剩余时间 {remain}"
@@ -6801,7 +6801,7 @@ class PetParkPlugin(Star):
         if p["love_state"] == "单身":
             return f"💔 『{p['nickname']}』当前**单身**。"
         return (
-            f"💕 『{p['nickname']}』**{p['love_state']}**中\n"
+            f"💕 『{p['nickname']}』**{p['love_state']}** 中\n"
             f"> 伴侣：`{p['love_target']}`　好感度：{p['favor']}"
         )
 
