@@ -224,6 +224,14 @@ KNOWN_COMMANDS = {
     # 摸金经验兑换
     "摸金兑换",
     "摸兑",
+    # 摸金双排
+    "摸金组队",
+    "摸金准备",
+    "摸金取消组队",
+    "摸金队伍",
+    "摸金救援",
+    "摸金捡取",
+    "摸金传送",
 }
 
 
@@ -283,6 +291,9 @@ class PetParkPlugin(Star):
         self._broadcast_tasks: set = set()
         # 宠物摸金当局运行时状态（内存中，不持久化）
         self._tomb_sessions: dict[str, dict] = {}
+        # 摸金双排组队状态
+        self._tomb_coop_teams: dict[str, dict] = {}   # key: "{gid}\x1f{leader_qq}"
+        self._tomb_coop_index: dict[str, str] = {}     # key: "{gid}\x1f{qq}" → coop_key
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
         self._patch_qqofficial_message_extensions()
@@ -925,6 +936,15 @@ class PetParkPlugin(Star):
             return self._tomb_status_outside(player)
         if cmd == "摸包":
             return self._tomb_pack(player)
+        # 摸金双排组队
+        if cmd == "摸金组队":
+            return self._tomb_team_invite(player, group_id, tokens)
+        if cmd == "摸金准备":
+            return self._tomb_team_ready(player)
+        if cmd == "摸金取消组队":
+            return self._tomb_team_cancel(player)
+        if cmd == "摸金队伍":
+            return self._tomb_team_status(player)
         if cmd in ("进入摸金", "摸进"):
             return self._tomb_enter(player, tokens)
         if cmd == "摸金移动":
@@ -957,6 +977,13 @@ class PetParkPlugin(Star):
             return self._tomb_flee(player)
         if cmd == "跳过":
             return self._tomb_skip(player)
+        # 摸金双排互动
+        if cmd == "摸金救援":
+            return self._tomb_rescue(player)
+        if cmd == "摸金捡取":
+            return self._tomb_loot(player)
+        if cmd == "摸金传送":
+            return self._tomb_transfer(player, tokens)
         # 摸金排行 / 神榜
         if cmd in ("摸金排行", "摸排"):
             return self._tomb_rank(player, group_id)
@@ -2576,6 +2603,8 @@ class PetParkPlugin(Star):
                 "- 摸金使用 名称 · 摸金撤离 · 放弃摸金",
                 "- 摸金排行 · 今日摸金神榜 · 昨日摸金神榜",
                 "- 领取摸金奖励 · 摸金兑换",
+                "- 摸金组队 用户ID · 摸金准备 · 摸金队伍 · 摸金取消组队（双排）",
+                "- 摸金救援 · 摸金捡取 · 摸金传送（双排互动）",
                 "",
                 "【姻缘】",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
@@ -4600,11 +4629,184 @@ class PetParkPlugin(Star):
 
     def _tomb_in_raid(self, player: dict) -> bool:
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        return key in self._tomb_sessions
+        if key in self._tomb_sessions:
+            return True
+        return self._tomb_get_coop(player) is not None
+
+    # ---- 双排辅助 ----
+    _TOMB_PLAYER_KEYS = frozenset({
+        "player_pos", "prev_pos", "visited", "hp", "hp_max",
+        "escapes", "weapon", "weapon_attack", "inventory",
+        "buffs", "pending", "status", "stunned", "mingbi",
+    })
+    _TOMB_SHARED_KEYS = frozenset({
+        "started_at", "difficulty", "map", "required", "time_limit",
+        "deadline", "image", "leader", "teammate", "active", "group_id",
+    })
+
+    def _tomb_get_coop(self, player: dict) -> dict | None:
+        """返回该玩家所在的双排队伍 session，不在队伍中返回 None。"""
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        coop_key = self._tomb_coop_index.get(key)
+        if coop_key and coop_key in self._tomb_coop_teams:
+            return self._tomb_coop_teams[coop_key]
+        return None
+
+    def _tomb_is_in_coop(self, player: dict) -> bool:
+        return self._tomb_get_coop(player) is not None
+
+    def _tomb_prepare(self, player: dict) -> tuple[dict | None, bool]:
+        """为当前玩家准备虚拟 session。返回 (session, is_coop)。双排时构造虚拟单人 session。"""
+        import copy
+        qq = str(player.get("qq", ""))
+        coop = self._tomb_get_coop(player)
+        if coop and coop.get("active"):
+            virtual = {}
+            for k in self._TOMB_SHARED_KEYS:
+                if k in coop:
+                    virtual[k] = coop[k] if k != "map" else dict(coop["map"])
+            pdata = coop.get("players", {}).get(qq, {})
+            for k in self._TOMB_PLAYER_KEYS:
+                if k in pdata:
+                    val = pdata[k]
+                    virtual[k] = copy.deepcopy(val) if isinstance(val, (dict, set, list)) else val
+            virtual["_coop_parent"] = coop
+            virtual["_is_coop"] = True
+            virtual["_coop_self_qq"] = qq
+            return virtual, True
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        session = self._tomb_sessions.get(key)
+        return session, False
+
+    def _tomb_commit(self, player: dict, virtual: dict, is_coop: bool) -> None:
+        """将虚拟 session 中的玩家私有字段写回双排父 session。"""
+        if not is_coop:
+            return
+        coop = virtual.pop("_coop_parent", None)
+        if not coop:
+            return
+        qq = str(player.get("qq", ""))
+        if qq not in coop.get("players", {}):
+            return
+        pdata = coop["players"][qq]
+        import copy
+        for k in self._TOMB_PLAYER_KEYS:
+            if k in virtual:
+                val = virtual[k]
+                pdata[k] = copy.deepcopy(val) if isinstance(val, (dict, set, list)) else val
+        # 同步可能被 _tomb_refresh_map 更新的共享字段
+        if "image" in virtual:
+            coop["image"] = virtual["image"]
+
+    def _tomb_teammate_qq(self, player: dict, coop: dict = None) -> str:
+        """返回该玩家在双排队伍中的队友 QQ，不在双排返回空字符串。"""
+        if coop is None:
+            coop = self._tomb_get_coop(player)
+        if not coop:
+            return ""
+        qq = str(player.get("qq", ""))
+        return coop.get("teammate") if qq == coop.get("leader") else coop.get("leader", "")
+
+    # ---- 双排辅助结束 ----
 
     def _tomb_pending_monster(self, session: dict) -> bool:
         pending = session.get("pending")
         return bool(pending and pending.get("type") == "M")
+
+    # --------------------------- 双排组队 ---------------------------
+    def _tomb_team_invite(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """摸金组队 用户ID —— 邀请队友组建双排队伍。"""
+        if self._tomb_in_raid(player):
+            return "你已在摸金中，请先结束当前探险（摸撤/摸弃）。"
+        target_qq = self._arg(tokens, 1)
+        if not target_qq:
+            return "用法：摸金组队 用户ID"
+        my_qq = str(player.get("qq", ""))
+        if target_qq == my_qq:
+            return "不能邀请自己组队。"
+        tp, err = self._find_target(group_id, target_qq)
+        if err:
+            return err
+        if self._tomb_is_in_coop(player):
+            return "你已经有队伍了，发送「摸金取消组队」退出当前队伍。"
+        if self._tomb_is_in_coop(tp):
+            return f"用户 {target_qq} 已经在另一个队伍中了。"
+        if self._tomb_in_raid(tp):
+            return f"用户 {target_qq} 正在摸金中，无法组队。"
+        coop_key = self._tomb_key(group_id, my_qq)
+        if coop_key in self._tomb_coop_teams:
+            return "你已经创建了一个队伍，等待对方回应。"
+        self._tomb_coop_teams[coop_key] = {
+            "leader": my_qq,
+            "teammate": target_qq,
+            "ready": set(),
+            "active": False,
+            "group_id": str(group_id),
+        }
+        self._tomb_coop_index[self._tomb_key(group_id, my_qq)] = coop_key
+        self._tomb_coop_index[self._tomb_key(group_id, target_qq)] = coop_key
+        return (
+            f"## 摸金组队\n"
+            f"队长 {my_qq} 邀请 {target_qq} 组队摸金！\n\n"
+            f"双方发送「摸金准备」确认，队长发送「摸进 难度」开始。"
+        )
+
+    def _tomb_team_ready(self, player: dict) -> str:
+        """摸金准备 —— 确认准备就绪。"""
+        coop = self._tomb_get_coop(player)
+        if not coop:
+            return "你不在任何队伍中，发送「摸金组队 用户ID」创建队伍。"
+        if coop.get("active"):
+            return "队伍已经在摸金中了。"
+        qq = str(player.get("qq", ""))
+        coop.setdefault("ready", set()).add(qq)
+        ready_list = "、".join(coop["ready"])
+        if len(coop["ready"]) >= 2:
+            return (
+                f"## 全队就绪\n"
+                f"队长 {coop['leader']} 可以发送「摸进 难度」开始探险！\n"
+                f"已就绪：{ready_list}"
+            )
+        return f"你已就绪！等待队友准备...\n已就绪：{ready_list}"
+
+    def _tomb_team_cancel(self, player: dict) -> str:
+        """摸金取消组队 —— 离开或解散队伍。"""
+        coop = self._tomb_get_coop(player)
+        if not coop:
+            return "你不在任何队伍中。"
+        if coop.get("active"):
+            return "探险已经开始，不能取消组队。发送「摸弃」放弃探险。"
+        gid = coop.get("group_id", "")
+        for pqq in (coop.get("leader", ""), coop.get("teammate", "")):
+            self._tomb_coop_index.pop(self._tomb_key(gid, pqq), None)
+        coop_key = self._tomb_key(gid, coop.get("leader", ""))
+        self._tomb_coop_teams.pop(coop_key, None)
+        return f"## 队伍已解散\n{player.get('qq', '')} 取消了组队。"
+
+    def _tomb_team_status(self, player: dict) -> str:
+        """摸金队伍 —— 查看当前队伍状态。"""
+        coop = self._tomb_get_coop(player)
+        if not coop:
+            return "你不在任何队伍中。发送「摸金组队 用户ID」创建队伍。"
+        ready_set = coop.get("ready", set())
+        state = "探险中" if coop.get("active") else "等待开始"
+        return (
+            f"## 摸金队伍\n"
+            f"状态：{state}\n"
+            f"队长：{coop.get('leader', '?')}\n"
+            f"队友：{coop.get('teammate', '?')}\n"
+            f"已就绪：{'、'.join(ready_set) if ready_set else '无'}"
+        )
+
+    def _tomb_team_validate_leader(self, player: dict, action: str = "") -> str | None:
+        """验证玩家是否为队长，返回 None 表示通过，否则返回错误信息。"""
+        coop = self._tomb_get_coop(player)
+        if not coop:
+            return None
+        if str(player.get("qq", "")) != coop.get("leader", ""):
+            return f"只有队长 {coop['leader']} 可以{action or '执行此操作'}。"
+        return None
+    # --------------------------- 双排组队结束 ---------------------------
 
     def _tomb_intro(self) -> str:
         diffs = data.TOMB_DIFFICULTIES
@@ -4628,7 +4830,15 @@ class PetParkPlugin(Star):
             "进入：摸进 难度\n"
             "移动：上 / 下 / 左 / 右  或  摸看\n"
             "交互：开箱  战斗  祭拜  逃跑  跳过  摸用\n"
-            "状态：摸态  摸撤  摸弃"
+            "状态：摸态  摸撤  摸弃\n\n"
+            "【双排模式】\n"
+            "- 摸金组队 用户ID — 邀请队友组队\n"
+            "- 摸金准备 — 确认准备\n"
+            "- 摸金队伍 — 查看队伍状态\n"
+            "- 摸金取消组队 — 解散队伍\n"
+            "- 摸金救援 — 救援倒地队友（3格内）\n"
+            "- 摸金捡取 — 捡取倒地队友物品\n"
+            "- 摸金传送 用户ID 物品/冥币 数量 — 传送物品"
         )
 
     def _tomb_shop(self) -> str:
@@ -4738,11 +4948,36 @@ class PetParkPlugin(Star):
         busy = self._busy_reason(p)
         if busy:
             return busy, None
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        if key in self._tomb_sessions:
-            return "你已经在一次摸金探险中，发送『摸态』查看。", None
+        group_id = player.get("group", "")
+        my_qq = str(player.get("qq", ""))
 
-        # 难度解析：支持数字 1~4 或名称 简单/普通/困难/噩梦
+        # 检查双排
+        coop = self._tomb_get_coop(player)
+        is_coop = coop is not None
+        if is_coop:
+            err = self._tomb_team_validate_leader(player, "开始探险")
+            if err:
+                return err, None
+            if len(coop.get("ready", set())) < 2:
+                return "双方都发送「摸金准备」后才能开始。", None
+            teammate_qq = self._tomb_teammate_qq(player, coop)
+            tp = self.store.get_player(teammate_qq, group_id, create=False)
+            if not tp:
+                return "队友数据异常，请重新组队。", None
+            tp_pet = self._need_pet(tp)
+            if not tp_pet:
+                return "队友还没有宠物，无法一起摸金。", None
+            if self._busy_reason(tp_pet):
+                return "队友宠物状态异常（可能已死亡或假死），无法进入。", None
+            if not self._tomb_coop_pass_checks(tp, teammate_qq, group_id):
+                return "队友不满足入场条件，无法进入。", None
+            key = self._tomb_key(group_id, my_qq)
+        else:
+            key = self._tomb_key(group_id, my_qq)
+            if key in self._tomb_sessions:
+                return "你已经在一次摸金探险中，发送『摸态』查看。", None
+
+        # 难度解析
         name_to_diff = {cfg["name"]: d for d, cfg in data.TOMB_DIFFICULTIES.items()}
         difficulty = 1
         if len(tokens) > 1:
@@ -4758,36 +4993,26 @@ class PetParkPlugin(Star):
             return "难度只能是 1~4。", None
         cfg = data.TOMB_DIFFICULTIES[difficulty]
 
+        # 验证主玩家入场条件
         st = self.store.tomb_state(player)
-        tomb_level = st.get("level", 1)
-        if tomb_level < cfg["tomb_level_req"]:
-            return (
-                f"【{cfg['name']}】需要摸金等级达到 Lv{cfg['tomb_level_req']}，"
-                f"你当前只有 Lv{tomb_level}。多下墓积累经验吧！"
-            ), None
+        err = self._tomb_validate_entry(player, st, p, difficulty, cfg)
+        if err:
+            return err, None
 
-        now = int(time.time())
-        cooldown_ts = st.get("cooldown", 0)
-        if cooldown_ts > now:
-            remain = cooldown_ts - now
-            m, s = divmod(remain, 60)
-            return f"冷却中，还需 {m}分{s:02d}秒 才能再次进入摸金。", None
-        tokens_needed = cfg.get("entry_tokens", 0)
-        token_count = self.store.get_tomb_token_count(player)
-        if tokens_needed > 0:
-            if token_count < tokens_needed:
-                return (
-                    f"难度【{cfg['name']}】需要 {tokens_needed} 张『{data.TOMB_EXTRA_TOKEN}』，"
-                    f"当前只有 {token_count} 张。可发送『摸买 {data.TOMB_EXTRA_TOKEN}』购买。"
-                ), None
-            self.store.consume_tomb_token(player, tokens_needed)
-        petmod.refresh_energy(p)
-        if p["energy"] < cfg["energy"]:
-            return f"精力不足（需 {cfg['energy']}，当前 {p['energy']}）。", None
-        p["energy"] -= cfg["energy"]
-        # 生成地图
-        cells = self._tomb_generate_map(difficulty)
-        # 找到随机入口位置
+        # 双排：验证队友入场条件，并消耗资源
+        if is_coop:
+            teammate_qq = self._tomb_teammate_qq(player, coop)
+            tp_st = self.store.tomb_state(tp)
+            err = self._tomb_validate_entry(tp, tp_st, tp_pet, difficulty, cfg)
+            if err:
+                return f"队友：{err}", None
+            self._tomb_consume_entry(tp, tp_st, tp_pet, difficulty, cfg)
+
+        # 消耗主玩家资源
+        self._tomb_consume_entry(player, st, p, difficulty, cfg)
+
+        # 生成地图（双排缩放）
+        cells = self._tomb_generate_map(difficulty, coop=is_coop)
         entrance_pos = {"x": 1, "y": 1}
         for ey, row in enumerate(cells):
             for ex, c in enumerate(row):
@@ -4796,13 +5021,77 @@ class PetParkPlugin(Star):
                     break
             if entrance_pos != {"x": 1, "y": 1}:
                 break
-        # 装备武器：只带装备背包里的武器
+
+        def _build_player_ps(qq: str, player_st: dict) -> dict:
+            equipped = player_st.get("equipped_weapon", "")
+            weapons = player_st.get("weapons", {})
+            weapon_attack = 0
+            if equipped and equipped in weapons and weapons[equipped].get("location") == "equip" and equipped in data.TOMB_WEAPONS:
+                weapon_attack = data.TOMB_WEAPONS[equipped]["attack"]
+            return {
+                "player_pos": dict(entrance_pos),
+                "prev_pos": dict(entrance_pos),
+                "visited": {(entrance_pos["x"], entrance_pos["y"])},
+                "hp": data.TOMB_MAX_HP,
+                "hp_max": data.TOMB_MAX_HP,
+                "escapes": data.TOMB_ESCAPES_PER_RAID,
+                "weapon": equipped,
+                "weapon_attack": weapon_attack,
+                "inventory": dict(player_st.get("equip_items", {})),
+                "buffs": {},
+                "pending": None,
+                "status": "active",
+                "stunned": 0,
+                "mingbi": 0,
+                "equip_items": dict(player_st.get("equip_items", {})),
+            }
+
+        now = int(time.time())
+        if is_coop:
+            teammate_qq = self._tomb_teammate_qq(player, coop)
+            leader_st = st
+            teammate_st = self.store.tomb_state(tp)
+            shared = {
+                "started_at": now,
+                "difficulty": difficulty,
+                "map": {"w": len(cells[0]), "h": len(cells), "cells": cells},
+                "required": int(cfg["required"] * data.TOMB_COOP_REQUIRED_MULT),
+                "time_limit": cfg["time"],
+                "deadline": now + cfg["time"],
+                "leader": my_qq,
+                "teammate": teammate_qq,
+                "active": True,
+                "group_id": str(group_id),
+                "players": {
+                    my_qq: _build_player_ps(my_qq, leader_st),
+                    teammate_qq: _build_player_ps(teammate_qq, teammate_st),
+                },
+            }
+            filename = self._tomb_draw_map(shared)
+            shared["image"] = filename
+            self._tomb_coop_teams[key] = shared
+            leader_st.setdefault("stats", {})["raids"] = leader_st["stats"].get("raids", 0) + 1
+            teammate_st.setdefault("stats", {})["raids"] = teammate_st["stats"].get("raids", 0) + 1
+            # 用虚拟 session 生成玩家视角地图
+            virtual, _ = self._tomb_prepare(player)
+            image_md = self._tomb_player_map_md(virtual)
+            power = data.tomb_player_attack(st.get("level", 1), 0)
+            wep_text = "徒步" if is_coop else "徒手"
+            text = (
+                f"## 进入【{cfg['name']}】（双排）\n"
+                f"队长 {my_qq} · 队友 {teammate_qq}\n"
+                f"需带回 **{shared['required']}** 冥币（合并计算）\n"
+                f"起点：({entrance_pos['x']},{entrance_pos['y']})\n"
+                f"> 上/下/左/右 移动　摸看 探索　摸态 状态"
+            )
+            return text, image_md
+
+        # 单人模式
         equipped = st.get("equipped_weapon", "")
         weapons = st.get("weapons", {})
         weapon_attack = 0
         if equipped and equipped in weapons and weapons[equipped].get("location") == "equip" and equipped in data.TOMB_WEAPONS:
             weapon_attack = data.TOMB_WEAPONS[equipped]["attack"]
-        now = int(time.time())
         session = {
             "started_at": now,
             "difficulty": difficulty,
@@ -4831,27 +5120,70 @@ class PetParkPlugin(Star):
         st.setdefault("stats", {})["raids"] = st["stats"].get("raids", 0) + 1
         image_md = self._tomb_player_map_md(session)
         ex, ey = entrance_pos["x"], entrance_pos["y"]
-        power = data.tomb_player_attack(tomb_level, weapon_attack)
+        power = data.tomb_player_attack(st.get("level", 1), weapon_attack)
         wep_text = f"{equipped}(攻+{weapon_attack})" if equipped else "徒手"
         text = (
-            f"## 🏺 进入【{cfg['name']}】\n"
-            f"● 摸金HP：{session['hp']}/{session['hp_max']}　战力：{power}　武器：{wep_text}\n"
-            f"● 逃跑次数：{session['escapes']}　需带回 **{cfg['required']}** 冥币并撤离\n"
-            f"● 起点：({ex},{ey})　出口：见地图红菱标记\n"
-            f"● 图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛　黄圆=金币　绿雾=毒雾　紫环=传送　青滴=生命泉　红骷髅=BOSS\n"
-            f"● 操作：上/下/左/右　摸看　摸态\n"
+            f"## 进入【{cfg['name']}】\n"
+            f"摸金HP：{session['hp']}/{session['hp_max']}　战力：{power}　武器：{wep_text}\n"
+            f"逃跑次数：{session['escapes']}　需带回 **{cfg['required']}** 冥币并撤离\n"
+            f"起点：({ex},{ey})　出口：见地图红菱标记\n"
+            f"图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛　黄圆=金币　绿雾=毒雾　紫环=传送　青滴=生命泉　红骷髅=BOSS\n"
+            f"操作：上/下/左/右　摸看　摸态\n"
             f"> 你当前在 ({ex},{ey})，剩余时间 {cfg['time'] // 60}:00"
         )
         return text, image_md
+
+    def _tomb_validate_entry(self, player: dict, st: dict, p: dict, difficulty: int, cfg: dict) -> str | None:
+        """验证玩家是否满足进入摸金的条件，返回 None 表示通过，否则返回错误信息。"""
+        tomb_level = st.get("level", 1)
+        if tomb_level < cfg["tomb_level_req"]:
+            return (
+                f"【{cfg['name']}】需要摸金等级 Lv{cfg['tomb_level_req']}，"
+                f"你当前 Lv{tomb_level}。"
+            )
+        now = int(time.time())
+        cooldown_ts = st.get("cooldown", 0)
+        if cooldown_ts > now:
+            remain = cooldown_ts - now
+            m, s = divmod(remain, 60)
+            return f"冷却中，还需 {m}分{s:02d}秒 才能再次进入摸金。"
+        tokens_needed = cfg.get("entry_tokens", 0)
+        if tokens_needed > 0:
+            token_count = (st.get("storage_items", {}).get(data.TOMB_EXTRA_TOKEN, 0)
+                           + st.get("equip_items", {}).get(data.TOMB_EXTRA_TOKEN, 0))
+            if token_count < tokens_needed:
+                return (
+                    f"【{cfg['name']}】需要 {tokens_needed} 张『{data.TOMB_EXTRA_TOKEN}』，"
+                    f"当前只有 {token_count} 张。"
+                )
+        petmod.refresh_energy(p)
+        if p["energy"] < cfg["energy"]:
+            return f"精力不足（需 {cfg['energy']}，当前 {p['energy']}）。"
+        return None
+
+    def _tomb_consume_entry(self, player: dict, st: dict, p: dict, difficulty: int, cfg: dict) -> None:
+        """消耗入场资源（令牌、精力），不重复校验。"""
+        tokens_needed = cfg.get("entry_tokens", 0)
+        if tokens_needed > 0:
+            self.store.consume_tomb_token(player, tokens_needed)
+        p["energy"] -= cfg["energy"]
+
+    def _tomb_coop_pass_checks(self, player: dict, qq: str, group_id: str) -> bool:
+        """快速检查队友是否满足基本条件（不消耗资源），用于双排入场前验证。"""
+        key = self._tomb_key(group_id, qq)
+        if key in self._tomb_sessions:
+            return False
+        return True
 
     def _tomb_move(self, player: dict, tokens: list[str]) -> tuple[str, str] | str:
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险，发送『摸进 难度』开始。"
+        if session.get("status") in ("downed",):
+            return "你已倒地，无法移动。等待队友「摸金救援」。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -4859,6 +5191,7 @@ class PetParkPlugin(Star):
             return "👹 你遭遇了怪物，必须先『战斗』或『逃跑』才能离开！"
         if session.get("stunned", 0) > 0:
             session["stunned"] -= 1
+            self._tomb_commit(player, session, is_coop)
             return f"😵 你仍处于眩晕中，本回合无法移动（还剩 {session['stunned']} 回合）。"
         if len(tokens) < 2:
             return "用法：上/下/左/右"
@@ -4883,8 +5216,9 @@ class PetParkPlugin(Star):
         avoid = session["buffs"].pop("avoid_monster", False)
         cell = cells[y][x]
         event_text = self._tomb_encounter(player, p, session, cell, avoid)
-        # 战斗/陷阱可能已经结算导致 session 被移除
-        if key not in self._tomb_sessions:
+        # 提交并检查会话是否仍然存在
+        self._tomb_commit(player, session, is_coop)
+        if not self._tomb_session_exists(player):
             return event_text
         remain = self._tomb_time_left(session)
         surroundings = self._tomb_format_surroundings(session)
@@ -4897,14 +5231,23 @@ class PetParkPlugin(Star):
         )
         return text, image_md
 
+    def _tomb_session_exists(self, player: dict) -> bool:
+        """检查玩家是否仍有存活的摸金会话（单人/双排通用）。"""
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        if key in self._tomb_sessions:
+            return True
+        coop = self._tomb_get_coop(player)
+        return coop is not None and coop.get("active", False)
+
     def _tomb_explore(self, player: dict) -> tuple[str, str] | str:
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            return "你已倒地，无法探索。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -4913,7 +5256,7 @@ class PetParkPlugin(Star):
         pos = session["player_pos"]
         image_md = self._tomb_player_map_md(session)
         text = (
-            f"## 🏺 摸看\n"
+            f"## 摸看\n"
             f"你当前在 ({pos['x']},{pos['y']})。\n"
             f"{surroundings}\n"
             f"> 摸金HP {session['hp']}/{session['hp_max']}　背负 {session['mingbi']} / {session['required']} 冥币　剩余时间 {remain}"
@@ -4924,10 +5267,12 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            self._tomb_commit(player, session, is_coop)
+            return "你已倒地，无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -4938,6 +5283,7 @@ class PetParkPlugin(Star):
             x, y = session["player_pos"]["x"], session["player_pos"]["y"]
         cells = session["map"]["cells"]
         if cells[y][x] != "C":
+            self._tomb_commit(player, session, is_coop)
             return "当前位置没有宝箱。"
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         base_min, base_max = cfg["chest_mingbi"]
@@ -4954,6 +5300,7 @@ class PetParkPlugin(Star):
             session.setdefault("inventory", {}).setdefault(item, 0)
             session["inventory"][item] += 1
             extra = f"，额外获得『{item}』×1"
+        self._tomb_commit(player, session, is_coop)
         remain = self._tomb_time_left(session)
         return (
             f"🎁 开启宝箱，获得 **{gain}** 冥币{extra}。\n"
@@ -4964,10 +5311,12 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            self._tomb_commit(player, session, is_coop)
+            return "你已倒地，无法执行此操作。"
         if len(tokens) < 2:
             return "用法：摸用 道具名"
         name = tokens[1]
@@ -5014,10 +5363,11 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            return "你已倒地，无法撤离。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5027,6 +5377,17 @@ class PetParkPlugin(Star):
         cells = session["map"]["cells"]
         if cells[y][x] != "E" and cells[y][x] != "X":
             return "❌ 只有回到起点或到达出口才能撤离。"
+        # 双排：合并双方冥币判断
+        if is_coop:
+            coop = session.get("_coop_parent")
+            if coop:
+                total_mb = sum(pd.get("mingbi", 0) for pd in coop["players"].values())
+                if total_mb < session["required"]:
+                    return (
+                        f"❌ 队伍冥币不足（当前合计 {total_mb} / {session['required']}），"
+                        f"无法撤离。继续探索吧！"
+                    )
+                return self._tomb_settle_coop(player, p, coop, "success")
         if session["mingbi"] < session["required"]:
             return (
                 f"❌ 你还未凑够冥币（当前 {session['mingbi']} / {session['required']}），"
@@ -5077,10 +5438,13 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if is_coop:
+            coop = session.get("_coop_parent")
+            if coop:
+                return self._tomb_settle_coop(player, p, coop, "forfeit")
         return self._tomb_settle(player, p, session, "forfeit")
 
     # ---- 摸金结算 ----
@@ -5173,7 +5537,123 @@ class PetParkPlugin(Star):
             f"● 带入的武器和道具已带回"
         )
 
+    def _tomb_settle_coop(self, player: dict, p: dict, coop: dict, reason: str) -> str:
+        """双排结算：双方各自结算经验/宠物经验/冥币/装备，清理队伍。"""
+        group_id = coop.get("group_id", player.get("group", ""))
+        cfg = data.TOMB_DIFFICULTIES[coop["difficulty"]]
+        result_parts = []
+        total_mingbi = 0
+
+        for qq in (coop["leader"], coop["teammate"]):
+            pl = self.store.get_player(qq, group_id, create=False)
+            if not pl:
+                continue
+            st = self.store.tomb_state(pl)
+            stats = st.setdefault("stats", {})
+            st["cooldown"] = int(time.time()) + data.TOMB_COOLDOWN
+            pdata = coop["players"].get(qq, {})
+            gained = pdata.get("mingbi", 0)
+
+            old_level = self.store.get_tomb_level(pl)
+            is_success = reason == "success"
+            xp = data.TOMB_XP_REWARD["success" if is_success else "failure"].get(coop["difficulty"], 0)
+            self.store.add_tomb_exp(pl, xp)
+
+            exp_range = data.TOMB_SUCCESS_EXP_RANGE.get(coop["difficulty"], (500, 2000))
+            base_pe = random.randint(*exp_range)
+            stored_pe = base_pe if is_success else (base_pe // 2)
+            if stored_pe > 0:
+                self.store.add_tomb_pending_pet_exp(pl, stored_pe)
+
+            if reason in ("death", "timeout"):
+                self.store.clear_tomb_loadout(pl)
+            else:
+                self.store.writeback_tomb_equip(pl, pdata.get("inventory", {}))
+
+            if reason == "success":
+                self.store.add_tomb_mingbi(pl, gained)
+                stats["success"] = stats.get("success", 0) + 1
+                stats["total_mingbi"] = stats.get("total_mingbi", 0) + gained
+                total_mingbi += gained
+            elif reason == "forfeit":
+                kept = int(gained * 0.5)
+                self.store.add_tomb_mingbi(pl, kept)
+                stats["fail"] = stats.get("fail", 0) + 1
+                total_mingbi += kept
+            elif reason == "revive":
+                kept = int(gained * 0.5)
+                self.store.add_tomb_mingbi(pl, kept)
+                stats["fail"] = stats.get("fail", 0) + 1
+                total_mingbi += kept
+            else:
+                kept = int(gained * 0.2)
+                self.store.add_tomb_mingbi(pl, kept)
+                stats["fail"] = stats.get("fail", 0) + 1
+
+        # 清理双排数据
+        for qq in (coop["leader"], coop["teammate"]):
+            idx_key = self._tomb_key(group_id, qq)
+            self._tomb_coop_index.pop(idx_key, None)
+        coop_key = self._tomb_key(group_id, coop["leader"])
+        self._tomb_coop_teams.pop(coop_key, None)
+
+        if reason == "success":
+            return f"## 组队撤离成功！\n共带出 {total_mingbi} 冥币。"
+        elif reason == "death":
+            return "## 全队覆灭...\n装备背包全部掉落。"
+        elif reason == "forfeit":
+            return f"## 队伍放弃探险\n共保留 {total_mingbi} 冥币。"
+        elif reason == "timeout":
+            return "## 时间耗尽！\n全队撤离失败，装备背包全部掉落。"
+        return f"## 结算完成"
+
+    def _tomb_settle_coop_player(self, player: dict, qq: str, group_id: str, cfg: dict, pdata: dict, reason: str) -> None:
+        """结算单个双排玩家。"""
+        pl = self.store.get_player(qq, group_id, create=False)
+        if not pl:
+            return
+        st = self.store.tomb_state(pl)
+        stats = st.setdefault("stats", {})
+        st["cooldown"] = int(time.time()) + data.TOMB_COOLDOWN
+        is_success = reason == "success"
+        xp = data.TOMB_XP_REWARD["success" if is_success else "failure"].get(cfg.get("difficulty", 1) if isinstance(cfg, dict) else 1, 0)
+        self.store.add_tomb_exp(pl, xp)
+        exp_range = data.TOMB_SUCCESS_EXP_RANGE.get(1, (500, 2000))
+        base_pe = random.randint(*exp_range)
+        stored_pe = base_pe if is_success else (base_pe // 2)
+        if stored_pe > 0:
+            self.store.add_tomb_pending_pet_exp(pl, stored_pe)
+        gained = pdata.get("mingbi", 0)
+        if reason == "success":
+            self.store.add_tomb_mingbi(pl, gained)
+            stats["success"] = stats.get("success", 0) + 1
+            stats["total_mingbi"] = stats.get("total_mingbi", 0) + gained
+        elif reason == "forfeit":
+            self.store.add_tomb_mingbi(pl, int(gained * 0.5))
+            stats["fail"] = stats.get("fail", 0) + 1
+        else:
+            stats["fail"] = stats.get("fail", 0) + 1
+        if reason in ("death", "timeout"):
+            self.store.clear_tomb_loadout(pl)
+        else:
+            self.store.writeback_tomb_equip(pl, pdata.get("inventory", {}))
+
+    def _tomb_cleanup_coop(self, coop: dict) -> None:
+        """清理双排 session 和索引。"""
+        gid = coop.get("group_id", "")
+        for qq in (coop.get("leader", ""), coop.get("teammate", "")):
+            self._tomb_coop_index.pop(self._tomb_key(gid, qq), None)
+        coop_key = self._tomb_key(gid, coop.get("leader", ""))
+        self._tomb_coop_teams.pop(coop_key, None)
+
     def _tomb_check_timeout(self, player: dict, p: dict, session: dict) -> str | None:
+        if int(time.time()) >= session.get("deadline", 0):
+            if session.get("_is_coop"):
+                coop = session.get("_coop_parent")
+                if coop:
+                    return self._tomb_settle_coop(player, p, coop, "timeout")
+            return self._tomb_settle(player, p, session, "timeout")
+        return None
         if int(time.time()) >= session.get("deadline", 0):
             return self._tomb_settle(player, p, session, "timeout")
         return None
@@ -5270,7 +5750,8 @@ class PetParkPlugin(Star):
         return f"☠️ 重伤陷阱！摸金HP -{dmg}，眩晕1回合。"
 
     def _tomb_after_damage(self, player: dict, p: dict, session: dict) -> str | None:
-        """摸金HP归0时的复活/死亡处理，返回提示文本（None 表示未阵亡）。"""
+        """摸金HP归0时的复活/死亡处理，返回提示文本（None 表示未阵亡）。
+        双排模式：先检查复活道具，若无则进入倒地状态。双方倒地则全队结算死亡。"""
         if session.get("hp", 0) > 0:
             return None
         inv = session.get("inventory", {})
@@ -5283,7 +5764,20 @@ class PetParkPlugin(Star):
         if session.get("buffs", {}).get("revive"):
             session["buffs"].pop("revive")
             session["hp"] = 1
+            # 双排招魂幡：不立即结算，保持存活
+            if session.get("_is_coop"):
+                return "🪦 招魂幡触发，摸金HP恢复到1！"
             return self._tomb_settle(player, p, session, "revive")
+        # 双排倒地逻辑
+        if session.get("_is_coop"):
+            session["status"] = "downed"
+            session["hp"] = 0
+            coop = session.get("_coop_parent")
+            if coop:
+                all_downed = all(pd.get("status") == "downed" for pd in coop["players"].values())
+                if all_downed:
+                    return self._tomb_settle_coop(player, p, coop, "death")
+            return "💀 你已倒地！等待队友「摸金救援」救援。"
         return self._tomb_settle(player, p, session, "death")
 
     def _tomb_altar_event(self, player: dict, p: dict, session: dict) -> str:
@@ -5407,10 +5901,12 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            self._tomb_commit(player, session, is_coop)
+            return "你已倒地，无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5419,7 +5915,8 @@ class PetParkPlugin(Star):
             return "这里没有要战斗的怪物（移动到怪物格或BOSS格才会遭遇）。"
         is_boss = pending.get("type") == "B"
         result = self._tomb_battle(player, p, session, summoned=False, forced_win=False, is_boss=is_boss)
-        if key in self._tomb_sessions:
+        self._tomb_commit(player, session, is_coop)
+        if self._tomb_session_exists(player):
             session["pending"] = None
         return result
 
@@ -5427,10 +5924,12 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            self._tomb_commit(player, session, is_coop)
+            return "你已倒地，无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5448,10 +5947,12 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            self._tomb_commit(player, session, is_coop)
+            return "你已倒地，无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5476,10 +5977,12 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        if session.get("status") == "downed":
+            self._tomb_commit(player, session, is_coop)
+            return "你已倒地，无法执行此操作。"
         if not session.get("pending"):
             return "当前没有待交互的对象。"
         pending = session["pending"]
@@ -5489,6 +5992,122 @@ class PetParkPlugin(Star):
         self._tomb_refresh_map(session)
         session["pending"] = None
         return "你选择离开，目标已消失在墓道中。可继续 上/下/左/右 移动。"
+
+    # --------------------------- 双排互动 ---------------------------
+    def _tomb_rescue(self, player: dict) -> str:
+        """摸金救援 —— 3 格内救援倒地队友。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        coop = self._tomb_get_coop(player)
+        if not coop or not coop.get("active"):
+            return "你不在组队摸金中。"
+        qq = str(player.get("qq", ""))
+        tqq = self._tomb_teammate_qq(player, coop)
+        if not tqq:
+            return "无法找到队友。"
+        mydata = coop["players"].get(qq, {})
+        tpdata = coop["players"].get(tqq, {})
+        if mydata.get("status") == "downed":
+            return "你已倒地，无法救援队友。"
+        if tpdata.get("status") != "downed":
+            return "队友没有倒地，无需救援。"
+        mx, my_ = mydata["player_pos"]["x"], mydata["player_pos"]["y"]
+        tx, ty = tpdata["player_pos"]["x"], tpdata["player_pos"]["y"]
+        dist = abs(mx - tx) + abs(my_ - ty)
+        if dist > data.TOMB_COOP_RANGE:
+            return f"队友离你太远了（距离 {dist} 格，需在 {data.TOMB_COOP_RANGE} 格内）。"
+        cost = max(1, int(mydata["hp_max"] * data.TOMB_COOP_RESCUE_HP_COST))
+        mydata["hp"] = max(1, mydata["hp"] - cost)
+        revive_hp = max(1, int(tpdata["hp_max"] * data.TOMB_COOP_RESCUE_REVIVE_HP))
+        tpdata["hp"] = revive_hp
+        tpdata["status"] = "active"
+        return (
+            f"## 救援成功\n"
+            f"你将 {tqq} 从绝境中救起！（HP恢复至 {revive_hp}）\n"
+            f"你消耗了 {cost} HP（剩余 {mydata['hp']}）。"
+        )
+
+    def _tomb_loot(self, player: dict) -> str:
+        """摸金捡取 —— 3 格内捡取倒地队友的全部物品和冥币。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        coop = self._tomb_get_coop(player)
+        if not coop or not coop.get("active"):
+            return "你不在组队摸金中。"
+        qq = str(player.get("qq", ""))
+        tqq = self._tomb_teammate_qq(player, coop)
+        mydata = coop["players"].get(qq, {})
+        tpdata = coop["players"].get(tqq, {})
+        if mydata.get("status") == "downed":
+            return "你已倒地，无法捡取。"
+        if tpdata.get("status") != "downed":
+            return "队友未倒地，无需捡取。"
+        mx, my_ = mydata["player_pos"]["x"], mydata["player_pos"]["y"]
+        tx, ty = tpdata["player_pos"]["x"], tpdata["player_pos"]["y"]
+        if abs(mx - tx) + abs(my_ - ty) > data.TOMB_COOP_RANGE:
+            return f"队友离你太远了。"
+        transferred = []
+        t_inv = tpdata.get("inventory", {})
+        my_inv = mydata.setdefault("inventory", {})
+        for item, count in list(t_inv.items()):
+            if count > 0:
+                my_inv[item] = my_inv.get(item, 0) + count
+                transferred.append(f"{item}×{count}")
+        tpdata["inventory"] = {}
+        t_mb = tpdata.get("mingbi", 0)
+        mydata["mingbi"] = mydata.get("mingbi", 0) + t_mb
+        tpdata["mingbi"] = 0
+        if t_mb > 0:
+            transferred.append(f"冥币×{t_mb}")
+        if not transferred:
+            return "队友身上没有可捡取的物品。"
+        return f"## 捡取完成\n已将队友的 {'、'.join(transferred)} 转移到你的背包。"
+
+    def _tomb_transfer(self, player: dict, tokens: list[str]) -> str:
+        """摸金传送 用户ID 物品/冥币 数量 —— 3 格内传送物品或冥币给队友。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        coop = self._tomb_get_coop(player)
+        if not coop or not coop.get("active"):
+            return "你不在组队摸金中。"
+        qq = str(player.get("qq", ""))
+        tqq = self._tomb_teammate_qq(player, coop)
+        if len(tokens) < 3:
+            return "用法：摸金传送 用户ID 物品名/冥币 数量"
+        target_qq = tokens[1]
+        item_name = tokens[2]
+        count = self._parse_count(tokens, 3) if len(tokens) > 3 else 1
+        if target_qq != tqq:
+            return "只能传送给自己的队友。"
+        mydata = coop["players"].get(qq, {})
+        tpdata = coop["players"].get(tqq, {})
+        if mydata.get("status") == "downed":
+            return "你已倒地，无法传送。"
+        if tpdata.get("status") == "downed":
+            return "队友已倒地，无法接收。可先「摸金救援」。"
+        mx, my_ = mydata["player_pos"]["x"], mydata["player_pos"]["y"]
+        tx, ty = tpdata["player_pos"]["x"], tpdata["player_pos"]["y"]
+        if abs(mx - tx) + abs(my_ - ty) > data.TOMB_COOP_RANGE:
+            return f"队友离你太远了（距离 {abs(mx - tx) + abs(my_ - ty)}，需在 {data.TOMB_COOP_RANGE} 格内）。"
+        if item_name == "冥币":
+            if mydata.get("mingbi", 0) < count:
+                return f"你的冥币不足（当前 {mydata.get('mingbi', 0)}）。"
+            mydata["mingbi"] -= count
+            tpdata["mingbi"] = tpdata.get("mingbi", 0) + count
+            return f"## 传送完成\n向 {target_qq} 传送 **冥币×{count}**。"
+        my_inv = mydata.get("inventory", {})
+        if my_inv.get(item_name, 0) < count:
+            return f"你的背包中没有足够的「{item_name}」。"
+        my_inv[item_name] -= count
+        if my_inv[item_name] <= 0:
+            my_inv.pop(item_name, None)
+        tp_inv = tpdata.setdefault("inventory", {})
+        tp_inv[item_name] = tp_inv.get(item_name, 0) + count
+        return f"## 传送完成\n向 {target_qq} 传送 **{item_name}×{count}**。"
+    # --------------------------- 双排互动结束 ---------------------------
 
     def _tomb_equip(self, player: dict, tokens: list[str]) -> str:
         if self._tomb_in_raid(player):
@@ -5751,9 +6370,18 @@ class PetParkPlugin(Star):
                     dq.append((nx, ny))
         return dist
 
-    def _tomb_generate_map(self, difficulty: int) -> list[list[str]]:
-        """生成复杂迷宫：墙为 #，通路为 .，随机入口 E，最远出口 X，并带少量环路。"""
-        cfg = data.TOMB_DIFFICULTIES[difficulty]
+    def _tomb_generate_map(self, difficulty: int, coop: bool = False) -> list[list[str]]:
+        """生成复杂迷宫：墙为 #，通路为 .，随机入口 E，最远出口 X，并带少量环路。
+        coop=True 时按 TOMB_COOP_MULT 倍率缩放怪物/宝箱/陷阱等数量。"""
+        base_cfg = data.TOMB_DIFFICULTIES[difficulty]
+        # coop 模式下缩放实体数量
+        mult = data.TOMB_COOP_MULT if coop else 1.0
+        cfg = dict(base_cfg)
+        for key in ("monsters", "chests", "traps", "altars", "gold_piles", "gas_zones", "portals", "springs", "bosses"):
+            if key in cfg:
+                cfg[key] = max(1, int(cfg[key] * mult))
+        if coop:
+            cfg["required"] = int(cfg["required"] * data.TOMB_COOP_REQUIRED_MULT)
         w, h = cfg["size"]
         # 迷宫算法需要奇数尺寸；配置里已保持奇数，这里做保险处理
         if w % 2 == 0:
@@ -5897,7 +6525,8 @@ class PetParkPlugin(Star):
                 continue
 
         # 顶部标题（全中文，避免英文）
-        title = f"摸金地图  难度{session['difficulty']}  {cfg['name']}"
+        mode_label = "（双排）" if session.get("players") else ""
+        title = f"摸金地图{mode_label}  难度{session['difficulty']}  {cfg['name']}"
         if font:
             draw.text((pad, 12), title, fill=data.TOMB_COLORS["text"], font=font)
         else:
@@ -6081,11 +6710,40 @@ class PetParkPlugin(Star):
         footer_region = img.crop((0, footer_top, img.width, img.height))
         fog.paste(footer_region, (0, footer_top))
 
-        # 玩家定位标记
+        # 玩家定位标记（青色）
         draw = ImageDraw.Draw(fog)
         r = cell // 3
-        draw.ellipse([cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2], outline=(0, 255, 255), width=3)
-        draw.ellipse([cx - r // 2, cy - r // 2, cx + r // 2, cy + r // 2], fill=(0, 255, 255))
+        draw.ellipse([cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2], outline=data.TOMB_COOP_SELF_COLOR, width=3)
+        draw.ellipse([cx - r // 2, cy - r // 2, cx + r // 2, cy + r // 2], fill=data.TOMB_COOP_SELF_COLOR)
+
+        # 双排：绘制队友标记
+        coop = session.get("_coop_parent")
+        if coop and session.get("_is_coop"):
+            tqq = coop.get("teammate") if session.get("_coop_self_qq") == coop.get("leader") else coop.get("leader")
+            # fallback: session may have _coop_qq from prepare
+            tqq = tqq or (session.get("_coop_qq", ""))
+            # try getting teammate from the other player in players dict
+            for pq, pd in coop.get("players", {}).items():
+                if pq != session.get("_coop_self_qq", session.get("_coop_qq", "")):
+                    tpd = pd
+                    tpx, tpy = tpd["player_pos"]["x"], tpd["player_pos"]["y"]
+                    tcx = ox + tpx * cell + cell // 2
+                    tcy = oy + tpy * cell + cell // 2
+                    if tpd.get("status") == "downed":
+                        # 倒地队友：红色骷髅（穿透迷雾）
+                        tr = cell // 3
+                        draw.ellipse([tcx - tr - 3, tcy - tr - 3, tcx + tr + 3, tcy + tr + 3],
+                                    fill=(180, 20, 20), outline=(255, 80, 80), width=3)
+                        draw.line([(tcx - tr, tcy - tr), (tcx + tr, tcy + tr)], fill=(255, 255, 255), width=2)
+                        draw.line([(tcx + tr, tcy - tr), (tcx - tr, tcy + tr)], fill=(255, 255, 255), width=2)
+                    else:
+                        # 正常队友：黄色标记
+                        tr = cell // 3
+                        draw.ellipse([tcx - tr - 2, tcy - tr - 2, tcx + tr + 2, tcy + tr + 2],
+                                    outline=data.TOMB_COOP_TEAMMATE_COLOR, width=3)
+                        draw.ellipse([tcx - tr // 2, tcy - tr // 2, tcx + tr // 2, tcy + tr // 2],
+                                    fill=data.TOMB_COOP_TEAMMATE_COLOR)
+                    break
 
         filename = f"tomb_p_{uuid.uuid4().hex}.png"
         path = self.store.custom_images_dir / filename

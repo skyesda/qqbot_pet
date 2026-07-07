@@ -1306,6 +1306,16 @@ TOMB_BOSS_POWER_MULT = 1.5
 TOMB_BOSS_MINGBI_MULT = 3
 TOMB_BOSS_DROP_CHANCE = 1.0  # 击败 Boss 必定掉落一件摸金道具
 
+# 摸金双排倍率
+TOMB_COOP_MULT = 1.5           # 怪物/宝箱/陷阱/金币/毒雾/传送/生命泉/Boss 通用倍率
+TOMB_COOP_REQUIRED_MULT = 2.0  # 撤离所需冥币倍率
+TOMB_COOP_RESCUE_HP_COST = 0.30    # 救援消耗 HP 比例
+TOMB_COOP_RESCUE_REVIVE_HP = 0.20  # 救援复活 HP 比例
+TOMB_COOP_RANGE = 3            # 救援/传送最大曼哈顿距离
+TOMB_COOP_SELF_COLOR = (0, 255, 255)      # 自己：青色
+TOMB_COOP_TEAMMATE_COLOR = (255, 220, 40) # 队友：黄色
+TOMB_COOP_DOWNED_COLOR = (255, 20, 20)    # 倒地标记：红色
+
 # 摸金商店道具（与主背包隔离）
 TOMB_ITEMS = {
     "引路香": {
