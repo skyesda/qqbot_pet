@@ -642,10 +642,11 @@ class PetParkPlugin(Star):
 
     @staticmethod
     def _check_daily_transfer_limit(
-        sender: dict, target: dict, group_id: str, count: int
+        sender: dict, target: dict, group_id: str, count: int,
+        check_count_limit: bool = True,
     ) -> str | None:
-        """检查每日转让限制：同群两人之间每天合计最多10次，单次最多10个。返回错误提示或 None。"""
-        if count > 10:
+        """检查每日转让限制：同群两人之间每天合计最多10次，道具单次最多10个。返回错误提示或 None。"""
+        if check_count_limit and count > 10:
             return "每次转让数量不能超过 10 个。"
         qq1 = str(sender.get("qq", ""))
         qq2 = str(target.get("qq", ""))
@@ -2128,8 +2129,6 @@ class PetParkPlugin(Star):
                 parts.append(f"解除『{v}』状态")
             elif k == "revive":
                 parts.append("复活并回满血量")
-            elif k == "force_evolve":
-                parts.append("强制进化")
             elif k == "upgrade_quality":
                 parts.append(f"品质提升为【{v}】")
             elif k == "clear_abyss_corruption":
@@ -3050,18 +3049,6 @@ class PetParkPlugin(Star):
             return "宠物还活着，无需复活。"
         if "cure" in eff and p.get("status") != eff["cure"]:
             return f"宠物当前不是『{eff['cure']}』状态，无需使用『{name}』。"
-        # 进化神石：每次只用 1 颗，且需可进化；脱落的神器/秘技放回背包
-        if eff.get("force_evolve"):
-            before = list(p.get("skills", [])) + (
-                [p["artifact"]] if p.get("artifact") else []
-            )
-            ok, msg = petmod.evolve(p, force=True)
-            if not ok:
-                return msg
-            for itx in before:
-                self.store.add_item(player, itx, 1)
-            self.store.remove_item(player, name, 1)
-            return f"使用『{name}』x1：{msg}"
         # 品质提升卡：每次 1 张，史诗及以上无法使用
         if "upgrade_quality" in eff:
             target = eff["upgrade_quality"]
@@ -3184,7 +3171,7 @@ class PetParkPlugin(Star):
         tp, err = self._find_target(group_id, target)
         if err:
             return err
-        limit_err = self._check_daily_transfer_limit(player, tp, group_id, count)
+        limit_err = self._check_daily_transfer_limit(player, tp, group_id, count, check_count_limit=False)
         if limit_err:
             return limit_err
         have = self.store.get_currency(player, currency)
@@ -3389,11 +3376,18 @@ class PetParkPlugin(Star):
         busy = self._busy_reason(p)
         if busy:
             return busy
+        if not self.store.has_item(player, "进化神石", 1):
+            return (
+                "背包里没有『进化神石』，无法进化。\n"
+                "> 可在商城购买（7200 积分），"
+                "或通过剧情任务『探索秘境』获得。"
+            )
         before = list(p.get("skills", [])) + (
             [p["artifact"]] if p.get("artifact") else []
         )
         ok, msg = petmod.evolve(p)
         if ok:
+            self.store.remove_item(player, "进化神石", 1)
             for it in before:
                 self.store.add_item(player, it, 1)
         return msg

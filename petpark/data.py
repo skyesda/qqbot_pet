@@ -356,9 +356,9 @@ ITEMS = {
         "price": 7200,
         "currency": CURRENCY_JIFEN,
         "category": "道具",
-        "usable": True,
-        "desc": "使用后立即让宠物进化（无视等级要求）。",
-        "effect": {"force_evolve": True},
+        "usable": False,
+        "desc": "宠物进化时消耗的材料（需 Lv60+，发送『宠物进化』时自动消耗 1 颗）。",
+        "effect": {},
     },
     "万能宝石": {
         "price": 8000,
