@@ -641,6 +641,43 @@ class PetParkPlugin(Star):
         return tp, None
 
     @staticmethod
+    def _check_daily_transfer_limit(
+        sender: dict, target: dict, group_id: str, count: int
+    ) -> str | None:
+        """检查每日转让限制：同群两人之间每天合计最多10次，单次最多10个。返回错误提示或 None。"""
+        if count > 10:
+            return "每次转让数量不能超过 10 个。"
+        qq1 = str(sender.get("qq", ""))
+        qq2 = str(target.get("qq", ""))
+        if qq1 == qq2:
+            return "不能转让给自己。"
+        today = time.strftime("%Y-%m-%d")
+        # 规范化 pair key：按用户ID排序，确保双向共享同一计数
+        a, b = (qq1, qq2) if qq1 < qq2 else (qq2, qq1)
+        pair_key = f"{group_id}:{a}:{b}:{today}"
+        sender.setdefault("_daily_transfers", {})
+        # 清理过期条目（非今天的 key）
+        stale = [k for k in sender["_daily_transfers"] if not k.endswith(f":{today}")]
+        for k in stale:
+            del sender["_daily_transfers"][k]
+        current = sender["_daily_transfers"].get(pair_key, 0)
+        if current >= 10:
+            return (
+                f"今日你与 `{qq2}` 之间的转让次数已达上限（10次/天），"
+                "明天再来吧。"
+            )
+        # 增量计数（双方同步）
+        sender["_daily_transfers"][pair_key] = current + 1
+        target.setdefault("_daily_transfers", {})
+        stale_t = [k for k in target["_daily_transfers"] if not k.endswith(f":{today}")]
+        for k in stale_t:
+            del target["_daily_transfers"][k]
+        target["_daily_transfers"][pair_key] = (
+            target["_daily_transfers"].get(pair_key, 0) + 1
+        )
+        return None
+
+    @staticmethod
     def _inc_stat(player: dict, key: str, n: int = 1) -> None:
         """增加玩家统计计数（如剧情任务进度）。"""
         player.setdefault("stats", {})[key] = player["stats"].get(key, 0) + n
@@ -3120,6 +3157,9 @@ class PetParkPlugin(Star):
             return err
         name = tokens[2]
         count = self._parse_count(tokens, 3)
+        limit_err = self._check_daily_transfer_limit(player, tp, group_id, count)
+        if limit_err:
+            return limit_err
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
         self.store.remove_item(player, name, count)
@@ -3144,6 +3184,9 @@ class PetParkPlugin(Star):
         tp, err = self._find_target(group_id, target)
         if err:
             return err
+        limit_err = self._check_daily_transfer_limit(player, tp, group_id, count)
+        if limit_err:
+            return limit_err
         have = self.store.get_currency(player, currency)
         if have < count:
             return f"你的{currency}不足（需要 {count}，当前 {have}）。"
