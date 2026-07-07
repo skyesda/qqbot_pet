@@ -191,6 +191,9 @@ KNOWN_COMMANDS = {
     "下",
     "左",
     "右",
+    "1",
+    "2",
+    "3",
     "摸金探索",
     "摸看",
     "摸金开箱",
@@ -989,6 +992,8 @@ class PetParkPlugin(Star):
             return self._tomb_move(player, tokens)
         if cmd in ("上", "下", "左", "右"):
             return self._tomb_move(player, ["摸金移动", cmd])
+        if cmd in ("1", "2", "3"):
+            return self._tomb_pick_card(player, cmd)
         if cmd in ("摸金探索", "摸看"):
             return self._tomb_explore(player)
         if cmd in ("摸金开箱", "开箱"):
@@ -4670,6 +4675,33 @@ class PetParkPlugin(Star):
             return True
         return self._tomb_get_coop(player) is not None
 
+    # ---- 命运卡牌 ----
+    def _tomb_draw_cards(self) -> list[str]:
+        """随机抽取 3 张不同的命运卡牌。"""
+        return random.sample(list(data.TOMB_DESTINY_CARDS.keys()), 3)
+
+    def _get_card_effect(self, session: dict, key: str, default=1.0):
+        """读取当前命运卡牌的效果值。session 为单人 session 或 coop 共享部分。"""
+        card_name = session.get("destiny_card", "")
+        if not card_name:
+            return default
+        return data.TOMB_DESTINY_CARDS.get(card_name, {}).get("effects", {}).get(key, default)
+
+    def _tomb_apply_entry_card_effects(self, session: dict, card_name: str):
+        """开局即时生效的命运卡牌效果（起始冥币/HP/时间/撤离要求等）。"""
+        eff = data.TOMB_DESTINY_CARDS[card_name]["effects"]
+        if "start_mingbi" in eff:
+            session["mingbi"] = session.get("mingbi", 0) + eff["start_mingbi"]
+        if "start_hp_mod" in eff:
+            session["hp"] = max(1, session["hp"] + eff["start_hp_mod"])
+            session["hp_max"] = max(1, session["hp_max"] + eff["start_hp_mod"])
+        if "time_mult" in eff:
+            new_limit = int(session["time_limit"] * eff["time_mult"])
+            session["time_limit"] = new_limit
+            session["deadline"] = session["started_at"] + new_limit
+        if "required_mult" in eff:
+            session["required"] = int(session["required"] * eff["required_mult"])
+
     # ---- 双排辅助 ----
     _TOMB_PLAYER_KEYS = frozenset({
         "player_pos", "prev_pos", "visited", "hp", "hp_max",
@@ -4707,6 +4739,12 @@ class PetParkPlugin(Star):
                 if k in pdata:
                     val = pdata[k]
                     virtual[k] = copy.deepcopy(val) if isinstance(val, (dict, set, list)) else val
+            # 命运卡牌共享字段 + 玩家私有字段
+            for extra_k in ("destiny_card", "destiny_choices"):
+                if extra_k in coop:
+                    virtual[extra_k] = coop[extra_k]
+            if "_auto_revive_used" in pdata:
+                virtual["_auto_revive_used"] = pdata["_auto_revive_used"]
             virtual["_coop_parent"] = coop
             virtual["_is_coop"] = True
             virtual["_coop_self_qq"] = qq
@@ -4731,6 +4769,10 @@ class PetParkPlugin(Star):
             if k in virtual:
                 val = virtual[k]
                 pdata[k] = copy.deepcopy(val) if isinstance(val, (dict, set, list)) else val
+        # 命运卡牌私有字段同步回玩家数据
+        for extra_k in ("_auto_revive_used",):
+            if extra_k in virtual:
+                pdata[extra_k] = virtual[extra_k]
         # 同步可能被 _tomb_refresh_map 更新的共享字段
         if "image" in virtual:
             coop["image"] = virtual["image"]
@@ -4978,6 +5020,19 @@ class PetParkPlugin(Star):
             f"{pending_line}"
         )
 
+    def _tomb_format_card_choices(self, choices: list[str], is_coop: bool = False) -> str:
+        """格式化命运卡牌选择消息。"""
+        lines = ["## 🎴 命运抉择"]
+        if is_coop:
+            lines.append("队长请选择一张命运卡牌（发送 1/2/3）：")
+        else:
+            lines.append("请选择一张命运卡牌（发送 1/2/3）：")
+        lines.append("")
+        for i, name in enumerate(choices, 1):
+            card = data.TOMB_DESTINY_CARDS[name]
+            lines.append(f"{i}. 【{name}】{card['desc']}")
+        return "\n".join(lines)
+
     def _tomb_enter(self, player: dict, tokens: list[str]) -> tuple[str, str | None]:
         p = self._need_pet(player)
         if not p:
@@ -5121,7 +5176,15 @@ class PetParkPlugin(Star):
                 f"起点：({entrance_pos['x']},{entrance_pos['y']})\n"
                 f"> 上/下/左/右 移动　摸看 探索　摸态 状态"
             )
-            return text, image_md
+            # 命运卡牌选择
+            choices = self._tomb_draw_cards()
+            shared["destiny_choices"] = choices
+            shared["destiny_card"] = ""
+            shared["_entry_text"] = text
+            shared["_entry_image_md"] = image_md
+            for pqq in (my_qq, teammate_qq):
+                shared["players"][pqq]["status"] = "pick_card"
+            return self._tomb_format_card_choices(choices, is_coop=True), None
 
         # 单人模式
         equipped = st.get("equipped_weapon", "")
@@ -5168,7 +5231,66 @@ class PetParkPlugin(Star):
             f"操作：上/下/左/右　摸看　摸态\n"
             f"> 你当前在 ({ex},{ey})，剩余时间 {cfg['time'] // 60}:00"
         )
-        return text, image_md
+        # 命运卡牌选择
+        choices = self._tomb_draw_cards()
+        session["destiny_choices"] = choices
+        session["destiny_card"] = ""
+        session["_entry_text"] = text
+        session["_entry_image_md"] = image_md
+        session["status"] = "pick_card"
+        return self._tomb_format_card_choices(choices, is_coop=False), None
+
+    def _tomb_pick_card(self, player: dict, choice: str) -> str | tuple[str, str | None]:
+        """处理命运卡牌选择（1/2/3）。"""
+        session, is_coop = self._tomb_prepare(player)
+        if not session:
+            return "你没有进行中的摸金探险。"
+        if session.get("status") != "pick_card":
+            return "当前不需要选择卡牌。"
+        # 双排：只有队长能选卡
+        coop = self._tomb_get_coop(player) if is_coop else None
+        if is_coop and coop and str(player.get("qq", "")) != coop.get("leader", ""):
+            return "只有队长可以选择命运卡牌。"
+        # 从共享或 solo session 读取 choices
+        src = coop if coop else session
+        choices = src.get("destiny_choices", [])
+        try:
+            idx = int(choice) - 1
+        except ValueError:
+            return "请输入 1/2/3 选择卡牌。"
+        if idx < 0 or idx >= len(choices):
+            return "请输入 1/2/3 选择卡牌。"
+
+        card_name = choices[idx]
+        # 应用卡牌（操作 session 以影响 prepare 返回的视图）
+        session["destiny_card"] = card_name
+        session["destiny_choices"] = []
+        self._tomb_apply_entry_card_effects(session, card_name)
+        # 恢复状态 + 清理临时字段
+        if is_coop and coop:
+            coop["destiny_card"] = card_name
+            coop["destiny_choices"] = []
+            for pqq in coop.get("players", {}):
+                coop["players"][pqq]["status"] = "active"
+            # 同步 card effects 对 time/required/hp 的修改回 coop
+            for k in ("time_limit", "deadline", "required", "hp", "hp_max", "mingbi"):
+                if k in session:
+                    # 这些 effects 可能改了共享值，从 session 写回 coop
+                    if k in self._TOMB_SHARED_KEYS:
+                        coop[k] = session[k]
+            self._tomb_commit(player, session, is_coop)
+            entry_text = coop.pop("_entry_text", "## 进入摸金（双排）")
+            entry_image = coop.pop("_entry_image_md", None)
+        else:
+            session["destiny_choices"] = []
+            session["status"] = "exploring"
+            entry_text = session.pop("_entry_text", "## 进入摸金")
+            entry_image = session.pop("_entry_image_md", None)
+
+        return (
+            f"🎴 你选择了【{card_name}】\n{data.TOMB_DESTINY_CARDS[card_name]['desc']}\n\n{entry_text}",
+            entry_image,
+        )
 
     def _tomb_validate_entry(self, player: dict, st: dict, p: dict, difficulty: int, cfg: dict) -> str | None:
         """验证玩家是否满足进入摸金的条件，返回 None 表示通过，否则返回错误信息。"""
@@ -5221,6 +5343,8 @@ class PetParkPlugin(Star):
             return "你没有进行中的摸金探险，发送『摸进 难度』开始。"
         if session.get("status") in ("downed",):
             return "你已倒地，无法移动。等待队友「摸金救援」。"
+        if session.get("status") == "pick_card":
+            return "请先选择命运卡牌（发送 1/2/3）。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5283,8 +5407,8 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
-            return "你已倒地，无法探索。"
+        if session.get("status") in ("downed", "pick_card"):
+            return "当前状态无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5307,9 +5431,9 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
+        if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
-            return "你已倒地，无法执行此操作。"
+            return "当前状态无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5327,6 +5451,10 @@ class PetParkPlugin(Star):
         gain = random.randint(base_min, base_max)
         if session["buffs"].pop("chest_bonus", False):
             gain = int(gain * 1.3)
+        # 命运卡牌效果
+        chest_mult = self._get_card_effect(session, "chest_mingbi_mult", 1.0)
+        chest_bonus = self._get_card_effect(session, "chest_mingbi_bonus", 0)
+        gain = int(gain * chest_mult) + int(chest_bonus)
         session["mingbi"] += gain
         cells[y][x] = "."
         self._tomb_refresh_map(session)
@@ -5351,9 +5479,9 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
+        if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
-            return "你已倒地，无法执行此操作。"
+            return "当前状态无法执行此操作。"
         if len(tokens) < 2:
             return "用法：摸用 道具名"
         name = tokens[1]
@@ -5376,10 +5504,14 @@ class PetParkPlugin(Star):
             inv.pop(name, None)
         if effect == "heal_tomb":
             heal = data.TOMB_ITEMS[name].get("amount", 30)
+            heal_mult = self._get_card_effect(session, "heal_item_mult", 1.0)
+            heal = max(1, int(heal * heal_mult))
             session["hp"] = min(session["hp_max"], session["hp"] + heal)
             return f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
         if effect == "heal_tomb_pct":
             heal = max(1, int(session["hp_max"] * data.TOMB_ITEMS[name].get("amount", 0.3)))
+            heal_mult = self._get_card_effect(session, "heal_item_mult", 1.0)
+            heal = max(1, int(heal * heal_mult))
             session["hp"] = min(session["hp_max"], session["hp"] + heal)
             return f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
         if effect == "avoid_monster":
@@ -5403,8 +5535,8 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
-            return "你已倒地，无法撤离。"
+        if session.get("status") in ("downed", "pick_card"):
+            return "当前状态无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5458,8 +5590,12 @@ class PetParkPlugin(Star):
         if pending:
             pmap = {"C": "宝箱待开（开箱/跳过）", "M": "怪物待战（战斗/逃跑）", "S": "祭坛待祭拜（祭拜/跳过）"}
             pending_text = f"\n● 当前：{pmap.get(pending['type'], '')}"
+        card_line = ""
+        if session.get("destiny_card"):
+            card_line = f"● 命运卡牌：【{session['destiny_card']}】\n"
         text = (
             f"## 🏺 摸态 · {cfg['name']}\n"
+            f"{card_line}"
             f"● 位置：({pos['x']},{pos['y']})\n"
             f"● 摸金HP：{session['hp']}/{session['hp_max']}\n"
             f"● 战力：{power}　武器：{wep_text}\n"
@@ -5720,6 +5856,11 @@ class PetParkPlugin(Star):
         if cell == "M":
             if avoid_monster:
                 return "🕯 引路香生效，你悄悄绕过怪物，怪物仍在原地。"
+            enc_mult = self._get_card_effect(session, "monster_encounter_mult", 1.0)
+            if enc_mult < 1.0 and random.random() > enc_mult:
+                cells[y][x] = "."
+                self._tomb_refresh_map(session)
+                return "👹 前方有怪物痕迹…但似乎已经离开了（命运卡牌）。"
             session["pending"] = {"type": "M", "x": x, "y": y}
             return f"👹 遭遇怪物！发送『战斗』迎战，或『逃跑』（剩余 {session.get('escapes', 0)} 次）。"
         if cell == "S":
@@ -5729,18 +5870,25 @@ class PetParkPlugin(Star):
             cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
             lo, hi = cfg.get("chest_mingbi", (10, 40))
             gain = random.randint(max(5, lo // 3), max(15, hi // 2))
+            gold_mult = self._get_card_effect(session, "gold_mult", 1.0)
+            gain = max(1, int(gain * gold_mult))
             session["mingbi"] += gain
             cells[y][x] = "."
             self._tomb_refresh_map(session)
             return f"💰 踩到散落的冥币，获得 {gain} 冥币！"
         if cell == "G":
-            dmg = max(1, int(session["hp_max"] * 0.10))
+            if self._get_card_effect(session, "gas_immune", False):
+                return "☠️ 毒雾弥漫…但你免疫毒雾（命运卡牌），安然通过。"
+            gas_mult = self._get_card_effect(session, "gas_damage_mult", 1.0)
+            dmg = max(1, int(session["hp_max"] * 0.10 * gas_mult))
             session["hp"] = max(0, session["hp"] - dmg)
             death = self._tomb_after_damage(player, p, session)
             if death:
                 return f"☠️ 踏入毒雾区，摸金HP -{dmg}。\n{death}"
             return f"☠️ 踏入毒雾区，摸金HP -{dmg}（毒雾不散，下次踩到仍有效果）。"
         if cell == "P":
+            if self._get_card_effect(session, "portal_blocked", False):
+                return "🌀 传送门闪烁着…但被命运之力封印，无法使用。"
             floors = [(fx, fy) for fy in range(len(cells)) for fx in range(len(cells[0]))
                       if cells[fy][fx] in (".", "E") and (fx, fy) != (x, y)]
             if floors:
@@ -5752,7 +5900,10 @@ class PetParkPlugin(Star):
                 return f"🌀 传送门将你吸入，传送到了 ({tx},{ty})！"
             return "🌀 传送门闪烁了一下…但似乎已经失效。"
         if cell == "H":
-            heal = max(1, int(session["hp_max"] * 0.30))
+            if self._get_card_effect(session, "spring_blocked", False):
+                return "💚 生命泉…但泉水已干涸（命运卡牌），无法回复。"
+            spring_mult = self._get_card_effect(session, "spring_heal_mult", 1.0)
+            heal = max(1, int(session["hp_max"] * 0.30 * spring_mult))
             session["hp"] = min(session["hp_max"], session["hp"] + heal)
             cells[y][x] = "."
             self._tomb_refresh_map(session)
@@ -5767,18 +5918,26 @@ class PetParkPlugin(Star):
     def _tomb_trap_event(self, player: dict, p: dict, session: dict) -> str:
         outcomes = [o for o, _ in data.TOMB_TRAP_OUTCOMES]
         weights = [w for _, w in data.TOMB_TRAP_OUTCOMES]
+        # 命运卡牌：陷阱避开率加成
+        dodge_bonus = self._get_card_effect(session, "trap_dodge_bonus", 0.0)
+        if dodge_bonus > 0:
+            # 增加 avoid 的权重
+            total_w = sum(weights)
+            bonus_w = int(total_w * dodge_bonus)
+            weights[0] += bonus_w
         outcome = random.choices(outcomes, weights=weights, k=1)[0]
+        trap_dmg_mult = self._get_card_effect(session, "trap_damage_mult", 1.0)
         if outcome == "avoid":
             return "🪤 你险险避开了一个陷阱。"
         if outcome == "light":
-            dmg = 15
+            dmg = max(1, int(15 * trap_dmg_mult))
             session["hp"] = max(0, session["hp"] - dmg)
             death = self._tomb_after_damage(player, p, session)
             if death:
                 return f"☠️ 触发陷阱！摸金HP -{dmg}。\n{death}"
             return f"☠️ 触发陷阱！摸金HP -{dmg}。"
         # heavy
-        dmg = 30
+        dmg = max(1, int(30 * trap_dmg_mult))
         session["hp"] = max(0, session["hp"] - dmg)
         session["stunned"] = session.get("stunned", 0) + 1
         death = self._tomb_after_damage(player, p, session)
@@ -5805,6 +5964,13 @@ class PetParkPlugin(Star):
             if session.get("_is_coop"):
                 return "🪦 招魂幡触发，摸金HP恢复到1！"
             return self._tomb_settle(player, p, session, "revive")
+        # 命运卡牌：涅槃（自动复活1次）
+        if self._get_card_effect(session, "auto_revive", False):
+            if not session.get("_auto_revive_used"):
+                session["_auto_revive_used"] = True
+                revive_hp = int(self._get_card_effect(session, "revive_hp", 40))
+                session["hp"] = revive_hp
+                return f"🔥 命运卡牌【涅槃】触发！摸金HP恢复到 {revive_hp}（本局仅1次）。"
         # 双排倒地逻辑
         if session.get("_is_coop"):
             session["status"] = "downed"
@@ -5841,15 +6007,19 @@ class PetParkPlugin(Star):
         cells = session["map"]["cells"]
         x, y = session["player_pos"]["x"], session["player_pos"]["y"]
 
-        # 武器耐久 -1
+        # 武器耐久 -1（命运卡牌可能加倍消耗）
         weapon = session.get("weapon", "")
         broke_text = ""
         if weapon:
-            remaining = self.store.decrement_tomb_weapon(player, weapon)
-            if remaining is not None and remaining == 0:
-                session["weapon"] = ""
-                session["weapon_attack"] = 0
-                broke_text = f"　⚠️『{weapon}』耐久耗尽破碎！"
+            dura_mult = self._get_card_effect(session, "weapon_durability_mult", 1.0)
+            dura_loss = max(1, int(dura_mult))
+            for _ in range(dura_loss):
+                remaining = self.store.decrement_tomb_weapon(player, weapon)
+                if remaining is not None and remaining == 0:
+                    session["weapon"] = ""
+                    session["weapon_attack"] = 0
+                    broke_text = f"　⚠️『{weapon}』耐久耗尽破碎！"
+                    break
 
         if not summoned and cells[y][x] in ("M", "B"):
             cells[y][x] = "."
@@ -5866,23 +6036,43 @@ class PetParkPlugin(Star):
             return f"⚔️ 镇尸钉锁定必胜！击败{label}获得 {gain} 冥币。{broke_text}"
 
         level = self.store.get_tomb_level(player)
-        my_power = data.tomb_player_attack(level, session.get("weapon_attack", 0))
+        weapon_atk = session.get("weapon_attack", 0)
+        # 命运卡牌：武器攻击倍率
+        weapon_mult = self._get_card_effect(session, "weapon_attack_mult", 1.0)
+        weapon_atk = int(weapon_atk * weapon_mult)
+        my_power = data.tomb_player_attack(level, weapon_atk)
+        # 命运卡牌：玩家攻击倍率
+        player_atk_mult = self._get_card_effect(session, "player_attack_mult", 1.0)
+        my_power = int(my_power * player_atk_mult)
         b = data.TOMB_BATTLE
 
         # 闪避：免伤撤退，怪物仍在原地
         if random.random() < b["dodge_chance"]:
             return f"💨 你灵巧闪避，全身而退，怪物仍在原地。{broke_text}"
 
-        player_score = my_power * random.uniform(*b["player_luck"])
+        # 命运卡牌：随机范围扩展
+        luck_mult = self._get_card_effect(session, "luck_range_mult", 1.0)
+        pl_low = 1.0 - (1.0 - b["player_luck"][0]) * luck_mult
+        pl_high = 1.0 + (b["player_luck"][1] - 1.0) * luck_mult
+        ml_low = 1.0 - (1.0 - b["monster_luck"][0]) * luck_mult
+        ml_high = 1.0 + (b["monster_luck"][1] - 1.0) * luck_mult
+        player_score = my_power * random.uniform(pl_low, pl_high)
         base_monster_power = cfg["monster_power"]
         if is_boss:
             base_monster_power = int(base_monster_power * data.TOMB_BOSS_POWER_MULT)
-        monster_score = base_monster_power * random.uniform(*b["monster_luck"])
+            # 命运卡牌：Boss 攻击倍率
+            boss_atk_mult = self._get_card_effect(session, "boss_attack_mult", 1.0)
+            base_monster_power = int(base_monster_power * boss_atk_mult)
+        # 命运卡牌：怪物攻击/血量倍率
+        mon_atk_mult = self._get_card_effect(session, "monster_attack_mult", 1.0)
+        mon_hp_mult = self._get_card_effect(session, "monster_hp_mult", 1.0)
+        monster_score = int(base_monster_power * mon_atk_mult * mon_hp_mult * random.uniform(ml_low, ml_high))
         events = []
         if random.random() < b["miss_chance"]:
             player_score *= b["miss_mult"]
             events.append("失手")
-        if random.random() < b["crit_chance"]:
+        crit_bonus = self._get_card_effect(session, "crit_chance_bonus", 0.0)
+        if random.random() < (b["crit_chance"] + crit_bonus):
             player_score *= b["crit_mult"]
             events.append("暴击")
         player_score = int(player_score)
@@ -5896,6 +6086,9 @@ class PetParkPlugin(Star):
         if player_score >= monster_score:
             ratio = (player_score - monster_score) / max(1, monster_score)
             gain = int(random.randint(gain_min, gain_max) * (1 + min(1.0, ratio)))
+            # 命运卡牌：战斗冥币归零
+            if self._get_card_effect(session, "combat_mingbi_zero", False):
+                gain = 0
             session["mingbi"] += gain
             boss_extra = ""
             if is_boss and random.random() < data.TOMB_BOSS_DROP_CHANCE:
@@ -5909,6 +6102,9 @@ class PetParkPlugin(Star):
                 hp_loss, tier = 5, "大胜"
             else:
                 hp_loss, tier = 10, "小胜"
+            # 命运卡牌：战后扣血/回血
+            hp_loss += int(self._get_card_effect(session, "post_battle_hp_loss", 0))
+            hp_loss = max(0, hp_loss - int(self._get_card_effect(session, "post_battle_hp_heal", 0)))
             label = "BOSS！" if is_boss else ""
             session["hp"] = max(0, session["hp"] - hp_loss)
             death = self._tomb_after_damage(player, p, session)
@@ -5941,9 +6137,9 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
+        if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
-            return "你已倒地，无法执行此操作。"
+            return "当前状态无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
@@ -5964,15 +6160,17 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
+        if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
-            return "你已倒地，无法执行此操作。"
+            return "当前状态无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
         pending = session.get("pending")
         if not pending or pending.get("type") != "S":
             return "这里没有祭坛（移动到祭坛格才会发现）。"
+        if self._get_card_effect(session, "altar_blocked", False):
+            return "🌀 祭坛被命运之力封印，无法祭拜。"
         x, y = pending["x"], pending["y"]
         cells = session["map"]["cells"]
         cells[y][x] = "."
@@ -5987,18 +6185,19 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
+        if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
-            return "你已倒地，无法执行此操作。"
+            return "当前状态无法执行此操作。"
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
         pending = session.get("pending")
         if not pending or pending.get("type") != "M":
             return "这里没有可以逃跑的怪物。"
-        if session.get("escapes", 0) <= 0:
+        if session.get("escapes", 0) <= 0 and not self._get_card_effect(session, "escape_guaranteed", False):
             return "🏃 逃跑次数已用完，只能战斗或使用道具。"
-        session["escapes"] -= 1
+        if not self._get_card_effect(session, "escape_guaranteed", False):
+            session["escapes"] -= 1
         x, y = pending["x"], pending["y"]
         cells = session["map"]["cells"]
         cells[y][x] = "."
@@ -6017,9 +6216,9 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
-        if session.get("status") == "downed":
+        if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
-            return "你已倒地，无法执行此操作。"
+            return "当前状态无法执行此操作。"
         if not session.get("pending"):
             return "当前没有待交互的对象。"
         pending = session["pending"]
@@ -6725,27 +6924,36 @@ class PetParkPlugin(Star):
         cx = ox + px * cell + cell // 2
         cy = oy + py * cell + cell // 2
 
-        # 全黑底图
-        fog = Image.new("RGB", img.size, (5, 5, 5))
-        # 视野遮罩：内圈清晰，外圈微亮，之外全黑
-        mask = Image.new("L", img.size, 0)
-        draw_mask = ImageDraw.Draw(mask)
-        draw_mask.ellipse(
-            [cx - cell * 3, cy - cell * 3, cx + cell * 3, cy + cell * 3],
-            fill=90,
-        )
-        draw_mask.ellipse(
-            [cx - cell * 2, cy - cell * 2, cx + cell * 2, cy + cell * 2],
-            fill=255,
-        )
-        fog.paste(img, (0, 0), mask)
+        # 命运卡牌：无迷雾
+        if self._get_card_effect(session, "no_fog", False):
+            fog = img  # 全图可见，无需迷雾
+        else:
+            # 命运卡牌：视野加成
+            vision_bonus = int(self._get_card_effect(session, "vision_bonus", 0))
+            inner_r = (2 + vision_bonus) * cell
+            outer_r = inner_r + cell
+            # 全黑底图
+            fog_img = Image.new("RGB", img.size, (5, 5, 5))
+            # 视野遮罩：内圈清晰，外圈微亮，之外全黑
+            mask = Image.new("L", img.size, 0)
+            draw_mask = ImageDraw.Draw(mask)
+            draw_mask.ellipse(
+                [cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r],
+                fill=90,
+            )
+            draw_mask.ellipse(
+                [cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r],
+                fill=255,
+            )
+            fog_img.paste(img, (0, 0), mask)
 
-        # 顶部标题栏和底部图例不受迷雾遮挡，始终可见
-        header_region = img.crop((0, 0, img.width, oy))
-        fog.paste(header_region, (0, 0))
-        footer_top = oy + h * cell
-        footer_region = img.crop((0, footer_top, img.width, img.height))
-        fog.paste(footer_region, (0, footer_top))
+            # 顶部标题栏和底部图例不受迷雾遮挡，始终可见
+            header_region = img.crop((0, 0, img.width, oy))
+            fog_img.paste(header_region, (0, 0))
+            footer_top = oy + h * cell
+            footer_region = img.crop((0, footer_top, img.width, img.height))
+            fog_img.paste(footer_region, (0, footer_top))
+            fog = fog_img
 
         # 玩家定位标记（青色）
         draw = ImageDraw.Draw(fog)
@@ -6781,6 +6989,19 @@ class PetParkPlugin(Star):
                         draw.ellipse([tcx - tr // 2, tcy - tr // 2, tcx + tr // 2, tcy + tr // 2],
                                     fill=data.TOMB_COOP_TEAMMATE_COLOR)
                     break
+
+        # 命运卡牌：Boss 位置穿透迷雾可见
+        if self._get_card_effect(session, "boss_visible", False):
+            for by in range(h):
+                for bx in range(w):
+                    if cells[by][bx] == "B":
+                        bcx = ox + bx * cell + cell // 2
+                        bcy = oy + by * cell + cell // 2
+                        tr = cell // 4
+                        draw.ellipse(
+                            [bcx - tr, bcy - tr, bcx + tr, bcy + tr],
+                            fill=(255, 60, 60), outline=(255, 200, 200), width=2,
+                        )
 
         filename = f"tomb_p_{uuid.uuid4().hex}.png"
         path = self.store.custom_images_dir / filename

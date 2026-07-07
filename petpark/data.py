@@ -1373,6 +1373,90 @@ TOMB_ITEMS = {
     },
 }
 
+# 摸金命运卡牌（开局随机抽 3 选 1，每局不同的 Buff/Debuff）
+TOMB_DESTINY_CARDS = {
+    "财迷心窍": {
+        "desc": "宝箱冥币×1.8，但怪物攻击×1.5",
+        "effects": {"chest_mingbi_mult": 1.8, "monster_attack_mult": 1.5},
+    },
+    "鹰眼": {
+        "desc": "全图无迷雾，但时间-25%",
+        "effects": {"no_fog": True, "time_mult": 0.75},
+    },
+    "铁胃": {
+        "desc": "毒雾免疫，但祭坛无法使用",
+        "effects": {"gas_immune": True, "altar_blocked": True},
+    },
+    "先知": {
+        "desc": "Boss 位置穿透迷雾可见，但传送门禁用",
+        "effects": {"boss_visible": True, "portal_blocked": True},
+    },
+    "狂战士": {
+        "desc": "玩家攻击+40%，但战后扣 8 HP",
+        "effects": {"player_attack_mult": 1.4, "post_battle_hp_loss": 8},
+    },
+    "摸金校尉": {
+        "desc": "开箱额外+25 冥币，但怪物遭遇率+30%",
+        "effects": {"chest_mingbi_bonus": 25, "monster_encounter_mult": 1.3},
+    },
+    "幸运星": {
+        "desc": "陷阱避开率+30%，但宝箱冥币-25%",
+        "effects": {"trap_dodge_bonus": 0.3, "chest_mingbi_mult": 0.75},
+    },
+    "吸血鬼": {
+        "desc": "战胜回复 15 HP，但治疗道具效果-50%",
+        "effects": {"post_battle_hp_heal": 15, "heal_item_mult": 0.5},
+    },
+    "时间掌控者": {
+        "desc": "时间+40%，但怪物血量×1.5",
+        "effects": {"time_mult": 1.4, "monster_hp_mult": 1.5},
+    },
+    "富可敌国": {
+        "desc": "起始+80 冥币，但撤离要求+40%",
+        "effects": {"start_mingbi": 80, "required_mult": 1.4},
+    },
+    "武器大师": {
+        "desc": "武器攻击×2，但耐久消耗×2",
+        "effects": {"weapon_attack_mult": 2.0, "weapon_durability_mult": 2.0},
+    },
+    "和平主义者": {
+        "desc": "逃跑必成功，但战斗不会掉落冥币",
+        "effects": {"escape_guaranteed": True, "combat_mingbi_zero": True},
+    },
+    "淘金热": {
+        "desc": "金币堆收益×2，但毒雾伤害×2",
+        "effects": {"gold_mult": 2.0, "gas_damage_mult": 2.0},
+    },
+    "涅槃": {
+        "desc": "死亡自动复活 1 次（40 HP），但初始 HP-25",
+        "effects": {"auto_revive": True, "revive_hp": 40, "start_hp_mod": -25},
+    },
+    "赌徒": {
+        "desc": "伤害随机范围扩大到±40%",
+        "effects": {"luck_range_mult": 1.4},
+    },
+    "潜行者": {
+        "desc": "怪物遭遇率-40%，但 Boss 战力+40%",
+        "effects": {"monster_encounter_mult": 0.6, "boss_attack_mult": 1.4},
+    },
+    "回春体": {
+        "desc": "生命泉回复×2，但陷阱伤害×1.5",
+        "effects": {"spring_heal_mult": 2.0, "trap_damage_mult": 1.5},
+    },
+    "天选之人": {
+        "desc": "暴击率+10%，陷阱避开率+10%（纯正面）",
+        "effects": {"crit_chance_bonus": 0.1, "trap_dodge_bonus": 0.1},
+    },
+    "死灵法师": {
+        "desc": "战胜回复 10 HP，但生命泉无法使用",
+        "effects": {"post_battle_hp_heal": 10, "spring_blocked": True},
+    },
+    "探险家": {
+        "desc": "视野+1（纯正面）",
+        "effects": {"vision_bonus": 1},
+    },
+}
+
 # 成功撤离后额外经验（区间随机，不影响现有财富），失败得一半
 TOMB_SUCCESS_EXP_RANGE = {
     1: (800, 2000),
