@@ -5026,7 +5026,7 @@ class PetParkPlugin(Star):
         x, y = session["player_pos"]["x"], session["player_pos"]["y"]
         cells = session["map"]["cells"]
         if cells[y][x] != "E" and cells[y][x] != "X":
-            return "❌ 只有回到入口/出口才能撤离。"
+            return "❌ 只有回到起点或到达出口才能撤离。"
         if session["mingbi"] < session["required"]:
             return (
                 f"❌ 你还未凑够冥币（当前 {session['mingbi']} / {session['required']}），"
@@ -5191,7 +5191,7 @@ class PetParkPlugin(Star):
         if cell == "X":
             return "🚪 你到达了出口，发送『摸撤』可结算离开。"
         if cell == "E":
-            return "🚪 你回到了入口，发送『摸撤』可撤离。"
+            return ""
         if cell == "T":
             cells[y][x] = "."
             self._tomb_refresh_map(session)
@@ -5984,7 +5984,7 @@ class PetParkPlugin(Star):
         cells = session["map"]["cells"]
         h, w = len(cells), len(cells[0])
         px, py = session["player_pos"]["x"], session["player_pos"]["y"]
-        names = {"E": "入口", "X": "出口", "M": "怪物", "C": "宝箱", "T": "陷阱", "S": "祭坛", ".": "空地", "#": "墙壁"}
+        names = {"X": "出口", "M": "怪物", "C": "宝箱", "T": "陷阱", "S": "祭坛", ".": "空地", "#": "墙壁"}
         found = []
         for dy in range(-radius, radius + 1):
             for dx in range(-radius, radius + 1):
@@ -5993,10 +5993,11 @@ class PetParkPlugin(Star):
                 nx, ny = px + dx, py + dy
                 if 0 <= nx < w and 0 <= ny < h:
                     c = cells[ny][nx]
-                    if c != "." and c != "#":
-                        dir_name = {(0, -1): "北", (0, 1): "南", (-1, 0): "西", (1, 0): "东"}.get(
-                            (dx, dy), f"({dx},{dy})"
-                        )
+                    if c != "." and c != "#" and c != "E":
+                        dir_name = {
+                            (0, -1): "北", (0, 1): "南", (-1, 0): "西", (1, 0): "东",
+                            (-1, -1): "西北", (1, -1): "东北", (-1, 1): "西南", (1, 1): "东南",
+                        }.get((dx, dy), f"({dx},{dy})")
                         found.append(f"{dir_name}边有**{names.get(c, c)}**")
         if not found:
             return "四周看起来空荡荡的。"
