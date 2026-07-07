@@ -6732,7 +6732,7 @@ class PetParkPlugin(Star):
         cell = data.TOMB_CELL_SIZE
         pad = data.TOMB_PADDING
         header_h = 44
-        footer_h = 36
+        footer_h = 64
         img_w = w * cell + pad * 2
         img_h = h * cell + pad * 2 + header_h + footer_h
 
@@ -6872,17 +6872,19 @@ class PetParkPlugin(Star):
                     crown_y = cy_c - b_r - 3
                     draw.polygon([(cx_c - 5, crown_y), (cx_c + 5, crown_y), (cx_c + 3, crown_y - 5), (cx_c - 3, crown_y - 5)], fill=(255, 200, 50))
 
-        # 底部图例
-        legend = (
-            f"红菱=出口  金箱=宝箱  白骷髅=怪物  紫刺=陷阱  蓝珠=祭坛  "
-            f"黄圆=金币  绿雾=毒雾  紫环=传送  青滴=生命泉  "
-            f"{'红骷髅=BOSS  ' if cfg.get('bosses', 0) > 0 else ''}"
-            f"需带回 {cfg['required']} 冥币"
-        )
-        if small_font:
-            draw.text((pad, oy + h * cell + 10), legend, fill=(170, 170, 170), font=small_font)
-        else:
-            draw.text((pad, oy + h * cell + 10), legend, fill=(170, 170, 170))
+        # 底部图例（拆为三行，避免小图宽度溢出）
+        base_y = oy + h * cell + 8
+        line_spacing = 16
+        legend_lines = [
+            "红菱=出口  金箱=宝箱  白骷髅=怪物  紫刺=陷阱",
+            "蓝珠=祭坛  黄圆=金币  绿雾=毒雾  紫环=传送",
+            f"青滴=生命泉  {'红骷髅=BOSS  ' if cfg.get('bosses', 0) > 0 else ''}需带回 {cfg['required']} 冥币",
+        ]
+        for i, line in enumerate(legend_lines):
+            if small_font:
+                draw.text((pad, base_y + i * line_spacing), line, fill=(170, 170, 170), font=small_font)
+            else:
+                draw.text((pad, base_y + i * line_spacing), line, fill=(170, 170, 170))
 
         filename = f"tomb_{uuid.uuid4().hex}.png"
         path = self.store.custom_images_dir / filename
