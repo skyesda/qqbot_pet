@@ -150,6 +150,8 @@ KNOWN_COMMANDS = {
     # 副本 / 剧情
     "宠物副本",
     "进入副本",
+    "飞升副本",
+    "挑战神仙",
     "深渊秘境",
     "深渊介绍",
     "深渊商店",
@@ -944,6 +946,10 @@ class PetParkPlugin(Star):
             return self._dungeon_list()
         if cmd == "进入副本":
             return self._enter_dungeon(player, tokens)
+        if cmd == "飞升副本":
+            return self._ascend_dungeon_list()
+        if cmd == "挑战神仙":
+            return self._enter_ascend_dungeon(player, tokens)
         if cmd == "深渊秘境":
             return self._abyss_dungeon(player)
         if cmd == "深渊介绍":
@@ -4143,6 +4149,103 @@ class PetParkPlugin(Star):
             "┗-★---信☆息---★-┛"
         )
         return f"{head}\n{desc}\n{body}"
+
+    # =====================================================================
+    # 飞升副本：挑战神仙
+    # =====================================================================
+    def _ascend_dungeon_list(self) -> str:
+        lines = [
+            "## 🏔 飞升副本",
+            "> 飞升后解锁，挑战各路神仙获取仙元。",
+            "> 消耗 **30** 精力，冷却 **20 分钟**。",
+            "",
+        ]
+        for lv in sorted(data.ASCEND_DUNGEONS.keys()):
+            d = data.ASCEND_DUNGEONS[lv]
+            low, high = d["xianyuan"]
+            lines.append(
+                f"- **{d['name']}** `Lv{lv}`　战力 {d['power']}\n"
+                f"　　仙元 {low}~{high}　积分 {d['jifen']}"
+            )
+        lines.append("\n> 使用 `挑战神仙 等级` 进入对应副本（如 `挑战神仙 120`）。")
+        return "\n".join(lines)
+
+    def _enter_ascend_dungeon(self, player: dict, tokens: list[str]) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你没有宠物。"
+        busy = self._busy_reason(p)
+        if busy:
+            return busy
+        if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
+            return "只有宠物飞升后才能挑战神仙。"
+        if len(tokens) < 2:
+            return "用法：挑战神仙 等级（如：挑战神仙 120）"
+        try:
+            level = int(tokens[1])
+        except ValueError:
+            return "请输入正确的等级数字（120/130/.../220）。"
+        if level not in data.ASCEND_DUNGEONS:
+            return "飞升副本等级为 120~220，每 10 级一档。"
+        d = data.ASCEND_DUNGEONS[level]
+        if p["level"] < d["level_req"]:
+            return f"挑战『{d['name']}』需要宠物达到 Lv{d['level_req']}。"
+        cd = self._cooldown_block(player, "ascend_dungeon", "挑战神仙")
+        if cd:
+            return cd
+        petmod.refresh_energy(p)
+        if p["energy"] < d["energy"]:
+            return f"精力不足（需 {d['energy']}，当前 {p['energy']}）。"
+        p["energy"] -= d["energy"]
+        self.store.set_cooldown(player, "ascend_dungeon", data.ASCEND_DUNGEON_COOLDOWN)
+        return self._ascend_dungeon_battle(player, p, level, d)
+
+    def _ascend_dungeon_battle(self, player: dict, p: dict, level: int, d: dict) -> str:
+        monster = d["name"]
+        power = d["power"]
+        my_power = petmod.battle_power(p)
+        # 战力 ±10% 浮动后比拼神仙战力
+        roll = int(my_power * random.uniform(0.9, 1.1))
+        win = roll >= power
+        nick = p["nickname"]
+        head = f"## ⚔ {nick} VS {monster}"
+        next_time = time.strftime(
+            "%Y/%m/%d %H:%M:%S",
+            time.localtime(time.time() + data.ASCEND_DUNGEON_COOLDOWN),
+        )
+        if win:
+            xianyuan_gain = random.randint(*d["xianyuan"])
+            jifen_gain = d["jifen"]
+            petmod.add_xianyuan(p, xianyuan_gain)
+            self.store.add_currency(player, "积分", jifen_gain)
+            self._inc_stat(player, "ascended_dungeon_clear")
+            drop_text = ""
+            drop = d.get("drop")
+            if drop and random.random() < drop["chance"]:
+                self.store.add_item(player, drop["item"], drop.get("count", 1))
+                drop_text = f"\n●掉落道具：{drop['item']} ×{drop.get('count', 1)}"
+            body = (
+                "┏-★---飞☆升---★-┓\n"
+                f"●神仙战力：{power}\n"
+                f"●你的战力：{roll}\n"
+                f"●获得仙元：{xianyuan_gain}\n"
+                f"●获得积分：{jifen_gain}{drop_text}\n"
+                f"●下次时间：{next_time}\n"
+                "┗-★---信☆息---★-┛"
+            )
+            return f"{head}\n✨ 你的『{nick}』击败『{monster}』，获得仙缘！\n{body}{self._auto_level_note(player, p)}"
+        # 失败惩罚：损失一半血量
+        p["hp"] = max(1, p["hp"] // 2)
+        body = (
+            "┏-★---飞☆升---★-┓\n"
+            f"●神仙战力：{power}\n"
+            f"●你的战力：{roll}\n"
+            "●战败，宠物身受重伤，无仙元奖励。\n"
+            f"●宠物血量：{p['hp']}/{p['hp_max']}\n"
+            f"●下次时间：{next_time}\n"
+            "┗-★---信☆息---★-┛"
+        )
+        return f"{head}\n💥 你的『{nick}』不敌『{monster}』，请恢复后再战。\n{body}"
 
     # =====================================================================
     # 深渊秘境

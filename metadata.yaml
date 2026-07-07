@@ -2,6 +2,6 @@ name: astrbot_plugin_petpark
 display_name: 宠物乐园
 desc: 宠物乐园：群聊宠物养成与对战玩法（砸蛋抽宠、商城、属性克制对战、进化飞升渡劫、姻缘繁殖、天赋觉醒、炼丹、神器秘技、副本、剧情任务、跨群挑战、排行神榜）。
 short_desc: 群聊宠物养成对战游戏插件
-version: v1.32.1
+version: v1.33.0
 author: Devin
 repo: https://github.com/skyesda/qqbot_pet
