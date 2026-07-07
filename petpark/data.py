@@ -1195,6 +1195,11 @@ TOMB_DIFFICULTIES = {
         "chests": 3,
         "traps": 2,
         "altars": 1,
+        "gold_piles": 2,
+        "gas_zones": 1,
+        "portals": 1,
+        "springs": 1,
+        "bosses": 0,
         "time": 600,
         "required": 80,
         "energy": 15,
@@ -1212,6 +1217,11 @@ TOMB_DIFFICULTIES = {
         "chests": 5,
         "traps": 3,
         "altars": 1,
+        "gold_piles": 3,
+        "gas_zones": 2,
+        "portals": 1,
+        "springs": 1,
+        "bosses": 1,
         "time": 720,
         "required": 200,
         "energy": 25,
@@ -1229,6 +1239,11 @@ TOMB_DIFFICULTIES = {
         "chests": 7,
         "traps": 4,
         "altars": 2,
+        "gold_piles": 4,
+        "gas_zones": 3,
+        "portals": 2,
+        "springs": 1,
+        "bosses": 1,
         "time": 900,
         "required": 450,
         "energy": 40,
@@ -1242,10 +1257,15 @@ TOMB_DIFFICULTIES = {
     4: {
         "name": "噩梦",
         "size": (21, 21),
-        "monsters": 10,
+        "monsters": 8,
         "chests": 9,
         "traps": 5,
         "altars": 2,
+        "gold_piles": 5,
+        "gas_zones": 4,
+        "portals": 2,
+        "springs": 2,
+        "bosses": 2,
         "time": 1200,
         "required": 900,
         "energy": 60,
@@ -1270,11 +1290,21 @@ TOMB_COLORS = {
     "chest": (200, 160, 60),
     "trap": (150, 60, 150),
     "altar": (60, 120, 180),
+    "gold": (255, 215, 0),
+    "gas": (100, 255, 80),
+    "portal": (180, 100, 255),
+    "spring": (80, 220, 240),
+    "boss": (255, 60, 20),
     "text": (220, 220, 220),
 }
 
 TOMB_CELL_SIZE = 48
 TOMB_PADDING = 24
+
+# Boss 属性加成与掉落倍率
+TOMB_BOSS_POWER_MULT = 1.5
+TOMB_BOSS_MINGBI_MULT = 3
+TOMB_BOSS_DROP_CHANCE = 1.0  # 击败 Boss 必定掉落一件摸金道具
 
 # 摸金商店道具（与主背包隔离）
 TOMB_ITEMS = {

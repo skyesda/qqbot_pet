@@ -4838,7 +4838,7 @@ class PetParkPlugin(Star):
             f"● 摸金HP：{session['hp']}/{session['hp_max']}　战力：{power}　武器：{wep_text}\n"
             f"● 逃跑次数：{session['escapes']}　需带回 **{cfg['required']}** 冥币并撤离\n"
             f"● 起点：({ex},{ey})　出口：见地图红菱标记\n"
-            f"● 图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛\n"
+            f"● 图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛　黄圆=金币　绿雾=毒雾　紫环=传送　青滴=生命泉　红骷髅=BOSS\n"
             f"● 操作：上/下/左/右　摸看　摸态\n"
             f"> 你当前在 ({ex},{ey})，剩余时间 {cfg['time'] // 60}:00"
         )
@@ -5208,6 +5208,43 @@ class PetParkPlugin(Star):
         if cell == "S":
             session["pending"] = {"type": "S", "x": x, "y": y}
             return "🌀 发现祭坛！发送『祭拜』互动，或『跳过』离开。"
+        if cell == "$":
+            cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
+            lo, hi = cfg.get("chest_mingbi", (10, 40))
+            gain = random.randint(max(5, lo // 3), max(15, hi // 2))
+            session["mingbi"] += gain
+            cells[y][x] = "."
+            self._tomb_refresh_map(session)
+            return f"💰 踩到散落的冥币，获得 {gain} 冥币！"
+        if cell == "G":
+            dmg = max(1, int(session["hp_max"] * 0.10))
+            session["hp"] = max(0, session["hp"] - dmg)
+            death = self._tomb_after_damage(player, p, session)
+            if death:
+                return f"☠️ 踏入毒雾区，摸金HP -{dmg}。\n{death}"
+            return f"☠️ 踏入毒雾区，摸金HP -{dmg}（毒雾不散，下次踩到仍有效果）。"
+        if cell == "P":
+            floors = [(fx, fy) for fy in range(len(cells)) for fx in range(len(cells[0]))
+                      if cells[fy][fx] in (".", "E") and (fx, fy) != (x, y)]
+            if floors:
+                tx, ty = random.choice(floors)
+                cells[y][x] = "."
+                self._tomb_refresh_map(session)
+                session["player_pos"] = {"x": tx, "y": ty}
+                session["visited"].add((tx, ty))
+                return f"🌀 传送门将你吸入，传送到了 ({tx},{ty})！"
+            return "🌀 传送门闪烁了一下…但似乎已经失效。"
+        if cell == "H":
+            heal = max(1, int(session["hp_max"] * 0.30))
+            session["hp"] = min(session["hp_max"], session["hp"] + heal)
+            cells[y][x] = "."
+            self._tomb_refresh_map(session)
+            return f"💚 生命泉涌出，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
+        if cell == "B":
+            if avoid_monster:
+                return "🕯 引路香生效，你悄悄绕过BOSS，BOSS仍在原地。"
+            session["pending"] = {"type": "B", "x": x, "y": y}
+            return f"👹 遭遇 BOSS！发送『战斗』迎战，或『逃跑』（剩余 {session.get('escapes', 0)} 次）。"
         return "四周一片死寂。"
 
     def _tomb_trap_event(self, player: dict, p: dict, session: dict) -> str:
@@ -5267,7 +5304,7 @@ class PetParkPlugin(Star):
         return f"✨ 祭坛中藏着『{item}』×1。"
 
     def _tomb_battle(
-        self, player: dict, p: dict, session: dict, summoned: bool = False, forced_win: bool = False
+        self, player: dict, p: dict, session: dict, summoned: bool = False, forced_win: bool = False, is_boss: bool = False
     ) -> str:
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         cells = session["map"]["cells"]
@@ -5283,15 +5320,19 @@ class PetParkPlugin(Star):
                 session["weapon_attack"] = 0
                 broke_text = f"　⚠️『{weapon}』耐久耗尽破碎！"
 
-        if not summoned and cells[y][x] == "M":
+        if not summoned and cells[y][x] in ("M", "B"):
             cells[y][x] = "."
             self._tomb_refresh_map(session)
 
         if forced_win or session["buffs"].pop("auto_win", False):
             gain_min, gain_max = cfg["monster_mingbi"]
+            if is_boss:
+                gain_min = int(gain_min * data.TOMB_BOSS_MINGBI_MULT)
+                gain_max = int(gain_max * data.TOMB_BOSS_MINGBI_MULT)
             gain = random.randint(gain_min, gain_max)
             session["mingbi"] += gain
-            return f"⚔️ 镇尸钉锁定必胜！获得 {gain} 冥币。{broke_text}"
+            label = "BOSS" if is_boss else ""
+            return f"⚔️ 镇尸钉锁定必胜！击败{label}获得 {gain} 冥币。{broke_text}"
 
         level = self.store.get_tomb_level(player)
         my_power = data.tomb_player_attack(level, session.get("weapon_attack", 0))
@@ -5302,7 +5343,10 @@ class PetParkPlugin(Star):
             return f"💨 你灵巧闪避，全身而退，怪物仍在原地。{broke_text}"
 
         player_score = my_power * random.uniform(*b["player_luck"])
-        monster_score = cfg["monster_power"] * random.uniform(*b["monster_luck"])
+        base_monster_power = cfg["monster_power"]
+        if is_boss:
+            base_monster_power = int(base_monster_power * data.TOMB_BOSS_POWER_MULT)
+        monster_score = base_monster_power * random.uniform(*b["monster_luck"])
         events = []
         if random.random() < b["miss_chance"]:
             player_score *= b["miss_mult"]
@@ -5314,21 +5358,33 @@ class PetParkPlugin(Star):
         monster_score = int(monster_score)
         event_text = ("（" + "、".join(events) + "）") if events else ""
         gain_min, gain_max = cfg["monster_mingbi"]
+        if is_boss:
+            gain_min = int(gain_min * data.TOMB_BOSS_MINGBI_MULT)
+            gain_max = int(gain_max * data.TOMB_BOSS_MINGBI_MULT)
 
         if player_score >= monster_score:
             ratio = (player_score - monster_score) / max(1, monster_score)
             gain = int(random.randint(gain_min, gain_max) * (1 + min(1.0, ratio)))
             session["mingbi"] += gain
+            boss_extra = ""
+            if is_boss and random.random() < data.TOMB_BOSS_DROP_CHANCE:
+                boss_items = [n for n in data.TOMB_ITEMS if data.TOMB_ITEMS[n].get("effect") not in ("token", "main_bag_item")]
+                if boss_items:
+                    item = random.choice(boss_items)
+                    session.setdefault("inventory", {}).setdefault(item, 0)
+                    session["inventory"][item] += 1
+                    boss_extra = f"　掉落『{item}』×1！"
             if player_score >= monster_score * 1.5:
                 hp_loss, tier = 5, "大胜"
             else:
                 hp_loss, tier = 10, "小胜"
+            label = "BOSS！" if is_boss else ""
             session["hp"] = max(0, session["hp"] - hp_loss)
             death = self._tomb_after_damage(player, p, session)
             if death:
-                return f"⚔️ {tier}！获得 {gain} 冥币，摸金HP -{hp_loss}。{event_text}{broke_text}\n{death}"
+                return f"⚔️ {tier}击败{label}获得 {gain} 冥币，摸金HP -{hp_loss}。{event_text}{broke_text}{boss_extra}\n{death}"
             return (
-                f"⚔️ {tier}！获得 {gain} 冥币，摸金HP -{hp_loss}。{event_text}{broke_text}\n"
+                f"⚔️ {tier}击败{label}获得 {gain} 冥币，摸金HP -{hp_loss}。{event_text}{broke_text}{boss_extra}\n"
                 f"> 摸金HP {session['hp']}/{session['hp_max']}"
             )
         # 失败
@@ -5336,12 +5392,13 @@ class PetParkPlugin(Star):
             hp_loss, tier = 60, "碾压败"
         else:
             hp_loss, tier = 40, "惨败"
+        label = "BOSS，" if is_boss else ""
         session["hp"] = max(0, session["hp"] - hp_loss)
         death = self._tomb_after_damage(player, p, session)
         if death:
-            return f"⚔️ {tier}！摸金HP -{hp_loss}。{event_text}{broke_text}\n{death}"
+            return f"⚔️ 败给{label}摸金HP -{hp_loss}。{event_text}{broke_text}\n{death}"
         return (
-            f"⚔️ {tier}！摸金HP -{hp_loss}。{event_text}{broke_text}\n"
+            f"⚔️ 败给{label}摸金HP -{hp_loss}。{event_text}{broke_text}\n"
             f"> 摸金HP {session['hp']}/{session['hp_max']}"
         )
 
@@ -5358,9 +5415,10 @@ class PetParkPlugin(Star):
         if settle:
             return settle
         pending = session.get("pending")
-        if not pending or pending.get("type") != "M":
-            return "这里没有要战斗的怪物（移动到怪物格才会遭遇）。"
-        result = self._tomb_battle(player, p, session)
+        if not pending or pending.get("type") not in ("M", "B"):
+            return "这里没有要战斗的怪物（移动到怪物格或BOSS格才会遭遇）。"
+        is_boss = pending.get("type") == "B"
+        result = self._tomb_battle(player, p, session, summoned=False, forced_win=False, is_boss=is_boss)
         if key in self._tomb_sessions:
             session["pending"] = None
         return result
@@ -5755,7 +5813,11 @@ class PetParkPlugin(Star):
                 cells[wy][wx] = "."
 
         available = [pos for pos in floors if pos not in (entrance, exit_pos)]
-        need = cfg["monsters"] + cfg["chests"] + cfg["traps"] + cfg["altars"]
+        need = (
+            cfg["monsters"] + cfg["chests"] + cfg["traps"] + cfg["altars"]
+            + cfg.get("gold_piles", 0) + cfg.get("gas_zones", 0)
+            + cfg.get("portals", 0) + cfg.get("springs", 0) + cfg.get("bosses", 0)
+        )
         if len(available) < need:
             need = len(available)
         chosen = random.sample(available, need)
@@ -5775,6 +5837,26 @@ class PetParkPlugin(Star):
         for _ in range(cfg["altars"]):
             if i < len(chosen):
                 cells[chosen[i][1]][chosen[i][0]] = "S"
+                i += 1
+        for _ in range(cfg.get("gold_piles", 0)):
+            if i < len(chosen):
+                cells[chosen[i][1]][chosen[i][0]] = "$"
+                i += 1
+        for _ in range(cfg.get("gas_zones", 0)):
+            if i < len(chosen):
+                cells[chosen[i][1]][chosen[i][0]] = "G"
+                i += 1
+        for _ in range(cfg.get("portals", 0)):
+            if i < len(chosen):
+                cells[chosen[i][1]][chosen[i][0]] = "P"
+                i += 1
+        for _ in range(cfg.get("springs", 0)):
+            if i < len(chosen):
+                cells[chosen[i][1]][chosen[i][0]] = "H"
+                i += 1
+        for _ in range(cfg.get("bosses", 0)):
+            if i < len(chosen):
+                cells[chosen[i][1]][chosen[i][0]] = "B"
                 i += 1
         return cells
 
@@ -5893,11 +5975,44 @@ class PetParkPlugin(Star):
                         (cx_c - r // 2, cy_c),
                     ]
                     draw.polygon(flame, fill=(220, 240, 255))
+                elif c == "$":
+                    # 金币堆：金色圆盘 + $ 符号
+                    draw.ellipse([cx_c - r, cy_c - r, cx_c + r, cy_c + r], fill=data.TOMB_COLORS["gold"], outline=(255, 240, 100), width=2)
+                    if small_font:
+                        draw.text((cx_c - cell // 6, cy_c - cell // 6), "$", fill=(120, 90, 0), font=small_font)
+                elif c == "G":
+                    # 毒雾：半透明绿色漩涡
+                    g_r = int(r * 0.9)
+                    draw.ellipse([cx_c - g_r, cy_c - g_r, cx_c + g_r, cy_c + g_r], fill=data.TOMB_COLORS["gas"], outline=(180, 255, 150), width=1)
+                    draw.arc([cx_c - g_r // 2, cy_c - g_r // 2, cx_c + g_r // 2, cy_c + g_r // 2], 0, 270, fill=(40, 100, 40), width=2)
+                elif c == "P":
+                    # 传送门：紫色漩涡环
+                    p_r = int(r * 0.85)
+                    draw.ellipse([cx_c - p_r, cy_c - p_r, cx_c + p_r, cy_c + p_r], fill=None, outline=data.TOMB_COLORS["portal"], width=3)
+                    draw.ellipse([cx_c - p_r // 2, cy_c - p_r // 2, cx_c + p_r // 2, cy_c + p_r // 2], fill=None, outline=(220, 160, 255), width=2)
+                    draw.ellipse([cx_c - 3, cy_c - 3, cx_c + 3, cy_c + 3], fill=(220, 160, 255))
+                elif c == "H":
+                    # 生命泉：青色水滴
+                    h_r = int(r * 0.8)
+                    draw.ellipse([cx_c - h_r, cy_c - h_r, cx_c + h_r, cy_c + h_r], fill=data.TOMB_COLORS["spring"], outline=(180, 255, 255), width=2)
+                    draw.ellipse([cx_c - h_r // 3, cy_c - h_r // 2, cx_c + h_r // 3, cy_c + h_r // 3], fill=(255, 255, 255))
+                elif c == "B":
+                    # Boss：红色大骷髅 + 交叉骨
+                    b_r = int(r * 0.95)
+                    draw.ellipse([cx_c - b_r, cy_c - b_r, cx_c + b_r, cy_c + b_r], fill=(40, 10, 10), outline=data.TOMB_COLORS["boss"], width=3)
+                    bs = b_r // 2
+                    draw.line([(cx_c - bs, cy_c - bs), (cx_c + bs, cy_c + bs)], fill=data.TOMB_COLORS["boss"], width=3)
+                    draw.line([(cx_c + bs, cy_c - bs), (cx_c - bs, cy_c + bs)], fill=data.TOMB_COLORS["boss"], width=3)
+                    # 头顶皇冠标记
+                    crown_y = cy_c - b_r - 3
+                    draw.polygon([(cx_c - 5, crown_y), (cx_c + 5, crown_y), (cx_c + 3, crown_y - 5), (cx_c - 3, crown_y - 5)], fill=(255, 200, 50))
 
         # 底部图例
         legend = (
-            f"红菱=出口  金箱=宝箱  白骷髅=怪物  "
-            f"紫刺=陷阱  蓝珠=祭坛  需带回 {cfg['required']} 冥币"
+            f"红菱=出口  金箱=宝箱  白骷髅=怪物  紫刺=陷阱  蓝珠=祭坛  "
+            f"黄圆=金币  绿雾=毒雾  紫环=传送  青滴=生命泉  "
+            f"{'红骷髅=BOSS  ' if cfg.get('bosses', 0) > 0 else ''}"
+            f"需带回 {cfg['required']} 冥币"
         )
         if small_font:
             draw.text((pad, oy + h * cell + 10), legend, fill=(170, 170, 170), font=small_font)
@@ -5985,7 +6100,7 @@ class PetParkPlugin(Star):
         cells = session["map"]["cells"]
         h, w = len(cells), len(cells[0])
         px, py = session["player_pos"]["x"], session["player_pos"]["y"]
-        names = {"X": "出口", "M": "怪物", "C": "宝箱", "T": "陷阱", "S": "祭坛", ".": "空地", "#": "墙壁"}
+        names = {"X": "出口", "M": "怪物", "C": "宝箱", "T": "陷阱", "S": "祭坛", "$": "金币堆", "G": "毒雾", "P": "传送门", "H": "生命泉", "B": "BOSS", ".": "空地", "#": "墙壁"}
         found = []
         for dy in range(-radius, radius + 1):
             for dx in range(-radius, radius + 1):
