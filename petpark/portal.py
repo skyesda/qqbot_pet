@@ -619,6 +619,36 @@ button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
 input[type="file"]{padding:10px;background:#fff;border:1px solid var(--line);color:var(--text);border-radius:12px;width:100%}
 .sec{font-size:13px;font-weight:700;color:#3c455c;margin-bottom:8px}
 
+/* 全屏应用布局 */
+body.appmode #app{padding:0;align-items:stretch;justify-content:flex-start}
+body.appmode::before,body.appmode::after{display:none}
+body.appmode .console{max-width:none}
+body.appmode .brand{display:none}
+body.appmode .screen-wrap{border:none;border-radius:0;box-shadow:none;background:transparent;overflow:visible}
+body.appmode .screen-wrap::before{display:none}
+body.appmode .screen{border-radius:0;padding:0;min-height:100vh;max-height:none;overflow:visible}
+.layout{display:flex;min-height:100vh;background:var(--bg)}
+.sidebar{width:264px;flex:0 0 264px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 16px 18px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:3px}
+.side-brand{font-size:16px;font-weight:800;letter-spacing:-.2px;padding:2px 8px 16px;border-bottom:1px solid var(--line);margin-bottom:14px;display:flex;align-items:center;gap:9px}
+.side-brand::before{content:'';width:10px;height:10px;border-radius:3px;background:var(--grad);flex:0 0 auto}
+.side-sec{font-size:11.5px;color:var(--muted);font-weight:700;letter-spacing:1.2px;margin:4px 8px 9px}
+.side-pets{display:flex;flex-direction:column;gap:8px}
+.side-pets .pet-chip{border-radius:14px}
+.side-bind{margin-top:12px;width:100%;padding:11px 14px;font-size:13.5px;border-radius:12px}
+.side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.side-user{font-size:12.5px;color:var(--muted);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.content{flex:1;min-width:0;padding:26px 34px 40px;overflow-x:hidden}
+.content-inner{max-width:960px;margin:0 auto}
+.content .topbar{margin-bottom:20px}
+@media(max-width:760px){
+  .layout{flex-direction:column}
+  .sidebar{width:100%;flex:none;position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+  .side-foot{margin-top:14px}
+  .content{padding:20px 16px 32px}
+}
+
 /* 动画 */
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes slideDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
@@ -718,11 +748,13 @@ function msg(text, type='err'){
   const d = document.createElement('div');
   d.className = `msg ${type}`;
   d.textContent = text;
-  screen.prepend(d);
+  const host = document.querySelector('.content-inner') || screen;
+  host.prepend(d);
   setTimeout(()=>d.remove(), 4000);
 }
 
 function viewLogin(){
+  document.body.classList.remove('appmode');
   document.querySelector('.console').classList.remove('wide');
   screen.innerHTML = `
     <div style="text-align:center;margin-top:6px">
@@ -749,6 +781,7 @@ function viewLogin(){
 }
 
 function viewRegister(){
+  document.body.classList.remove('appmode');
   document.querySelector('.console').classList.remove('wide');
   screen.innerHTML = `
     <div style="text-align:center;margin-top:6px">
@@ -785,6 +818,7 @@ async function initDashboard(){
 }
 
 function renderDashboard(){
+  document.body.classList.add('appmode');
   document.querySelector('.console').classList.add('wide');
   const chips = state.pets.map((p,i)=>`
     <div class="pet-chip ${state.current && state.current.group_id===p.group_id && state.current.qq===p.qq?'active':''}" data-idx="${i}">
@@ -792,17 +826,26 @@ function renderDashboard(){
       <div class="info"><div class="name">${esc(p.nickname)}</div><div class="sub">Lv${p.level} · ${esc(p.quality)}</div></div>
     </div>`).join('');
   screen.innerHTML = `
-    <div class="dashboard" style="display:block">
-      <div class="topbar">
-        <div><h2>宠物档案</h2></div>
-        <div class="account">QQ ${esc(state.account.qq)} <button class="ghost" id="logoutBtn" style="padding:6px 14px;font-size:12px">退出登录</button></div>
-      </div>
-      <div class="pet-selector">${chips || '<span class="muted">暂无绑定宠物</span>'}</div>
-      <div id="main"></div>
-      <div class="bind-open">
-        <button id="openBindBtn" style="padding:12px 22px">＋ 绑定新宠物</button>
-        <p class="muted" style="margin:8px 0 0">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
-      </div>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="side-brand">宠物乐园 · 玩家中心</div>
+        <div class="side-sec">我的宠物</div>
+        <div class="side-pets">${chips || '<span class="muted" style="padding:0 8px">暂无绑定宠物</span>'}</div>
+        <button id="openBindBtn" class="side-bind">＋ 绑定新宠物</button>
+        <p class="muted" style="margin:9px 4px 0;font-size:12px">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
+        <div class="side-foot">
+          <div class="side-user">QQ ${esc(state.account.qq)}</div>
+          <button class="ghost" id="logoutBtn" style="padding:6px 14px;font-size:12px">退出登录</button>
+        </div>
+      </aside>
+      <section class="content">
+        <div class="content-inner">
+          <div class="topbar">
+            <div><h2>宠物档案</h2></div>
+          </div>
+          <div id="main"></div>
+        </div>
+      </section>
     </div>`;
   document.querySelectorAll('.pet-chip').forEach(c=>c.onclick=()=>loadPet(state.pets[+c.dataset.idx]));
   document.getElementById('logoutBtn').onclick = async ()=>{ await api('/api/portal/logout','POST'); viewLogin(); };
