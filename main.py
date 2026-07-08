@@ -3244,6 +3244,8 @@ class PetParkPlugin(Star):
             return "『冥想』需要定制宠物才行。"
         if action == "双修" and p.get("love_state") != "已婚":
             return "『双修』需与伴侣结为夫妻才行，先通过『宠物求婚 / 同意求婚』结婚吧（单身/恋爱中可用『修炼』）。"
+        if action == "修炼" and p.get("love_state") == "已婚":
+            return "你已结婚，解锁了更高效的『双修』，请使用『双修』代替『修炼』。"
         cd = self._cooldown_block(player, f"日常:{action}", action)
         if cd:
             return cd
