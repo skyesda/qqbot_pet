@@ -254,6 +254,7 @@ class PlayerPortal:
         app.router.add_post("/api/portal/custom_redeem", self._api_custom_redeem)
         app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
         app.router.add_post("/api/portal/use_item", self._api_use_item)
+        app.router.add_get("/api/portal/item_info", self._api_item_info)
         app.router.add_post("/api/portal/redeem", self._api_redeem)
         app.router.add_post("/api/portal/change_password", self._api_change_password)
         app.router.add_post("/api/portal/pet_action", self._api_pet_action)
@@ -697,6 +698,23 @@ class PlayerPortal:
             "summary": self._player_summary(group_id, qq),
         })
 
+    async def _api_item_info(self, request: web.Request) -> web.Response:
+        self._require_session(request)
+        if self.command_gateway is None:
+            return web.json_response({"ok": False, "msg": "功能暂不可用，请重载插件后重试"})
+        name = str(request.query.get("name", "")).strip()
+        if not name:
+            return web.json_response({"ok": False, "msg": "请指定物品名称"})
+        try:
+            # 等同群聊「查看说明 物品名」
+            text = self.command_gateway._handle_info("查看说明", ["查看说明", name])
+        except Exception as e:
+            logger.exception("[petpark] 门户查看物品说明失败")
+            return web.json_response({"ok": False, "msg": f"查询失败：{e}"})
+        text = str(text or "")
+        ok = bool(text) and "未找到" not in text
+        return web.json_response({"ok": ok, "msg": text or f"❓ 未找到『{name}』的说明。"})
+
     async def _api_pet_action(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
         sess = self._require_session(request)
@@ -886,6 +904,8 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
   .item:hover{box-shadow:0 6px 18px rgba(30,40,80,.08)}
   .item-name{font-size:14px;font-weight:700;padding-right:44px}
   .item .count{font-size:12px;color:var(--muted);margin-top:3px;display:block}
+  .info-link{color:var(--brand);cursor:pointer;font-weight:600}
+  .info-link:hover{text-decoration:underline}
   .item .use-row{display:flex;gap:8px;margin-top:11px;align-items:center}
   .item .use-row .el-input-number{width:100px;flex:0 0 auto}
   .item .use-row .el-button{flex:1;margin:0}
@@ -1104,7 +1124,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
             <el-tag v-if="it.kind==='art'" class="item-tag" type="danger" size="small" effect="dark" round>神器</el-tag>
             <el-tag v-else-if="it.kind==='skill'" class="item-tag" type="primary" size="small" effect="dark" round>秘技</el-tag>
             <div class="item-name">{{ it.name }}</div>
-            <span class="count">持有 ×{{ it.count }}</span>
+            <span class="count">持有 ×{{ it.count }} · <a class="info-link" @click="showItemInfo(it)">查看说明</a></span>
             <div class="use-row">
               <el-input-number v-if="it.kind==='item'" v-model="it.qty" :min="1" :max="it.count" size="small"></el-input-number>
               <el-button type="primary" plain size="small" round :loading="usingItem===it.name" @click="useItem(it)">
@@ -1420,6 +1440,17 @@ createApp({
       } finally { acting.value = ''; }
     }
 
+    async function showItemInfo(it){
+      const r = await api('/api/portal/item_info?name=' + encodeURIComponent(it.name));
+      if(!r){ ElMessage.error('查询失败'); return; }
+      if(!r.ok){ ElMessage.warning(stripMd(r.msg || '未找到说明')); return; }
+      let text = stripMd(r.msg);
+      const lines = text.split('\n');
+      if(lines.length > 1 && lines[0].includes(it.name)) text = lines.slice(1).join('\n').trim();
+      ElMessageBox.alert(`<div class="result-pre">${text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/\n/g,'<br>')}</div>`,
+        `📘 ${it.name}`, {dangerouslyUseHTMLString:true, confirmButtonText:'知道了'});
+    }
+
     async function useItem(it){
       if(!data.value) return;
       const n = it.kind==='item' ? Math.max(1, it.qty||1) : 1;
@@ -1599,7 +1630,7 @@ createApp({
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns,
       bind, pwd, fb, custom, crop,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
-      loadPet, logout, doBind, openPwd, changePwd, petAction, useItem, redeem,
+      loadPet, logout, doBind, openPwd, changePwd, petAction, useItem, showItemInfo, redeem,
       openFeedback, pickFbImages, submitFeedback,
       redeemCustom, openCustomEdit, submitCustom,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};
