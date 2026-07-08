@@ -934,12 +934,33 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
   @media(max-width:760px){
     .layout{flex-direction:column}
-    .sidebar{width:100%;position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
-    .side-foot{margin-top:14px}
-    .content{padding:20px 14px 32px;margin-left:0}
+    .sidebar{width:100%;position:static;height:auto;border-right:none;border-bottom:1px solid var(--line);padding:14px 14px 12px}
+    .side-brand{padding-bottom:10px;margin-bottom:10px}
+    .side-pets{flex-direction:row;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+    .pet-chip{flex:0 0 auto;min-width:150px}
+    .side-btns{flex-direction:row}
+    .side-btns .el-button{width:auto;flex:1}
+    .side-tip{display:none}
+    .side-foot{margin-top:12px;padding-top:10px;flex-direction:row;align-items:center;justify-content:space-between}
+    .side-foot-btns{flex:0 0 auto}
+    .content{padding:18px 12px 32px;margin-left:0}
+    .page-title{font-size:18px;margin-bottom:14px}
+    .card{padding:16px;border-radius:15px}
     .pet-hero{flex-direction:column;align-items:center;text-align:center}
     .pet-name,.pet-tags,.pet-badges{justify-content:center}
+    .pet-img{width:120px;height:120px}
     .pet-bars{max-width:none;width:100%}
+    .bar-row .bl{width:56px}
+    .bar-row .bv{width:96px;font-size:11.5px}
+    .stat-grid{grid-template-columns:repeat(2,1fr)}
+    .wallet{grid-template-columns:repeat(2,1fr)}
+    .cd-grid{grid-template-columns:repeat(2,1fr)}
+    .bag{grid-template-columns:1fr}
+    .grow-row{gap:8px}
+    .redeem-row{flex-direction:column}
+    .el-dialog{--el-dialog-width:calc(100vw - 28px) !important;width:calc(100vw - 28px) !important;max-width:calc(100vw - 28px)}
+    .el-message-box{max-width:calc(100vw - 28px)}
+    .el-message{max-width:calc(100vw - 24px)}
   }
 </style>
 </head>
@@ -1689,6 +1710,32 @@ _HOME_HTML = r"""<!DOCTYPE html>
     .stats{grid-template-columns:repeat(2,1fr)}
     .boards{grid-template-columns:1fr}
     .hero h1{font-size:38px}
+  }
+  @media(max-width:600px){
+    .wrap{padding:0 16px}
+    nav{padding:16px 0}
+    .brand{font-size:16px}
+    .nav-btns{gap:6px}
+    .nav-btns .el-button{padding:8px 14px}
+    .user-chip{display:none}
+    .hero{padding:44px 0 26px}
+    .hero h1{font-size:30px}
+    .hero p{font-size:14px}
+    .hero .cta{flex-wrap:wrap}
+    .hero .cta .el-button{padding:18px 22px;font-size:14px}
+    .stats{gap:10px;margin:30px 0 6px}
+    .stat-card{padding:18px 12px;border-radius:14px}
+    .stat-card .num{font-size:27px}
+    .section{margin:44px 0}
+    .section-head{flex-direction:column;gap:4px}
+    .section-head h2{font-size:20px}
+    .board{padding:14px;border-radius:14px}
+    .board .el-table{font-size:13px}
+    .link-card{padding:16px}
+    .link-card .go{display:none}
+    footer{padding:36px 0 26px;line-height:2}
+    .el-dialog{--el-dialog-width:calc(100vw - 28px) !important;width:calc(100vw - 28px) !important;max-width:calc(100vw - 28px)}
+    .el-message{max-width:calc(100vw - 24px)}
   }
 </style>
 </head>
