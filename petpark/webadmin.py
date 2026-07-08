@@ -549,6 +549,12 @@ td.k{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#6d4aff;wo
 .modal{position:fixed;inset:0;background:rgba(20,26,42,.4);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:20}
 .modal .card{background:#fff;padding:26px;border-radius:20px;width:min(720px,96vw);max-height:90vh;overflow:auto;border:1px solid #e8ecf6;box-shadow:0 32px 80px -12px rgba(20,26,42,.3)}
 .modal h3{margin:0 0 6px;font-weight:800;letter-spacing:-.2px}
+.content-ellipsis{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;line-height:1.5;max-width:340px}
+.fb-detail-content{white-space:pre-wrap;line-height:1.7;color:#1f2937;font-size:15px;word-break:break-word}
+.fb-detail-meta{color:#64748b;font-size:13px;margin-top:10px}
+.fb-detail-images{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.fb-detail-images img{width:120px;height:120px;object-fit:cover;border-radius:12px;border:1px solid #e2e8f0;cursor:pointer;transition:transform .2s}
+.fb-detail-images img:hover{transform:scale(1.03)}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>div{flex:1;min-width:120px}
 .row input{width:100%}
@@ -621,6 +627,13 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <div id="pabody"></div>
 <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
 <button class="act ghost" onclick="closePaModal()">关闭</button>
+</div>
+</div></div>
+<div class="modal" id="fbmodal"><div class="card" style="width:min(760px,96vw)">
+<h3 id="fbtitle">反馈详情</h3>
+<div id="fbbody"></div>
+<div style="margin-top:18px;display:flex;gap:10px;justify-content:flex-end">
+<button class="act ghost" onclick="closeFbModal()">关闭</button>
 </div>
 </div></div>
 <script>
@@ -772,13 +785,13 @@ function renderFeedbacks(){
   const imgs=(f.images||[]).map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e8ecf6"></a>`).join(' ')||'—';
   const meta=f.kind==='bug'?`<div class="muted">发生时间：${esc(f.occur_time||'—')}</div><div class="muted">群号：${esc(f.group||'—')} · 用户ID：${esc(f.user_id||'—')}</div>`:'';
   rows+=`<tr>
-   <td><span class="tag ${f.kind==='bug'?'off':'on'}">${f.kind==='bug'?'Bug':'建议'}</span></td>
+   <td><span class="tag ${f.kind==='bug'?'off':'on'}" onclick='fbDetail(${tj(f.id)})' style="cursor:pointer" title="查看详情">${f.kind==='bug'?'Bug':'建议'}</span></td>
    <td class="num">${esc(f.qq||'')}</td>
-   <td style="max-width:340px"><div style="white-space:pre-wrap">${esc(f.content)}</div>${meta}</td>
+   <td style="max-width:340px"><div class="content-ellipsis" title="${esc(f.content).replace(/"/g,'&quot;')}">${esc(f.content)}</div>${meta}</td>
    <td>${imgs}</td>
    <td class="muted">${fdate(f.created_at)}</td>
    <td>${f.status==='pending'?`<span class="tag off">待处理</span>`:`<span class="tag on">已回复</span><div class="muted" style="max-width:220px;white-space:pre-wrap">${esc(f.reply||'')}</div><div class="muted">${fdate(f.replied_at)}</div>`}</td>
-   <td style="white-space:nowrap"><button class="act" onclick='fbReply(${tj(f.id)})'>${f.status==='pending'?'回复':'修改回复'}</button> <button class="act del" onclick='fbDelete(${tj(f.id)})'>删除</button></td>
+   <td style="white-space:nowrap"><button class="act" onclick='fbDetail(${tj(f.id)})'>详情</button> <button class="act" onclick='fbReply(${tj(f.id)})'>${f.status==='pending'?'回复':'修改回复'}</button> <button class="act del" onclick='fbDelete(${tj(f.id)})'>删除</button></td>
   </tr>`;
  }
  document.getElementById('count').textContent='共 '+fbCache.length+' 条';
@@ -801,6 +814,25 @@ async function fbReply(id){
  loadFeedbacks(fbStatus);
 }
 async function fbDelete(id){ if(!confirm('确认删除该条反馈？')) return; const r=await api('/api/feedbacks/delete',{id}); alert(r.ok?'已删除':(r.msg||'操作失败')); loadFeedbacks(fbStatus); }
+function fbDetail(id){
+ const f=fbCache.find(x=>x.id===id)||{};
+ const meta=f.kind==='bug'
+  ? `<div class="fb-detail-meta">发生时间：${esc(f.occur_time||'—')}　|　群号：${esc(f.group||'—')}　|　用户ID：${esc(f.user_id||'—')}</div>`
+  : `<div class="fb-detail-meta">群号：${esc(f.group||'—')}　|　用户ID：${esc(f.user_id||'—')}</div>`;
+ const imgs=(f.images||[]).map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}"></a>`).join('')||'';
+ const reply=f.reply?`<div style="margin-top:18px;padding:14px;background:#f1f5f9;border-radius:12px"><div class="muted" style="font-weight:700;margin-bottom:6px">管理员回复（${fdate(f.replied_at)}）</div><div style="white-space:pre-wrap">${esc(f.reply)}</div></div>`:'';
+ g('fbtitle').textContent=(f.kind==='bug'?'🐛 Bug 反馈':'💡 玩家建议')+' 详情';
+ g('fbbody').innerHTML=`
+  <div class="fb-detail-meta">提交账号：${esc(f.qq||'—')}　|　提交时间：${fdate(f.created_at)}</div>
+  ${meta}
+  <div class="fb-detail-content" style="margin-top:14px">${esc(f.content)}</div>
+  ${imgs?`<div class="fb-detail-images">${imgs}</div>`:''}
+  ${reply}
+ `;
+ g('fbmodal').style.display='flex';
+}
+function closeFbModal(){ g('fbmodal').style.display='none'; }
+g('fbmodal').addEventListener('click',e=>{ if(e.target===g('fbmodal')) closeFbModal(); });
 
 async function cpCancel(group,qq){ if(!confirm('确认取消该宠物的定制权限？将移除定制图和自定义名称。')) return; const r=await api('/api/custom_pets/cancel',{group,qq}); alert(r.ok?(r.msg||'已取消'):(r.msg||'操作失败')); loadCustomPets(); }
 
