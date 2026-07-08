@@ -257,6 +257,13 @@ class PlayerPortal:
         app.router.add_post("/api/portal/redeem", self._api_redeem)
         app.router.add_post("/api/portal/change_password", self._api_change_password)
         app.router.add_post("/api/portal/pet_action", self._api_pet_action)
+        app.router.add_post("/api/portal/feedback", self._api_feedback_submit)
+        app.router.add_get("/api/portal/feedback", self._api_feedback_list)
+        app.router.add_static(
+            "/feedback_images",
+            path=self.store.feedback_images_dir,
+            name="feedback_images",
+        )
         app.router.add_static(
             "/custom_images",
             path=self.store.custom_images_dir,
@@ -579,6 +586,70 @@ class PlayerPortal:
             "msg": "已提交审核，预计 3 个工作日内处理完毕",
             "review": review,
         })
+
+    # --------------------------- 玩家反馈 ---------------------------
+    _FEEDBACK_IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    _FEEDBACK_IMG_MAX = 5 * 1024 * 1024
+
+    async def _api_feedback_submit(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        account = self.store.get_account(sess["aid"])
+        ok_rate, why = self._check_rate(f"feedback:{sess.get('aid')}")
+        if not ok_rate:
+            return web.json_response({"ok": False, "msg": why})
+        reader = await request.multipart()
+        fields: dict[str, str] = {}
+        images: list[str] = []
+        async for part in reader:
+            if part.filename:
+                if len(images) >= 3:
+                    continue
+                ext = Path(part.filename).suffix.lower()
+                if ext not in self._FEEDBACK_IMG_EXTS:
+                    return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+                blob = await part.read()
+                if len(blob) > self._FEEDBACK_IMG_MAX:
+                    return web.json_response({"ok": False, "msg": "单张图片不能超过 5MB"})
+                fname = f"{secrets.token_hex(8)}{ext}"
+                self.store.feedback_image_path(fname).write_bytes(blob)
+                images.append(fname)
+            else:
+                fields[part.name] = await part.text()
+        kind = fields.get("kind", "bug")
+        if kind not in ("bug", "suggestion"):
+            kind = "bug"
+        content = str(fields.get("content", "")).strip()
+        occur_time = str(fields.get("occur_time", "")).strip()
+        group_id = str(fields.get("group_id", "")).strip()
+        user_id = str(fields.get("user_id", "")).strip()
+        if not content:
+            return web.json_response({"ok": False, "msg": "请填写问题描述"})
+        if len(content) > 2000:
+            return web.json_response({"ok": False, "msg": "描述请控制在 2000 字以内"})
+        if kind == "bug":
+            if not occur_time:
+                return web.json_response({"ok": False, "msg": "请填写发生时间"})
+            if not group_id:
+                return web.json_response({"ok": False, "msg": "请填写对应的 QQ 群号"})
+            if not user_id:
+                return web.json_response({"ok": False, "msg": "请填写对应的用户 ID"})
+        fb = self.store.create_feedback(
+            sess["aid"],
+            account.get("qq", "") if account else "",
+            kind,
+            content,
+            occur_time=occur_time,
+            group_id=group_id,
+            user_id=user_id,
+            images=images,
+        )
+        await self.store.save()
+        return web.json_response({"ok": True, "msg": "反馈已提交，管理员处理后可在「我的反馈」中查看回复", "feedback": fb})
+
+    async def _api_feedback_list(self, request: web.Request) -> web.Response:
+        sess = self._require_session(request)
+        return web.json_response({"ok": True, "data": self.store.account_feedbacks(sess["aid"])})
 
     # --------------------------- 道具使用 / 卡密兑换 / 改密 ---------------------------
     async def _api_use_item(self, request: web.Request) -> web.Response:
@@ -939,6 +1010,33 @@ body.appmode .screen{border-radius:0;padding:0;min-height:100vh;max-height:none;
 .side-pets{display:flex;flex-direction:column;gap:8px}
 .side-pets .pet-chip{border-radius:14px}
 .side-bind{margin-top:12px;width:100%;padding:11px 14px;font-size:13.5px;border-radius:12px}
+.side-feedback{margin-top:10px;width:100%;padding:11px 14px;font-size:13.5px;font-weight:700;border:none;border-radius:12px;cursor:pointer;color:#fff;background:linear-gradient(135deg,#f59e0b,#ef6c1a);box-shadow:0 3px 12px rgba(245,158,11,.3);transition:.18s;font-family:inherit}
+.side-feedback:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(245,158,11,.42)}
+.fb-tabs{display:flex;gap:8px;margin:6px 0 12px}
+.fb-tabs button{flex:1;padding:10px 0;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--muted);font-size:13.5px;font-weight:700;cursor:pointer;transition:.18s;font-family:inherit}
+.fb-tabs button.active{border-color:transparent;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand-2));box-shadow:0 3px 12px rgba(99,102,241,.28)}
+#fbContent{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:14px;outline:none;resize:vertical;font-family:inherit;box-sizing:border-box}
+#fbContent:focus{border-color:var(--brand)}
+#fbTime{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box}
+#fbTime:focus{border-color:var(--brand)}
+.fb-img-preview{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.fb-img-preview .fb-thumb{position:relative}
+.fb-img-preview img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+.fb-img-preview .rm{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:none;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+.fb-list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.fb-item{border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13px}
+.fb-item .fb-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.fb-item .fb-kind{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px}
+.fb-item .fb-kind.bug{background:#fee2e2;color:#b91c1c}
+.fb-item .fb-kind.sug{background:#dbeafe;color:#1d4ed8}
+.fb-item .fb-status{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;background:#fef3c7;color:#b45309}
+.fb-item .fb-status.done{background:#dcfce7;color:#15803d}
+.fb-item .fb-date{margin-left:auto;color:var(--muted);font-size:12px}
+.fb-item .fb-body{white-space:pre-wrap;color:var(--text);line-height:1.6}
+.fb-item .fb-meta{color:var(--muted);font-size:12px;margin-top:4px}
+.fb-item .fb-reply{margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:9px 12px;color:#166534;white-space:pre-wrap;line-height:1.6}
+.fb-item .fb-imgs{display:flex;gap:6px;margin-top:8px}
+.fb-item .fb-imgs img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 .side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
 .side-foot .side-user{padding:0 2px}
 .side-foot-btns{display:flex;gap:8px}
@@ -1002,6 +1100,43 @@ body.appmode .screen{border-radius:0;padding:0;min-height:100vh;max-height:none;
         <button class="ghost" onclick="closePwdModal()">取消</button>
         <button id="pwdBtn">确认修改</button>
       </div>
+    </div>
+  </div>
+  <div class="modal" id="fbModal">
+    <div class="sheet" style="width:min(560px,100%);max-height:88vh;overflow-y:auto">
+      <div class="modal-head">
+        <div class="modal-icon">📣</div>
+        <h3>问题反馈</h3>
+        <p class="modal-sub">反馈 Bug 或提出建议，管理员处理后可在下方「我的反馈」查看回复</p>
+      </div>
+      <div class="fb-tabs">
+        <button id="fbTabBug" class="active" onclick="setFbKind('bug')">🐞 反馈 Bug</button>
+        <button id="fbTabSug" onclick="setFbKind('suggestion')">💡 提出建议</button>
+      </div>
+      <label class="fld" id="fbContentLbl">问题描述</label>
+      <textarea id="fbContent" rows="4" placeholder="请详细描述遇到的问题：操作了什么、预期结果、实际结果…"></textarea>
+      <div id="fbBugFields">
+        <label class="fld">发生时间</label>
+        <input id="fbTime" type="datetime-local">
+        <div class="bind-row" style="margin-top:10px">
+          <input id="fbGroup" type="text" placeholder="对应的 QQ 群号">
+          <input id="fbUser" type="text" placeholder="对应的用户 ID">
+        </div>
+      </div>
+      <label class="fld">图片截图（可选，最多 3 张）</label>
+      <input id="fbImages" type="file" accept="image/*" multiple style="display:none">
+      <div class="upload-zone" id="fbPickBtn">
+        <div class="upload-plus">+</div>
+        <div class="upload-text">点击选择图片</div>
+        <div class="upload-hint">支持 jpg / png / gif / webp，单张不超过 5MB</div>
+      </div>
+      <div id="fbImgPreview" class="fb-img-preview"></div>
+      <div class="actions">
+        <button class="ghost" onclick="closeFbModal()">关闭</button>
+        <button id="fbSubmitBtn">提交反馈</button>
+      </div>
+      <h3 style="margin-top:22px">📬 我的反馈</h3>
+      <div id="fbList" class="fb-list"><span class="muted">加载中…</span></div>
     </div>
   </div>
   <div class="modal" id="customModal">
@@ -1131,6 +1266,10 @@ async function initDashboard(){
   state.account = me.account;
   state.pets = me.bound_pets || [];
   renderDashboard();
+  if(location.hash === '#feedback'){
+    history.replaceState(null, '', location.pathname);
+    openFbModal();
+  }
   if(state.pets.length) await loadPet(state.pets[0]);
 }
 
@@ -1149,6 +1288,7 @@ function renderDashboard(){
         <div class="side-sec">我的宠物</div>
         <div class="side-pets">${chips || '<span class="muted" style="padding:0 8px">暂无绑定宠物</span>'}</div>
         <button id="openBindBtn" class="side-bind">＋ 绑定新宠物</button>
+        <button id="fbOpenBtn" class="side-feedback">📣 问题反馈</button>
         <p class="muted" style="margin:9px 4px 0;font-size:12px">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
         <div class="side-foot">
           <div class="side-user">QQ ${esc(state.account.qq)}</div>
@@ -1171,6 +1311,97 @@ function renderDashboard(){
   document.getElementById('logoutBtn').onclick = async ()=>{ await api('/api/portal/logout','POST'); viewLogin(); };
   document.getElementById('openBindBtn').onclick = openBindModal;
   document.getElementById('pwdOpenBtn').onclick = openPwdModal;
+  document.getElementById('fbOpenBtn').onclick = openFbModal;
+}
+
+// --------------------------- 问题反馈 ---------------------------
+let fbKind = 'bug';
+let fbFiles = [];
+function openFbModal(){
+  setFbKind('bug');
+  document.getElementById('fbContent').value='';
+  document.getElementById('fbTime').value='';
+  document.getElementById('fbGroup').value='';
+  document.getElementById('fbUser').value='';
+  fbFiles=[]; renderFbPreview();
+  document.getElementById('fbModal').classList.add('show');
+  loadMyFeedbacks();
+}
+function closeFbModal(){ document.getElementById('fbModal').classList.remove('show'); }
+document.getElementById('fbModal').onclick = e=>{ if(e.target.id==='fbModal') closeFbModal(); };
+function setFbKind(k){
+  fbKind = k;
+  document.getElementById('fbTabBug').classList.toggle('active', k==='bug');
+  document.getElementById('fbTabSug').classList.toggle('active', k==='suggestion');
+  document.getElementById('fbBugFields').style.display = k==='bug' ? '' : 'none';
+  document.getElementById('fbContentLbl').textContent = k==='bug' ? '问题描述' : '建议内容';
+  document.getElementById('fbContent').placeholder = k==='bug'
+    ? '请详细描述遇到的问题：操作了什么、预期结果、实际结果…'
+    : '说说你希望增加或改进的功能…';
+}
+document.getElementById('fbPickBtn').onclick = ()=>document.getElementById('fbImages').click();
+document.getElementById('fbImages').onchange = e=>{
+  for(const f of e.target.files){
+    if(fbFiles.length >= 3) break;
+    if(f.size > 5*1024*1024){ msg(`图片「${f.name}」超过 5MB，已跳过`); continue; }
+    fbFiles.push(f);
+  }
+  e.target.value='';
+  renderFbPreview();
+};
+function renderFbPreview(){
+  const box = document.getElementById('fbImgPreview');
+  box.innerHTML = fbFiles.map((f,i)=>`<div class="fb-thumb"><img src="${URL.createObjectURL(f)}"><button class="rm" data-i="${i}">×</button></div>`).join('');
+  box.querySelectorAll('.rm').forEach(b=>b.onclick=()=>{ fbFiles.splice(+b.dataset.i,1); renderFbPreview(); });
+}
+document.getElementById('fbSubmitBtn').onclick = async ()=>{
+  const content = document.getElementById('fbContent').value.trim();
+  if(!content){ msg(fbKind==='bug'?'请填写问题描述':'请填写建议内容'); return; }
+  const fd = new FormData();
+  fd.append('kind', fbKind);
+  fd.append('content', content);
+  if(fbKind==='bug'){
+    const t = document.getElementById('fbTime').value;
+    const g = document.getElementById('fbGroup').value.trim();
+    const u = document.getElementById('fbUser').value.trim();
+    if(!t){ msg('请填写发生时间'); return; }
+    if(!g){ msg('请填写对应的 QQ 群号'); return; }
+    if(!u){ msg('请填写对应的用户 ID'); return; }
+    fd.append('occur_time', t.replace('T',' '));
+    fd.append('group_id', g);
+    fd.append('user_id', u);
+  }
+  fbFiles.forEach((f,i)=>fd.append(`image${i}`, f, f.name));
+  const btn = document.getElementById('fbSubmitBtn');
+  btn.disabled = true; btn.textContent = '提交中…';
+  try{
+    const r = await fetch('/api/portal/feedback', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd}).then(x=>x.json()).catch(()=>null);
+    if(r && r.ok){
+      msg(r.msg || '反馈已提交', 'ok');
+      document.getElementById('fbContent').value='';
+      fbFiles=[]; renderFbPreview();
+      loadMyFeedbacks();
+    } else {
+      msg((r && r.msg) || '提交失败，请稍后重试');
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = '提交反馈';
+  }
+};
+async function loadMyFeedbacks(){
+  const box = document.getElementById('fbList');
+  const r = await api('/api/portal/feedback');
+  const list = (r && r.data) || [];
+  if(!list.length){ box.innerHTML = '<span class="muted">还没有提交过反馈</span>'; return; }
+  box.innerHTML = list.map(f=>{
+    const kind = f.kind==='bug' ? '<span class="fb-kind bug">Bug</span>' : '<span class="fb-kind sug">建议</span>';
+    const status = f.status==='resolved' ? '<span class="fb-status done">已回复</span>' : '<span class="fb-status">处理中</span>';
+    const date = new Date((f.created_at||0)*1000).toLocaleString('zh-CN',{hour12:false});
+    const meta = f.kind==='bug' ? `<div class="fb-meta">发生时间：${esc(f.occur_time||'—')} · 群号：${esc(f.group||'—')} · 用户ID：${esc(f.user_id||'—')}</div>` : '';
+    const imgs = (f.images||[]).length ? `<div class="fb-imgs">${f.images.map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}"></a>`).join('')}</div>` : '';
+    const reply = f.reply ? `<div class="fb-reply">💬 管理员回复：${esc(f.reply)}</div>` : '';
+    return `<div class="fb-item"><div class="fb-head">${kind}${status}<span class="fb-date">${date}</span></div><div class="fb-body">${esc(f.content)}</div>${meta}${imgs}${reply}</div>`;
+  }).join('');
 }
 
 function openBindModal(){ document.getElementById('bindModal').classList.add('show'); }
@@ -1617,7 +1848,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
   .q{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:rgba(140,110,255,.15);color:#c3b8ff;border:1px solid rgba(140,110,255,.25)}
   .empty-row{color:var(--muted);text-align:center;padding:26px 0 !important}
 
-  .links{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .links{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
   .link-card{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;text-decoration:none;color:var(--text);backdrop-filter:blur(8px);transition:.2s}
   .link-card:hover{transform:translateY(-2px);border-color:rgba(140,110,255,.45);box-shadow:0 12px 32px rgba(80,60,200,.25)}
   .link-card .ic{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;background:linear-gradient(135deg,rgba(99,102,241,.25),rgba(168,85,247,.25));border:1px solid rgba(140,110,255,.3);flex-shrink:0}
@@ -1738,6 +1969,14 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </div>
         <div class="go">前往充值 →</div>
       </a>
+      <a class="link-card" href="javascript:void(0)" onclick="goFeedback()">
+        <div class="ic">📣</div>
+        <div>
+          <div class="t">问题反馈</div>
+          <div class="d">遇到 Bug 或有好建议？登录后即可提交，管理员处理后回复可查</div>
+        </div>
+        <div class="go">去反馈 →</div>
+      </a>
     </div>
   </div>
 
@@ -1760,7 +1999,13 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <script>
 const CSRF = "{{CSRF_TOKEN}}";
 let authMode = 'login';
+let homeLoggedIn = false;
 const $ = id => document.getElementById(id);
+
+function goFeedback(){
+  if(homeLoggedIn){ location.href='/portal#feedback'; }
+  else { openAuth('login'); $('authHint').textContent = '登录后即可提交问题反馈'; }
+}
 
 async function logout(){
   try{ await fetch('/api/portal/logout', {method:'POST', headers:{'X-CSRF-Token': CSRF}}); }catch(e){}
@@ -1774,6 +2019,7 @@ async function checkAuth(){
     const d = await r.json();
     if(!d || !d.ok) return;
     const qq = d.qq || (d.account && d.account.qq) || '';
+    homeLoggedIn = true;
     $('navBtns').innerHTML =
       (qq ? `<span class="user-chip">✅ 已登录 · ${String(qq).replace(/[&<>"']/g,'')}</span>` : '<span class="user-chip">✅ 已登录</span>') +
       `<button class="btn-primary" onclick="location.href='/portal'">仪表盘</button>` +

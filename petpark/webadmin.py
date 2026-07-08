@@ -68,6 +68,9 @@ class WebAdmin:
         app.router.add_post("/api/custom_reviews/reject", self._api_custom_review_reject)
         app.router.add_post("/api/custom_pets", self._api_custom_pets)
         app.router.add_post("/api/custom_pets/cancel", self._api_custom_pet_cancel)
+        app.router.add_post("/api/feedbacks", self._api_feedbacks)
+        app.router.add_post("/api/feedbacks/reply", self._api_feedback_reply)
+        app.router.add_post("/api/feedbacks/delete", self._api_feedback_delete)
 
         portal = PlayerPortal(
             self.store,
@@ -282,6 +285,37 @@ class WebAdmin:
         if ok:
             await self.store.save()
         return self._json({"ok": ok, "msg": msg})
+
+    async def _api_feedbacks(self, request):
+        self._require(request)
+        body = await request.json()
+        status = body.get("status", "")
+        data = list(self.store.feedbacks().values())
+        if status:
+            data = [f for f in data if f.get("status") == status]
+        data.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+        return self._json({"ok": True, "data": data})
+
+    async def _api_feedback_reply(self, request):
+        self._require(request)
+        body = await request.json()
+        fid = str(body.get("id", "")).strip()
+        reply = str(body.get("reply", "")).strip()
+        if not reply:
+            return self._json({"ok": False, "msg": "请填写回复内容"})
+        ok, msg = self.store.reply_feedback(fid, reply)
+        if ok:
+            await self.store.save()
+        return self._json({"ok": ok, "msg": msg})
+
+    async def _api_feedback_delete(self, request):
+        self._require(request)
+        body = await request.json()
+        fid = str(body.get("id", "")).strip()
+        ok = self.store.delete_feedback(fid)
+        if ok:
+            await self.store.save()
+        return self._json({"ok": ok, "msg": "已删除" if ok else "反馈记录不存在"})
 
     async def _api_custom_pets(self, request):
         self._require(request)
@@ -538,6 +572,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="portal_accounts" onclick="tab('portal_accounts')">网页账号</button>
 <button data-t="custom_reviews" onclick="tab('custom_reviews')">定制审核</button>
 <button data-t="custom_pets" onclick="tab('custom_pets')">定制管理</button>
+<button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -721,6 +756,52 @@ function renderCustomPets(){
    ? `<table><thead><tr><th>群号</th><th>用户ID</th><th>账号QQ</th><th>宠物昵称</th><th>种类名称</th><th>品质</th><th>标签</th><th>定制图</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无已解锁定制的宠物</div>`;
 }
+let fbCache=[], fbStatus='pending';
+async function loadFeedbacks(status){
+ if(status===undefined) status=fbStatus;
+ fbStatus=status;
+ const r=await api('/api/feedbacks',{status});
+ fbCache=r.data||[];
+ renderFeedbacks();
+}
+function renderFeedbacks(){
+ const q=(document.getElementById('q').value||'').toLowerCase();
+ let rows='';
+ for(const f of fbCache){
+  if(q && !String(f.qq).toLowerCase().includes(q) && !String(f.group).toLowerCase().includes(q) && !String(f.user_id).toLowerCase().includes(q) && !String(f.content).toLowerCase().includes(q)) continue;
+  const imgs=(f.images||[]).map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e8ecf6"></a>`).join(' ')||'—';
+  const meta=f.kind==='bug'?`<div class="muted">发生时间：${esc(f.occur_time||'—')}</div><div class="muted">群号：${esc(f.group||'—')} · 用户ID：${esc(f.user_id||'—')}</div>`:'';
+  rows+=`<tr>
+   <td><span class="tag ${f.kind==='bug'?'off':'on'}">${f.kind==='bug'?'Bug':'建议'}</span></td>
+   <td class="num">${esc(f.qq||'')}</td>
+   <td style="max-width:340px"><div style="white-space:pre-wrap">${esc(f.content)}</div>${meta}</td>
+   <td>${imgs}</td>
+   <td class="muted">${fdate(f.created_at)}</td>
+   <td>${f.status==='pending'?`<span class="tag off">待处理</span>`:`<span class="tag on">已回复</span><div class="muted" style="max-width:220px;white-space:pre-wrap">${esc(f.reply||'')}</div><div class="muted">${fdate(f.replied_at)}</div>`}</td>
+   <td style="white-space:nowrap"><button class="act" onclick='fbReply(${tj(f.id)})'>${f.status==='pending'?'回复':'修改回复'}</button> <button class="act del" onclick='fbDelete(${tj(f.id)})'>删除</button></td>
+  </tr>`;
+ }
+ document.getElementById('count').textContent='共 '+fbCache.length+' 条';
+ document.getElementById('extrawrap').innerHTML=`
+  <div class="bar" style="margin-bottom:8px">
+   <button class="act ${fbStatus==='pending'?'':'ghost'}" onclick="loadFeedbacks('pending')">待处理</button>
+   <button class="act ${fbStatus==='resolved'?'':'ghost'}" onclick="loadFeedbacks('resolved')">已回复</button>
+   <button class="act ${fbStatus===''?'':'ghost'}" onclick="loadFeedbacks('')">全部</button>
+  </div>`;
+ document.getElementById('tablewrap').innerHTML = rows
+   ? `<table><thead><tr><th>类型</th><th>账号QQ</th><th>内容</th><th>截图</th><th>提交时间</th><th>处理状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+   : `<div class="empty">暂无反馈</div>`;
+}
+async function fbReply(id){
+ const cur=fbCache.find(x=>x.id===id)||{};
+ const reply=prompt('回复内容（用户将在「我的反馈」中看到）：', cur.reply||'');
+ if(!reply) return;
+ const r=await api('/api/feedbacks/reply',{id,reply});
+ alert(r.ok?(r.msg||'已回复'):(r.msg||'操作失败'));
+ loadFeedbacks(fbStatus);
+}
+async function fbDelete(id){ if(!confirm('确认删除该条反馈？')) return; const r=await api('/api/feedbacks/delete',{id}); alert(r.ok?'已删除':(r.msg||'操作失败')); loadFeedbacks(fbStatus); }
+
 async function cpCancel(group,qq){ if(!confirm('确认取消该宠物的定制权限？将移除定制图和自定义名称。')) return; const r=await api('/api/custom_pets/cancel',{group,qq}); alert(r.ok?(r.msg||'已取消'):(r.msg||'操作失败')); loadCustomPets(); }
 
 const PET_FIELDS=[
@@ -743,14 +824,15 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
+ else if(t==='feedbacks') loadFeedbacks();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -762,6 +844,7 @@ function render(){
  else if(cur==='portal_accounts')renderPortalAccounts();
  else if(cur==='custom_reviews')renderCustomReviews();
  else if(cur==='custom_pets')renderCustomPets();
+ else if(cur==='feedbacks')renderFeedbacks();
  else renderCards();
 }
 function shell(head,rows,cols){

@@ -49,6 +49,8 @@ class PetStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.custom_images_dir = self.path.parent / "custom_images"
         self.custom_images_dir.mkdir(parents=True, exist_ok=True)
+        self.feedback_images_dir = self.path.parent / "feedback_images"
+        self.feedback_images_dir.mkdir(parents=True, exist_ok=True)
         self.start_coin = start_coin
         self.start_jifen = start_jifen
         self.start_diamond = start_diamond
@@ -1219,6 +1221,72 @@ class PetStore:
                 continue
             out.append(r)
         return out
+
+    # ------------------------------------------------------------------
+    # 玩家反馈（Bug / 建议）
+    # ------------------------------------------------------------------
+    def feedbacks(self) -> dict:
+        return self._data.setdefault("feedbacks", {})
+
+    def feedback_image_path(self, filename: str) -> Path:
+        return self.feedback_images_dir / filename
+
+    def create_feedback(
+        self,
+        account_id: str,
+        account_qq: str,
+        kind: str,
+        content: str,
+        occur_time: str = "",
+        group_id: str = "",
+        user_id: str = "",
+        images: Optional[list[str]] = None,
+    ) -> dict:
+        fid = secrets.token_hex(8)
+        fb = {
+            "id": fid,
+            "account_id": account_id,
+            "qq": account_qq,
+            "kind": kind,  # bug / suggestion
+            "content": str(content or ""),
+            "occur_time": str(occur_time or ""),
+            "group": str(group_id or ""),
+            "user_id": str(user_id or ""),
+            "images": list(images or []),
+            "status": "pending",  # pending / resolved
+            "reply": "",
+            "created_at": int(time.time()),
+            "replied_at": 0,
+        }
+        self.feedbacks()[fid] = fb
+        return fb
+
+    def account_feedbacks(self, account_id: str) -> list[dict]:
+        out = [
+            fb for fb in self.feedbacks().values()
+            if fb.get("account_id") == account_id
+        ]
+        out.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+        return out
+
+    def reply_feedback(self, feedback_id: str, reply: str) -> tuple[bool, str]:
+        fb = self.feedbacks().get(feedback_id)
+        if not fb:
+            return False, "反馈记录不存在"
+        fb["reply"] = str(reply or "")
+        fb["status"] = "resolved"
+        fb["replied_at"] = int(time.time())
+        return True, "已回复"
+
+    def delete_feedback(self, feedback_id: str) -> bool:
+        fb = self.feedbacks().pop(feedback_id, None)
+        if fb:
+            for img in fb.get("images", []):
+                try:
+                    self.feedback_image_path(img).unlink(missing_ok=True)
+                except OSError:
+                    pass
+        return fb is not None
 
     @staticmethod
     def get_invited_users(player: dict) -> list[dict]:
