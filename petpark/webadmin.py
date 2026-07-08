@@ -441,16 +441,20 @@ LOGIN_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>宠物乐园 · 管理登录</title>
 <style>
-body{margin:0;font-family:system-ui,"Microsoft YaHei",sans-serif;background:#0f172a;color:#e2e8f0;display:flex;min-height:100vh;align-items:center;justify-content:center}
-.box{background:#1e293b;padding:32px;border-radius:16px;width:320px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-h1{font-size:20px;margin:0 0 20px;text-align:center}
-input{width:100%;box-sizing:border-box;padding:11px;margin:8px 0;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px}
-button{width:100%;padding:11px;margin-top:12px;border:0;border-radius:8px;background:#6366f1;color:#fff;font-size:15px;cursor:pointer}
-button:hover{background:#4f46e5}
-.err{color:#f87171;text-align:center;min-height:18px;font-size:13px}
+body{margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f6f8fd;color:#141a2a;display:flex;min-height:100vh;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;top:-260px;left:-160px;width:640px;height:640px;border-radius:50%;background:radial-gradient(closest-side,rgba(47,107,255,.14),transparent);pointer-events:none}
+body::after{content:'';position:fixed;bottom:-280px;right:-180px;width:720px;height:720px;border-radius:50%;background:radial-gradient(closest-side,rgba(147,51,234,.10),transparent);pointer-events:none}
+.box{background:#fff;padding:36px 32px;border-radius:22px;width:340px;border:1px solid #e8ecf6;box-shadow:0 24px 64px -12px rgba(47,107,255,.18),0 2px 6px rgba(20,26,42,.06);position:relative;overflow:hidden;z-index:1}
+.box::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(120deg,#2f6bff,#6d4aff,#9333ea)}
+h1{font-size:19px;font-weight:800;margin:0 0 22px;text-align:center;letter-spacing:-.2px}
+input{width:100%;box-sizing:border-box;padding:12px 15px;margin:7px 0;border-radius:12px;border:1.5px solid transparent;background:#f7f9fd;color:#141a2a;font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s,background .2s}
+input:focus{background:#fff;border-color:#2f6bff;box-shadow:0 0 0 4px rgba(47,107,255,.12)}
+button{width:100%;padding:12px;margin-top:14px;border:0;border-radius:12px;background:linear-gradient(120deg,#2f6bff,#6d4aff,#9333ea);color:#fff;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 8px 20px -6px rgba(47,107,255,.5);transition:transform .15s,box-shadow .2s}
+button:hover{transform:translateY(-1px);box-shadow:0 12px 26px -6px rgba(47,107,255,.55)}
+.err{color:#e5484d;text-align:center;min-height:18px;font-size:13px}
 </style></head><body>
 <form class="box" method="post" action="/login">
-<h1>🐾 宠物乐园 · 管理后台</h1>
+<h1>宠物乐园 · 管理后台</h1>
 <div class="err"><!--ERR--></div>
 <input name="user" placeholder="账号" autocomplete="username">
 <input name="password" type="password" placeholder="密码" autocomplete="current-password">
@@ -464,53 +468,62 @@ DASHBOARD_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <title>宠物乐园 · 管理后台</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,"Microsoft YaHei",sans-serif;background:#0f172a;color:#e2e8f0}
-header{background:#1e293b;padding:14px 20px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10}
-header h1{font-size:17px;margin:0;flex:1}
-header a{color:#94a3b8;text-decoration:none;font-size:14px}
-.tabs{display:flex;gap:8px;padding:14px 20px 0}
-.tabs button{padding:9px 18px;border:0;border-radius:10px 10px 0 0;background:#1e293b;color:#94a3b8;cursor:pointer;font-size:14px}
-.tabs button.active{background:#334155;color:#fff;font-weight:600}
-main{padding:16px 20px}
-.cards-stat{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
-.stat{background:#1e293b;border-radius:12px;padding:12px 18px;min-width:120px}
-.stat .n{font-size:22px;font-weight:700}
-.stat .l{font-size:12px;color:#94a3b8;margin-top:2px}
-.bar{margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-input,select{padding:9px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px}
-label.fld{display:block;margin:10px 0 4px;font-size:13px;color:#94a3b8}
-button.act{padding:9px 15px;border:0;border-radius:8px;background:#6366f1;color:#fff;cursor:pointer;font-size:13px}
-button.act:hover{background:#4f46e5}
-button.del{background:#dc2626}button.del:hover{background:#b91d1d}
-.tag{display:inline-block;font-size:11px;background:rgba(99,102,241,.15);color:#818cf8;border:1px solid rgba(99,102,241,.35);border-radius:999px;padding:2px 8px;margin:1px}
-button.ghost{background:#475569}button.ghost:hover{background:#64748b}
-table{width:100%;border-collapse:collapse;font-size:13px;background:#1e293b;border-radius:12px}
-th,td{padding:11px 12px;border-bottom:1px solid #334155;text-align:left}
-th{color:#94a3b8;background:#172033;font-weight:600}
-tr:hover td{background:#243047}
-td.k{font-family:monospace;color:#a5b4fc;word-break:break-all;max-width:240px}
+body{margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f6f8fd;color:#141a2a;-webkit-font-smoothing:antialiased}
+header{background:rgba(255,255,255,.85);backdrop-filter:blur(10px);padding:14px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10;border-bottom:1px solid #e8ecf6}
+header h1{font-size:16px;font-weight:800;margin:0;flex:1;letter-spacing:-.2px}
+header h1::before{content:'';display:inline-block;width:10px;height:10px;border-radius:3px;background:linear-gradient(120deg,#2f6bff,#9333ea);margin-right:9px}
+header a{color:#8a93a8;text-decoration:none;font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px;border:1px solid #e8ecf6;background:#fff;transition:color .2s,border-color .2s}
+header a:hover{color:#2f6bff;border-color:#2f6bff}
+.tabs{display:flex;gap:6px;padding:16px 24px 0;flex-wrap:wrap}
+.tabs button{padding:9px 18px;border:1px solid transparent;border-radius:999px;background:transparent;color:#8a93a8;cursor:pointer;font-size:13.5px;font-weight:600;transition:background .2s,color .2s}
+.tabs button:hover{background:#eef3ff;color:#2f6bff}
+.tabs button.active{background:linear-gradient(120deg,#2f6bff,#6d4aff);color:#fff;box-shadow:0 6px 16px -6px rgba(47,107,255,.5)}
+main{padding:18px 24px 28px}
+.cards-stat{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.stat{background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:14px 20px;min-width:130px;box-shadow:0 1px 2px rgba(20,26,42,.04)}
+.stat .n{font-size:23px;font-weight:800;background:linear-gradient(120deg,#2f6bff,#9333ea);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
+.stat .l{font-size:12px;color:#8a93a8;margin-top:2px;font-weight:500}
+.bar{margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,select{padding:9px 13px;border-radius:10px;border:1.5px solid #e8ecf6;background:#fff;color:#141a2a;font-size:13px;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12)}
+input::placeholder{color:#aab3c7}
+label.fld{display:block;margin:10px 0 4px;font-size:13px;color:#5b657d;font-weight:600}
+button.act{padding:9px 16px;border:0;border-radius:10px;background:linear-gradient(120deg,#2f6bff,#6d4aff);color:#fff;cursor:pointer;font-size:13px;font-weight:600;box-shadow:0 4px 12px -4px rgba(47,107,255,.45);transition:transform .15s,box-shadow .2s,filter .15s}
+button.act:hover{transform:translateY(-1px);filter:saturate(1.08)}
+button.del{background:linear-gradient(120deg,#ef4444,#dc2626);box-shadow:0 4px 12px -4px rgba(220,38,38,.4)}
+button.del:hover{filter:brightness(1.05)}
+.tag{display:inline-block;font-size:11px;background:#eef3ff;color:#2f6bff;border:1px solid rgba(47,107,255,.25);border-radius:999px;padding:2px 9px;margin:1px;font-weight:600}
+button.ghost{background:#fff;color:#5b657d;border:1.5px solid #d8dfef;box-shadow:none}
+button.ghost:hover{color:#2f6bff;border-color:#2f6bff;background:#eef3ff;transform:none}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;background:#fff;border:1px solid #e8ecf6;border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(20,26,42,.04)}
+th,td{padding:12px 14px;border-bottom:1px solid #eef1f8;text-align:left}
+tr:last-child td{border-bottom:0}
+th{color:#8a93a8;background:#fafbfe;font-weight:700;font-size:12px;letter-spacing:.3px}
+tr:hover td{background:#f7f9fd}
+td.k{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#6d4aff;word-break:break-all;max-width:240px}
 .num{font-variant-numeric:tabular-nums}
-.coin{color:#fbbf24}.jifen{color:#34d399}.diamond{color:#22d3ee}
-.tag{padding:2px 9px;border-radius:999px;font-size:12px;white-space:nowrap}
-.used{background:#7f1d1d;color:#fecaca}.unused{background:#14532d;color:#bbf7d0}
-.on{background:#1e3a8a;color:#bfdbfe}.off{background:#374151;color:#cbd5e1}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:20}
-.modal .card{background:#1e293b;padding:22px;border-radius:14px;width:min(720px,96vw);max-height:90vh;overflow:auto}
-.modal h3{margin:0 0 6px}
+.coin{color:#d97706;font-weight:700}.jifen{color:#059669;font-weight:700}.diamond{color:#0891b2;font-weight:700}
+.tag{padding:2px 10px;border-radius:999px;font-size:12px;white-space:nowrap}
+.used{background:#feeef0;color:#c53a3f;border-color:rgba(229,72,77,.25)}.unused{background:#e9f8f0;color:#0c7a45;border-color:rgba(15,157,88,.25)}
+.on{background:#eef3ff;color:#2f6bff;border-color:rgba(47,107,255,.25)}.off{background:#f1f3f9;color:#8a93a8;border-color:#e8ecf6}
+.modal{position:fixed;inset:0;background:rgba(20,26,42,.4);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:20}
+.modal .card{background:#fff;padding:26px;border-radius:20px;width:min(720px,96vw);max-height:90vh;overflow:auto;border:1px solid #e8ecf6;box-shadow:0 32px 80px -12px rgba(20,26,42,.3)}
+.modal h3{margin:0 0 6px;font-weight:800;letter-spacing:-.2px}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>div{flex:1;min-width:120px}
 .row input{width:100%}
-textarea{width:100%;height:240px;font-family:monospace;font-size:13px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;padding:10px}
-.muted{color:#64748b;font-size:12px}
+textarea{width:100%;height:240px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;border-radius:12px;border:1.5px solid #e8ecf6;background:#f7f9fd;color:#141a2a;padding:12px;outline:none}
+textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);background:#fff}
+.muted{color:#8a93a8;font-size:12px}
 .adv{margin-top:12px}
-.adv summary{cursor:pointer;color:#94a3b8;font-size:13px}
+.adv summary{cursor:pointer;color:#5b657d;font-size:13px;font-weight:600}
 .chk{display:flex;align-items:center;gap:8px;margin:10px 0}
 .chk input{width:auto}
-.sec{margin:16px 0 6px;font-weight:700;font-size:14px;color:#c7d2fe;border-bottom:1px solid #334155;padding-bottom:4px}
+.sec{margin:18px 0 8px;font-weight:800;font-size:13px;color:#5b657d;border-bottom:1px solid #e8ecf6;padding-bottom:6px;letter-spacing:.3px}
 .bagrow{margin:6px 0}
-.empty{padding:24px;text-align:center;color:#64748b}
+.empty{padding:32px;text-align:center;color:#8a93a8;background:#fff;border:1px dashed #d8dfef;border-radius:14px}
 </style></head><body>
-<header><h1>🐾 宠物乐园 · 管理后台</h1><a href="/logout">退出登录</a></header>
+<header><h1>宠物乐园 · 管理后台</h1><a href="/logout">退出登录</a></header>
 <div class="tabs">
 <button data-t="players" class="active" onclick="tab('players')">玩家</button>
 <button data-t="groups" onclick="tab('groups')">群设置</button>
@@ -602,7 +615,7 @@ function paDetail(aid){
  const a=paCache.find(x=>x.id===aid); if(!a) return;
  let pets='';
  for(const p of (a.bound_pets||[])){
-  pets+=`<div class="row" style="align-items:center;margin:6px 0;padding:8px;border:1px solid #334155;border-radius:8px">
+  pets+=`<div class="row" style="align-items:center;margin:6px 0;padding:8px;border:1px solid #e8ecf6;border-radius:8px">
    <div style="flex:1"><div class="muted">群号 / 用户ID</div>${esc(p.group||'')} / ${esc(p.qq||'')}</div>
    <div style="flex:1"><div class="muted">宠物</div>${esc(p.nickname||'未命名')} · ${esc(p.species||'未知')}</div>
    <div><button class="act del" onclick='paUnbind(${tj(aid)},${tj(p.group)},${tj(p.qq)})'>解绑</button></div>
@@ -626,7 +639,7 @@ async function paDelete(aid){ if(!confirm('确认删除账号 '+aid+'？绑定�
 function crImgUrl(img){ if(!img) return ''; if(img.startsWith('http') || img.startsWith('/')) return esc(img); return '/custom_images/'+esc(img); }
 function crImgBox(img,label){
  if(!img) return '';
- return `<div><div class="muted">${label}</div><div style="width:160px;height:160px;overflow:auto;border-radius:8px;border:1px solid #334155"><img src="${crImgUrl(img)}" style="width:512px;height:512px;object-fit:contain;display:block"></div></div>`;
+ return `<div><div class="muted">${label}</div><div style="width:160px;height:160px;overflow:auto;border-radius:8px;border:1px solid #e8ecf6"><img src="${crImgUrl(img)}" style="width:512px;height:512px;object-fit:contain;display:block"></div></div>`;
 }
 async function paUnbind(aid,group,qq){ if(!confirm(`确认解绑 ${group} / ${qq}？`)) return; await api('/api/portal_accounts/unbind',{account_id:aid,group, qq}); loadPortalAccounts(); paDetail(aid); }
 
@@ -682,7 +695,7 @@ function renderCustomPets(){
  let rows='';
  for(const p of cpCache){
   if(q && !String(p.group).toLowerCase().includes(q) && !String(p.qq).toLowerCase().includes(q) && !String(p.account_qq).toLowerCase().includes(q) && !String(p.nickname).toLowerCase().includes(q)) continue;
-  const img=p.custom_image?`<img src="/custom_images/${esc(p.custom_image)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #334155">`:'—';
+  const img=p.custom_image?`<img src="/custom_images/${esc(p.custom_image)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e8ecf6">`:'—';
   const tags=(p.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join(' ');
   rows+=`<tr>
    <td class="num">${esc(p.group)}</td>
@@ -1293,7 +1306,7 @@ function eventCollectReward(box){
 // actions
 function eventActionHtml(name,conf){
  conf=conf||{};
- return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:2"><label>玩法指令</label><input class="ev-a-name" value="${escA(name)}"></div>
    <div style="flex:1"><label>宠物精力</label><input class="ev-a-energy" type="number" value="${conf.energy!==undefined?conf.energy:10}"></div>
@@ -1383,7 +1396,7 @@ function eventCollectRewards(container){
 // shop
 function eventShopHtml(name,it){
  it=it||{};
- return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:2"><label>商品名</label><input class="ev-s-name" value="${escA(name)}"></div>
    <div style="flex:2"><label>价格（如：贝壳 20 / 金币 100）</label><input class="ev-s-cost" value="${escA(eventCostToString(it.cost||{}))}"></div>
@@ -1456,7 +1469,7 @@ async function bossRespawn(){
 // gacha
 function eventGachaHtml(entry){
  entry=entry||{};
- return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:1"><label>权重</label><input class="ev-g-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
    <div style="flex:3"><label>提示文案（可选）</label><input class="ev-g-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
@@ -1493,7 +1506,7 @@ function eventCollectGacha(){
 // dungeons
 function eventDungeonHtml(name,conf){
  conf=conf||{};
- return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:2"><label>副本名称</label><input class="ev-d-name" value="${escA(name)}"></div>
    <div style="flex:2"><label>怪物名</label><input class="ev-d-monster" value="${escA(conf.monster||'')}"/></div>
@@ -1577,7 +1590,7 @@ function eventAddEffRow(btn){
 }
 function eventItemHtml(name,conf){
  conf=conf||{};
- return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:2"><label>道具名</label><input class="ev-i-name" value="${escA(name)}" placeholder="夏日冰饮"></div>
    <div style="flex:1"><label>分类</label><select class="ev-i-cat">${['药品','道具','装饰','材料'].map(o=>`<option ${o===(conf.category||'道具')?'selected':''}>${o}</option>`).join('')}</select></div>
@@ -1643,7 +1656,7 @@ function updateEventItemDatalist(){
 // boss
 function eventBossRewardHtml(entry){
  entry=entry||{};
- return `<div class="event-card" style="border:1px solid #334155;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:1"><label>分配权重（越高越优先给高伤害）</label><input class="ev-b-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
    <div style="flex:3"><label>提示文案（可选）</label><input class="ev-b-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
