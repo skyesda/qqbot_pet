@@ -1404,6 +1404,14 @@ createApp({
     // ---- 养成 / 道具 / 兑换 ----
     async function petAction(action){
       if(!data.value) return;
+      const tips = {
+        auto_level: '确定要一键升级吗？将自动消耗经验与精力升到可达最高等级。',
+        level: `确定要升级 ${Math.max(1, levelTimes.value||1)} 次吗？将消耗相应经验与精力。`,
+        evolve: '确定要进行宠物进化吗？需消耗『进化神石』。'
+      };
+      try{
+        await ElMessageBox.confirm(tips[action] || '确定要执行该操作吗？', '操作确认', {confirmButtonText:'确定', cancelButtonText:'取消', type:'warning'});
+      }catch(e){ return; }
       acting.value = action;
       try{
         const r = await api('/api/portal/pet_action','POST',{group_id:data.value.group_id, qq:data.value.qq, action, times:Math.max(1, levelTimes.value||1)});
@@ -1414,6 +1422,11 @@ createApp({
 
     async function useItem(it){
       if(!data.value) return;
+      const n = it.kind==='item' ? Math.max(1, it.qty||1) : 1;
+      const verb = it.kind==='art' ? `佩戴神器「${it.name}」` : (it.kind==='skill' ? `参悟秘技书「${it.name}」` : `使用「${it.name}」×${n}`);
+      try{
+        await ElMessageBox.confirm(`确定要${verb}吗？`, '操作确认', {confirmButtonText:'确定', cancelButtonText:'取消', type:'warning'});
+      }catch(e){ return; }
       usingItem.value = it.name;
       try{
         const r = await api('/api/portal/use_item','POST',{group_id:data.value.group_id, qq:data.value.qq, name:it.name, count: it.kind==='item' ? Math.max(1, it.qty||1) : 1});
