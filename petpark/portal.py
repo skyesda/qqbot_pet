@@ -256,6 +256,7 @@ class PlayerPortal:
         app.router.add_post("/api/portal/use_item", self._api_use_item)
         app.router.add_post("/api/portal/redeem", self._api_redeem)
         app.router.add_post("/api/portal/change_password", self._api_change_password)
+        app.router.add_post("/api/portal/pet_action", self._api_pet_action)
         app.router.add_static(
             "/custom_images",
             path=self.store.custom_images_dir,
@@ -274,7 +275,9 @@ class PlayerPortal:
         return response
 
     async def _home_page(self, request: web.Request) -> web.Response:
-        return web.Response(text=_HOME_HTML, content_type="text/html")
+        sess = self._current_session(request)
+        html = _HOME_HTML.replace("{{CSRF_TOKEN}}", sess.get("csrf", "") if sess else "")
+        return web.Response(text=html, content_type="text/html")
 
     @staticmethod
     def _mask_qq(qq: str) -> str:
@@ -618,6 +621,46 @@ class PlayerPortal:
             "summary": self._player_summary(group_id, qq),
         })
 
+    async def _api_pet_action(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        if self.command_gateway is None:
+            return web.json_response({"ok": False, "msg": "功能暂不可用，请重载插件后重试"})
+        body = await request.json()
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        action = str(body.get("action", "")).strip()
+        try:
+            times = max(1, min(9999, int(body.get("times", 1))))
+        except (TypeError, ValueError):
+            times = 1
+        player = self._owned_player(sess, group_id, qq)
+        gw = self.command_gateway
+        try:
+            if action == "auto_level":
+                # 等同群聊「一键升级宠物」
+                text = gw._auto_level(player)
+            elif action == "level":
+                # 等同群聊「宠物升级 次数」
+                text = gw._manual_level(player, ["宠物升级", str(times)])
+            elif action == "evolve":
+                # 等同群聊「宠物进化」
+                text = gw._evolve(player)
+            else:
+                return web.json_response({"ok": False, "msg": "未知操作"})
+        except Exception as e:
+            logger.exception("[petpark] 门户宠物操作失败")
+            return web.json_response({"ok": False, "msg": f"操作失败：{e}"})
+        await self.store.save()
+        text = str(text)
+        failed_markers = ("没有", "不足", "不能", "无法", "失败", "未能", "正在", "无需")
+        success = not any(m in text for m in failed_markers)
+        return web.json_response({
+            "ok": success,
+            "msg": text,
+            "summary": self._player_summary(group_id, qq),
+        })
+
     async def _api_redeem(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
         sess = self._require_session(request)
@@ -810,6 +853,18 @@ button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
 .item .item-tag{align-self:flex-start;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 9px;background:var(--brand-soft);color:var(--brand);border:1px solid rgba(47,107,255,.18)}
 .item .item-tag.art{background:#fef3e2;color:#c2660a;border-color:rgba(194,102,10,.22)}
 .item .item-tag.skill{background:#f2ecff;color:#7c3aed;border-color:rgba(124,58,237,.2)}
+
+/* 宠物养成 */
+.grow-row{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+.grow-row button{border:none;border-radius:11px;padding:11px 20px;font-size:13.5px;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--brand),var(--brand-2));box-shadow:0 3px 12px rgba(99,102,241,.28);transition:.18s;font-family:inherit}
+.grow-row button:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(99,102,241,.38)}
+.grow-row button:disabled{opacity:.6;cursor:wait;transform:none}
+.grow-row button.evolve{background:linear-gradient(135deg,#f59e0b,#ef6c1a);box-shadow:0 3px 12px rgba(245,158,11,.3)}
+.grow-row button.evolve:hover{box-shadow:0 6px 18px rgba(245,158,11,.42)}
+.grow-group{display:inline-flex;gap:0;border-radius:11px;overflow:hidden}
+.grow-group input{width:72px;border:1px solid var(--line);border-right:none;border-radius:11px 0 0 11px;padding:0 12px;font-size:14px;outline:none;font-family:inherit}
+.grow-group input:focus{border-color:var(--brand)}
+.grow-group button{border-radius:0 11px 11px 0}
 
 /* 冷却 */
 .cd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:9px}
@@ -1359,6 +1414,13 @@ function renderPet(container, d){
       <div class="coin"><div class="label">💎 钻石</div><div class="value">${fmt(d.diamond)}</div></div>
       <div class="coin"><div class="label">🔮 深渊结晶</div><div class="value">${fmt(d.abyss.crystal||0)}</div></div>
     </div>
+    <h3>宠物养成</h3>
+    <div class="grow-row">
+      <button data-act="auto_level">⚡ 一键升级</button>
+      <span class="grow-group"><input type="number" id="levelTimes" min="1" value="1"><button data-act="level">⬆ 升级</button></span>
+      <button data-act="evolve" class="evolve">🌟 宠物进化</button>
+    </div>
+    <p class="muted" style="margin:6px 0 0">效果与群聊指令一致；升级消耗经验与精力，进化需『进化神石』。</p>
     <h3>活动冷却</h3>
     <div class="cd-grid">${cds}</div>
     <h3>背包</h3>
@@ -1374,6 +1436,19 @@ function renderPet(container, d){
     </div>
     <div class="pet-source">群号：${esc(d.group_id)} &nbsp;|&nbsp; 用户ID：${esc(d.qq)}</div>`;
 
+  container.querySelectorAll('button[data-act]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const action = btn.dataset.act;
+      const times = Math.max(1, parseInt((document.getElementById('levelTimes')||{}).value)||1);
+      btn.disabled = true;
+      try{
+        const r = await api('/api/portal/pet_action','POST',{group_id:d.group_id, qq:d.qq, action, times});
+        if(r && r.msg) msg(stripMd(r.msg), r.ok?'ok':'err');
+        else msg('操作失败');
+        if(r && r.ok) await refreshAll();
+      } finally { btn.disabled = false; }
+    };
+  });
   container.querySelectorAll('button[data-use]').forEach(btn=>{
     btn.onclick = async ()=>{
       const name = btn.dataset.use;
@@ -1494,7 +1569,8 @@ _HOME_HTML = r"""<!DOCTYPE html>
   nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0}
   .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;letter-spacing:.5px}
   .brand .dot{width:12px;height:12px;border-radius:4px;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 0 16px rgba(129,90,247,.8)}
-  .nav-btns{display:flex;gap:10px}
+  .nav-btns{display:flex;gap:10px;align-items:center}
+  .user-chip{font-size:13px;color:#b6f2d4;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);border-radius:999px;padding:7px 14px;font-weight:600}
   button{font-family:inherit;cursor:pointer;border:none;border-radius:10px;font-size:14px;font-weight:600;transition:.18s}
   .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--line);padding:9px 20px}
   .btn-ghost:hover{border-color:rgba(255,255,255,.3);background:rgba(255,255,255,.05)}
@@ -1569,7 +1645,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <div class="wrap">
   <nav>
     <div class="brand"><span class="dot"></span>宠物乐园</div>
-    <div class="nav-btns">
+    <div class="nav-btns" id="navBtns">
       <button class="btn-ghost" onclick="openAuth('login')">登录</button>
       <button class="btn-primary" onclick="openAuth('register')">注册</button>
     </div>
@@ -1579,7 +1655,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     <div class="tag">QQ 群宠物养成 · 全服数据中心</div>
     <h1>砸蛋抽宠 · 养成对战<br>飞升渡劫 · 摸金探险</h1>
     <p>跨群神榜实时竞技，副本、姻缘、天赋觉醒、深渊秘境……<br>登录玩家中心，随时随地管理你的专属宠物。</p>
-    <div class="cta">
+    <div class="cta" id="heroCta">
       <button class="btn-primary" onclick="openAuth('register')">立即加入</button>
       <button class="btn-ghost" onclick="openAuth('login')">进入玩家中心</button>
     </div>
@@ -1651,8 +1727,32 @@ _HOME_HTML = r"""<!DOCTYPE html>
 </div>
 
 <script>
+const CSRF = "{{CSRF_TOKEN}}";
 let authMode = 'login';
 const $ = id => document.getElementById(id);
+
+async function logout(){
+  try{ await fetch('/api/portal/logout', {method:'POST', headers:{'X-CSRF-Token': CSRF}}); }catch(e){}
+  location.reload();
+}
+
+async function checkAuth(){
+  try{
+    const r = await fetch('/api/portal/me');
+    if(!r.ok) return;
+    const d = await r.json();
+    if(!d || !d.ok) return;
+    const qq = d.qq || (d.account && d.account.qq) || '';
+    $('navBtns').innerHTML =
+      (qq ? `<span class="user-chip">✅ 已登录 · ${String(qq).replace(/[&<>"']/g,'')}</span>` : '<span class="user-chip">✅ 已登录</span>') +
+      `<button class="btn-primary" onclick="location.href='/portal'">仪表盘</button>` +
+      `<button class="btn-ghost" onclick="logout()">退出登录</button>`;
+    $('heroCta').innerHTML =
+      `<button class="btn-primary" onclick="location.href='/portal'">进入仪表盘</button>` +
+      `<button class="btn-ghost" onclick="logout()">退出登录</button>`;
+  }catch(e){}
+}
+checkAuth();
 
 function openAuth(mode){
   authMode = mode;
