@@ -194,6 +194,7 @@ class PlayerPortal:
                 "image": self.store.remaining_custom_changes(player, "image"),
                 "species_name": self.store.remaining_custom_changes(player, "species_name"),
             },
+            "auto_cultivation": dict(player.get("auto_cultivation", {})),
         }
 
     def _cooldown_list(self, player: dict) -> list:
@@ -251,6 +252,7 @@ class PlayerPortal:
         app.router.add_get("/api/portal/me", self._api_me)
         app.router.add_post("/api/portal/bind", self._api_bind)
         app.router.add_get("/api/portal/pet", self._api_pet)
+        app.router.add_post("/api/portal/auto_cultivation", self._api_auto_cultivation)
         app.router.add_post("/api/portal/custom_redeem", self._api_custom_redeem)
         app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
         app.router.add_post("/api/portal/use_item", self._api_use_item)
@@ -463,6 +465,43 @@ class PlayerPortal:
         if owner != sess.get("aid"):
             raise web.HTTPForbidden(text="你没有绑定该宠物")
         return web.json_response({"ok": True, **self._player_summary(group_id, qq)})
+
+    async def _api_auto_cultivation(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        self._require_session(request)
+        body = await request.json()
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        enabled = bool(body.get("enabled"))
+        if not group_id or not qq:
+            return web.json_response({"ok": False, "msg": "缺少群号或用户 ID"})
+        owner = self.store.account_for_pet(group_id, qq)
+        sess = self._current_session(request)
+        if owner != sess.get("aid"):
+            raise web.HTTPForbidden(text="你没有绑定该宠物")
+        key = self.store.make_key(group_id, qq)
+        player = self.store._data["players"].get(key)
+        if not player:
+            return web.json_response({"ok": False, "msg": "未找到该宠物"})
+        pet = player.get("pet")
+        if not pet or not pet.get("custom"):
+            return web.json_response({"ok": False, "msg": "自动修炼仅限定制宠物"})
+        ac = player.setdefault("auto_cultivation", {
+            "enabled": False,
+            "started_at": 0,
+            "total_sessions": 0,
+            "total_exp": 0,
+            "last_run_at": 0,
+        })
+        ac["enabled"] = enabled
+        if enabled:
+            ac["started_at"] = int(time.time())
+        await self.store.save()
+        return web.json_response({
+            "ok": True,
+            "msg": "已开启自动修炼" if enabled else "已关闭自动修炼",
+            "auto_cultivation": dict(ac),
+        })
 
     async def _api_custom_redeem(self, request: web.Request) -> web.Response:
         try:
@@ -1078,7 +1117,23 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
           <div class="custom-box" v-else>
             <div class="custom-badge">✨ 定制权限已解锁（混沌品质）</div>
             <div class="custom-remaining">本月剩余次数：图片 {{ data.custom_remaining.image }} 次 / 名称 {{ data.custom_remaining.species_name }} 次</div>
-            <el-button type="primary" round @click="openCustomEdit">修改形象 / 名称</el-button>
+            <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap">
+              <el-button type="primary" round @click="openCustomEdit">修改形象 / 名称</el-button>
+              <div style="display:flex;align-items:center;gap:8px;background:#fff;padding:8px 14px;border-radius:999px;border:1px solid #e2e0f7">
+                <span style="font-size:13px;color:#5b657d">自动修炼</span>
+                <el-switch
+                  v-model="data.auto_cultivation.enabled"
+                  :loading="autoCultivating"
+                  inline-prompt
+                  active-text="开"
+                  inactive-text="关"
+                  @change="toggleAutoCultivation"
+                />
+              </div>
+            </div>
+            <div v-if="data.auto_cultivation.enabled" class="custom-remaining" style="color:#0c7a45">
+              🧘 自动修炼运行中 · 累计 {{ data.auto_cultivation.total_sessions || 0 }} 次 · 经验 +{{ data.auto_cultivation.total_exp || 0 }}
+            </div>
             <el-alert v-for="(r,i) in data.custom_pending || []" :key="'p'+i" type="success" :closable="false" style="margin-top:10px"
               :title="'已提交审核，预计 3 个工作日内完成。' + (r.new.species_name ? '名称：'+r.new.species_name+' ' : '') + (r.new.image ? '图片' : '')"></el-alert>
             <el-alert v-for="(r,i) in data.custom_rejected || []" :key="'r'+i" type="error" :closable="false" style="margin-top:10px"
@@ -1331,6 +1386,7 @@ createApp({
     const redeemResult = ref('');
     const bagItems = ref([]);
     const cooldowns = ref([]);
+    const autoCultivating = ref(false);
 
     const bind = reactive({show:false, group:'', qq:'', loading:false});
     const pwd = reactive({show:false, old:'', n1:'', n2:'', loading:false});
@@ -1387,6 +1443,27 @@ createApp({
       const me = await api('/api/portal/me');
       if(me && me.ok){ account.value = me.account; pets.value = me.bound_pets || []; }
       if(current.value) await loadPet(current.value);
+    }
+
+    async function toggleAutoCultivation(enabled){
+      if(!data.value) return;
+      autoCultivating.value = true;
+      try{
+        const p = current.value;
+        const r = await api('/api/portal/auto_cultivation','POST',{
+          group_id: p.group_id,
+          qq: p.qq,
+          enabled: Boolean(enabled),
+        });
+        if(r && r.ok){
+          ElMessage.success(r.msg || '设置成功');
+          if(data.value) data.value.auto_cultivation = r.auto_cultivation || data.value.auto_cultivation;
+        } else {
+          ElMessage.error((r && r.msg) || '设置失败');
+          // 回滚开关状态：重新加载宠物数据
+          await loadPet(p);
+        }
+      } finally { autoCultivating.value = false; }
     }
 
     async function logout(){
@@ -1627,12 +1704,12 @@ createApp({
     onMounted(init);
 
     return {account, pets, current, data, pet, petLoading, blankImg:BLANK_IMG,
-      levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns,
+      levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       bind, pwd, fb, custom, crop,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
       loadPet, logout, doBind, openPwd, changePwd, petAction, useItem, showItemInfo, redeem,
       openFeedback, pickFbImages, submitFeedback,
-      redeemCustom, openCustomEdit, submitCustom,
+      redeemCustom, openCustomEdit, submitCustom, toggleAutoCultivation,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
