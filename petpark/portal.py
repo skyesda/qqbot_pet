@@ -5,7 +5,7 @@
 - 会话采用 HMAC-SHA256 签名 Cookie，HttpOnly + SameSite=Strict
 - POST 接口校验 CSRF token
 - 登录/注册/绑定接口有简单的 IP+QQ 级速率限制
-- 当前只读，不提供任何修改数据的能力
+- 使用道具/卡密兑换等写操作复用主插件的群聊指令实现，效果与群聊一致
 """
 
 from __future__ import annotations
@@ -33,9 +33,10 @@ _LOGIN_MAX_ATTEMPTS = 5
 
 
 class PlayerPortal:
-    def __init__(self, store, broadcast_callback=None):
+    def __init__(self, store, broadcast_callback=None, command_gateway=None):
         self.store = store
         self.broadcast_callback = broadcast_callback
+        self.command_gateway = command_gateway
         self._attempts: dict[str, dict] = {}
 
     # --------------------------- 工具：密码与会话 ---------------------------
@@ -181,6 +182,11 @@ class PlayerPortal:
             "abyss": dict(self.store.abyss_state(player)),
             "stats": dict(player.get("stats", {})),
             "pet": self._format_pet(player, group_id, qq),
+            "cooldowns": self._cooldown_list(player),
+            "skills": list((player.get("pet") or {}).get("skills", [])),
+            "artifact": (player.get("pet") or {}).get("artifact"),
+            "artifact_names": list(data.ARTIFACTS.keys()),
+            "skill_names": list(data.SKILLS.keys()),
             "custom_pending": pending,
             "custom_rejected": last_rejected,
             "custom_remaining": {
@@ -188,6 +194,50 @@ class PlayerPortal:
                 "species_name": self.store.remaining_custom_changes(player, "species_name"),
             },
         }
+
+    def _cooldown_list(self, player: dict) -> list:
+        """汇总玩家所有活动冷却：日常活动 + 固定玩法 + 限时活动。"""
+        now = int(time.time())
+        entries = []
+        for action in data.DAILY_ACTIONS:
+            entries.append({
+                "name": action,
+                "remaining": self.store.cooldown_remaining(player, f"日常:{action}"),
+            })
+        fixed = [
+            ("砸蛋", "砸蛋"),
+            ("副本", "副本"),
+            ("fantasy_treasure", "幻境寻宝"),
+            ("ascend_dungeon", "挑战神仙"),
+            ("深渊秘境", "深渊秘境"),
+        ]
+        for key, label in fixed:
+            entries.append({
+                "name": label,
+                "remaining": self.store.cooldown_remaining(player, key),
+            })
+        known = {f"日常:{a}" for a in data.DAILY_ACTIONS} | {k for k, _ in fixed}
+        for key, end in (player.get("cooldowns") or {}).items():
+            if key in known:
+                continue
+            remaining = max(0, int(end) - now)
+            if remaining <= 0:
+                continue
+            label = key.split(":")[-1] if ":" in key else key
+            entries.append({"name": label, "remaining": remaining})
+        return entries
+
+    def _owned_player(self, sess: dict, group_id: str, qq: str) -> dict:
+        if not group_id or not qq:
+            raise web.HTTPBadRequest(text="参数不完整")
+        owner = self.store.account_for_pet(group_id, qq)
+        if owner != sess.get("aid"):
+            raise web.HTTPForbidden(text="你没有绑定该宠物")
+        key = self.store.make_key(group_id, qq)
+        player = self.store._data["players"].get(key)
+        if not player:
+            raise web.HTTPNotFound(text="未找到该宠物")
+        return player
 
     # --------------------------- 路由 ---------------------------
     def setup(self, app: web.Application) -> None:
@@ -200,6 +250,9 @@ class PlayerPortal:
         app.router.add_get("/api/portal/pet", self._api_pet)
         app.router.add_post("/api/portal/custom_redeem", self._api_custom_redeem)
         app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
+        app.router.add_post("/api/portal/use_item", self._api_use_item)
+        app.router.add_post("/api/portal/redeem", self._api_redeem)
+        app.router.add_post("/api/portal/change_password", self._api_change_password)
         app.router.add_static(
             "/custom_images",
             path=self.store.custom_images_dir,
@@ -449,6 +502,102 @@ class PlayerPortal:
             "review": review,
         })
 
+    # --------------------------- 道具使用 / 卡密兑换 / 改密 ---------------------------
+    async def _api_use_item(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        if self.command_gateway is None:
+            return web.json_response({"ok": False, "msg": "功能暂不可用，请重载插件后重试"})
+        body = await request.json()
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        name = str(body.get("name", "")).strip()
+        try:
+            count = max(1, min(9999, int(body.get("count", 1))))
+        except (TypeError, ValueError):
+            count = 1
+        if not name:
+            return web.json_response({"ok": False, "msg": "请选择要使用的道具"})
+        player = self._owned_player(sess, group_id, qq)
+        bag = player.get("bag", {})
+        if bag.get(name, 0) <= 0:
+            return web.json_response({"ok": False, "msg": f"背包里没有『{name}』"})
+        try:
+            gw = self.command_gateway
+            if name in data.ARTIFACTS:
+                # 神器：等同群聊「佩戴神器 名称」
+                text = gw._equip_artifact(player, ["佩戴神器", name])
+            else:
+                # 普通道具 / 秘技书：等同群聊「使用 名称 数量」
+                text = gw._use_item(player, ["使用", name, str(count)])
+        except Exception as e:
+            logger.exception("[petpark] 门户使用道具失败")
+            return web.json_response({"ok": False, "msg": f"使用失败：{e}"})
+        await self.store.save()
+        text = str(text)
+        failed_markers = ("没有", "不足", "不能", "无法", "无需", "用法：", "需要", "已学会", "还活着", "已佩戴该")
+        success = not any(m in text for m in failed_markers) or "成功" in text
+        return web.json_response({
+            "ok": success,
+            "msg": text,
+            "summary": self._player_summary(group_id, qq),
+        })
+
+    async def _api_redeem(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        if self.command_gateway is None:
+            return web.json_response({"ok": False, "msg": "功能暂不可用，请重载插件后重试"})
+        body = await request.json()
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        code = str(body.get("code", "")).strip()
+        if not code:
+            return web.json_response({"ok": False, "msg": "请输入卡密"})
+        ok_rate, why = self._check_rate(f"redeem:{sess.get('aid')}")
+        if not ok_rate:
+            return web.json_response({"ok": False, "msg": why})
+        player = self._owned_player(sess, group_id, qq)
+        try:
+            # 等同群聊「兑换 卡密」
+            text = self.command_gateway._redeem(player, group_id, qq, ["兑换", code])
+        except Exception as e:
+            logger.exception("[petpark] 门户卡密兑换失败")
+            return web.json_response({"ok": False, "msg": f"兑换失败：{e}"})
+        await self.store.save()
+        success = "兑换成功" in str(text)
+        if success:
+            self._reset_rate(f"redeem:{sess.get('aid')}")
+        return web.json_response({
+            "ok": success,
+            "msg": str(text),
+            "summary": self._player_summary(group_id, qq),
+        })
+
+    async def _api_change_password(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        body = await request.json()
+        old_password = str(body.get("old_password", ""))
+        new_password = str(body.get("new_password", ""))
+        if len(new_password) < 6:
+            return web.json_response({"ok": False, "msg": "新密码至少 6 位"})
+        account = self.store.get_account(sess.get("aid"))
+        if not account:
+            return web.json_response({"ok": False, "msg": "账号不存在"})
+        ok_rate, why = self._check_rate(f"chpwd:{sess.get('aid')}")
+        if not ok_rate:
+            return web.json_response({"ok": False, "msg": why})
+        expected = self._hash_password(old_password, account.get("salt", ""))
+        if not secrets.compare_digest(expected, account.get("password_hash", "")):
+            return web.json_response({"ok": False, "msg": "旧密码不正确"})
+        salt = self._make_salt()
+        account["salt"] = salt
+        account["password_hash"] = self._hash_password(new_password, salt)
+        await self.store.save()
+        self._reset_rate(f"chpwd:{sess.get('aid')}")
+        return web.json_response({"ok": True, "msg": "密码修改成功"})
+
 
 # --------------------------- 前端页面 ---------------------------
 # 明亮现代风格：浅色背景 + 白色卡片 + 品牌渐变
@@ -575,9 +724,32 @@ button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
 .bag{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:9px;max-height:290px;overflow-y:auto;padding:2px 4px 2px 2px}
 .bag::-webkit-scrollbar{width:6px}
 .bag::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:3px}
-.item{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 6px;text-align:center;font-size:13px;color:#3c455c;transition:box-shadow .2s,border-color .2s}
-.item:hover{border-color:var(--line-strong);box-shadow:var(--shadow-sm)}
-.item .count{display:block;margin-top:5px;color:var(--brand);font-weight:800;font-variant-numeric:tabular-nums}
+.bag{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));max-height:420px}
+.item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 12px 11px;text-align:left;font-size:13px;color:#3c455c;transition:box-shadow .2s,border-color .2s,transform .2s;display:flex;flex-direction:column;gap:8px}
+.item:hover{border-color:var(--line-strong);box-shadow:var(--shadow);transform:translateY(-1px)}
+.item .item-name{font-weight:700;color:var(--text);word-break:break-all;line-height:1.4}
+.item .count{color:var(--brand);font-weight:800;font-variant-numeric:tabular-nums;font-size:12px}
+.item .use-row{display:flex;gap:6px;margin-top:auto}
+.item .use-row input{flex:1;min-width:0;width:52px;padding:6px 8px;font-size:13px;border-radius:9px;text-align:center}
+.item .use-row button{flex:0 0 auto;padding:6px 13px;font-size:12.5px;border-radius:9px;box-shadow:none}
+.item .item-tag{align-self:flex-start;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 9px;background:var(--brand-soft);color:var(--brand);border:1px solid rgba(47,107,255,.18)}
+.item .item-tag.art{background:#fef3e2;color:#c2660a;border-color:rgba(194,102,10,.22)}
+.item .item-tag.skill{background:#f2ecff;color:#7c3aed;border-color:rgba(124,58,237,.2)}
+
+/* 冷却 */
+.cd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:9px}
+.cd{background:#fff;border:1px solid var(--line);border-radius:13px;padding:11px 13px;transition:box-shadow .2s}
+.cd:hover{box-shadow:var(--shadow-sm)}
+.cd .cd-name{font-size:12.5px;color:var(--muted);font-weight:600}
+.cd .cd-time{font-size:15px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums}
+.cd.ready .cd-time{color:var(--ok)}
+.cd.busy .cd-time{color:#c2660a}
+
+/* 卡密兑换 */
+.redeem-box{margin-top:2px;padding:18px;background:linear-gradient(135deg,#eef7ff,#f4f0ff);border:1px solid #e0e6f7;border-radius:16px}
+.redeem-box .bind-row input{background:#fff}
+.redeem-result{margin-top:12px;font-size:13px;line-height:1.8;white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:none}
+.redeem-result.show{display:block}
 .empty{text-align:center;color:var(--muted);padding:34px 0;font-size:14px}
 
 /* 绑定表单 */
@@ -628,7 +800,7 @@ body.appmode .screen-wrap{border:none;border-radius:0;box-shadow:none;background
 body.appmode .screen-wrap::before{display:none}
 body.appmode .screen{border-radius:0;padding:0;min-height:100vh;max-height:none;overflow:visible}
 .layout{display:flex;min-height:100vh;background:var(--bg)}
-.sidebar{width:264px;flex:0 0 264px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 16px 18px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.sidebar{width:264px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 16px 18px;position:fixed;left:0;top:0;height:100vh;overflow-y:auto;z-index:20}
 .sidebar::-webkit-scrollbar{width:6px}
 .sidebar::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:3px}
 .side-brand{font-size:16px;font-weight:800;letter-spacing:-.2px;padding:2px 8px 16px;border-bottom:1px solid var(--line);margin-bottom:14px;display:flex;align-items:center;gap:9px}
@@ -637,16 +809,19 @@ body.appmode .screen{border-radius:0;padding:0;min-height:100vh;max-height:none;
 .side-pets{display:flex;flex-direction:column;gap:8px}
 .side-pets .pet-chip{border-radius:14px}
 .side-bind{margin-top:12px;width:100%;padding:11px 14px;font-size:13.5px;border-radius:12px}
-.side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
+.side-foot .side-user{padding:0 2px}
+.side-foot-btns{display:flex;gap:8px}
+.side-foot-btns button{flex:1;padding:8px 10px;font-size:12.5px;border-radius:10px}
 .side-user{font-size:12.5px;color:var(--muted);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.content{flex:1;min-width:0;padding:26px 34px 40px;overflow-x:hidden}
+.content{flex:1;min-width:0;padding:26px 34px 40px;overflow-x:hidden;margin-left:264px}
 .content-inner{max-width:960px;margin:0 auto}
 .content .topbar{margin-bottom:20px}
 @media(max-width:760px){
   .layout{flex-direction:column}
   .sidebar{width:100%;flex:none;position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
   .side-foot{margin-top:14px}
-  .content{padding:20px 16px 32px}
+  .content{padding:20px 16px 32px;margin-left:0}
 }
 
 /* 动画 */
@@ -684,6 +859,18 @@ body.appmode .screen{border-radius:0;padding:0;min-height:100vh;max-height:none;
       <div class="actions">
         <button class="ghost" onclick="closeBindModal()">取消</button>
         <button id="bindBtn">绑定</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal" id="pwdModal">
+    <div class="sheet">
+      <h3>🔒 修改密码</h3>
+      <div class="bind-row"><input id="pwdOld" type="password" placeholder="旧密码" style="flex:1 1 100%"></div>
+      <div class="bind-row"><input id="pwdNew" type="password" placeholder="新密码（至少 6 位）" style="flex:1 1 100%"></div>
+      <div class="bind-row"><input id="pwdNew2" type="password" placeholder="确认新密码" style="flex:1 1 100%"></div>
+      <div class="actions">
+        <button class="ghost" onclick="closePwdModal()">取消</button>
+        <button id="pwdBtn">确认修改</button>
       </div>
     </div>
   </div>
@@ -835,7 +1022,10 @@ function renderDashboard(){
         <p class="muted" style="margin:9px 4px 0;font-size:12px">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
         <div class="side-foot">
           <div class="side-user">QQ ${esc(state.account.qq)}</div>
-          <button class="ghost" id="logoutBtn" style="padding:6px 14px;font-size:12px">退出登录</button>
+          <div class="side-foot-btns">
+            <button class="ghost" id="pwdOpenBtn">修改密码</button>
+            <button class="ghost" id="logoutBtn">退出登录</button>
+          </div>
         </div>
       </aside>
       <section class="content">
@@ -850,10 +1040,29 @@ function renderDashboard(){
   document.querySelectorAll('.pet-chip').forEach(c=>c.onclick=()=>loadPet(state.pets[+c.dataset.idx]));
   document.getElementById('logoutBtn').onclick = async ()=>{ await api('/api/portal/logout','POST'); viewLogin(); };
   document.getElementById('openBindBtn').onclick = openBindModal;
+  document.getElementById('pwdOpenBtn').onclick = openPwdModal;
 }
 
 function openBindModal(){ document.getElementById('bindModal').classList.add('show'); }
 function closeBindModal(){ document.getElementById('bindModal').classList.remove('show'); }
+
+function openPwdModal(){
+  ['pwdOld','pwdNew','pwdNew2'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('pwdModal').classList.add('show');
+}
+function closePwdModal(){ document.getElementById('pwdModal').classList.remove('show'); }
+document.getElementById('pwdModal').onclick = e=>{ if(e.target.id==='pwdModal') closePwdModal(); };
+document.getElementById('pwdBtn').onclick = async ()=>{
+  const oldPwd = document.getElementById('pwdOld').value;
+  const newPwd = document.getElementById('pwdNew').value;
+  const newPwd2 = document.getElementById('pwdNew2').value;
+  if(!oldPwd || !newPwd){ msg('请填写旧密码和新密码'); return; }
+  if(newPwd.length < 6){ msg('新密码至少 6 位'); return; }
+  if(newPwd !== newPwd2){ msg('两次输入的新密码不一致'); return; }
+  const r = await api('/api/portal/change_password','POST',{old_password:oldPwd, new_password:newPwd});
+  if(r && r.ok){ msg('密码修改成功','ok'); closePwdModal(); }
+  else { msg((r&&r.msg)||'修改失败'); }
+};
 
 document.getElementById('bindBtn').onclick = async ()=>{
   const g = document.getElementById('bindGroup').value.trim();
@@ -1049,9 +1258,23 @@ function renderPet(container, d){
     </div>`
     : '<div class="empty">该账号下暂无宠物</div>';
 
+  const artSet = new Set(d.artifact_names || []);
+  const skillSet = new Set(d.skill_names || []);
   const bag = d.bag && Object.keys(d.bag).length ?
-    Object.entries(d.bag).map(([k,v])=>`<div class="item">${esc(k)}<span class="count">×${v}</span></div>`).join('')
+    Object.entries(d.bag).map(([k,v])=>{
+      const isArt = artSet.has(k), isSkill = skillSet.has(k);
+      const tag = isArt ? '<span class="item-tag art">神器</span>' : (isSkill ? '<span class="item-tag skill">秘技</span>' : '');
+      const btnLabel = isArt ? '佩戴' : (isSkill ? '参悟' : '使用');
+      const qty = (isArt || isSkill) ? '' : `<input type="number" min="1" max="${v}" value="1" data-qty="${escAttr(k)}">`;
+      return `<div class="item">${tag}<div class="item-name">${esc(k)}</div><span class="count">持有 ×${v}</span>
+        <div class="use-row">${qty}<button data-use="${escAttr(k)}">${btnLabel}</button></div></div>`;
+    }).join('')
     : '<div class="empty">背包空空如也</div>';
+
+  const cds = (d.cooldowns || []).map(c=>{
+    const readyAt = Math.floor(Date.now()/1000) + (c.remaining||0);
+    return `<div class="cd ${c.remaining>0?'busy':'ready'}" data-ready="${readyAt}"><div class="cd-name">${esc(c.name)}</div><div class="cd-time">${c.remaining>0?fmtCd(c.remaining):'可用'}</div></div>`;
+  }).join('') || '<div class="empty">暂无活动</div>';
 
   container.innerHTML = petHtml + renderCustom(d) + `
     <h3>我的财产</h3>
@@ -1061,9 +1284,51 @@ function renderPet(container, d){
       <div class="coin"><div class="label">💎 钻石</div><div class="value">${fmt(d.diamond)}</div></div>
       <div class="coin"><div class="label">🔮 深渊结晶</div><div class="value">${fmt(d.abyss.crystal||0)}</div></div>
     </div>
+    <h3>活动冷却</h3>
+    <div class="cd-grid">${cds}</div>
     <h3>背包</h3>
+    <p class="muted" style="margin:-4px 0 10px">道具可直接使用（支持数量），神器可佩戴、秘技书可参悟，效果与群聊指令一致。</p>
     <div class="bag">${bag}</div>
+    <h3>卡密兑换</h3>
+    <div class="redeem-box">
+      <div class="bind-row">
+        <input id="redeemCode" type="text" placeholder="输入卡密，可兑换金币 / 积分 / 钻石 / 道具">
+        <button id="redeemBtn">兑换</button>
+      </div>
+      <div id="redeemResult" class="redeem-result"></div>
+    </div>
     <div class="pet-source">群号：${esc(d.group_id)} &nbsp;|&nbsp; 用户ID：${esc(d.qq)}</div>`;
+
+  container.querySelectorAll('button[data-use]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const name = btn.dataset.use;
+      const qtyInput = container.querySelector(`input[data-qty="${CSS.escape(name)}"]`);
+      const count = qtyInput ? Math.max(1, parseInt(qtyInput.value)||1) : 1;
+      btn.disabled = true;
+      try{
+        const r = await api('/api/portal/use_item','POST',{group_id:d.group_id, qq:d.qq, name, count});
+        if(r && r.msg) msg(stripMd(r.msg), r.ok?'ok':'err');
+        else msg('使用失败');
+        if(r && r.ok) await refreshAll();
+      } finally { btn.disabled = false; }
+    };
+  });
+  const redeemBtn2 = document.getElementById('redeemBtn');
+  if(redeemBtn2){
+    redeemBtn2.onclick = async ()=>{
+      const code = document.getElementById('redeemCode').value.trim();
+      if(!code){ msg('请输入卡密'); return; }
+      redeemBtn2.disabled = true;
+      try{
+        const r = await api('/api/portal/redeem','POST',{group_id:d.group_id, qq:d.qq, code});
+        const box = document.getElementById('redeemResult');
+        if(r && r.msg){ box.textContent = stripMd(r.msg); box.classList.add('show'); }
+        if(r && r.ok){ msg('兑换成功','ok'); await refreshAll(); }
+        else if(r){ msg(stripMd(r.msg||'兑换失败')); }
+      } finally { redeemBtn2.disabled = false; }
+    };
+  }
+  startCdTicker();
   const redeemBtn = document.getElementById('redeemCustomBtn');
   if(redeemBtn){
     redeemBtn.onclick = async ()=>{
@@ -1088,7 +1353,33 @@ function renderPet(container, d){
 }
 
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escAttr(s){ return esc(s); }
 function fmt(n){ return Number(n).toLocaleString('zh-CN'); }
+function stripMd(s){ return String(s).replace(/^#+\s*/gm,'').replace(/\*\*/g,'').replace(/`/g,'').replace(/━+/g,'').replace(/\n{3,}/g,'\n\n').trim(); }
+function fmtCd(sec){
+  sec = Math.max(0, Math.floor(sec));
+  if(sec >= 3600) return `${Math.floor(sec/3600)}时${Math.floor(sec%3600/60)}分`;
+  if(sec >= 60) return `${Math.floor(sec/60)}分${sec%60}秒`;
+  return `${sec}秒`;
+}
+let cdTimer = null;
+function startCdTicker(){
+  if(cdTimer) clearInterval(cdTimer);
+  cdTimer = setInterval(()=>{
+    document.querySelectorAll('.cd[data-ready]').forEach(el=>{
+      const remaining = (+el.dataset.ready) - Math.floor(Date.now()/1000);
+      const t = el.querySelector('.cd-time');
+      if(remaining > 0){ el.classList.add('busy'); el.classList.remove('ready'); t.textContent = fmtCd(remaining); }
+      else { el.classList.remove('busy'); el.classList.add('ready'); t.textContent = '可用'; }
+    });
+  }, 1000);
+}
+async function refreshAll(){
+  // 全局刷新：重新拉取账号绑定列表与当前宠物数据
+  const me = await api('/api/portal/me');
+  if(me && me.ok){ state.account = me.account; state.pets = me.bound_pets || []; }
+  if(state.current) await loadPet(state.current);
+}
 
 initDashboard();
 </script>

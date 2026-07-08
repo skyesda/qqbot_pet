@@ -322,6 +322,7 @@ class PetParkPlugin(Star):
             user=str(self.config.get("web_user", "admin")),
             password=str(self.config.get("web_pass", "2468080asd")),
             broadcast_callback=self._broadcast_to_authorized_groups,
+            command_gateway=self,
         )
 
         async def _boot():

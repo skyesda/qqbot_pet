@@ -32,6 +32,7 @@ class WebAdmin:
         user: str,
         password: str,
         broadcast_callback=None,
+        command_gateway=None,
     ):
         self.store = store
         self.host = host
@@ -39,6 +40,7 @@ class WebAdmin:
         self.user = user
         self.password = password
         self._broadcast_callback = broadcast_callback
+        self._command_gateway = command_gateway
         self._tokens: set[str] = set()
         self._runner = None
 
@@ -68,7 +70,11 @@ class WebAdmin:
         app.router.add_post("/api/custom_pets", self._api_custom_pets)
         app.router.add_post("/api/custom_pets/cancel", self._api_custom_pet_cancel)
 
-        portal = PlayerPortal(self.store, broadcast_callback=self._broadcast_callback)
+        portal = PlayerPortal(
+            self.store,
+            broadcast_callback=self._broadcast_callback,
+            command_gateway=self._command_gateway,
+        )
         portal.setup(app)
 
         runner = web.AppRunner(app)
