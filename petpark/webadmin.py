@@ -48,6 +48,7 @@ class WebAdmin:
 
         app = web.Application()
         app.router.add_get("/", self._index)
+        app.router.add_get("/admin", self._index)
         app.router.add_get("/login", self._login_page)
         app.router.add_post("/login", self._login_submit)
         app.router.add_get("/logout", self._logout)
@@ -113,7 +114,7 @@ class WebAdmin:
         ):
             token = secrets.token_hex(16)
             self._tokens.add(token)
-            resp = web.HTTPFound("/")
+            resp = web.HTTPFound("/admin")
             resp.set_cookie(COOKIE, token, httponly=True, max_age=86400)
             return resp
         return web.Response(
