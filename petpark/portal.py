@@ -17,6 +17,7 @@ import hmac
 import json
 import secrets
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -241,6 +242,8 @@ class PlayerPortal:
 
     # --------------------------- 路由 ---------------------------
     def setup(self, app: web.Application) -> None:
+        app.router.add_get("/", self._home_page)
+        app.router.add_get("/api/portal/home", self._api_home)
         app.router.add_get("/portal", self._portal_page)
         app.router.add_post("/api/portal/register", self._api_register)
         app.router.add_post("/api/portal/login", self._api_login)
@@ -261,13 +264,85 @@ class PlayerPortal:
 
     async def _portal_page(self, request: web.Request) -> web.Response:
         sess = self._current_session(request)
-        csrf = sess.get("csrf") if sess else secrets.token_urlsafe(24)
+        if not sess:
+            raise web.HTTPFound("/")
+        csrf = sess.get("csrf")
         html = _PORTAL_HTML.replace("{{CSRF_TOKEN}}", csrf)
         response = web.Response(text=html, content_type="text/html")
-        if sess:
-            # 刷新 Cookie 过期时间
-            self._set_session(response, sess["aid"], csrf)
+        # 刷新 Cookie 过期时间
+        self._set_session(response, sess["aid"], csrf)
         return response
+
+    async def _home_page(self, request: web.Request) -> web.Response:
+        return web.Response(text=_HOME_HTML, content_type="text/html")
+
+    @staticmethod
+    def _mask_qq(qq: str) -> str:
+        q = str(qq or "")
+        if len(q) <= 5:
+            return q
+        return f"{q[:3]}****{q[-2:]}"
+
+    async def _api_home(self, request: web.Request) -> web.Response:
+        """首页公开统计：玩家/授权群/各大榜单，30 秒缓存。"""
+        now = time.time()
+        cache = getattr(self, "_home_cache", None)
+        if cache and now - cache[0] < 30:
+            return web.json_response(cache[1])
+        players = self.store.all_players()
+        pet_entries = []
+        for pl in players.values():
+            pet = pl.get("pet")
+            if not pet:
+                continue
+            pet_entries.append({
+                "nickname": str(pet.get("nickname", "")),
+                "level": pet.get("level", 1),
+                "stage": pet.get("stage", ""),
+                "quality": pet.get("quality", ""),
+                "power": int(battle_power(pet)),
+            })
+        pet_entries.sort(key=lambda x: x["power"], reverse=True)
+        groups = self.store._data.get("groups", {})
+        auth_groups = sum(
+            1 for g in groups.values()
+            if int(g.get("auth_until", 0) or 0) > int(now)
+        )
+        tomb = self.store._data.get("tomb_players", {})
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        tomb_rank, tomb_today, tomb_yesterday = [], [], []
+        for qq, st in tomb.items():
+            masked = self._mask_qq(qq)
+            mingbi = int(st.get("mingbi", 0) or 0)
+            if mingbi > 0:
+                tomb_rank.append({"qq": masked, "value": mingbi})
+            gains = st.get("daily_gains", {}) or {}
+            g_today = int(gains.get(today, 0) or 0)
+            if g_today > 0:
+                tomb_today.append({"qq": masked, "value": g_today})
+            g_yst = int(gains.get(yesterday, 0) or 0)
+            if g_yst > 0:
+                tomb_yesterday.append({"qq": masked, "value": g_yst})
+        for lst in (tomb_rank, tomb_today, tomb_yesterday):
+            lst.sort(key=lambda x: x["value"], reverse=True)
+        payload = {
+            "ok": True,
+            "stats": {
+                "players": len(players),
+                "auth_groups": auth_groups,
+                "pets": len(pet_entries),
+                "tomb_players": len(tomb),
+            },
+            "pet_rank": pet_entries[:10],
+            "tomb_rank": tomb_rank[:10],
+            "tomb_today": tomb_today[:10],
+            "tomb_yesterday": tomb_yesterday[:10],
+            "date_today": today,
+            "date_yesterday": yesterday,
+        }
+        self._home_cache = (now, payload)
+        return web.json_response(payload)
 
     async def _api_register(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -1382,6 +1457,295 @@ async function refreshAll(){
 }
 
 initDashboard();
+</script>
+</body>
+</html>
+"""
+
+
+_HOME_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>宠物乐园 · 全服数据中心</title>
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#101736; --card:rgba(255,255,255,.04); --line:rgba(255,255,255,.08);
+    --text:#e8ecf8; --muted:#8b93b0; --brand:#6366f1; --brand2:#a855f7; --gold:#fbbf24;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden;
+  }
+  .glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.35;pointer-events:none;z-index:0}
+  .glow.a{width:560px;height:560px;background:#4338ca;top:-180px;left:-120px;animation:drift 18s ease-in-out infinite alternate}
+  .glow.b{width:480px;height:480px;background:#7e22ce;top:22%;right:-160px;animation:drift 22s ease-in-out infinite alternate-reverse}
+  .glow.c{width:420px;height:420px;background:#0e7490;bottom:-140px;left:32%;animation:drift 26s ease-in-out infinite alternate}
+  @keyframes drift{from{transform:translate(0,0)}to{transform:translate(60px,40px)}}
+  .grid-bg{position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 40%,transparent 100%);
+  }
+  .wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 24px}
+
+  nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;letter-spacing:.5px}
+  .brand .dot{width:12px;height:12px;border-radius:4px;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 0 16px rgba(129,90,247,.8)}
+  .nav-btns{display:flex;gap:10px}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:10px;font-size:14px;font-weight:600;transition:.18s}
+  .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--line);padding:9px 20px}
+  .btn-ghost:hover{border-color:rgba(255,255,255,.3);background:rgba(255,255,255,.05)}
+  .btn-primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;padding:9px 22px;box-shadow:0 4px 18px rgba(120,80,240,.4)}
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 26px rgba(120,80,240,.55)}
+
+  .hero{text-align:center;padding:72px 0 40px}
+  .hero .tag{display:inline-block;font-size:12px;letter-spacing:2px;color:#b6bdf7;border:1px solid rgba(120,110,250,.4);border-radius:999px;padding:6px 16px;background:rgba(90,80,220,.12);margin-bottom:22px}
+  .hero h1{font-size:56px;font-weight:900;line-height:1.15;letter-spacing:1px;
+    background:linear-gradient(120deg,#fff 20%,#c7bfff 55%,#8f7bf7 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p{color:var(--muted);font-size:16px;margin-top:16px;line-height:1.8}
+  .hero .cta{margin-top:30px;display:flex;gap:14px;justify-content:center}
+  .hero .cta .btn-primary{padding:13px 34px;font-size:15px;border-radius:12px}
+  .hero .cta .btn-ghost{padding:13px 30px;font-size:15px;border-radius:12px}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:46px 0 10px}
+  .stat-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 20px;text-align:center;backdrop-filter:blur(8px);position:relative;overflow:hidden}
+  .stat-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(140,110,255,.7),transparent)}
+  .stat-card .num{font-size:38px;font-weight:900;background:linear-gradient(120deg,#fff,#b9aefe);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
+  .stat-card .lbl{color:var(--muted);font-size:13px;margin-top:8px;letter-spacing:1px}
+
+  .section{margin:64px 0}
+  .section-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px}
+  .section-head h2{font-size:24px;font-weight:800}
+  .section-head span{color:var(--muted);font-size:13px}
+  .boards{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .board{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;backdrop-filter:blur(8px)}
+  .board.full{grid-column:1/-1}
+  .board h3{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .board .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);letter-spacing:1px}
+  td{padding:10px;border-bottom:1px solid rgba(255,255,255,.04)}
+  tr:last-child td{border-bottom:none}
+  tbody tr{transition:.15s}
+  tbody tr:hover{background:rgba(255,255,255,.035)}
+  td.r,th.r{text-align:right}
+  .rk{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;font-size:13px;font-weight:800;background:rgba(255,255,255,.06);color:var(--muted)}
+  .rk.g1{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#442c00}
+  .rk.g2{background:linear-gradient(135deg,#e5e7eb,#9ca3af);color:#26292f}
+  .rk.g3{background:linear-gradient(135deg,#f6ad7b,#c2703d);color:#3d1e05}
+  .pw{font-weight:800;color:#ffd479;font-variant-numeric:tabular-nums}
+  .mb{font-weight:700;color:#8ce3c2;font-variant-numeric:tabular-nums}
+  .q{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:rgba(140,110,255,.15);color:#c3b8ff;border:1px solid rgba(140,110,255,.25)}
+  .empty-row{color:var(--muted);text-align:center;padding:26px 0 !important}
+
+  footer{color:var(--muted);font-size:13px;text-align:center;padding:50px 0 36px;border-top:1px solid var(--line);margin-top:70px}
+
+  .modal{position:fixed;inset:0;background:rgba(5,8,20,.72);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal.show{display:flex}
+  .sheet{background:#141a33;border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:30px;width:min(400px,92vw);box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  .sheet h3{font-size:20px;font-weight:800;margin-bottom:6px}
+  .sheet .hint{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .sheet input{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:12px 14px;font-size:14px;margin-bottom:12px;outline:none;font-family:inherit}
+  .sheet input:focus{border-color:var(--brand)}
+  .sheet .btn-primary{width:100%;padding:12px;font-size:15px;margin-top:6px}
+  .sheet .switch{color:var(--muted);font-size:13px;text-align:center;margin-top:16px}
+  .sheet .switch a{color:#a5b0ff;cursor:pointer;text-decoration:none}
+  .form-msg{font-size:13px;min-height:18px;margin-bottom:4px;color:#ff9c9c}
+  .form-msg.ok{color:#7ce3b1}
+
+  @media(max-width:900px){
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .boards{grid-template-columns:1fr}
+    .hero h1{font-size:38px}
+  }
+</style>
+</head>
+<body>
+<div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
+<div class="grid-bg"></div>
+<div class="wrap">
+  <nav>
+    <div class="brand"><span class="dot"></span>宠物乐园</div>
+    <div class="nav-btns">
+      <button class="btn-ghost" onclick="openAuth('login')">登录</button>
+      <button class="btn-primary" onclick="openAuth('register')">注册</button>
+    </div>
+  </nav>
+
+  <div class="hero">
+    <div class="tag">QQ 群宠物养成 · 全服数据中心</div>
+    <h1>砸蛋抽宠 · 养成对战<br>飞升渡劫 · 摸金探险</h1>
+    <p>跨群神榜实时竞技，副本、姻缘、天赋觉醒、深渊秘境……<br>登录玩家中心，随时随地管理你的专属宠物。</p>
+    <div class="cta">
+      <button class="btn-primary" onclick="openAuth('register')">立即加入</button>
+      <button class="btn-ghost" onclick="openAuth('login')">进入玩家中心</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card"><div class="num" id="stPlayers" data-v="0">0</div><div class="lbl">全服玩家</div></div>
+    <div class="stat-card"><div class="num" id="stGroups" data-v="0">0</div><div class="lbl">授权群聊</div></div>
+    <div class="stat-card"><div class="num" id="stPets" data-v="0">0</div><div class="lbl">在册宠物</div></div>
+    <div class="stat-card"><div class="num" id="stTomb" data-v="0">0</div><div class="lbl">摸金玩家</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>🏅 宠物神榜</h2><span>全服跨群战力排行 · 前三每日可领神榜奖励</span></div>
+    <div class="boards">
+      <div class="board full">
+        <table>
+          <thead><tr><th>排名</th><th>昵称</th><th>等级</th><th>阶段</th><th>级别</th><th class="r">战力</th></tr></thead>
+          <tbody id="petRank"><tr><td class="empty-row" colspan="6">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>🏺 摸金风云榜</h2><span>地宫探险 · 冥币为王</span></div>
+    <div class="boards">
+      <div class="board full">
+        <h3>💰 摸金排行（全服）</h3>
+        <div class="sub">按永久冥币总量排序</div>
+        <table>
+          <thead><tr><th>排名</th><th>用户</th><th class="r">冥币</th></tr></thead>
+          <tbody id="tombRank"><tr><td class="empty-row" colspan="3">加载中…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="board">
+        <h3>🔥 今日摸金神榜</h3>
+        <div class="sub" id="todaySub">统计今日 00:00 至今获得冥币</div>
+        <table>
+          <thead><tr><th>排名</th><th>用户</th><th class="r">今日获得</th></tr></thead>
+          <tbody id="tombToday"><tr><td class="empty-row" colspan="3">加载中…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="board">
+        <h3>🌙 昨日摸金神榜</h3>
+        <div class="sub" id="ystSub">前三名可领取随机宠物经验奖励</div>
+        <table>
+          <thead><tr><th>排名</th><th>用户</th><th class="r">昨日获得</th></tr></thead>
+          <tbody id="tombYst"><tr><td class="empty-row" colspan="3">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer>宠物乐园 · 数据每 30 秒更新 · <a href="/portal" style="color:#a5b0ff;text-decoration:none">玩家中心</a></footer>
+</div>
+
+<div class="modal" id="authModal">
+  <div class="sheet">
+    <h3 id="authTitle">登录</h3>
+    <div class="hint" id="authHint">使用注册时的 QQ 号登录玩家中心</div>
+    <div class="form-msg" id="authMsg"></div>
+    <input id="authQQ" type="text" placeholder="QQ 号" autocomplete="username">
+    <input id="authPwd" type="password" placeholder="密码" autocomplete="current-password">
+    <input id="authPwd2" type="password" placeholder="确认密码" style="display:none" autocomplete="new-password">
+    <button class="btn-primary" id="authBtn">登录</button>
+    <div class="switch" id="authSwitch"></div>
+  </div>
+</div>
+
+<script>
+let authMode = 'login';
+const $ = id => document.getElementById(id);
+
+function openAuth(mode){
+  authMode = mode;
+  $('authMsg').textContent = '';
+  $('authQQ').value = ''; $('authPwd').value = ''; $('authPwd2').value = '';
+  const isReg = mode === 'register';
+  $('authTitle').textContent = isReg ? '注册' : '登录';
+  $('authHint').textContent = isReg ? '使用 QQ 号创建玩家中心账号' : '使用注册时的 QQ 号登录玩家中心';
+  $('authPwd2').style.display = isReg ? '' : 'none';
+  $('authBtn').textContent = isReg ? '注册' : '登录';
+  $('authSwitch').innerHTML = isReg
+    ? '已有账号？<a onclick="openAuth(\'login\')">直接登录</a>'
+    : '还没有账号？<a onclick="openAuth(\'register\')">立即注册</a>';
+  $('authModal').classList.add('show');
+}
+$('authModal').onclick = e => { if(e.target.id === 'authModal') $('authModal').classList.remove('show'); };
+
+async function post(path, data){
+  const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  return r.json();
+}
+
+$('authBtn').onclick = async () => {
+  const qq = $('authQQ').value.trim(), pwd = $('authPwd').value;
+  const box = $('authMsg');
+  box.classList.remove('ok');
+  if(!qq || !pwd){ box.textContent = '请填写 QQ 号和密码'; return; }
+  if(authMode === 'register'){
+    if(pwd.length < 6){ box.textContent = '密码至少 6 位'; return; }
+    if(pwd !== $('authPwd2').value){ box.textContent = '两次输入的密码不一致'; return; }
+  }
+  $('authBtn').disabled = true;
+  try{
+    const r = await post('/api/portal/' + authMode, {qq, password: pwd});
+    if(r.ok && authMode === 'register'){
+      box.classList.add('ok'); box.textContent = '注册成功，正在登录…';
+      const r2 = await post('/api/portal/login', {qq, password: pwd});
+      if(r2.ok){ location.href = '/portal'; return; }
+      openAuth('login'); $('authMsg').textContent = '注册成功，请登录';
+      return;
+    }
+    if(r.ok){ location.href = '/portal'; return; }
+    box.textContent = r.msg || '操作失败';
+  }catch(e){ box.textContent = '网络异常，请稍后再试'; }
+  finally{ $('authBtn').disabled = false; }
+};
+
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmt(n){ return Number(n).toLocaleString('zh-CN'); }
+function fmtPower(bp){ return bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp); }
+function rk(i){ return `<span class="rk ${i<=3?'g'+i:''}">${i}</span>`; }
+
+function countUp(el, target){
+  const from = +el.dataset.v || 0;
+  el.dataset.v = target;
+  if(from === target){ el.textContent = fmt(target); return; }
+  const start = performance.now(), dur = 1200;
+  function tick(t){
+    const p = Math.min(1, (t - start) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(Math.round(from + (target - from) * eased));
+    if(p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function fillTomb(id, rows, cls){
+  const tb = $(id);
+  tb.innerHTML = rows && rows.length
+    ? rows.map((r,i)=>`<tr><td>${rk(i+1)}</td><td>${esc(r.qq)}</td><td class="r ${cls}">${fmt(r.value)}</td></tr>`).join('')
+    : '<tr><td class="empty-row" colspan="3">暂无上榜数据</td></tr>';
+}
+
+async function loadHome(){
+  try{
+    const r = await (await fetch('/api/portal/home')).json();
+    if(!r.ok) return;
+    countUp($('stPlayers'), r.stats.players);
+    countUp($('stGroups'), r.stats.auth_groups);
+    countUp($('stPets'), r.stats.pets);
+    countUp($('stTomb'), r.stats.tomb_players);
+    $('petRank').innerHTML = r.pet_rank && r.pet_rank.length
+      ? r.pet_rank.map((p,i)=>`<tr><td>${rk(i+1)}</td><td>${esc(p.nickname)}</td><td>Lv${p.level}</td><td>${esc(p.stage)}</td><td><span class="q">${esc(p.quality)}</span></td><td class="r pw">${fmtPower(p.power)}</td></tr>`).join('')
+      : '<tr><td class="empty-row" colspan="6">暂无宠物上榜</td></tr>';
+    fillTomb('tombRank', r.tomb_rank, 'mb');
+    fillTomb('tombToday', r.tomb_today, 'mb');
+    fillTomb('tombYst', r.tomb_yesterday, 'mb');
+    $('todaySub').textContent = `统计 ${r.date_today} 00:00 至今获得冥币，每日 0 点重置`;
+    $('ystSub').textContent = `统计 ${r.date_yesterday} 全天 · 前三名可领取随机宠物经验奖励`;
+  }catch(e){}
+}
+loadHome();
+setInterval(loadHome, 30000);
 </script>
 </body>
 </html>

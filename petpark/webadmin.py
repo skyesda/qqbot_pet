@@ -49,7 +49,6 @@ class WebAdmin:
         from aiohttp import web
 
         app = web.Application()
-        app.router.add_get("/", self._index)
         app.router.add_get("/admin", self._index)
         app.router.add_get("/login", self._login_page)
         app.router.add_post("/login", self._login_submit)
