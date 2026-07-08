@@ -141,6 +141,12 @@ KNOWN_COMMANDS = {
     "治愈",
     "复活",
     "精力转移",
+    # 自动修炼
+    "自动修炼",
+    "开启自动修炼",
+    "关闭自动修炼",
+    "自动修炼状态",
+    "修炼状态",
     # 对战 / 排行
     "宠物攻击",
     "跨群挑战宠物",
@@ -248,6 +254,9 @@ KNOWN_COMMANDS = {
     "https://github.com/skyesda/qqbot_pet",
 )
 class PetParkPlugin(Star):
+    # 类级引用，用于插件重载时取消旧的后台自动修炼任务，防止多实例并行运行
+    _auto_cultivation_task_ref: Any = None
+
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.config = config or {}
@@ -302,6 +311,18 @@ class PetParkPlugin(Star):
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
         self._patch_qqofficial_message_extensions()
+        # 启动后台自动修炼循环；重载插件时先取消旧任务，避免并发
+        try:
+            if (
+                PetParkPlugin._auto_cultivation_task_ref
+                and not PetParkPlugin._auto_cultivation_task_ref.done()
+            ):
+                PetParkPlugin._auto_cultivation_task_ref.cancel()
+        except Exception:
+            pass
+        PetParkPlugin._auto_cultivation_task_ref = asyncio.create_task(
+            self._auto_cultivation_loop()
+        )
 
     def _start_web_admin(self) -> None:
         """在当前事件循环中后台启动管理网站；失败不影响插件主体。"""
@@ -335,6 +356,131 @@ class PetParkPlugin(Star):
             asyncio.get_event_loop().create_task(_boot())
         except RuntimeError:
             logger.warning("[petpark] 无运行中的事件循环，管理网站未启动")
+
+    # =====================================================================
+    # 自动修炼挂机
+    # =====================================================================
+    AUTO_CULTIVATION_INTERVAL = 30  # 秒
+
+    async def _auto_cultivation_loop(self) -> None:
+        """后台循环：定期为开启自动挂机的定制宠物执行修炼/双修。"""
+        while True:
+            try:
+                await self._auto_cultivation_tick()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("[petpark] 自动修炼循环异常")
+            try:
+                await asyncio.sleep(self.AUTO_CULTIVATION_INTERVAL)
+            except asyncio.CancelledError:
+                break
+
+    async def _auto_cultivation_tick(self) -> None:
+        """单次扫描并执行所有符合条件的自动修炼。"""
+        now = int(time.time())
+        any_changed = False
+        for key, player in list(self.store.all_players().items()):
+            ac = player.get("auto_cultivation")
+            if not ac or not ac.get("enabled"):
+                continue
+            p = player.get("pet")
+            if not p or not p.get("custom"):
+                # 非定制宠物自动关闭挂机
+                ac["enabled"] = False
+                any_changed = True
+                continue
+            # 宠物异常时跳过，等恢复后再继续
+            if self._busy_reason(p):
+                continue
+            # 优先双修，否则修炼
+            action = "双修" if p.get("love_state") == "已婚" else "修炼"
+            # 检查冷却
+            if self.store.cooldown_remaining(player, f"日常:{action}") > 0:
+                continue
+            petmod.refresh_energy(p)
+            conf = data.DAILY_ACTIONS[action]
+            if p["energy"] < conf["energy"]:
+                continue
+            # 执行修炼/双修
+            p["energy"] -= conf["energy"]
+            self.store.set_cooldown(
+                player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
+            )
+            base = random.randint(80, 200) + p["level"] * 25
+            exp = base * (2 if action == "双修" else 1)
+            petmod.add_exp(p, exp)
+            if action == "双修":
+                self._inc_stat(player, "shuangxiu")
+            # 自动升级（不发送消息，静默处理）
+            petmod.auto_level_up(p)
+            # 更新统计
+            ac["total_sessions"] = ac.get("total_sessions", 0) + 1
+            ac["total_exp"] = ac.get("total_exp", 0) + exp
+            ac["last_run_at"] = now
+            any_changed = True
+        if any_changed:
+            await self.store.save()
+
+    def _auto_cultivation_toggle(self, player: dict, enable: bool) -> str:
+        """开启或关闭当前群宠物的自动修炼。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        if not p.get("custom"):
+            return "『自动修炼』仅限定制宠物使用。"
+        ac = player.setdefault("auto_cultivation", {
+            "enabled": False,
+            "started_at": 0,
+            "total_sessions": 0,
+            "total_exp": 0,
+            "last_run_at": 0,
+        })
+        if enable:
+            if ac.get("enabled"):
+                return "你的定制宠物已经在自动修炼中，发送『自动修炼状态』查看进度。"
+            ac["enabled"] = True
+            ac["started_at"] = int(time.time())
+            return (
+                f"✅ 已开启『{p['nickname']}』的自动修炼！\n"
+                f"后台会自动在满足条件时进行修炼，已婚优先双修，精力/冷却不足时自动等待。\n"
+                f"发送『关闭自动修炼』停止，发送『自动修炼状态』查看进度。"
+            )
+        else:
+            if not ac.get("enabled"):
+                return "你的定制宠物当前没有开启自动修炼。"
+            ac["enabled"] = False
+            return f"⏹ 已关闭『{p['nickname']}』的自动修炼。累计挂机 {ac.get('total_sessions', 0)} 次，共获得 {ac.get('total_exp', 0)} 经验。"
+
+    def _auto_cultivation_status(self, player: dict) -> str:
+        """查看当前群宠物自动修炼状态。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        ac = player.get("auto_cultivation", {})
+        if not ac:
+            return "你的定制宠物尚未开启过自动修炼。"
+        status = "🟢 运行中" if ac.get("enabled") else "🔴 已停止"
+        started = ac.get("started_at", 0)
+        started_txt = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(started)) if started else "—"
+        last = ac.get("last_run_at", 0)
+        last_txt = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(last)) if last else "—"
+        action = "双修" if p.get("love_state") == "已婚" else "修炼"
+        remain_cd = self.store.cooldown_remaining(player, f"日常:{action}")
+        cd_txt = self._fmt_duration(remain_cd) if remain_cd > 0 else "已就绪"
+        petmod.refresh_energy(p)
+        return (
+            f"## 🧘 自动修炼状态\n"
+            f"状态：{status}\n"
+            f"宠物：{p['nickname']}（定制）\n"
+            f"模式：优先 {action}\n"
+            f"精力：{p['energy']}/{p['energy_max']}\n"
+            f"下次可修炼：{cd_txt}\n"
+            f"累计挂机：{ac.get('total_sessions', 0)} 次\n"
+            f"累计经验：{ac.get('total_exp', 0)}\n"
+            f"开启时间：{started_txt}\n"
+            f"最后执行：{last_txt}"
+        )
 
     def _patch_qqofficial_message_extensions(self) -> None:
         """为 QQ 官方适配器补齐 Markdown 主动推送与消息按钮支持。
@@ -929,6 +1075,14 @@ class PetParkPlugin(Star):
             return self._talent_revive(player, group_id, tokens)
         if cmd == "精力转移":
             return self._energy_transfer(player, group_id, tokens)
+
+        # ---- 自动修炼 ----
+        if cmd in ("自动修炼", "开启自动修炼"):
+            return self._auto_cultivation_toggle(player, True)
+        if cmd == "关闭自动修炼":
+            return self._auto_cultivation_toggle(player, False)
+        if cmd in ("自动修炼状态", "修炼状态"):
+            return self._auto_cultivation_status(player)
 
         # ---- 对战 / 排行 ----
         if cmd == "宠物攻击":

@@ -185,6 +185,13 @@ class PetStore:
                 "last_actions": {},
                 "stats": {"battle_win": 0, "explore": 0},
                 "quests": {},
+                "auto_cultivation": {
+                    "enabled": False,
+                    "started_at": 0,
+                    "total_sessions": 0,
+                    "total_exp": 0,
+                    "last_run_at": 0,
+                },
                 "abyss_corruption": 0,
                 "abyss_pity": 0,
                 "abyss_crystal": 0,
