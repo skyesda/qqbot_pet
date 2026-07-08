@@ -500,9 +500,9 @@ class PetStore:
         return PetStore.player_event_state(player, event_id)["shop_bought"].get(item, 0)
 
     @staticmethod
-    def inc_event_shop_bought(player: dict, event_id: str, item: str) -> None:
+    def inc_event_shop_bought(player: dict, event_id: str, item: str, count: int = 1) -> None:
         st = PetStore.player_event_state(player, event_id)
-        st["shop_bought"][item] = st["shop_bought"].get(item, 0) + 1
+        st["shop_bought"][item] = st["shop_bought"].get(item, 0) + max(1, int(count))
 
     # ----------------------------- 深渊秘境 -----------------------------
     @staticmethod
@@ -797,6 +797,15 @@ class PetStore:
     @classmethod
     def clear_tomb_pending_pet_exp(cls, player: dict) -> None:
         cls.tomb_state(player)["pending_pet_exp"] = 0
+
+    @classmethod
+    def consume_tomb_pending_pet_exp(cls, player: dict, amount: int) -> int:
+        """消费指定数量的待兑换宠物经验，返回实际消费数量。"""
+        st = cls.tomb_state(player)
+        pending = st.get("pending_pet_exp", 0)
+        actual = min(pending, max(0, amount))
+        st["pending_pet_exp"] = pending - actual
+        return actual
 
     # ---- 摸金武器 ----
     @classmethod

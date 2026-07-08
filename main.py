@@ -1045,7 +1045,7 @@ class PetParkPlugin(Star):
             return self._tomb_claim_daily_reward(player, group_id)
         # 摸金经验兑换
         if cmd in ("摸金兑换", "摸兑"):
-            return self._tomb_redeem_exp(player)
+            return self._tomb_redeem_exp(player, tokens)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -1801,7 +1801,14 @@ class PetParkPlugin(Star):
                 return item
         return None
 
-    def _event_buy(self, player: dict, eid: str, cfg: dict, item_name: str) -> str | None:
+    def _event_buy(
+        self,
+        player: dict,
+        eid: str,
+        cfg: dict,
+        item_name: str,
+        count: int = 1,
+    ) -> str | None:
         shop = cfg.get("shop", {})
         if item_name not in shop:
             return None
@@ -1809,30 +1816,40 @@ class PetParkPlugin(Star):
         token = cfg.get("token", "代币")
         today = time.strftime("%Y-%m-%d")
         self.store.reset_event_daily(player, eid, today)
+        count = max(1, int(count))
         cost = it.get("cost", {})
-        for cur, amt in cost.items():
+        total_cost = {cur: amt * count for cur, amt in cost.items()}
+        for cur, amt in total_cost.items():
             if cur == token:
                 if self.store.get_event_token(player, eid, token) < amt:
-                    return f"购买『{item_name}』需要 {amt} {token}，余额不足。"
+                    return f"购买 {count} 个『{item_name}』需要 {amt} {token}，余额不足。"
             else:
                 if self.store.get_currency(player, cur) < amt:
-                    return f"购买『{item_name}』需要 {amt} {cur}，余额不足。"
+                    return f"购买 {count} 个『{item_name}』需要 {amt} {cur}，余额不足。"
         per_player = it.get("stock", {}).get("per_player")
-        if per_player and self.store.event_shop_bought(player, eid, item_name) >= per_player:
-            return f"『{item_name}』每人限购 {per_player} 个。"
+        if per_player is not None:
+            already = self.store.event_shop_bought(player, eid, item_name)
+            if already + count > per_player:
+                remain = per_player - already
+                if remain <= 0:
+                    return f"『{item_name}』每人限购 {per_player} 个。"
+                return f"『{item_name}』每人限购 {per_player} 个，你还剩 {remain} 个可买。"
         global_stock = it.get("stock", {}).get("global")
         if global_stock is not None:
             sold = cfg.setdefault("_sold", {}).get(item_name, 0)
-            if sold >= global_stock:
-                return f"『{item_name}』已售罄。"
-        for cur, amt in cost.items():
+            if sold + count > global_stock:
+                remain = global_stock - sold
+                if remain <= 0:
+                    return f"『{item_name}』已售罄。"
+                return f"『{item_name}』全球库存剩余 {remain} 个，无法购买 {count} 个。"
+        for cur, amt in total_cost.items():
             if cur == token:
                 self.store.add_event_token(player, eid, token, -amt)
             else:
                 self.store.add_currency(player, cur, -amt)
-        self.store.inc_event_shop_bought(player, eid, item_name)
+        self.store.inc_event_shop_bought(player, eid, item_name, count)
         if global_stock is not None:
-            cfg["_sold"][item_name] = cfg["_sold"].get(item_name, 0) + 1
+            cfg["_sold"][item_name] = cfg["_sold"].get(item_name, 0) + count
         reward = it.get("reward") or {"item": item_name, "count": 1}
         # 兼容旧版/误配置：如果商店奖励写的是效果，则视为该道具的使用效果，购买时只给道具
         if "effect" in reward and "item" not in reward:
@@ -1845,8 +1862,14 @@ class PetParkPlugin(Star):
                     "effect": effect,
                 }
             reward = {"item": item_name, "count": 1}
+        # 批量购买时按购买数量缩放奖励
+        scaled_reward = dict(reward)
+        if "count" in scaled_reward:
+            scaled_reward["count"] = scaled_reward["count"] * count
+        else:
+            scaled_reward["count"] = count
         return self._grant_event_reward(
-            player, eid, cfg, reward, prefix=f"购买『{item_name}』成功"
+            player, eid, cfg, scaled_reward, prefix=f"购买『{item_name}』x{count} 成功"
         )
 
     def _event_gacha(self, player: dict, eid: str, cfg: dict) -> str:
@@ -2998,16 +3021,16 @@ class PetParkPlugin(Star):
         if len(tokens) < 2:
             return "用法：购买 物品名 [数量]"
         name = tokens[1]
+        count = self._parse_count(tokens, 2)
         # 优先检查活动商店
         for eid, cfg in self.store.active_events().items():
             if name in cfg.get("shop", {}):
-                return self._event_buy(player, eid, cfg, name) or "购买失败。"
+                return self._event_buy(player, eid, cfg, name, count) or "购买失败。"
         if name not in data.ITEMS:
             return f"商城没有『{name}』。发送『宠物商城』或『道具商城』查看。"
         it = data.ITEMS[name]
         if it["price"] <= 0:
             return f"『{name}』无法直接购买。"
-        count = self._parse_count(tokens, 2)
         cost = it["price"] * count
         if self.store.get_currency(player, it["currency"]) < cost:
             return f"购买 {count} 个『{name}』需 {cost} {it['currency']}，余额不足。"
@@ -6647,17 +6670,40 @@ class PetParkPlugin(Star):
             f"🎁 昨日摸金神榜强者奖励到账！宠物经验 +{exp}。{level_note}"
         )
 
-    def _tomb_redeem_exp(self, player: dict) -> str:
-        """把暂存的摸金宠物经验兑换到当前群宠物。"""
+    def _tomb_redeem_exp(self, player: dict, tokens: list[str]) -> str:
+        """把暂存的摸金宠物经验兑换到当前群宠物。
+
+        用法：
+        - 摸金兑换                 一键兑换全部
+        - 摸金兑换 全部            一键兑换全部
+        - 摸金兑换 10000           只兑换 10000 点
+        """
         pending = self.store.get_tomb_pending_pet_exp(player)
         if pending <= 0:
             return "你没有待兑换的摸金宠物经验。"
         p = player.get("pet")
         if not p:
             return "你没有宠物，无法兑换经验。"
-        self.store.clear_tomb_pending_pet_exp(player)
-        petmod.add_exp(p, pending)
-        return f"🎁 摸金经验兑换成功！当前群宠物 +{pending} 经验。"
+
+        # 解析数量
+        amount_str = tokens[1] if len(tokens) > 1 else ""
+        if amount_str and amount_str not in ("全部", "all"):
+            try:
+                amount = int(amount_str)
+            except ValueError:
+                return "用法：摸金兑换 [数量/全部]，数量请填写整数。"
+            if amount <= 0:
+                return "兑换数量必须大于 0。"
+            if amount > pending:
+                return f"待兑换经验只有 {pending} 点，不足 {amount} 点。"
+        else:
+            amount = pending
+
+        actual = self.store.consume_tomb_pending_pet_exp(player, amount)
+        petmod.add_exp(p, actual)
+        remain = self.store.get_tomb_pending_pet_exp(player)
+        note = f"，还剩余 {remain} 点" if remain > 0 else "，已全部兑换"
+        return f"🎁 摸金经验兑换成功！当前群宠物 +{actual} 经验{note}。{self._auto_level_note(player, p)}"
 
     # ---- 地图生成与绘图 ----
     @staticmethod
