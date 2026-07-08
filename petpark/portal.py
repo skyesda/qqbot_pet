@@ -1597,7 +1597,8 @@ _HOME_HTML = r"""<!DOCTYPE html>
     background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden;
   }
   [v-cloak]{display:none}
-  .glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.35;pointer-events:none;z-index:0}
+  #particles{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.35;pointer-events:none;z-index:0;transition:transform .6s cubic-bezier(.22,1,.36,1)}
   .glow.a{width:560px;height:560px;background:#4338ca;top:-180px;left:-120px;animation:drift 18s ease-in-out infinite alternate}
   .glow.b{width:480px;height:480px;background:#7e22ce;top:22%;right:-160px;animation:drift 22s ease-in-out infinite alternate-reverse}
   .glow.c{width:420px;height:420px;background:#0e7490;bottom:-140px;left:32%;animation:drift 26s ease-in-out infinite alternate}
@@ -1618,15 +1619,22 @@ _HOME_HTML = r"""<!DOCTYPE html>
   .btn-grad:hover{transform:translateY(-1px);box-shadow:0 8px 26px rgba(120,80,240,.55)}
 
   .hero{text-align:center;padding:72px 0 40px}
+  .hero .tag,.hero h1,.hero p,.hero .cta{opacity:0;animation:rise .9s cubic-bezier(.22,1,.36,1) forwards}
+  .hero h1{animation-delay:.12s}
+  .hero p{animation-delay:.24s}
+  .hero .cta{animation-delay:.36s}
+  @keyframes rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}
   .hero .tag{display:inline-block;font-size:12px;letter-spacing:2px;color:#b6bdf7;border:1px solid rgba(120,110,250,.4);border-radius:999px;padding:6px 16px;background:rgba(90,80,220,.12);margin-bottom:22px}
   .hero h1{font-size:56px;font-weight:900;line-height:1.15;letter-spacing:1px;
-    background:linear-gradient(120deg,#fff 20%,#c7bfff 55%,#8f7bf7 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
+    background:linear-gradient(120deg,#fff 10%,#c7bfff 35%,#8f7bf7 55%,#c7bfff 75%,#fff 95%);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:rise .9s cubic-bezier(.22,1,.36,1) .12s forwards,shine 7s linear 1.1s infinite}
+  @keyframes shine{to{background-position:-200% center}}
   .hero p{color:var(--muted);font-size:16px;margin-top:16px;line-height:1.8}
   .hero .cta{margin-top:30px;display:flex;gap:14px;justify-content:center}
   .hero .cta .el-button{padding:22px 32px;font-size:15px;border-radius:12px}
 
   .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:46px 0 10px}
-  .stat-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 20px;text-align:center;backdrop-filter:blur(8px);position:relative;overflow:hidden}
+  .stat-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 20px;text-align:center;backdrop-filter:blur(8px);position:relative;overflow:hidden;transition:transform .25s,border-color .25s,box-shadow .25s}
+  .stat-card:hover{transform:translateY(-4px);border-color:rgba(140,110,255,.45);box-shadow:0 14px 36px rgba(80,60,200,.28)}
   .stat-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(140,110,255,.7),transparent)}
   .stat-card .num{font-size:38px;font-weight:900;background:linear-gradient(120deg,#fff,#b9aefe);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
   .stat-card .lbl{color:var(--muted);font-size:13px;margin-top:8px;letter-spacing:1px}
@@ -1664,6 +1672,13 @@ _HOME_HTML = r"""<!DOCTYPE html>
   footer{color:var(--muted);font-size:13px;text-align:center;padding:50px 0 36px;border-top:1px solid var(--line);margin-top:70px}
   footer a{color:#a5b0ff;text-decoration:none}
 
+  .reveal{opacity:0;transform:translateY(34px);transition:opacity .8s cubic-bezier(.22,1,.36,1),transform .8s cubic-bezier(.22,1,.36,1)}
+  .reveal.in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){
+    .reveal{opacity:1;transform:none;transition:none}
+    .hero .tag,.hero h1,.hero p,.hero .cta{opacity:1;animation:none}
+  }
+
   .auth-dialog{--el-dialog-border-radius:20px}
   .auth-dialog .el-dialog__header{padding-bottom:2px}
   .auth-hint{color:var(--muted);font-size:13px;margin-bottom:18px}
@@ -1680,6 +1695,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <body>
 <div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
 <div class="grid-bg"></div>
+<canvas id="particles"></canvas>
 <div id="app" v-cloak>
 <div class="wrap">
   <nav>
@@ -1709,14 +1725,14 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="stats">
+  <div class="stats reveal">
     <div class="stat-card"><div class="num">{{ fmt(disp.players) }}</div><div class="lbl">全服玩家</div></div>
     <div class="stat-card"><div class="num">{{ fmt(disp.auth_groups) }}</div><div class="lbl">授权群聊</div></div>
     <div class="stat-card"><div class="num">{{ fmt(disp.pets) }}</div><div class="lbl">在册宠物</div></div>
     <div class="stat-card"><div class="num">{{ fmt(disp.tomb_players) }}</div><div class="lbl">摸金玩家</div></div>
   </div>
 
-  <div class="section">
+  <div class="section reveal">
     <div class="section-head"><h2>🏅 宠物神榜</h2><span>全服跨群战力排行 · 前三每日可领神榜奖励</span></div>
     <div class="boards">
       <div class="board full">
@@ -1740,7 +1756,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="section">
+  <div class="section reveal">
     <div class="section-head"><h2>🏺 摸金风云榜</h2><span>地宫探险 · 冥币为王</span></div>
     <div class="boards">
       <div class="board full">
@@ -1785,7 +1801,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="section">
+  <div class="section reveal">
     <div class="section-head"><h2>🚀 加入我们</h2><span>进群开玩 · 充值直达</span></div>
     <div class="links">
       <a class="link-card" href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">
@@ -1951,10 +1967,86 @@ createApp({
       finally{ auth.loading = false; }
     }
 
+    function initParticles(){
+      const cv = document.getElementById('particles');
+      if(!cv) return;
+      const ctx = cv.getContext('2d');
+      let W = 0, H = 0, dots = [];
+      const mouse = {x:-9999, y:-9999};
+      function resize(){
+        W = cv.width = innerWidth; H = cv.height = innerHeight;
+        const n = Math.min(110, Math.round(W * H / 16000));
+        dots = Array.from({length:n}, () => ({
+          x: Math.random()*W, y: Math.random()*H,
+          vx: (Math.random()-.5)*.35, vy: (Math.random()-.5)*.35,
+          r: Math.random()*1.6 + .6
+        }));
+      }
+      resize();
+      addEventListener('resize', resize);
+      addEventListener('pointermove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+      addEventListener('pointerleave', () => { mouse.x = -9999; mouse.y = -9999; });
+      const LINK = 130, MOUSE = 170;
+      function frame(){
+        ctx.clearRect(0, 0, W, H);
+        for(const d of dots){
+          d.x += d.vx; d.y += d.vy;
+          if(d.x < -20) d.x = W + 20; else if(d.x > W + 20) d.x = -20;
+          if(d.y < -20) d.y = H + 20; else if(d.y > H + 20) d.y = -20;
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(165,150,255,.55)';
+          ctx.fill();
+        }
+        for(let i = 0; i < dots.length; i++){
+          const a = dots[i];
+          for(let j = i + 1; j < dots.length; j++){
+            const b = dots[j];
+            const dx = a.x - b.x, dy = a.y - b.y;
+            const dist = Math.hypot(dx, dy);
+            if(dist < LINK){
+              ctx.beginPath();
+              ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+              ctx.strokeStyle = `rgba(140,120,255,${(1 - dist / LINK) * .22})`;
+              ctx.lineWidth = 1;
+              ctx.stroke();
+            }
+          }
+          const md = Math.hypot(a.x - mouse.x, a.y - mouse.y);
+          if(md < MOUSE){
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y); ctx.lineTo(mouse.x, mouse.y);
+            ctx.strokeStyle = `rgba(190,170,255,${(1 - md / MOUSE) * .3})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+      if(!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(frame);
+    }
+
+    function initMotion(){
+      const io = new IntersectionObserver(es => {
+        es.forEach(e => { if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+      }, {threshold: .12});
+      document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+      const glows = document.querySelectorAll('.glow');
+      addEventListener('pointermove', e => {
+        const rx = e.clientX / innerWidth - .5, ry = e.clientY / innerHeight - .5;
+        glows.forEach((g, i) => {
+          const k = (i + 1) * 14;
+          g.style.transform = `translate(${rx * k}px, ${ry * k}px)`;
+        });
+      });
+    }
+
     onMounted(()=>{
       checkAuth();
       loadHome();
       setInterval(loadHome, 30000);
+      initParticles();
+      initMotion();
     });
 
     return {loggedIn, userQQ, loading, disp, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
