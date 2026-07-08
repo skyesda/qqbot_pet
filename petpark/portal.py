@@ -1617,6 +1617,15 @@ _HOME_HTML = r"""<!DOCTYPE html>
   .q{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:rgba(140,110,255,.15);color:#c3b8ff;border:1px solid rgba(140,110,255,.25)}
   .empty-row{color:var(--muted);text-align:center;padding:26px 0 !important}
 
+  .links{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .link-card{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;text-decoration:none;color:var(--text);backdrop-filter:blur(8px);transition:.2s}
+  .link-card:hover{transform:translateY(-2px);border-color:rgba(140,110,255,.45);box-shadow:0 12px 32px rgba(80,60,200,.25)}
+  .link-card .ic{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;background:linear-gradient(135deg,rgba(99,102,241,.25),rgba(168,85,247,.25));border:1px solid rgba(140,110,255,.3);flex-shrink:0}
+  .link-card .t{font-size:16px;font-weight:800}
+  .link-card .d{color:var(--muted);font-size:13px;margin-top:5px;line-height:1.6}
+  .link-card .go{margin-left:auto;flex-shrink:0;color:#a5b0ff;font-size:13px;font-weight:700;white-space:nowrap}
+  @media(max-width:900px){.links{grid-template-columns:1fr}}
+
   footer{color:var(--muted);font-size:13px;text-align:center;padding:50px 0 36px;border-top:1px solid var(--line);margin-top:70px}
 
   .modal{position:fixed;inset:0;background:rgba(5,8,20,.72);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:50}
@@ -1710,7 +1719,29 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <footer>宠物乐园 · 数据每 30 秒更新 · <a href="/portal" style="color:#a5b0ff;text-decoration:none">玩家中心</a></footer>
+  <div class="section">
+    <div class="section-head"><h2>🚀 加入我们</h2><span>进群开玩 · 充值直达</span></div>
+    <div class="links">
+      <a class="link-card" href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">
+        <div class="ic">💬</div>
+        <div>
+          <div class="t">小飞机器人官方群</div>
+          <div class="d">官方 QQ 群：547205828 · 点击一键加群，交流攻略、领取福利</div>
+        </div>
+        <div class="go">加入群聊 →</div>
+      </a>
+      <a class="link-card" href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">
+        <div class="ic">💎</div>
+        <div>
+          <div class="t">充值入口</div>
+          <div class="d">金币 / 积分 / 钻石卡密自助购买，兑换即时到账</div>
+        </div>
+        <div class="go">前往充值 →</div>
+      </a>
+    </div>
+  </div>
+
+  <footer>宠物乐园 · 数据每 30 秒更新 · <a href="/portal" style="color:#a5b0ff;text-decoration:none">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener" style="color:#a5b0ff;text-decoration:none">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener" style="color:#a5b0ff;text-decoration:none">充值入口</a></footer>
 </div>
 
 <div class="modal" id="authModal">
