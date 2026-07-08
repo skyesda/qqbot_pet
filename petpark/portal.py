@@ -269,6 +269,11 @@ class PlayerPortal:
             path=self.store.custom_images_dir,
             name="custom_images",
         )
+        app.router.add_static(
+            "/webstatic",
+            path=Path(__file__).parent / "webstatic",
+            name="webstatic",
+        )
 
     async def _portal_page(self, request: web.Request) -> web.Response:
         sess = self._current_session(request)
@@ -793,976 +798,779 @@ class PlayerPortal:
 _PORTAL_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>宠物乐园 · 玩家中心</title>
+<link rel="stylesheet" href="/webstatic/element-plus.min.css">
 <style>
-:root{
-  --brand:#2f6bff;
-  --brand-2:#7c3aed;
-  --brand-3:#06b6d4;
-  --grad:linear-gradient(120deg,#2f6bff 0%,#6d4aff 55%,#9333ea 100%);
-  --brand-soft:#eef3ff;
-  --bg:#f6f8fd;
-  --card:#ffffff;
-  --line:#e8ecf6;
-  --line-strong:#d8dfef;
-  --text:#141a2a;
-  --muted:#8a93a8;
-  --danger:#e5484d;
-  --danger-soft:#feeef0;
-  --ok:#0f9d58;
-  --ok-soft:#e9f8f0;
-  --shadow-sm:0 1px 2px rgba(20,26,42,.05);
-  --shadow:0 1px 2px rgba(20,26,42,.04),0 12px 32px -8px rgba(20,26,42,.10);
-  --shadow-lg:0 24px 64px -12px rgba(47,107,255,.18),0 2px 6px rgba(20,26,42,.06);
-}
-*{box-sizing:border-box}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;overflow-x:hidden;overflow-y:auto;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
-body::before{content:'';position:fixed;top:-260px;left:-160px;width:640px;height:640px;border-radius:50%;background:radial-gradient(closest-side,rgba(47,107,255,.14),transparent);pointer-events:none;z-index:0}
-body::after{content:'';position:fixed;bottom:-280px;right:-180px;width:720px;height:720px;border-radius:50%;background:radial-gradient(closest-side,rgba(147,51,234,.10),transparent);pointer-events:none;z-index:0}
-#app{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:28px 20px;position:relative;z-index:1}
+  :root{
+    --bg:#f4f6fb; --card:#fff; --line:#e6e9f2; --text:#1f2534; --muted:#8a93a8;
+    --brand:#6366f1; --brand2:#a855f7; --grad:linear-gradient(135deg,#6366f1,#a855f7);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--text); min-height:100vh;
+  }
+  [v-cloak]{display:none}
+  #app{min-height:100vh}
+  .layout{display:flex;min-height:100vh}
+  .sidebar{width:264px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 16px 18px;position:fixed;left:0;top:0;height:100vh;overflow-y:auto;z-index:20}
+  .sidebar::-webkit-scrollbar{width:6px}
+  .sidebar::-webkit-scrollbar-thumb{background:#d6dae6;border-radius:3px}
+  .side-brand{font-size:16px;font-weight:800;padding:2px 8px 16px;border-bottom:1px solid var(--line);margin-bottom:14px;display:flex;align-items:center;gap:9px}
+  .side-brand::before{content:'';width:10px;height:10px;border-radius:3px;background:var(--grad);flex:0 0 auto}
+  .side-sec{font-size:11.5px;color:var(--muted);font-weight:700;letter-spacing:1.2px;margin:4px 8px 9px}
+  .side-pets{display:flex;flex-direction:column;gap:8px}
+  .pet-chip{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:14px;cursor:pointer;transition:.16s;background:#fff}
+  .pet-chip:hover{border-color:#c4c9ff;box-shadow:0 3px 12px rgba(99,102,241,.12)}
+  .pet-chip.active{border-color:transparent;background:linear-gradient(135deg,#eef0ff,#f6efff);box-shadow:inset 0 0 0 1.5px #8a8ef5}
+  .pet-chip img{width:40px;height:40px;border-radius:11px;object-fit:cover;background:#eef1f8;flex:0 0 auto}
+  .pet-chip .name{font-size:13.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pet-chip .sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .pet-chip .info{min-width:0}
+  .side-btns{display:flex;flex-direction:column;gap:9px;margin-top:12px}
+  .side-btns .el-button{width:100%;margin:0}
+  .side-tip{color:var(--muted);margin:9px 4px 0;font-size:12px;line-height:1.6}
+  .side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
+  .side-user{font-size:12.5px;color:var(--muted);font-weight:600;padding:0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .side-foot-btns{display:flex;gap:8px}
+  .side-foot-btns .el-button{flex:1;margin:0}
+  .content{flex:1;min-width:0;padding:26px 34px 40px;margin-left:264px}
+  .content-inner{max-width:960px;margin:0 auto}
+  .page-title{font-size:21px;font-weight:800;margin-bottom:18px}
 
-/* 主容器 */
-.console{width:100%;max-width:440px;transition:max-width .35s cubic-bezier(.4,0,.2,1)}
-.console.wide{max-width:min(1120px,100%)}
-.brand{display:flex;align-items:center;justify-content:center;gap:11px;font-size:18px;font-weight:800;letter-spacing:.3px;margin-bottom:20px;color:var(--text)}
-.screen-wrap{background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow-lg);overflow:hidden;position:relative}
-.screen-wrap::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:var(--grad);z-index:5}
-.screen{position:relative;border-radius:24px;min-height:340px;overflow:hidden auto;padding:32px 30px 30px}
-.console.wide .screen{min-height:min(70vh,620px);max-height:min(820px,calc(92vh - 96px));padding:30px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 2px 10px rgba(30,40,80,.04)}
+  .sec-title{font-size:16px;font-weight:800;margin:26px 0 12px;display:flex;align-items:center;gap:9px}
+  .sec-title::before{content:'';width:4px;height:16px;border-radius:2px;background:var(--grad)}
 
-/* 通用排版 */
-h1,h2,h3{margin:0 0 12px;font-weight:800;letter-spacing:-.2px}
-h1{font-size:26px}
-h2{font-size:19px}
-h3{font-size:14px;color:var(--muted);text-transform:none;display:flex;align-items:center;gap:8px;margin:22px 0 10px;font-weight:700;letter-spacing:.4px}
-h3::before{content:'';width:4px;height:14px;border-radius:4px;background:var(--grad)}
-.muted{color:var(--muted);font-size:13px;line-height:1.6}
+  .pet-hero{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .pet-img{width:148px;height:148px;border-radius:20px;object-fit:cover;background:#eef1f8;border:1px solid var(--line);flex:0 0 auto}
+  .pet-head{flex:1;min-width:220px}
+  .pet-name{font-size:22px;font-weight:800;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .pet-name .lv{font-size:14px;color:var(--muted);font-weight:700}
+  .pet-meta{color:var(--muted);font-size:13.5px;margin-top:5px}
+  .pet-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .pet-bars{margin-top:13px;display:flex;flex-direction:column;gap:8px;max-width:420px}
+  .bar-row{display:flex;align-items:center;gap:10px;font-size:12.5px}
+  .bar-row .bl{width:70px;color:var(--muted);font-weight:600;flex:0 0 auto}
+  .bar-row .el-progress{flex:1}
+  .bar-row .bv{width:120px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .pet-badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
 
-/* 表单 */
-.form{display:flex;flex-direction:column;gap:14px;animation:fadeIn .45s cubic-bezier(.16,1,.3,1) both;max-width:360px;margin:8px auto 0}
-label{font-size:13px;font-weight:600;color:#3c455c}
-input,button,select{font-family:inherit;border:none;outline:none;border-radius:12px}
-input,select{background:#f7f9fd;border:1.5px solid transparent;color:var(--text);padding:13px 16px;font-size:15px;transition:border-color .2s,box-shadow .2s,background .2s}
-input:hover{background:#f2f5fc}
-input::placeholder{color:#aab3c7}
-input:focus,select:focus{background:#fff;border-color:var(--brand);box-shadow:0 0 0 4px rgba(47,107,255,.12)}
-button{cursor:pointer;background:var(--grad);color:#fff;font-weight:700;padding:13px 20px;font-size:15px;letter-spacing:.3px;transition:transform .15s,box-shadow .2s,filter .15s;box-shadow:0 8px 20px -6px rgba(47,107,255,.5)}
-button:hover{transform:translateY(-1px);box-shadow:0 12px 26px -6px rgba(47,107,255,.55);filter:saturate(1.08)}
-button:active{transform:translateY(0);box-shadow:0 4px 12px -4px rgba(47,107,255,.5)}
-button.ghost{background:#fff;color:#3c455c;border:1.5px solid var(--line-strong);box-shadow:var(--shadow-sm);font-weight:600}
-button.ghost:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-soft);box-shadow:var(--shadow-sm)}
-button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
-.links{display:flex;justify-content:space-between;margin-top:6px}
-.links a{color:var(--brand);text-decoration:none;font-size:13px;font-weight:600}
-.links a:hover{text-decoration:underline}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:16px}
+  .stat{background:#f8f9fd;border:1px solid var(--line);border-radius:14px;padding:13px 15px}
+  .stat .label{font-size:12px;color:var(--muted);font-weight:600}
+  .stat .value{font-size:17px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums}
 
-/* 消息 */
-.msg{padding:11px 16px;border-radius:12px;font-size:14px;font-weight:500;margin-bottom:12px;animation:slideDown .3s cubic-bezier(.16,1,.3,1);display:flex;align-items:center;gap:8px}
-.msg::before{font-size:15px}
-.msg.err{background:var(--danger-soft);color:#c53a3f;border:1px solid rgba(229,72,77,.18)}
-.msg.err::before{content:'⚠️'}
-.msg.ok{background:var(--ok-soft);color:#0c7a45;border:1px solid rgba(15,157,88,.18)}
-.msg.ok::before{content:'✅'}
+  .wallet{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+  .coin{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px;transition:.16s}
+  .coin:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(30,40,80,.08)}
+  .coin .label{font-size:12.5px;color:var(--muted);font-weight:600}
+  .coin .value{font-size:21px;font-weight:800;margin-top:5px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
 
-/* 仪表盘 */
-.dashboard{display:none;animation:fadeIn .45s cubic-bezier(.16,1,.3,1) both}
-.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;flex-wrap:wrap;gap:10px}
-.topbar h2{margin:0}
-.account{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:10px;background:#f7f9fd;border:1px solid var(--line);border-radius:999px;padding:5px 6px 5px 14px}
-.account button{border-radius:999px}
-.pet-selector{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px;margin-bottom:18px}
-.pet-chip{background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:11px 13px;cursor:pointer;transition:border-color .2s,box-shadow .25s,transform .2s;display:flex;align-items:center;gap:11px;min-width:0;position:relative}
-.pet-chip:hover{border-color:var(--line-strong);box-shadow:var(--shadow);transform:translateY(-2px)}
-.pet-chip.active{border-color:var(--brand);background:linear-gradient(180deg,var(--brand-soft),#fff);box-shadow:0 8px 20px -8px rgba(47,107,255,.35)}
-.pet-chip img{width:42px;height:42px;border-radius:12px;object-fit:cover;background:var(--bg);flex:0 0 auto;border:1px solid var(--line)}
-.pet-chip .info{line-height:1.35;min-width:0}
-.pet-chip .name{font-size:14px;font-weight:700;color:var(--text);word-break:break-all;overflow-wrap:anywhere}
-.pet-chip .sub{font-size:11.5px;color:var(--muted);word-break:break-all}
+  .grow-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .grow-group{display:flex;gap:8px;align-items:center}
+  .muted{color:var(--muted);font-size:12.5px;line-height:1.7}
 
-/* 宠物卡片 */
-.pet-card{display:flex;flex-direction:column;align-items:center;background:#fff;border:1px solid var(--line);border-radius:20px;padding:0 18px 22px;margin-bottom:16px;position:relative;overflow:hidden;box-shadow:var(--shadow-sm)}
-.pet-card::before{content:'';width:calc(100% + 36px);height:110px;margin:0 -18px;background:var(--grad);opacity:.92;flex:0 0 auto}
-.pet-card::after{content:'';position:absolute;top:0;left:0;right:0;height:110px;background:radial-gradient(circle at 80% -30%,rgba(255,255,255,.35),transparent 60%),radial-gradient(circle at 12% 130%,rgba(255,255,255,.22),transparent 55%);pointer-events:none}
-.pet-img{width:150px;height:150px;border-radius:20px;object-fit:cover;background:#fff;border:5px solid #fff;box-shadow:0 16px 36px -10px rgba(20,26,42,.28);margin-top:-64px;position:relative;z-index:2;animation:popIn .45s cubic-bezier(.16,1,.3,1) both}
-.pet-title{margin-top:14px;text-align:center;position:relative;z-index:2}
-.pet-title .name{font-size:23px;font-weight:800;letter-spacing:-.3px}
-.pet-title .meta{font-size:13px;color:var(--muted);margin-top:5px}
-.pet-tags{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:9px}
-.pet-tag{font-size:11px;font-weight:600;background:var(--brand-soft);color:var(--brand);border:1px solid rgba(47,107,255,.2);border-radius:999px;padding:3px 11px}
-.pet-resource{font-size:12px;color:var(--muted);margin-top:9px}
-.badges{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;justify-content:center;position:relative;z-index:2}
-.badge{font-size:12.5px;font-weight:600;background:#f7f9fd;padding:6px 14px;border-radius:999px;border:1px solid var(--line);color:#3c455c}
+  .cd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .cd{border:1px solid var(--line);border-radius:13px;padding:11px 13px;background:#fff}
+  .cd .cd-name{font-size:13px;font-weight:700}
+  .cd .cd-time{font-size:12.5px;margin-top:4px;font-weight:700;font-variant-numeric:tabular-nums}
+  .cd.ready .cd-time{color:#16a34a}
+  .cd.busy .cd-time{color:#d97706}
+  .cd.ready{border-color:#bbf0cd;background:#f4fdf7}
 
-/* 属性网格 */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px;margin-bottom:6px}
-.stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px 15px;transition:box-shadow .2s,transform .2s}
-.stat:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
-.stat .label{font-size:12px;color:var(--muted);font-weight:500}
-.stat .value{font-size:19px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
+  .bag{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+  .item{border:1px solid var(--line);border-radius:14px;padding:14px 15px;background:#fff;position:relative;transition:.16s}
+  .item:hover{box-shadow:0 6px 18px rgba(30,40,80,.08)}
+  .item-name{font-size:14px;font-weight:700;padding-right:44px}
+  .item .count{font-size:12px;color:var(--muted);margin-top:3px;display:block}
+  .item .use-row{display:flex;gap:8px;margin-top:11px;align-items:center}
+  .item .use-row .el-input-number{width:100px;flex:0 0 auto}
+  .item .use-row .el-button{flex:1;margin:0}
+  .item .item-tag{position:absolute;top:12px;right:12px}
 
-/* 财产 */
-.wallet{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px;margin-bottom:6px}
-.coin{text-align:center;background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 6px;transition:box-shadow .2s,transform .2s}
-.coin:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
-.coin .label{font-size:11.5px;color:var(--muted);font-weight:500}
-.coin .value{font-size:18px;font-weight:800;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin-top:5px;word-break:break-all;font-variant-numeric:tabular-nums}
+  .empty-tip{color:var(--muted);font-size:13.5px;padding:22px 0;text-align:center}
 
-/* 背包 */
-.bag{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:9px;max-height:290px;overflow-y:auto;padding:2px 4px 2px 2px}
-.bag::-webkit-scrollbar{width:6px}
-.bag::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:3px}
-.bag{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));max-height:420px}
-.item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 12px 11px;text-align:left;font-size:13px;color:#3c455c;transition:box-shadow .2s,border-color .2s,transform .2s;display:flex;flex-direction:column;gap:8px}
-.item:hover{border-color:var(--line-strong);box-shadow:var(--shadow);transform:translateY(-1px)}
-.item .item-name{font-weight:700;color:var(--text);word-break:break-all;line-height:1.4}
-.item .count{color:var(--brand);font-weight:800;font-variant-numeric:tabular-nums;font-size:12px}
-.item .use-row{display:flex;gap:6px;margin-top:auto}
-.item .use-row input{flex:1;min-width:0;width:52px;padding:6px 8px;font-size:13px;border-radius:9px;text-align:center}
-.item .use-row button{flex:0 0 auto;padding:6px 13px;font-size:12.5px;border-radius:9px;box-shadow:none}
-.item .item-tag{align-self:flex-start;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 9px;background:var(--brand-soft);color:var(--brand);border:1px solid rgba(47,107,255,.18)}
-.item .item-tag.art{background:#fef3e2;color:#c2660a;border-color:rgba(194,102,10,.22)}
-.item .item-tag.skill{background:#f2ecff;color:#7c3aed;border-color:rgba(124,58,237,.2)}
+  .redeem-row{display:flex;gap:10px}
+  .redeem-row .el-input{flex:1}
+  .redeem-result{margin-top:12px;padding:12px 14px;border-radius:12px;background:#f6f8ff;border:1px solid #dfe4ff;font-size:13px;white-space:pre-wrap;line-height:1.7}
 
-/* 宠物养成 */
-.grow-row{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
-.grow-row button{border:none;border-radius:11px;padding:11px 20px;font-size:13.5px;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--brand),var(--brand-2));box-shadow:0 3px 12px rgba(99,102,241,.28);transition:.18s;font-family:inherit}
-.grow-row button:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(99,102,241,.38)}
-.grow-row button:disabled{opacity:.6;cursor:wait;transform:none}
-.grow-row button.evolve{background:linear-gradient(135deg,#f59e0b,#ef6c1a);box-shadow:0 3px 12px rgba(245,158,11,.3)}
-.grow-row button.evolve:hover{box-shadow:0 6px 18px rgba(245,158,11,.42)}
-.grow-group{display:inline-flex;gap:0;border-radius:11px;overflow:hidden}
-.grow-group input{width:72px;border:1px solid var(--line);border-right:none;border-radius:11px 0 0 11px;padding:0 12px;font-size:14px;outline:none;font-family:inherit}
-.grow-group input:focus{border-color:var(--brand)}
-.grow-group button{border-radius:0 11px 11px 0}
+  .custom-box{margin-top:16px;padding:18px;background:linear-gradient(135deg,#f4f0ff,#eef5ff);border-radius:16px;border:1px solid #e2e0f7}
+  .custom-badge{color:var(--brand2);font-size:14px;font-weight:700;margin-bottom:6px}
+  .custom-remaining{font-size:12px;color:var(--muted);margin-bottom:12px}
 
-/* 冷却 */
-.cd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:9px}
-.cd{background:#fff;border:1px solid var(--line);border-radius:13px;padding:11px 13px;transition:box-shadow .2s}
-.cd:hover{box-shadow:var(--shadow-sm)}
-.cd .cd-name{font-size:12.5px;color:var(--muted);font-weight:600}
-.cd .cd-time{font-size:15px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums}
-.cd.ready .cd-time{color:var(--ok)}
-.cd.busy .cd-time{color:#c2660a}
+  .pet-source{margin-top:18px;text-align:center;color:#b0b8ca;font-size:12px;word-break:break-all}
 
-/* 卡密兑换 */
-.redeem-box{margin-top:2px;padding:18px;background:linear-gradient(135deg,#eef7ff,#f4f0ff);border:1px solid #e0e6f7;border-radius:16px}
-.redeem-box .bind-row input{background:#fff}
-.redeem-result{margin-top:12px;font-size:13px;line-height:1.8;white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:none}
-.redeem-result.show{display:block}
-.empty{text-align:center;color:var(--muted);padding:34px 0;font-size:14px}
+  .upload-zone{border:1.5px dashed #c9cede;border-radius:14px;padding:18px;text-align:center;cursor:pointer;transition:.16s;background:#fafbfe}
+  .upload-zone:hover{border-color:var(--brand);background:#f5f6ff}
+  .upload-plus{font-size:26px;color:#aab1c5;line-height:1}
+  .upload-text{font-size:13px;font-weight:700;margin-top:5px}
+  .upload-hint{font-size:12px;color:var(--muted);margin-top:3px}
+  .fb-img-preview{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .fb-thumb{position:relative}
+  .fb-thumb img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+  .fb-thumb .rm{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:none;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+  .fb-list{display:flex;flex-direction:column;gap:10px;margin-top:10px;max-height:320px;overflow-y:auto}
+  .fb-item{border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13px}
+  .fb-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .fb-date{margin-left:auto;color:var(--muted);font-size:12px}
+  .fb-body{white-space:pre-wrap;line-height:1.6}
+  .fb-meta{color:var(--muted);font-size:12px;margin-top:4px}
+  .fb-imgs{display:flex;gap:6px;margin-top:8px}
+  .fb-imgs img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+  .fb-reply{margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:9px 12px;color:#166534;white-space:pre-wrap;line-height:1.6}
+  .fld{display:block;font-size:12.5px;font-weight:700;color:#3c455c;margin:12px 0 7px}
 
-/* 绑定表单 */
-.bind-box{margin-top:14px;padding:18px;background:#f7f9fd;border-radius:16px;border:1.5px dashed var(--line-strong)}
-.bind-box h3{margin:0 0 10px}
-.bind-row{display:flex;flex-wrap:wrap;gap:8px}
-.bind-row input{flex:1 1 120px;min-width:0;background:#fff}
-.bind-row button{flex:0 0 auto}
-.bind-help{margin-top:9px;font-size:12px;color:var(--muted);line-height:1.7}
-.bind-open{text-align:center;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+  .crop-wrap{display:flex;justify-content:center;margin:10px 0}
+  #cropCanvas{max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line);cursor:grab;touch-action:none}
+  .crop-zoom{display:flex;align-items:center;gap:12px;margin:12px 0 4px}
+  .crop-zoom .el-slider{flex:1}
+  .crop-preview{margin:10px 0;text-align:center}
+  .crop-preview img{max-width:150px;max-height:150px;border-radius:14px;border:1px solid var(--line)}
 
-/* 弹窗 */
-.modal{position:fixed;inset:0;background:rgba(20,26,42,.4);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
-.modal.show{display:flex}
-.modal .sheet{background:#fff;border:1px solid var(--line);border-radius:22px;padding:26px;width:min(440px,100%);box-shadow:0 32px 80px -12px rgba(20,26,42,.3);animation:popIn .3s cubic-bezier(.16,1,.3,1) both}
-.modal .sheet h3{color:var(--text);font-size:17px;margin:0 0 16px}
-.modal .sheet h3::before{display:none}
-.modal .sheet .bind-row{margin-bottom:10px}
-.modal .sheet .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
-/* 定制弹窗 */
-.custom-sheet{width:min(480px,100%)}
-.modal-head{text-align:center;margin-bottom:18px}
-.modal-icon{font-size:38px;line-height:1;margin-bottom:8px}
-.modal-head h3{margin:0 0 6px;justify-content:center}
-.modal-sub{font-size:13px;color:var(--muted);margin:0}
-.custom-sheet label{display:block;margin:12px 0 6px}
-.custom-sheet input[type="text"]{width:100%}
-.upload-zone{border:2px dashed var(--line-strong);border-radius:16px;padding:26px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;background:#f7f9fd;margin:12px 0}
-.upload-zone:hover{border-color:var(--brand);background:var(--brand-soft)}
-.upload-plus{font-size:30px;color:var(--brand);line-height:1;margin-bottom:6px;font-weight:300}
-.upload-text{font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px}
-.upload-hint{font-size:12px;color:var(--muted)}
-.crop-preview{margin-bottom:12px;text-align:center}
-.crop-preview img{max-width:160px;max-height:160px;border-radius:16px;border:1px solid var(--line);box-shadow:var(--shadow)}
-.pet-source{margin-top:16px;text-align:center;color:#b0b8ca;font-size:12px;word-break:break-all}
-.custom-box{margin-top:14px;padding:18px;background:linear-gradient(135deg,#f4f0ff,#eef5ff);border-radius:16px;border:1px solid #e2e0f7}
-.custom-badge{color:var(--brand-2);font-size:14px;font-weight:700;margin-bottom:8px}
-.custom-remaining{font-size:12px;color:var(--muted);margin-bottom:12px}
-input[type="file"]{padding:10px;background:#fff;border:1px solid var(--line);color:var(--text);border-radius:12px;width:100%}
-.sec{font-size:13px;font-weight:700;color:#3c455c;margin-bottom:8px}
+  .result-pre{white-space:pre-wrap;line-height:1.8;font-size:14px}
 
-/* 全屏应用布局 */
-body.appmode #app{padding:0;align-items:stretch;justify-content:flex-start}
-body.appmode::before,body.appmode::after{display:none}
-body.appmode .console{max-width:none}
-body.appmode .brand{display:none}
-body.appmode .screen-wrap{border:none;border-radius:0;box-shadow:none;background:transparent;overflow:visible}
-body.appmode .screen-wrap::before{display:none}
-body.appmode .screen{border-radius:0;padding:0;min-height:100vh;max-height:none;overflow:visible}
-.layout{display:flex;min-height:100vh;background:var(--bg)}
-.sidebar{width:264px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 16px 18px;position:fixed;left:0;top:0;height:100vh;overflow-y:auto;z-index:20}
-.sidebar::-webkit-scrollbar{width:6px}
-.sidebar::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:3px}
-.side-brand{font-size:16px;font-weight:800;letter-spacing:-.2px;padding:2px 8px 16px;border-bottom:1px solid var(--line);margin-bottom:14px;display:flex;align-items:center;gap:9px}
-.side-brand::before{content:'';width:10px;height:10px;border-radius:3px;background:var(--grad);flex:0 0 auto}
-.side-sec{font-size:11.5px;color:var(--muted);font-weight:700;letter-spacing:1.2px;margin:4px 8px 9px}
-.side-pets{display:flex;flex-direction:column;gap:8px}
-.side-pets .pet-chip{border-radius:14px}
-.side-bind{margin-top:12px;width:100%;padding:11px 14px;font-size:13.5px;border-radius:12px}
-.side-feedback{margin-top:10px;width:100%;padding:11px 14px;font-size:13.5px;font-weight:700;border:none;border-radius:12px;cursor:pointer;color:#fff;background:linear-gradient(135deg,#f59e0b,#ef6c1a);box-shadow:0 3px 12px rgba(245,158,11,.3);transition:.18s;font-family:inherit}
-.side-feedback:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(245,158,11,.42)}
-.fb-tabs{display:flex;gap:8px;margin:6px 0 12px}
-.fb-tabs button{flex:1;padding:10px 0;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--muted);font-size:13.5px;font-weight:700;cursor:pointer;transition:.18s;font-family:inherit}
-.fb-tabs button.active{border-color:transparent;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand-2));box-shadow:0 3px 12px rgba(99,102,241,.28)}
-#fbContent{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:14px;outline:none;resize:vertical;font-family:inherit;box-sizing:border-box}
-#fbContent:focus{border-color:var(--brand)}
-#fbTime{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box}
-#fbTime:focus{border-color:var(--brand)}
-.fb-img-preview{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-.fb-img-preview .fb-thumb{position:relative}
-.fb-img-preview img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
-.fb-img-preview .rm{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:none;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;line-height:20px;cursor:pointer;padding:0}
-.fb-list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
-.fb-item{border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13px}
-.fb-item .fb-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.fb-item .fb-kind{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px}
-.fb-item .fb-kind.bug{background:#fee2e2;color:#b91c1c}
-.fb-item .fb-kind.sug{background:#dbeafe;color:#1d4ed8}
-.fb-item .fb-status{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;background:#fef3c7;color:#b45309}
-.fb-item .fb-status.done{background:#dcfce7;color:#15803d}
-.fb-item .fb-date{margin-left:auto;color:var(--muted);font-size:12px}
-.fb-item .fb-body{white-space:pre-wrap;color:var(--text);line-height:1.6}
-.fb-item .fb-meta{color:var(--muted);font-size:12px;margin-top:4px}
-.fb-item .fb-reply{margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:9px 12px;color:#166534;white-space:pre-wrap;line-height:1.6}
-.fb-item .fb-imgs{display:flex;gap:6px;margin-top:8px}
-.fb-item .fb-imgs img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
-.side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
-.side-foot .side-user{padding:0 2px}
-.side-foot-btns{display:flex;gap:8px}
-.side-foot-btns button{flex:1;padding:8px 10px;font-size:12.5px;border-radius:10px}
-.side-user{font-size:12.5px;color:var(--muted);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.content{flex:1;min-width:0;padding:26px 34px 40px;overflow-x:hidden;margin-left:264px}
-.content-inner{max-width:960px;margin:0 auto}
-.content .topbar{margin-bottom:20px}
-@media(max-width:760px){
-  .layout{flex-direction:column}
-  .sidebar{width:100%;flex:none;position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
-  .side-foot{margin-top:14px}
-  .content{padding:20px 16px 32px;margin-left:0}
-}
-
-/* 动画 */
-@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-@keyframes slideDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-@keyframes popIn{0%{transform:scale(.94);opacity:0}100%{transform:scale(1);opacity:1}}
-
-@media(max-width:460px){
-  #app{padding:14px 10px}
-  .screen{min-height:360px;padding:24px 18px}
-  .pet-img{width:124px;height:124px;margin-top:-56px}
-  .wallet{grid-template-columns:repeat(2,1fr)}
-  .brand{font-size:16px}
-}
+  @media(max-width:760px){
+    .layout{flex-direction:column}
+    .sidebar{width:100%;position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    .side-foot{margin-top:14px}
+    .content{padding:20px 14px 32px;margin-left:0}
+    .pet-hero{flex-direction:column;align-items:center;text-align:center}
+    .pet-name,.pet-tags,.pet-badges{justify-content:center}
+    .pet-bars{max-width:none;width:100%}
+  }
 </style>
 </head>
 <body>
-<div id="app">
-  <div class="console">
-    <div class="brand">宠物乐园 · 玩家中心</div>
-    <div class="screen-wrap">
-      <div id="screen" class="screen on">
-        <noscript>请启用 JavaScript 以使用玩家中心。</noscript>
-      </div>
-    </div>
-  </div>
-  <div class="modal" id="bindModal">
-    <div class="sheet">
-      <h3>＋ 绑定新宠物</h3>
-      <div class="bind-row">
-        <input id="bindGroup" type="text" placeholder="群号">
-        <input id="bindQQ" type="text" inputmode="numeric" placeholder="绑定用户ID">
-      </div>
-      <p class="bind-help">输入你在群内使用宠物乐园的群号和用户 ID，即可查看该群宠物。</p>
-      <div class="actions">
-        <button class="ghost" onclick="closeBindModal()">取消</button>
-        <button id="bindBtn">绑定</button>
-      </div>
-    </div>
-  </div>
-  <div class="modal" id="pwdModal">
-    <div class="sheet">
-      <h3>🔒 修改密码</h3>
-      <div class="bind-row"><input id="pwdOld" type="password" placeholder="旧密码" style="flex:1 1 100%"></div>
-      <div class="bind-row"><input id="pwdNew" type="password" placeholder="新密码（至少 6 位）" style="flex:1 1 100%"></div>
-      <div class="bind-row"><input id="pwdNew2" type="password" placeholder="确认新密码" style="flex:1 1 100%"></div>
-      <div class="actions">
-        <button class="ghost" onclick="closePwdModal()">取消</button>
-        <button id="pwdBtn">确认修改</button>
-      </div>
-    </div>
-  </div>
-  <div class="modal" id="fbModal">
-    <div class="sheet" style="width:min(560px,100%);max-height:88vh;overflow-y:auto">
-      <div class="modal-head">
-        <div class="modal-icon">📣</div>
-        <h3>问题反馈</h3>
-        <p class="modal-sub">反馈 Bug 或提出建议，管理员处理后可在下方「我的反馈」查看回复</p>
-      </div>
-      <div class="fb-tabs">
-        <button id="fbTabBug" class="active" onclick="setFbKind('bug')">🐞 反馈 Bug</button>
-        <button id="fbTabSug" onclick="setFbKind('suggestion')">💡 提出建议</button>
-      </div>
-      <label class="fld" id="fbContentLbl">问题描述</label>
-      <textarea id="fbContent" rows="4" placeholder="请详细描述遇到的问题：操作了什么、预期结果、实际结果…"></textarea>
-      <div id="fbBugFields">
-        <label class="fld">发生时间</label>
-        <input id="fbTime" type="datetime-local">
-        <div class="bind-row" style="margin-top:10px">
-          <input id="fbGroup" type="text" placeholder="对应的 QQ 群号">
-          <input id="fbUser" type="text" placeholder="对应的用户 ID">
+<div id="app" v-cloak>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-brand">宠物乐园 · 玩家中心</div>
+    <div class="side-sec">我的宠物</div>
+    <div class="side-pets">
+      <div v-for="(p,i) in pets" :key="p.group_id + ':' + p.qq" class="pet-chip"
+           :class="{active: current && current.group_id===p.group_id && current.qq===p.qq}" @click="loadPet(p)">
+        <img :src="p.image_url || blankImg" alt="">
+        <div class="info">
+          <div class="name">{{ p.nickname }}</div>
+          <div class="sub">Lv{{ p.level }} · {{ p.quality }}</div>
         </div>
       </div>
-      <label class="fld">图片截图（可选，最多 3 张）</label>
-      <input id="fbImages" type="file" accept="image/*" multiple style="display:none">
-      <div class="upload-zone" id="fbPickBtn">
-        <div class="upload-plus">+</div>
-        <div class="upload-text">点击选择图片</div>
-        <div class="upload-hint">支持 jpg / png / gif / webp，单张不超过 5MB</div>
-      </div>
-      <div id="fbImgPreview" class="fb-img-preview"></div>
-      <div class="actions">
-        <button class="ghost" onclick="closeFbModal()">关闭</button>
-        <button id="fbSubmitBtn">提交反馈</button>
-      </div>
-      <h3 style="margin-top:22px">📬 我的反馈</h3>
-      <div id="fbList" class="fb-list"><span class="muted">加载中…</span></div>
+      <span v-if="!pets.length" class="muted" style="padding:0 8px">暂无绑定宠物</span>
     </div>
-  </div>
-  <div class="modal" id="customModal">
-    <div class="sheet custom-sheet">
-      <div class="modal-head">
-        <div class="modal-icon">✨</div>
-        <h3>修改宠物形象</h3>
-        <p class="modal-sub">定制专属形象与种类名称，审核通过后生效</p>
-      </div>
-      <label class="fld">种类名称（显示名称）</label>
-      <input id="customSpeciesName" type="text" placeholder="例如：灭世魔龙">
-      <label class="fld">宠物图片</label>
-      <input id="customImage" type="file" accept="image/*" style="display:none">
-      <div class="upload-zone" id="pickImageBtn">
-        <div class="upload-plus">+</div>
-        <div class="upload-text">点击选择图片</div>
-        <div class="upload-hint">支持 jpg / png / gif / webp，将裁剪为 512×512</div>
-      </div>
-      <div id="cropPreview" class="crop-preview"></div>
-      <p class="bind-help">每月图片和名称各限 3 次，提交后需管理员审核，预计 3 个工作日内完成。审核期间无法再次提交。</p>
-      <div class="actions">
-        <button class="ghost" onclick="closeCustomModal()">取消</button>
-        <button id="submitCustomBtn">提交审核</button>
+    <div class="side-btns">
+      <el-button type="primary" plain round @click="bind.show = true">＋ 绑定新宠物</el-button>
+      <el-button type="warning" round @click="openFeedback">📣 问题反馈</el-button>
+    </div>
+    <p class="side-tip">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
+    <div class="side-foot">
+      <div class="side-user" v-if="account">QQ {{ account.qq }}</div>
+      <div class="side-foot-btns">
+        <el-button size="small" round @click="openPwd">修改密码</el-button>
+        <el-button size="small" round @click="logout">退出登录</el-button>
       </div>
     </div>
-  </div>
-  <div class="modal" id="cropModal">
-    <div class="sheet" style="width:min(560px,100%)">
-      <h3>裁剪图片</h3>
-      <div style="display:flex;justify-content:center;margin:10px 0">
-        <canvas id="cropCanvas" width="512" height="512" style="max-width:100%;height:auto;border-radius:12px;border:1px solid rgba(255,176,0,.2);cursor:grab"></canvas>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;margin:10px 0">
-        <span class="muted">缩小</span>
-        <input id="cropZoom" type="range" min="100" max="300" value="100" style="flex:1">
-        <span class="muted">放大</span>
-      </div>
-      <p class="muted">拖动图片调整位置，滑动缩放，最终输出 512×512。</p>
-      <div class="actions">
-        <button class="ghost" onclick="closeCropModal()">取消</button>
-        <button id="saveCropBtn">保存裁剪</button>
-      </div>
+  </aside>
+
+  <section class="content">
+    <div class="content-inner">
+      <div class="page-title">宠物档案</div>
+
+      <div v-if="!current" class="card empty-tip">请先在左侧绑定并选择宠物</div>
+      <div v-else-if="petLoading" class="card" v-loading="petLoading" style="min-height:220px"></div>
+      <template v-else-if="data">
+        <div class="card" v-if="pet && pet.exists">
+          <div class="pet-hero">
+            <img class="pet-img" :src="pet.image_url || blankImg" :alt="pet.custom_species_name || pet.species || '宠物'">
+            <div class="pet-head">
+              <div class="pet-name">{{ pet.nickname || '未命名' }} <span class="lv">Lv{{ pet.level }}</span></div>
+              <div class="pet-meta">{{ pet.custom_species_name || pet.species || '未知' }} · {{ pet.quality }} · {{ pet.stage }} · {{ pet.element_cn }}</div>
+              <div class="pet-tags" v-if="pet.tags && pet.tags.length">
+                <el-tag v-for="t in pet.tags" :key="t" size="small" effect="light" round>{{ t }}</el-tag>
+              </div>
+              <div class="pet-bars">
+                <div class="bar-row">
+                  <span class="bl">{{ pet.ascended ? '仙元' : '经验' }}</span>
+                  <el-progress :percentage="pct(pet.ascended ? pet.xianyuan : pet.exp, pet.exp_to_next)" :stroke-width="10" :show-text="false" color="#8b5cf6"></el-progress>
+                  <span class="bv">{{ fmt(pet.ascended ? (pet.xianyuan||0) : (pet.exp||0)) }} / {{ fmt(pet.exp_to_next||0) }}</span>
+                </div>
+                <div class="bar-row">
+                  <span class="bl">❤️ 生命</span>
+                  <el-progress :percentage="pct(pet.hp, pet.hp_max)" :stroke-width="10" :show-text="false" color="#f43f5e"></el-progress>
+                  <span class="bv">{{ fmt(pet.hp||0) }} / {{ fmt(pet.hp_max||0) }}</span>
+                </div>
+                <div class="bar-row">
+                  <span class="bl">⚡ 精力</span>
+                  <el-progress :percentage="pct(pet.energy, pet.energy_max)" :stroke-width="10" :show-text="false" color="#f59e0b"></el-progress>
+                  <span class="bv">{{ fmt(pet.energy||0) }} / {{ fmt(pet.energy_max||0) }}</span>
+                </div>
+              </div>
+              <div class="pet-badges">
+                <el-tag type="danger" effect="plain" round>⚔️ 战力 {{ fmt(pet.battle_power) }}</el-tag>
+                <el-tag type="warning" effect="plain" round>😊 心情 {{ fmt(pet.mood||0) }}</el-tag>
+                <el-tag v-if="pet.ascended" type="success" effect="plain" round>余 {{ fmt(pet.exp||0) }} 经验</el-tag>
+              </div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat"><div class="label">攻击</div><div class="value">{{ fmt(pet.atk||0) }}</div></div>
+            <div class="stat"><div class="label">防御</div><div class="value">{{ fmt(pet.def||0) }}</div></div>
+            <div class="stat"><div class="label">智力</div><div class="value">{{ fmt(pet.intel||0) }}</div></div>
+            <div class="stat"><div class="label">经验</div><div class="value">{{ fmt(pet.exp||0) }}/{{ fmt(pet.exp_to_next||0) }}</div></div>
+            <div class="stat"><div class="label">性别</div><div class="value">{{ pet.gender || '?' }}</div></div>
+            <div class="stat"><div class="label">姻缘</div><div class="value">{{ pet.love_state || '单身' }}</div></div>
+          </div>
+
+          <div class="custom-box" v-if="!pet.custom">
+            <el-input v-model="custom.code" placeholder="定制卡密" clearable></el-input>
+            <p class="muted" style="margin:8px 0 0">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为混沌。</p>
+            <div class="fld">全群祝贺信息</div>
+            <div style="display:flex;gap:8px">
+              <el-input v-model="custom.nickname" placeholder="你的 QQ 昵称"></el-input>
+              <el-input v-model="custom.showQQ" placeholder="显示 QQ 号"></el-input>
+            </div>
+            <p class="muted" style="margin:8px 0 10px">填写昵称和 QQ 号用于解锁后向所有授权群发送祝贺，让全服见证你的专属宠物！</p>
+            <el-button type="primary" round :loading="custom.redeeming" @click="redeemCustom">解锁定制</el-button>
+          </div>
+          <div class="custom-box" v-else>
+            <div class="custom-badge">✨ 定制权限已解锁（混沌品质）</div>
+            <div class="custom-remaining">本月剩余次数：图片 {{ data.custom_remaining.image }} 次 / 名称 {{ data.custom_remaining.species_name }} 次</div>
+            <el-button type="primary" round @click="openCustomEdit">修改形象 / 名称</el-button>
+            <el-alert v-for="(r,i) in data.custom_pending || []" :key="'p'+i" type="success" :closable="false" style="margin-top:10px"
+              :title="'已提交审核，预计 3 个工作日内完成。' + (r.new.species_name ? '名称：'+r.new.species_name+' ' : '') + (r.new.image ? '图片' : '')"></el-alert>
+            <el-alert v-for="(r,i) in data.custom_rejected || []" :key="'r'+i" type="error" :closable="false" style="margin-top:10px"
+              :title="'审核未通过：' + (r.reason || '未说明原因')"></el-alert>
+          </div>
+        </div>
+        <div v-else class="card empty-tip">该账号下暂无宠物</div>
+
+        <div class="sec-title">我的财产</div>
+        <div class="wallet">
+          <div class="coin"><div class="label">🪙 金币</div><div class="value">{{ fmt(data.coin) }}</div></div>
+          <div class="coin"><div class="label">✨ 积分</div><div class="value">{{ fmt(data.jifen) }}</div></div>
+          <div class="coin"><div class="label">💎 钻石</div><div class="value">{{ fmt(data.diamond) }}</div></div>
+          <div class="coin"><div class="label">🔮 深渊结晶</div><div class="value">{{ fmt(data.abyss && data.abyss.crystal || 0) }}</div></div>
+        </div>
+
+        <div class="sec-title">宠物养成</div>
+        <div class="card">
+          <div class="grow-row">
+            <el-button type="primary" round :loading="acting==='auto_level'" @click="petAction('auto_level')">⚡ 一键升级</el-button>
+            <span class="grow-group">
+              <el-input-number v-model="levelTimes" :min="1" :max="9999" size="default"></el-input-number>
+              <el-button round :loading="acting==='level'" @click="petAction('level')">⬆ 升级</el-button>
+            </span>
+            <el-button type="warning" round :loading="acting==='evolve'" @click="petAction('evolve')">🌟 宠物进化</el-button>
+          </div>
+          <p class="muted" style="margin-top:9px">效果与群聊指令一致；升级消耗经验与精力，进化需『进化神石』。</p>
+        </div>
+
+        <div class="sec-title">活动冷却</div>
+        <div class="cd-grid" v-if="cooldowns.length">
+          <div v-for="c in cooldowns" :key="c.name" class="cd" :class="cdRemaining(c) > 0 ? 'busy' : 'ready'">
+            <div class="cd-name">{{ c.name }}</div>
+            <div class="cd-time">{{ cdRemaining(c) > 0 ? fmtCd(cdRemaining(c)) : '可用' }}</div>
+          </div>
+        </div>
+        <div v-else class="card empty-tip">暂无活动</div>
+
+        <div class="sec-title">背包</div>
+        <p class="muted" style="margin:-4px 0 10px">道具可直接使用（支持数量），神器可佩戴、秘技书可参悟，效果与群聊指令一致。</p>
+        <div class="bag" v-if="bagItems.length">
+          <div v-for="it in bagItems" :key="it.name" class="item">
+            <el-tag v-if="it.kind==='art'" class="item-tag" type="danger" size="small" effect="dark" round>神器</el-tag>
+            <el-tag v-else-if="it.kind==='skill'" class="item-tag" type="primary" size="small" effect="dark" round>秘技</el-tag>
+            <div class="item-name">{{ it.name }}</div>
+            <span class="count">持有 ×{{ it.count }}</span>
+            <div class="use-row">
+              <el-input-number v-if="it.kind==='item'" v-model="it.qty" :min="1" :max="it.count" size="small"></el-input-number>
+              <el-button type="primary" plain size="small" round :loading="usingItem===it.name" @click="useItem(it)">
+                {{ it.kind==='art' ? '佩戴' : (it.kind==='skill' ? '参悟' : '使用') }}
+              </el-button>
+            </div>
+          </div>
+        </div>
+        <div v-else class="card empty-tip">背包空空如也</div>
+
+        <div class="sec-title">卡密兑换</div>
+        <div class="card">
+          <div class="redeem-row">
+            <el-input v-model="redeemCode" placeholder="输入卡密，可兑换金币 / 积分 / 钻石 / 道具" clearable @keyup.enter="redeem"></el-input>
+            <el-button type="primary" round :loading="redeeming" @click="redeem">兑换</el-button>
+          </div>
+          <div v-if="redeemResult" class="redeem-result">{{ redeemResult }}</div>
+        </div>
+
+        <div class="pet-source">群号：{{ data.group_id }} ｜ 用户ID：{{ data.qq }}</div>
+      </template>
     </div>
-  </div>
+  </section>
 </div>
+
+<!-- 绑定新宠物 -->
+<el-dialog v-model="bind.show" title="＋ 绑定新宠物" width="420px" align-center>
+  <el-form label-position="top" @submit.prevent="doBind">
+    <el-form-item label="群号">
+      <el-input v-model="bind.group" placeholder="宠物所在的 QQ 群号" clearable></el-input>
+    </el-form-item>
+    <el-form-item label="绑定用户ID">
+      <el-input v-model="bind.qq" placeholder="你在该群使用宠物乐园的用户 ID" clearable @keyup.enter="doBind"></el-input>
+    </el-form-item>
+  </el-form>
+  <p class="muted">输入你在群内使用宠物乐园的群号和用户 ID，即可查看该群宠物。</p>
+  <template #footer>
+    <el-button round @click="bind.show=false">取消</el-button>
+    <el-button type="primary" round :loading="bind.loading" @click="doBind">绑定</el-button>
+  </template>
+</el-dialog>
+
+<!-- 修改密码 -->
+<el-dialog v-model="pwd.show" title="🔒 修改密码" width="420px" align-center>
+  <el-form label-position="top" @submit.prevent="changePwd">
+    <el-form-item label="旧密码">
+      <el-input v-model="pwd.old" type="password" show-password placeholder="当前密码"></el-input>
+    </el-form-item>
+    <el-form-item label="新密码">
+      <el-input v-model="pwd.n1" type="password" show-password placeholder="至少 6 位"></el-input>
+    </el-form-item>
+    <el-form-item label="确认新密码">
+      <el-input v-model="pwd.n2" type="password" show-password placeholder="再次输入新密码" @keyup.enter="changePwd"></el-input>
+    </el-form-item>
+  </el-form>
+  <template #footer>
+    <el-button round @click="pwd.show=false">取消</el-button>
+    <el-button type="primary" round :loading="pwd.loading" @click="changePwd">确认修改</el-button>
+  </template>
+</el-dialog>
+
+<!-- 问题反馈 -->
+<el-dialog v-model="fb.show" title="📣 问题反馈" width="580px" align-center top="4vh">
+  <p class="muted" style="margin:-6px 0 10px">反馈 Bug 或提出建议，管理员处理后可在下方「我的反馈」查看回复。</p>
+  <el-tabs v-model="fb.kind">
+    <el-tab-pane label="🐞 反馈 Bug" name="bug"></el-tab-pane>
+    <el-tab-pane label="💡 提出建议" name="suggestion"></el-tab-pane>
+  </el-tabs>
+  <label class="fld" style="margin-top:2px">{{ fb.kind==='bug' ? '问题描述' : '建议内容' }}</label>
+  <el-input v-model="fb.content" type="textarea" :rows="4" maxlength="2000" show-word-limit
+    :placeholder="fb.kind==='bug' ? '请详细描述遇到的问题：操作了什么、预期结果、实际结果…' : '说说你希望增加或改进的功能…'"></el-input>
+  <template v-if="fb.kind==='bug'">
+    <label class="fld">发生时间</label>
+    <el-date-picker v-model="fb.time" type="datetime" placeholder="选择问题发生的时间" style="width:100%" format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm"></el-date-picker>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <el-input v-model="fb.group" placeholder="对应的 QQ 群号"></el-input>
+      <el-input v-model="fb.user" placeholder="对应的用户 ID"></el-input>
+    </div>
+  </template>
+  <label class="fld">图片截图（可选，最多 3 张）</label>
+  <input ref="fbFileInput" type="file" accept="image/*" multiple style="display:none" @change="pickFbImages">
+  <div class="upload-zone" @click="$refs.fbFileInput.click()">
+    <div class="upload-plus">＋</div>
+    <div class="upload-text">点击选择图片</div>
+    <div class="upload-hint">支持 jpg / png / gif / webp，单张不超过 5MB</div>
+  </div>
+  <div class="fb-img-preview" v-if="fb.files.length">
+    <div v-for="(f,i) in fb.files" :key="i" class="fb-thumb">
+      <img :src="f.url"><button class="rm" @click="fb.files.splice(i,1)">×</button>
+    </div>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+    <el-button round @click="fb.show=false">关闭</el-button>
+    <el-button type="primary" round :loading="fb.submitting" @click="submitFeedback">提交反馈</el-button>
+  </div>
+  <div class="sec-title" style="margin-top:20px">📬 我的反馈</div>
+  <div class="fb-list" v-loading="fb.listLoading">
+    <span v-if="!fb.list.length && !fb.listLoading" class="muted">还没有提交过反馈</span>
+    <div v-for="f in fb.list" :key="f.id" class="fb-item">
+      <div class="fb-head">
+        <el-tag :type="f.kind==='bug' ? 'danger' : 'primary'" size="small" round>{{ f.kind==='bug' ? 'Bug' : '建议' }}</el-tag>
+        <el-tag :type="f.status==='resolved' ? 'success' : 'warning'" size="small" round>{{ f.status==='resolved' ? '已回复' : '处理中' }}</el-tag>
+        <span class="fb-date">{{ fmtDate(f.created_at) }}</span>
+      </div>
+      <div class="fb-body">{{ f.content }}</div>
+      <div v-if="f.kind==='bug'" class="fb-meta">发生时间：{{ f.occur_time || '—' }} · 群号：{{ f.group || '—' }} · 用户ID：{{ f.user_id || '—' }}</div>
+      <div class="fb-imgs" v-if="(f.images||[]).length">
+        <el-image v-for="im in f.images" :key="im" :src="'/feedback_images/'+im"
+          :preview-src-list="(f.images||[]).map(x=>'/feedback_images/'+x)" fit="cover"
+          style="width:56px;height:56px;border-radius:8px;border:1px solid var(--line)"></el-image>
+      </div>
+      <div v-if="f.reply" class="fb-reply">💬 管理员回复：{{ f.reply }}</div>
+    </div>
+  </div>
+</el-dialog>
+
+<!-- 修改宠物形象 -->
+<el-dialog v-model="custom.editShow" title="✨ 修改宠物形象" width="480px" align-center>
+  <p class="muted" style="margin:-6px 0 4px">定制专属形象与种类名称，审核通过后生效。</p>
+  <label class="fld">种类名称（显示名称）</label>
+  <el-input v-model="custom.species" placeholder="例如：灭世魔龙" clearable></el-input>
+  <label class="fld">宠物图片</label>
+  <input ref="customFileInput" type="file" accept="image/*" style="display:none" @change="pickCustomImage">
+  <div class="upload-zone" @click="$refs.customFileInput.click()">
+    <div class="upload-plus">＋</div>
+    <div class="upload-text">点击选择图片</div>
+    <div class="upload-hint">支持 jpg / png / gif / webp，将裁剪为 512×512</div>
+  </div>
+  <div class="crop-preview" v-if="custom.previewUrl"><img :src="custom.previewUrl" alt="预览"></div>
+  <p class="muted" style="margin-top:8px">每月图片和名称各限 3 次，提交后需管理员审核，预计 3 个工作日内完成。审核期间无法再次提交。</p>
+  <template #footer>
+    <el-button round @click="custom.editShow=false">取消</el-button>
+    <el-button type="primary" round :loading="custom.submitting" @click="submitCustom">提交审核</el-button>
+  </template>
+</el-dialog>
+
+<!-- 裁剪图片 -->
+<el-dialog v-model="crop.show" title="裁剪图片" width="580px" align-center top="4vh" :close-on-click-modal="false">
+  <div class="crop-wrap">
+    <canvas id="cropCanvas" width="512" height="512"
+      @mousedown="cropDown" @mousemove="cropMove" @mouseup="cropUp" @mouseleave="cropUp"
+      @touchstart.prevent="cropTouchStart" @touchmove.prevent="cropTouchMove" @touchend="cropUp"></canvas>
+  </div>
+  <div class="crop-zoom">
+    <span class="muted">缩小</span>
+    <el-slider v-model="crop.zoom" :min="100" :max="300" @input="applyZoom"></el-slider>
+    <span class="muted">放大</span>
+  </div>
+  <p class="muted">拖动图片调整位置，滑动缩放，最终输出 512×512。</p>
+  <template #footer>
+    <el-button round @click="crop.show=false">取消</el-button>
+    <el-button type="primary" round @click="saveCrop">保存裁剪</el-button>
+  </template>
+</el-dialog>
+</div>
+
+<script src="/webstatic/vue.global.prod.js"></script>
+<script src="/webstatic/element-plus.full.min.js"></script>
+<script src="/webstatic/element-plus-zh-cn.min.js"></script>
 <script>
 const CSRF_TOKEN = '{{CSRF_TOKEN}}';
-const screen = document.getElementById('screen');
+const { createApp, reactive, ref, computed, onMounted, nextTick } = Vue;
+const { ElMessage, ElMessageBox } = ElementPlus;
+
+const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 async function api(path, method='GET', body=null){
   const opts = {method, headers:{'X-CSRF-Token':CSRF_TOKEN}};
-  if(body){opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body)}
+  if(body){ opts.headers['Content-Type']='application/json'; opts.body = JSON.stringify(body); }
   const r = await fetch(path, opts);
-  if(r.status === 401 || r.status === 403){
-    return {unauthorized:true};
-  }
+  if(r.status === 401 || r.status === 403){ location.href = '/'; return null; }
   return r.json().catch(()=>null);
 }
 
-function msg(text, type='err'){
-  const d = document.createElement('div');
-  d.className = `msg ${type}`;
-  d.textContent = text;
-  const host = document.querySelector('.content-inner') || screen;
-  host.prepend(d);
-  setTimeout(()=>d.remove(), 4000);
-}
-
-function viewLogin(){
-  document.body.classList.remove('appmode');
-  document.querySelector('.console').classList.remove('wide');
-  screen.innerHTML = `
-    <div style="text-align:center;margin-top:6px">
-      <h1>欢迎回来 👋</h1>
-      <p class="muted" style="margin-top:-4px">登录后随时随地查看你的宠物状态</p>
-    </div>
-    <form class="form" id="loginForm">
-      <label>QQ 号</label>
-      <input name="qq" type="text" inputmode="numeric" placeholder="10001" required>
-      <label>密码</label>
-      <input name="password" type="password" placeholder="●●●●●●" required>
-      <button type="submit">登录</button>
-      <div class="links"><a href="#" id="toRegister">注册账号</a><a href="#" id="toBind">先绑定宠物</a></div>
-    </form>`;
-  document.getElementById('loginForm').onsubmit = async e=>{
-    e.preventDefault();
-    const f = e.target;
-    const r = await api('/api/portal/login','POST',{qq:f.qq.value, password:f.password.value});
-    if(r && r.ok){ msg('登录成功','ok'); location.reload(); }
-    else { msg((r&&r.msg)||'登录失败'); }
-  };
-  document.getElementById('toRegister').onclick = e=>{e.preventDefault(); viewRegister()};
-  document.getElementById('toBind').onclick = e=>{e.preventDefault(); msg('请先登录或注册后再绑定宠物')};
-}
-
-function viewRegister(){
-  document.body.classList.remove('appmode');
-  document.querySelector('.console').classList.remove('wide');
-  screen.innerHTML = `
-    <div style="text-align:center;margin-top:6px">
-      <h1>创建账号</h1>
-      <p class="muted" style="margin-top:-4px">注册后即可绑定并管理你的宠物</p>
-    </div>
-    <form class="form" id="regForm">
-      <label>QQ 号</label>
-      <input name="qq" type="text" inputmode="numeric" placeholder="10001" required>
-      <label>密码</label>
-      <input name="password" type="password" placeholder="至少 6 位" required>
-      <button type="submit">注册</button>
-      <div class="links"><a href="#" id="toLogin">已有账号？登录</a></div>
-    </form>`;
-  document.getElementById('regForm').onsubmit = async e=>{
-    e.preventDefault();
-    const f = e.target;
-    const r = await api('/api/portal/register','POST',{qq:f.qq.value, password:f.password.value});
-    if(r && r.ok){ msg('注册成功，请登录','ok'); viewLogin(); }
-    else { msg((r&&r.msg)||'注册失败'); }
-  };
-  document.getElementById('toLogin').onclick = e=>{e.preventDefault(); viewLogin()};
-}
-
-let state = {account:null, pets:[], current:null, data:null};
-
-async function initDashboard(){
-  const me = await api('/api/portal/me');
-  if(!me || !me.ok){ viewLogin(); return; }
-  state.account = me.account;
-  state.pets = me.bound_pets || [];
-  renderDashboard();
-  if(location.hash === '#feedback'){
-    history.replaceState(null, '', location.pathname);
-    openFbModal();
-  }
-  if(state.pets.length) await loadPet(state.pets[0]);
-}
-
-function renderDashboard(){
-  document.body.classList.add('appmode');
-  document.querySelector('.console').classList.add('wide');
-  const chips = state.pets.map((p,i)=>`
-    <div class="pet-chip ${state.current && state.current.group_id===p.group_id && state.current.qq===p.qq?'active':''}" data-idx="${i}">
-      <img src="${p.image_url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}" alt="">
-      <div class="info"><div class="name">${esc(p.nickname)}</div><div class="sub">Lv${p.level} · ${esc(p.quality)}</div></div>
-    </div>`).join('');
-  screen.innerHTML = `
-    <div class="layout">
-      <aside class="sidebar">
-        <div class="side-brand">宠物乐园 · 玩家中心</div>
-        <div class="side-sec">我的宠物</div>
-        <div class="side-pets">${chips || '<span class="muted" style="padding:0 8px">暂无绑定宠物</span>'}</div>
-        <button id="openBindBtn" class="side-bind">＋ 绑定新宠物</button>
-        <button id="fbOpenBtn" class="side-feedback">📣 问题反馈</button>
-        <p class="muted" style="margin:9px 4px 0;font-size:12px">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
-        <div class="side-foot">
-          <div class="side-user">QQ ${esc(state.account.qq)}</div>
-          <div class="side-foot-btns">
-            <button class="ghost" id="pwdOpenBtn">修改密码</button>
-            <button class="ghost" id="logoutBtn">退出登录</button>
-          </div>
-        </div>
-      </aside>
-      <section class="content">
-        <div class="content-inner">
-          <div class="topbar">
-            <div><h2>宠物档案</h2></div>
-          </div>
-          <div id="main"></div>
-        </div>
-      </section>
-    </div>`;
-  document.querySelectorAll('.pet-chip').forEach(c=>c.onclick=()=>loadPet(state.pets[+c.dataset.idx]));
-  document.getElementById('logoutBtn').onclick = async ()=>{ await api('/api/portal/logout','POST'); viewLogin(); };
-  document.getElementById('openBindBtn').onclick = openBindModal;
-  document.getElementById('pwdOpenBtn').onclick = openPwdModal;
-  document.getElementById('fbOpenBtn').onclick = openFbModal;
-}
-
-// --------------------------- 问题反馈 ---------------------------
-let fbKind = 'bug';
-let fbFiles = [];
-function openFbModal(){
-  setFbKind('bug');
-  document.getElementById('fbContent').value='';
-  document.getElementById('fbTime').value='';
-  document.getElementById('fbGroup').value='';
-  document.getElementById('fbUser').value='';
-  fbFiles=[]; renderFbPreview();
-  document.getElementById('fbModal').classList.add('show');
-  loadMyFeedbacks();
-}
-function closeFbModal(){ document.getElementById('fbModal').classList.remove('show'); }
-document.getElementById('fbModal').onclick = e=>{ if(e.target.id==='fbModal') closeFbModal(); };
-function setFbKind(k){
-  fbKind = k;
-  document.getElementById('fbTabBug').classList.toggle('active', k==='bug');
-  document.getElementById('fbTabSug').classList.toggle('active', k==='suggestion');
-  document.getElementById('fbBugFields').style.display = k==='bug' ? '' : 'none';
-  document.getElementById('fbContentLbl').textContent = k==='bug' ? '问题描述' : '建议内容';
-  document.getElementById('fbContent').placeholder = k==='bug'
-    ? '请详细描述遇到的问题：操作了什么、预期结果、实际结果…'
-    : '说说你希望增加或改进的功能…';
-}
-document.getElementById('fbPickBtn').onclick = ()=>document.getElementById('fbImages').click();
-document.getElementById('fbImages').onchange = e=>{
-  for(const f of e.target.files){
-    if(fbFiles.length >= 3) break;
-    if(f.size > 5*1024*1024){ msg(`图片「${f.name}」超过 5MB，已跳过`); continue; }
-    fbFiles.push(f);
-  }
-  e.target.value='';
-  renderFbPreview();
-};
-function renderFbPreview(){
-  const box = document.getElementById('fbImgPreview');
-  box.innerHTML = fbFiles.map((f,i)=>`<div class="fb-thumb"><img src="${URL.createObjectURL(f)}"><button class="rm" data-i="${i}">×</button></div>`).join('');
-  box.querySelectorAll('.rm').forEach(b=>b.onclick=()=>{ fbFiles.splice(+b.dataset.i,1); renderFbPreview(); });
-}
-document.getElementById('fbSubmitBtn').onclick = async ()=>{
-  const content = document.getElementById('fbContent').value.trim();
-  if(!content){ msg(fbKind==='bug'?'请填写问题描述':'请填写建议内容'); return; }
-  const fd = new FormData();
-  fd.append('kind', fbKind);
-  fd.append('content', content);
-  if(fbKind==='bug'){
-    const t = document.getElementById('fbTime').value;
-    const g = document.getElementById('fbGroup').value.trim();
-    const u = document.getElementById('fbUser').value.trim();
-    if(!t){ msg('请填写发生时间'); return; }
-    if(!g){ msg('请填写对应的 QQ 群号'); return; }
-    if(!u){ msg('请填写对应的用户 ID'); return; }
-    fd.append('occur_time', t.replace('T',' '));
-    fd.append('group_id', g);
-    fd.append('user_id', u);
-  }
-  fbFiles.forEach((f,i)=>fd.append(`image${i}`, f, f.name));
-  const btn = document.getElementById('fbSubmitBtn');
-  btn.disabled = true; btn.textContent = '提交中…';
-  try{
-    const r = await fetch('/api/portal/feedback', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd}).then(x=>x.json()).catch(()=>null);
-    if(r && r.ok){
-      msg(r.msg || '反馈已提交', 'ok');
-      document.getElementById('fbContent').value='';
-      fbFiles=[]; renderFbPreview();
-      loadMyFeedbacks();
-    } else {
-      msg((r && r.msg) || '提交失败，请稍后重试');
-    }
-  } finally {
-    btn.disabled = false; btn.textContent = '提交反馈';
-  }
-};
-async function loadMyFeedbacks(){
-  const box = document.getElementById('fbList');
-  const r = await api('/api/portal/feedback');
-  const list = (r && r.data) || [];
-  if(!list.length){ box.innerHTML = '<span class="muted">还没有提交过反馈</span>'; return; }
-  box.innerHTML = list.map(f=>{
-    const kind = f.kind==='bug' ? '<span class="fb-kind bug">Bug</span>' : '<span class="fb-kind sug">建议</span>';
-    const status = f.status==='resolved' ? '<span class="fb-status done">已回复</span>' : '<span class="fb-status">处理中</span>';
-    const date = new Date((f.created_at||0)*1000).toLocaleString('zh-CN',{hour12:false});
-    const meta = f.kind==='bug' ? `<div class="fb-meta">发生时间：${esc(f.occur_time||'—')} · 群号：${esc(f.group||'—')} · 用户ID：${esc(f.user_id||'—')}</div>` : '';
-    const imgs = (f.images||[]).length ? `<div class="fb-imgs">${f.images.map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}"></a>`).join('')}</div>` : '';
-    const reply = f.reply ? `<div class="fb-reply">💬 管理员回复：${esc(f.reply)}</div>` : '';
-    return `<div class="fb-item"><div class="fb-head">${kind}${status}<span class="fb-date">${date}</span></div><div class="fb-body">${esc(f.content)}</div>${meta}${imgs}${reply}</div>`;
-  }).join('');
-}
-
-function openBindModal(){ document.getElementById('bindModal').classList.add('show'); }
-function closeBindModal(){ document.getElementById('bindModal').classList.remove('show'); }
-
-function openPwdModal(){
-  ['pwdOld','pwdNew','pwdNew2'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('pwdModal').classList.add('show');
-}
-function closePwdModal(){ document.getElementById('pwdModal').classList.remove('show'); }
-document.getElementById('pwdModal').onclick = e=>{ if(e.target.id==='pwdModal') closePwdModal(); };
-document.getElementById('pwdBtn').onclick = async ()=>{
-  const oldPwd = document.getElementById('pwdOld').value;
-  const newPwd = document.getElementById('pwdNew').value;
-  const newPwd2 = document.getElementById('pwdNew2').value;
-  if(!oldPwd || !newPwd){ msg('请填写旧密码和新密码'); return; }
-  if(newPwd.length < 6){ msg('新密码至少 6 位'); return; }
-  if(newPwd !== newPwd2){ msg('两次输入的新密码不一致'); return; }
-  const r = await api('/api/portal/change_password','POST',{old_password:oldPwd, new_password:newPwd});
-  if(r && r.ok){ msg('密码修改成功','ok'); closePwdModal(); }
-  else { msg((r&&r.msg)||'修改失败'); }
-};
-
-document.getElementById('bindBtn').onclick = async ()=>{
-  const g = document.getElementById('bindGroup').value.trim();
-  const q = document.getElementById('bindQQ').value.trim();
-  if(!g || !q){ msg('群号和用户 ID 不能为空'); return; }
-  const r = await api('/api/portal/bind','POST',{group_id:g, qq:q});
-  if(r && r.ok){ msg(r.msg,'ok'); closeBindModal(); document.getElementById('bindGroup').value=''; document.getElementById('bindQQ').value=''; await initDashboard(); }
-  else { msg((r&&r.msg)||'绑定失败'); }
-};
-document.getElementById('bindModal').onclick = e=>{ if(e.target.id==='bindModal') closeBindModal(); };
-
-function openCustomModal(){ document.getElementById('customModal').classList.add('show'); }
-function closeCustomModal(){ document.getElementById('customModal').classList.remove('show'); }
-
-let cropState = {img:null, scale:1, x:0, y:0, dragging:false, lastX:0, lastY:0, blob:null};
-const cropCanvas = document.getElementById('cropCanvas');
-const cropCtx = cropCanvas.getContext('2d');
-
-function drawCrop(){
-  if(!cropState.img) return;
-  const W = 512, H = 512;
-  cropCtx.clearRect(0,0,W,H);
-  const img = cropState.img;
-  const drawW = img.naturalWidth * cropState.scale;
-  const drawH = img.naturalHeight * cropState.scale;
-  cropCtx.drawImage(img, cropState.x, cropState.y, drawW, drawH);
-}
-
-function resetCrop(){
-  cropState.img = null; cropState.scale = 1; cropState.x = 0; cropState.y = 0; cropState.blob = null;
-  document.getElementById('customImage').value = '';
-  document.getElementById('cropPreview').textContent = '';
-}
-
-function openCropper(file){
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = ()=>{
-    cropState.img = img;
-    // 初始缩放让图片短边填满 512
-    const scale = Math.max(512 / img.naturalWidth, 512 / img.naturalHeight);
-    cropState.scale = scale;
-    cropState.x = (512 - img.naturalWidth * scale) / 2;
-    cropState.y = (512 - img.naturalHeight * scale) / 2;
-    document.getElementById('cropZoom').value = 100;
-    drawCrop();
-    document.getElementById('cropModal').classList.add('show');
-  };
-  img.src = url;
-}
-
-function closeCropModal(){ document.getElementById('cropModal').classList.remove('show'); }
-
-document.getElementById('pickImageBtn').onclick = ()=> document.getElementById('customImage').click();
-document.getElementById('customImage').onchange = e=>{
-  const f = e.target.files[0];
-  if(f) openCropper(f);
-};
-document.getElementById('cropZoom').oninput = e=>{
-  if(!cropState.img) return;
-  const oldScale = cropState.scale;
-  const ratio = (+e.target.value) / 100;
-  const base = Math.max(512 / cropState.img.naturalWidth, 512 / cropState.img.naturalHeight);
-  cropState.scale = base * ratio;
-  // 以画布中心为锚点缩放
-  const cx = 256, cy = 256;
-  cropState.x = cx - (cx - cropState.x) * (cropState.scale / oldScale);
-  cropState.y = cy - (cy - cropState.y) * (cropState.scale / oldScale);
-  drawCrop();
-};
-function cropStartDrag(ex,ey){
-  cropState.dragging = true;
-  cropState.lastX = ex; cropState.lastY = ey;
-  cropCanvas.style.cursor = 'grabbing';
-}
-function cropMoveDrag(ex,ey){
-  if(!cropState.dragging) return;
-  cropState.x += ex - cropState.lastX;
-  cropState.y += ey - cropState.lastY;
-  cropState.lastX = ex; cropState.lastY = ey;
-  drawCrop();
-}
-function cropEndDrag(){ cropState.dragging = false; cropCanvas.style.cursor = 'grab'; }
-cropCanvas.addEventListener('mousedown', e=>cropStartDrag(e.offsetX * (512 / cropCanvas.clientWidth), e.offsetY * (512 / cropCanvas.clientHeight)));
-cropCanvas.addEventListener('mousemove', e=>cropMoveDrag(e.offsetX * (512 / cropCanvas.clientWidth), e.offsetY * (512 / cropCanvas.clientHeight)));
-cropCanvas.addEventListener('mouseup', cropEndDrag);
-cropCanvas.addEventListener('mouseleave', cropEndDrag);
-cropCanvas.addEventListener('touchstart', e=>{ const t=e.touches[0]; const r=cropCanvas.getBoundingClientRect(); cropStartDrag((t.clientX-r.left)*(512/r.width),(t.clientY-r.top)*(512/r.height)); },{passive:false});
-cropCanvas.addEventListener('touchmove', e=>{ e.preventDefault(); const t=e.touches[0]; const r=cropCanvas.getBoundingClientRect(); cropMoveDrag((t.clientX-r.left)*(512/r.width),(t.clientY-r.top)*(512/r.height)); },{passive:false});
-cropCanvas.addEventListener('touchend', cropEndDrag);
-
-document.getElementById('saveCropBtn').onclick = ()=>{
-  cropCanvas.toBlob(blob=>{
-    cropState.blob = blob;
-    const url = URL.createObjectURL(blob);
-    document.getElementById('cropPreview').innerHTML = `<img src="${url}" alt="预览">`;
-    closeCropModal();
-  }, 'image/jpeg', 0.92);
-};
-document.getElementById('cropModal').onclick = e=>{ if(e.target.id==='cropModal') closeCropModal(); };
-
-document.getElementById('submitCustomBtn').onclick = async ()=>{
-  if(!state.current){ msg('请先选择宠物'); return; }
-  const species = document.getElementById('customSpeciesName').value.trim();
-  const file = cropState.blob;
-  if(!species && !file){ msg('请至少修改名称或上传图片'); return; }
-  const btn = document.getElementById('submitCustomBtn');
-  btn.disabled = true; btn.textContent = '提交中…';
-  try {
-    const fd = new FormData();
-    fd.append('group_id', state.current.group_id);
-    fd.append('qq', state.current.qq);
-    if(species) fd.append('species_name', species);
-    if(file) fd.append('image', file, 'custom.jpg');
-    const r = await fetch('/api/portal/custom_submit', {
-      method:'POST',
-      headers:{'X-CSRF-Token':CSRF_TOKEN},
-      body:fd
-    });
-    const data = await r.json().catch(()=>null);
-    if(data && data.ok){ msg(data.msg,'ok'); closeCustomModal(); resetCrop(); await loadPet(state.current); }
-    else { msg((data&&data.msg)||'提交失败'); }
-  } finally {
-    btn.disabled = false; btn.textContent = '提交审核';
-  }
-};
-document.getElementById('customModal').onclick = e=>{ if(e.target.id==='customModal') closeCustomModal(); };
-
-async function loadPet(petMeta){
-  state.current = petMeta;
-  renderDashboard();
-  const main = document.getElementById('main');
-  main.innerHTML = '<div class="empty">加载中…</div>';
-  const d = await api(`/api/portal/pet?group_id=${encodeURIComponent(petMeta.group_id)}&qq=${encodeURIComponent(petMeta.qq)}`);
-  if(!d || !d.ok){ main.innerHTML='<div class="empty">加载失败</div>'; return; }
-  state.data = d;
-  renderPet(main, d);
-}
-
-function renderCustom(d){
-  const pet = d.pet;
-  if(!pet.exists) return '';
-  const pending = (d.custom_pending || []).map(r=>`<div class="msg ok">已提交审核，预计 3 个工作日内完成。${r.new.species_name?'名称：'+esc(r.new.species_name):''} ${r.new.image?'图片':''}</div>`).join('');
-  const rejected = (d.custom_rejected || []).map(r=>`<div class="msg err">审核未通过：${esc(r.reason||'未说明原因')}</div>`).join('');
-  if(!pet.custom){
-    return `<div class="custom-box">
-      <div class="bind-row">
-        <input id="customCode" type="text" placeholder="定制卡密">
-      </div>
-      <p class="muted" style="margin:8px 0 0">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为混沌。</p>
-      <div class="sec" style="margin-top:12px">全群祝贺信息</div>
-      <div class="bind-row">
-        <input id="customNickname" type="text" placeholder="你的 QQ 昵称" style="flex:1">
-        <input id="customShowQQ" type="text" inputmode="numeric" placeholder="显示 QQ 号" style="flex:1">
-      </div>
-      <p class="bind-help">填写昵称和 QQ 号用于解锁后向所有授权群发送祝贺，让全服见证你的专属宠物！</p>
-      <button id="redeemCustomBtn" style="margin-top:8px">解锁定制</button>
-    </div>`;
-  }
-  return `<div class="custom-box">
-      <div class="custom-badge">✨ 定制权限已解锁（混沌品质）</div>
-      <div class="custom-remaining">本月剩余次数：图片 ${d.custom_remaining.image} 次 / 名称 ${d.custom_remaining.species_name} 次</div>
-      <button id="editCustomBtn">修改形象 / 名称</button>
-      ${pending}${rejected}
-    </div>`;
-}
-
-function renderPet(container, d){
-  const pet = d.pet;
-  const petHtml = pet.exists ? `
-    <div class="pet-card">
-      <img class="pet-img" src="${pet.image_url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}" alt="${esc(pet.custom_species_name || pet.species || '宠物')}">
-      <div class="pet-title">
-        <div class="name">${esc(pet.nickname||'未命名')} <span style="font-size:14px;color:var(--muted)">Lv${pet.level}</span></div>
-        <div class="meta">${esc(pet.custom_species_name || pet.species || '未知')} · ${esc(pet.quality)} · ${esc(pet.stage)} · ${esc(pet.element_cn)}</div>
-        ${pet.tags && pet.tags.length ? `<div class="pet-tags">${pet.tags.map(t=>`<span class="pet-tag">${esc(t)}</span>`).join('')}</div>` : ''}
-        <div class="pet-resource">${pet.ascended ? `仙元 ${fmt(pet.xianyuan||0)} / ${fmt(pet.exp_to_next||0)}（余 ${fmt(pet.exp||0)} 经验）` : `经验 ${fmt(pet.exp||0)} / ${fmt(pet.exp_to_next||0)}`}</div>
-      </div>
-      <div class="badges">
-        <span class="badge">⚔️ 战力 ${fmt(pet.battle_power)}</span>
-        <span class="badge">❤️ 生命 ${fmt(pet.hp||0)}/${fmt(pet.hp_max||0)}</span>
-        <span class="badge">⚡ 精力 ${fmt(pet.energy||0)}/${fmt(pet.energy_max||0)}</span>
-        <span class="badge">😊 心情 ${fmt(pet.mood||0)}</span>
-      </div>
-    </div>
-    <div class="grid">
-      <div class="stat"><div class="label">攻击</div><div class="value">${fmt(pet.atk||0)}</div></div>
-      <div class="stat"><div class="label">防御</div><div class="value">${fmt(pet.def||0)}</div></div>
-      <div class="stat"><div class="label">智力</div><div class="value">${fmt(pet.intel||0)}</div></div>
-      <div class="stat"><div class="label">经验</div><div class="value">${fmt(pet.exp||0)}/${fmt(pet.exp_to_next||0)}</div></div>
-      <div class="stat"><div class="label">性别</div><div class="value">${esc(pet.gender||'?')}</div></div>
-      <div class="stat"><div class="label">姻缘</div><div class="value">${esc(pet.love_state||'单身')}</div></div>
-    </div>`
-    : '<div class="empty">该账号下暂无宠物</div>';
-
-  const artSet = new Set(d.artifact_names || []);
-  const skillSet = new Set(d.skill_names || []);
-  const bag = d.bag && Object.keys(d.bag).length ?
-    Object.entries(d.bag).map(([k,v])=>{
-      const isArt = artSet.has(k), isSkill = skillSet.has(k);
-      const tag = isArt ? '<span class="item-tag art">神器</span>' : (isSkill ? '<span class="item-tag skill">秘技</span>' : '');
-      const btnLabel = isArt ? '佩戴' : (isSkill ? '参悟' : '使用');
-      const qty = (isArt || isSkill) ? '' : `<input type="number" min="1" max="${v}" value="1" data-qty="${escAttr(k)}">`;
-      return `<div class="item">${tag}<div class="item-name">${esc(k)}</div><span class="count">持有 ×${v}</span>
-        <div class="use-row">${qty}<button data-use="${escAttr(k)}">${btnLabel}</button></div></div>`;
-    }).join('')
-    : '<div class="empty">背包空空如也</div>';
-
-  const cds = (d.cooldowns || []).map(c=>{
-    const readyAt = Math.floor(Date.now()/1000) + (c.remaining||0);
-    return `<div class="cd ${c.remaining>0?'busy':'ready'}" data-ready="${readyAt}"><div class="cd-name">${esc(c.name)}</div><div class="cd-time">${c.remaining>0?fmtCd(c.remaining):'可用'}</div></div>`;
-  }).join('') || '<div class="empty">暂无活动</div>';
-
-  container.innerHTML = petHtml + renderCustom(d) + `
-    <h3>我的财产</h3>
-    <div class="wallet">
-      <div class="coin"><div class="label">🪙 金币</div><div class="value">${fmt(d.coin)}</div></div>
-      <div class="coin"><div class="label">✨ 积分</div><div class="value">${fmt(d.jifen)}</div></div>
-      <div class="coin"><div class="label">💎 钻石</div><div class="value">${fmt(d.diamond)}</div></div>
-      <div class="coin"><div class="label">🔮 深渊结晶</div><div class="value">${fmt(d.abyss.crystal||0)}</div></div>
-    </div>
-    <h3>宠物养成</h3>
-    <div class="grow-row">
-      <button data-act="auto_level">⚡ 一键升级</button>
-      <span class="grow-group"><input type="number" id="levelTimes" min="1" value="1"><button data-act="level">⬆ 升级</button></span>
-      <button data-act="evolve" class="evolve">🌟 宠物进化</button>
-    </div>
-    <p class="muted" style="margin:6px 0 0">效果与群聊指令一致；升级消耗经验与精力，进化需『进化神石』。</p>
-    <h3>活动冷却</h3>
-    <div class="cd-grid">${cds}</div>
-    <h3>背包</h3>
-    <p class="muted" style="margin:-4px 0 10px">道具可直接使用（支持数量），神器可佩戴、秘技书可参悟，效果与群聊指令一致。</p>
-    <div class="bag">${bag}</div>
-    <h3>卡密兑换</h3>
-    <div class="redeem-box">
-      <div class="bind-row">
-        <input id="redeemCode" type="text" placeholder="输入卡密，可兑换金币 / 积分 / 钻石 / 道具">
-        <button id="redeemBtn">兑换</button>
-      </div>
-      <div id="redeemResult" class="redeem-result"></div>
-    </div>
-    <div class="pet-source">群号：${esc(d.group_id)} &nbsp;|&nbsp; 用户ID：${esc(d.qq)}</div>`;
-
-  container.querySelectorAll('button[data-act]').forEach(btn=>{
-    btn.onclick = async ()=>{
-      const action = btn.dataset.act;
-      const times = Math.max(1, parseInt((document.getElementById('levelTimes')||{}).value)||1);
-      btn.disabled = true;
-      try{
-        const r = await api('/api/portal/pet_action','POST',{group_id:d.group_id, qq:d.qq, action, times});
-        if(r && r.msg) msg(stripMd(r.msg), r.ok?'ok':'err');
-        else msg('操作失败');
-        if(r && r.ok) await refreshAll();
-      } finally { btn.disabled = false; }
-    };
-  });
-  container.querySelectorAll('button[data-use]').forEach(btn=>{
-    btn.onclick = async ()=>{
-      const name = btn.dataset.use;
-      const qtyInput = container.querySelector(`input[data-qty="${CSS.escape(name)}"]`);
-      const count = qtyInput ? Math.max(1, parseInt(qtyInput.value)||1) : 1;
-      btn.disabled = true;
-      try{
-        const r = await api('/api/portal/use_item','POST',{group_id:d.group_id, qq:d.qq, name, count});
-        if(r && r.msg) msg(stripMd(r.msg), r.ok?'ok':'err');
-        else msg('使用失败');
-        if(r && r.ok) await refreshAll();
-      } finally { btn.disabled = false; }
-    };
-  });
-  const redeemBtn2 = document.getElementById('redeemBtn');
-  if(redeemBtn2){
-    redeemBtn2.onclick = async ()=>{
-      const code = document.getElementById('redeemCode').value.trim();
-      if(!code){ msg('请输入卡密'); return; }
-      redeemBtn2.disabled = true;
-      try{
-        const r = await api('/api/portal/redeem','POST',{group_id:d.group_id, qq:d.qq, code});
-        const box = document.getElementById('redeemResult');
-        if(r && r.msg){ box.textContent = stripMd(r.msg); box.classList.add('show'); }
-        if(r && r.ok){ msg('兑换成功','ok'); await refreshAll(); }
-        else if(r){ msg(stripMd(r.msg||'兑换失败')); }
-      } finally { redeemBtn2.disabled = false; }
-    };
-  }
-  startCdTicker();
-  const redeemBtn = document.getElementById('redeemCustomBtn');
-  if(redeemBtn){
-    redeemBtn.onclick = async ()=>{
-      const code = document.getElementById('customCode').value.trim();
-      const nickname = document.getElementById('customNickname').value.trim();
-      const showQQ = document.getElementById('customShowQQ').value.trim();
-      if(!code){ msg('请输入定制卡密'); return; }
-      if(!nickname || !showQQ){ msg('请填写昵称和 QQ 号，用于全群祝贺'); return; }
-      const r = await api('/api/portal/custom_redeem','POST',{group_id:d.group_id, qq:d.qq, code, nickname, show_qq:showQQ});
-      if(r && r.ok){ msg(r.msg,'ok'); await loadPet(state.current); }
-      else { msg((r&&r.msg)||'解锁失败'); }
-    };
-  }
-  const editBtn = document.getElementById('editCustomBtn');
-  if(editBtn){
-    editBtn.onclick = ()=>{
-      resetCrop();
-      document.getElementById('customSpeciesName').value = d.pet.custom_species_name || d.pet.species || '';
-      document.getElementById('customModal').classList.add('show');
-    };
-  }
-}
-
-function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function escAttr(s){ return esc(s); }
-function fmt(n){ return Number(n).toLocaleString('zh-CN'); }
 function stripMd(s){ return String(s).replace(/^#+\s*/gm,'').replace(/\*\*/g,'').replace(/`/g,'').replace(/━+/g,'').replace(/\n{3,}/g,'\n\n').trim(); }
-function fmtCd(sec){
-  sec = Math.max(0, Math.floor(sec));
-  if(sec >= 3600) return `${Math.floor(sec/3600)}时${Math.floor(sec%3600/60)}分`;
-  if(sec >= 60) return `${Math.floor(sec/60)}分${sec%60}秒`;
-  return `${sec}秒`;
-}
-let cdTimer = null;
-function startCdTicker(){
-  if(cdTimer) clearInterval(cdTimer);
-  cdTimer = setInterval(()=>{
-    document.querySelectorAll('.cd[data-ready]').forEach(el=>{
-      const remaining = (+el.dataset.ready) - Math.floor(Date.now()/1000);
-      const t = el.querySelector('.cd-time');
-      if(remaining > 0){ el.classList.add('busy'); el.classList.remove('ready'); t.textContent = fmtCd(remaining); }
-      else { el.classList.remove('busy'); el.classList.add('ready'); t.textContent = '可用'; }
-    });
-  }, 1000);
-}
-async function refreshAll(){
-  // 全局刷新：重新拉取账号绑定列表与当前宠物数据
-  const me = await api('/api/portal/me');
-  if(me && me.ok){ state.account = me.account; state.pets = me.bound_pets || []; }
-  if(state.current) await loadPet(state.current);
+
+function showResult(r, fallback){
+  if(!r){ ElMessage.error(fallback || '操作失败'); return; }
+  const text = stripMd(r.msg || (r.ok ? '操作成功' : fallback || '操作失败'));
+  if(text.length > 64 || text.includes('\n')){
+    ElMessageBox.alert(`<div class="result-pre">${text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/\n/g,'<br>')}</div>`,
+      r.ok ? '操作成功' : '操作失败', {dangerouslyUseHTMLString:true, confirmButtonText:'知道了', type: r.ok ? 'success' : 'warning'});
+  } else {
+    r.ok ? ElMessage.success(text) : ElMessage.error(text);
+  }
 }
 
-initDashboard();
+createApp({
+  setup(){
+    const account = ref(null);
+    const pets = ref([]);
+    const current = ref(null);
+    const data = ref(null);
+    const pet = computed(()=> data.value ? data.value.pet : null);
+    const petLoading = ref(false);
+    const now = ref(Math.floor(Date.now()/1000));
+    setInterval(()=>{ now.value = Math.floor(Date.now()/1000); }, 1000);
+
+    const levelTimes = ref(1);
+    const acting = ref('');
+    const usingItem = ref('');
+    const redeemCode = ref('');
+    const redeeming = ref(false);
+    const redeemResult = ref('');
+    const bagItems = ref([]);
+    const cooldowns = ref([]);
+
+    const bind = reactive({show:false, group:'', qq:'', loading:false});
+    const pwd = reactive({show:false, old:'', n1:'', n2:'', loading:false});
+    const fb = reactive({show:false, kind:'bug', content:'', time:'', group:'', user:'', files:[], submitting:false, list:[], listLoading:false});
+    const custom = reactive({code:'', nickname:'', showQQ:'', redeeming:false,
+      editShow:false, species:'', blob:null, previewUrl:'', submitting:false});
+    const crop = reactive({show:false, zoom:100});
+    const cropState = {img:null, scale:1, base:1, x:0, y:0, dragging:false, lastX:0, lastY:0};
+
+    const fmt = n => Number(n||0).toLocaleString('zh-CN');
+    const pct = (v,m) => { m = Number(m)||0; if(m<=0) return 0; return Math.max(0, Math.min(100, Math.round(Number(v||0)/m*100))); };
+    const fmtDate = ts => new Date((ts||0)*1000).toLocaleString('zh-CN',{hour12:false});
+    function fmtCd(sec){
+      sec = Math.max(0, Math.floor(sec));
+      if(sec >= 3600) return `${Math.floor(sec/3600)}时${Math.floor(sec%3600/60)}分`;
+      if(sec >= 60) return `${Math.floor(sec/60)}分${sec%60}秒`;
+      return `${sec}秒`;
+    }
+    const cdRemaining = c => (c.ready_at || 0) - now.value;
+
+    async function init(){
+      const me = await api('/api/portal/me');
+      if(!me || !me.ok){ location.href = '/'; return; }
+      account.value = me.account;
+      pets.value = me.bound_pets || [];
+      if(location.hash === '#feedback'){
+        history.replaceState(null, '', location.pathname);
+        openFeedback();
+      }
+      if(pets.value.length) await loadPet(pets.value[0]);
+    }
+
+    async function loadPet(p){
+      current.value = p;
+      petLoading.value = true;
+      try{
+        const d = await api(`/api/portal/pet?group_id=${encodeURIComponent(p.group_id)}&qq=${encodeURIComponent(p.qq)}`);
+        if(!d || !d.ok){ ElMessage.error((d && d.msg) || '宠物数据加载失败'); data.value = null; return; }
+        data.value = d;
+        redeemResult.value = '';
+        const artSet = new Set(d.artifact_names || []);
+        const skillSet = new Set(d.skill_names || []);
+        bagItems.value = Object.entries(d.bag || {}).map(([name,count])=>({
+          name, count,
+          kind: artSet.has(name) ? 'art' : (skillSet.has(name) ? 'skill' : 'item'),
+          qty: 1,
+        }));
+        const base = Math.floor(Date.now()/1000);
+        cooldowns.value = (d.cooldowns || []).map(c=>({name:c.name, ready_at: base + (c.remaining||0)}));
+      } finally { petLoading.value = false; }
+    }
+
+    async function refreshAll(){
+      const me = await api('/api/portal/me');
+      if(me && me.ok){ account.value = me.account; pets.value = me.bound_pets || []; }
+      if(current.value) await loadPet(current.value);
+    }
+
+    async function logout(){
+      await api('/api/portal/logout','POST');
+      ElMessage.success('已退出登录');
+      setTimeout(()=>{ location.href = '/'; }, 400);
+    }
+
+    // ---- 绑定 ----
+    async function doBind(){
+      const g = bind.group.trim(), q = bind.qq.trim();
+      if(!g || !q){ ElMessage.warning('群号和用户 ID 不能为空'); return; }
+      bind.loading = true;
+      try{
+        const r = await api('/api/portal/bind','POST',{group_id:g, qq:q});
+        if(r && r.ok){ ElMessage.success(r.msg || '绑定成功'); bind.show=false; bind.group=''; bind.qq=''; await init(); }
+        else { ElMessage.error((r && r.msg) || '绑定失败'); }
+      } finally { bind.loading = false; }
+    }
+
+    // ---- 修改密码 ----
+    function openPwd(){ pwd.old=''; pwd.n1=''; pwd.n2=''; pwd.show=true; }
+    async function changePwd(){
+      if(!pwd.old || !pwd.n1){ ElMessage.warning('请填写旧密码和新密码'); return; }
+      if(pwd.n1.length < 6){ ElMessage.warning('新密码至少 6 位'); return; }
+      if(pwd.n1 !== pwd.n2){ ElMessage.warning('两次输入的新密码不一致'); return; }
+      pwd.loading = true;
+      try{
+        const r = await api('/api/portal/change_password','POST',{old_password:pwd.old, new_password:pwd.n1});
+        if(r && r.ok){ ElMessage.success('密码修改成功'); pwd.show = false; }
+        else { ElMessage.error((r && r.msg) || '修改失败'); }
+      } finally { pwd.loading = false; }
+    }
+
+    // ---- 养成 / 道具 / 兑换 ----
+    async function petAction(action){
+      if(!data.value) return;
+      acting.value = action;
+      try{
+        const r = await api('/api/portal/pet_action','POST',{group_id:data.value.group_id, qq:data.value.qq, action, times:Math.max(1, levelTimes.value||1)});
+        showResult(r, '操作失败');
+        if(r && r.ok) await refreshAll();
+      } finally { acting.value = ''; }
+    }
+
+    async function useItem(it){
+      if(!data.value) return;
+      usingItem.value = it.name;
+      try{
+        const r = await api('/api/portal/use_item','POST',{group_id:data.value.group_id, qq:data.value.qq, name:it.name, count: it.kind==='item' ? Math.max(1, it.qty||1) : 1});
+        showResult(r, '使用失败');
+        if(r && r.ok) await refreshAll();
+      } finally { usingItem.value = ''; }
+    }
+
+    async function redeem(){
+      const code = redeemCode.value.trim();
+      if(!code){ ElMessage.warning('请输入卡密'); return; }
+      redeeming.value = true;
+      try{
+        const r = await api('/api/portal/redeem','POST',{group_id:data.value.group_id, qq:data.value.qq, code});
+        if(r && r.msg) redeemResult.value = stripMd(r.msg);
+        if(r && r.ok){ ElMessage.success('兑换成功'); redeemCode.value=''; await refreshAll(); }
+        else { ElMessage.error(stripMd((r && r.msg) || '兑换失败')); }
+      } finally { redeeming.value = false; }
+    }
+
+    // ---- 反馈 ----
+    function openFeedback(){
+      fb.kind='bug'; fb.content=''; fb.time=''; fb.group=''; fb.user=''; fb.files=[];
+      fb.show = true;
+      loadFeedbacks();
+    }
+    async function loadFeedbacks(){
+      fb.listLoading = true;
+      try{
+        const r = await api('/api/portal/feedback');
+        fb.list = (r && r.data) || [];
+      } finally { fb.listLoading = false; }
+    }
+    function pickFbImages(e){
+      for(const f of e.target.files){
+        if(fb.files.length >= 3){ ElMessage.warning('最多上传 3 张图片'); break; }
+        if(f.size > 5*1024*1024){ ElMessage.warning(`图片「${f.name}」超过 5MB，已跳过`); continue; }
+        fb.files.push({file:f, url:URL.createObjectURL(f)});
+      }
+      e.target.value = '';
+    }
+    async function submitFeedback(){
+      const content = fb.content.trim();
+      if(!content){ ElMessage.warning(fb.kind==='bug' ? '请填写问题描述' : '请填写建议内容'); return; }
+      const fd = new FormData();
+      fd.append('kind', fb.kind);
+      fd.append('content', content);
+      if(fb.kind==='bug'){
+        if(!fb.time){ ElMessage.warning('请填写发生时间'); return; }
+        if(!fb.group.trim()){ ElMessage.warning('请填写对应的 QQ 群号'); return; }
+        if(!fb.user.trim()){ ElMessage.warning('请填写对应的用户 ID'); return; }
+        fd.append('occur_time', fb.time);
+        fd.append('group_id', fb.group.trim());
+        fd.append('user_id', fb.user.trim());
+      }
+      fb.files.forEach((f,i)=>fd.append(`image${i}`, f.file, f.file.name));
+      fb.submitting = true;
+      try{
+        const r = await fetch('/api/portal/feedback', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd}).then(x=>x.json()).catch(()=>null);
+        if(r && r.ok){
+          ElMessage.success(r.msg || '反馈已提交');
+          fb.content=''; fb.files=[];
+          loadFeedbacks();
+        } else {
+          ElMessage.error((r && r.msg) || '提交失败，请稍后重试');
+        }
+      } finally { fb.submitting = false; }
+    }
+
+    // ---- 定制 ----
+    async function redeemCustom(){
+      const code = custom.code.trim();
+      if(!code){ ElMessage.warning('请输入定制卡密'); return; }
+      if(!custom.nickname.trim() || !custom.showQQ.trim()){ ElMessage.warning('请填写昵称和 QQ 号，用于全群祝贺'); return; }
+      custom.redeeming = true;
+      try{
+        const r = await api('/api/portal/custom_redeem','POST',{group_id:data.value.group_id, qq:data.value.qq, code, nickname:custom.nickname.trim(), show_qq:custom.showQQ.trim()});
+        if(r && r.ok){ ElMessage.success(r.msg || '解锁成功'); custom.code=''; await loadPet(current.value); }
+        else { ElMessage.error((r && r.msg) || '解锁失败'); }
+      } finally { custom.redeeming = false; }
+    }
+    function openCustomEdit(){
+      custom.species = (pet.value && (pet.value.custom_species_name || pet.value.species)) || '';
+      custom.blob = null; custom.previewUrl = '';
+      custom.editShow = true;
+    }
+    async function submitCustom(){
+      if(!current.value){ ElMessage.warning('请先选择宠物'); return; }
+      const species = custom.species.trim();
+      if(!species && !custom.blob){ ElMessage.warning('请至少修改名称或上传图片'); return; }
+      custom.submitting = true;
+      try{
+        const fd = new FormData();
+        fd.append('group_id', current.value.group_id);
+        fd.append('qq', current.value.qq);
+        if(species) fd.append('species_name', species);
+        if(custom.blob) fd.append('image', custom.blob, 'custom.jpg');
+        const r = await fetch('/api/portal/custom_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
+        const d = await r.json().catch(()=>null);
+        if(d && d.ok){ ElMessage.success(d.msg || '已提交审核'); custom.editShow = false; custom.blob=null; custom.previewUrl=''; await loadPet(current.value); }
+        else { ElMessage.error((d && d.msg) || '提交失败'); }
+      } finally { custom.submitting = false; }
+    }
+
+    // ---- 裁剪 ----
+    function drawCrop(){
+      const canvas = document.getElementById('cropCanvas');
+      if(!canvas || !cropState.img) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,512,512);
+      ctx.drawImage(cropState.img, cropState.x, cropState.y, cropState.img.naturalWidth*cropState.scale, cropState.img.naturalHeight*cropState.scale);
+    }
+    function pickCustomImage(e){
+      const f = e.target.files[0];
+      e.target.value = '';
+      if(!f) return;
+      const img = new Image();
+      img.onload = ()=>{
+        cropState.img = img;
+        cropState.base = Math.max(512/img.naturalWidth, 512/img.naturalHeight);
+        cropState.scale = cropState.base;
+        cropState.x = (512 - img.naturalWidth*cropState.scale)/2;
+        cropState.y = (512 - img.naturalHeight*cropState.scale)/2;
+        crop.zoom = 100;
+        crop.show = true;
+        nextTick(()=>drawCrop());
+      };
+      img.src = URL.createObjectURL(f);
+    }
+    function applyZoom(v){
+      if(!cropState.img) return;
+      const oldScale = cropState.scale;
+      cropState.scale = cropState.base * (v/100);
+      cropState.x = 256 - (256 - cropState.x) * (cropState.scale/oldScale);
+      cropState.y = 256 - (256 - cropState.y) * (cropState.scale/oldScale);
+      drawCrop();
+    }
+    function canvasXY(e){
+      const canvas = document.getElementById('cropCanvas');
+      const r = canvas.getBoundingClientRect();
+      const cx = e.touches ? e.touches[0].clientX : e.clientX;
+      const cy = e.touches ? e.touches[0].clientY : e.clientY;
+      return [(cx - r.left) * (512/r.width), (cy - r.top) * (512/r.height)];
+    }
+    function cropDown(e){ const [x,y]=canvasXY(e); cropState.dragging=true; cropState.lastX=x; cropState.lastY=y; }
+    function cropMove(e){
+      if(!cropState.dragging) return;
+      const [x,y]=canvasXY(e);
+      cropState.x += x - cropState.lastX; cropState.y += y - cropState.lastY;
+      cropState.lastX=x; cropState.lastY=y;
+      drawCrop();
+    }
+    function cropUp(){ cropState.dragging=false; }
+    function cropTouchStart(e){ cropDown(e); }
+    function cropTouchMove(e){ cropMove(e); }
+    function saveCrop(){
+      const canvas = document.getElementById('cropCanvas');
+      if(!canvas || !cropState.img){ crop.show=false; return; }
+      canvas.toBlob(blob=>{
+        custom.blob = blob;
+        custom.previewUrl = URL.createObjectURL(blob);
+        crop.show = false;
+        ElMessage.success('裁剪完成，可提交审核');
+      }, 'image/jpeg', 0.92);
+    }
+
+    onMounted(init);
+
+    return {account, pets, current, data, pet, petLoading, blankImg:BLANK_IMG,
+      levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns,
+      bind, pwd, fb, custom, crop,
+      fmt, pct, fmtDate, fmtCd, cdRemaining,
+      loadPet, logout, doBind, openPwd, changePwd, petAction, useItem, redeem,
+      openFeedback, pickFbImages, submitFeedback,
+      redeemCustom, openCustomEdit, submitCustom,
+      pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};
+  }
+}).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
 </script>
 </body>
 </html>
@@ -1770,21 +1578,25 @@ initDashboard();
 
 
 _HOME_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>宠物乐园 · 全服数据中心</title>
+<link rel="stylesheet" href="/webstatic/element-plus.min.css">
+<link rel="stylesheet" href="/webstatic/element-plus-dark.css">
 <style>
   :root{
-    --bg:#0b1020; --bg2:#101736; --card:rgba(255,255,255,.04); --line:rgba(255,255,255,.08);
-    --text:#e8ecf8; --muted:#8b93b0; --brand:#6366f1; --brand2:#a855f7; --gold:#fbbf24;
+    --bg:#0b1020; --card:rgba(255,255,255,.04); --line:rgba(255,255,255,.08);
+    --text:#e8ecf8; --muted:#8b93b0; --brand:#6366f1; --brand2:#a855f7;
   }
   *{margin:0;padding:0;box-sizing:border-box}
+  html.dark{--el-bg-color:#141a33;--el-bg-color-overlay:#141a33}
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
     background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden;
   }
+  [v-cloak]{display:none}
   .glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.35;pointer-events:none;z-index:0}
   .glow.a{width:560px;height:560px;background:#4338ca;top:-180px;left:-120px;animation:drift 18s ease-in-out infinite alternate}
   .glow.b{width:480px;height:480px;background:#7e22ce;top:22%;right:-160px;animation:drift 22s ease-in-out infinite alternate-reverse}
@@ -1802,11 +1614,8 @@ _HOME_HTML = r"""<!DOCTYPE html>
   .brand .dot{width:12px;height:12px;border-radius:4px;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 0 16px rgba(129,90,247,.8)}
   .nav-btns{display:flex;gap:10px;align-items:center}
   .user-chip{font-size:13px;color:#b6f2d4;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);border-radius:999px;padding:7px 14px;font-weight:600}
-  button{font-family:inherit;cursor:pointer;border:none;border-radius:10px;font-size:14px;font-weight:600;transition:.18s}
-  .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--line);padding:9px 20px}
-  .btn-ghost:hover{border-color:rgba(255,255,255,.3);background:rgba(255,255,255,.05)}
-  .btn-primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;padding:9px 22px;box-shadow:0 4px 18px rgba(120,80,240,.4)}
-  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 26px rgba(120,80,240,.55)}
+  .btn-grad{background:linear-gradient(135deg,var(--brand),var(--brand2)) !important;border:none !important;color:#fff !important;box-shadow:0 4px 18px rgba(120,80,240,.4)}
+  .btn-grad:hover{transform:translateY(-1px);box-shadow:0 8px 26px rgba(120,80,240,.55)}
 
   .hero{text-align:center;padding:72px 0 40px}
   .hero .tag{display:inline-block;font-size:12px;letter-spacing:2px;color:#b6bdf7;border:1px solid rgba(120,110,250,.4);border-radius:999px;padding:6px 16px;background:rgba(90,80,220,.12);margin-bottom:22px}
@@ -1814,8 +1623,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     background:linear-gradient(120deg,#fff 20%,#c7bfff 55%,#8f7bf7 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
   .hero p{color:var(--muted);font-size:16px;margin-top:16px;line-height:1.8}
   .hero .cta{margin-top:30px;display:flex;gap:14px;justify-content:center}
-  .hero .cta .btn-primary{padding:13px 34px;font-size:15px;border-radius:12px}
-  .hero .cta .btn-ghost{padding:13px 30px;font-size:15px;border-radius:12px}
+  .hero .cta .el-button{padding:22px 32px;font-size:15px;border-radius:12px}
 
   .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:46px 0 10px}
   .stat-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 20px;text-align:center;backdrop-filter:blur(8px);position:relative;overflow:hidden}
@@ -1832,13 +1640,10 @@ _HOME_HTML = r"""<!DOCTYPE html>
   .board.full{grid-column:1/-1}
   .board h3{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:4px}
   .board .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  th{color:var(--muted);font-weight:600;font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);letter-spacing:1px}
-  td{padding:10px;border-bottom:1px solid rgba(255,255,255,.04)}
-  tr:last-child td{border-bottom:none}
-  tbody tr{transition:.15s}
-  tbody tr:hover{background:rgba(255,255,255,.035)}
-  td.r,th.r{text-align:right}
+  .board .el-table{--el-table-bg-color:transparent;--el-table-tr-bg-color:transparent;--el-table-header-bg-color:transparent;
+    --el-table-border-color:rgba(255,255,255,.07);--el-table-row-hover-bg-color:rgba(255,255,255,.045);
+    --el-table-header-text-color:#8b93b0;--el-table-text-color:#e8ecf8;font-size:14px}
+  .board .el-table::before{display:none}
   .rk{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;font-size:13px;font-weight:800;background:rgba(255,255,255,.06);color:var(--muted)}
   .rk.g1{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#442c00}
   .rk.g2{background:linear-gradient(135deg,#e5e7eb,#9ca3af);color:#26292f}
@@ -1846,10 +1651,9 @@ _HOME_HTML = r"""<!DOCTYPE html>
   .pw{font-weight:800;color:#ffd479;font-variant-numeric:tabular-nums}
   .mb{font-weight:700;color:#8ce3c2;font-variant-numeric:tabular-nums}
   .q{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:rgba(140,110,255,.15);color:#c3b8ff;border:1px solid rgba(140,110,255,.25)}
-  .empty-row{color:var(--muted);text-align:center;padding:26px 0 !important}
 
   .links{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
-  .link-card{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;text-decoration:none;color:var(--text);backdrop-filter:blur(8px);transition:.2s}
+  .link-card{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;text-decoration:none;color:var(--text);backdrop-filter:blur(8px);transition:.2s;cursor:pointer}
   .link-card:hover{transform:translateY(-2px);border-color:rgba(140,110,255,.45);box-shadow:0 12px 32px rgba(80,60,200,.25)}
   .link-card .ic{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;background:linear-gradient(135deg,rgba(99,102,241,.25),rgba(168,85,247,.25));border:1px solid rgba(140,110,255,.3);flex-shrink:0}
   .link-card .t{font-size:16px;font-weight:800}
@@ -1858,19 +1662,13 @@ _HOME_HTML = r"""<!DOCTYPE html>
   @media(max-width:900px){.links{grid-template-columns:1fr}}
 
   footer{color:var(--muted);font-size:13px;text-align:center;padding:50px 0 36px;border-top:1px solid var(--line);margin-top:70px}
+  footer a{color:#a5b0ff;text-decoration:none}
 
-  .modal{position:fixed;inset:0;background:rgba(5,8,20,.72);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:50}
-  .modal.show{display:flex}
-  .sheet{background:#141a33;border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:30px;width:min(400px,92vw);box-shadow:0 30px 80px rgba(0,0,0,.6)}
-  .sheet h3{font-size:20px;font-weight:800;margin-bottom:6px}
-  .sheet .hint{color:var(--muted);font-size:13px;margin-bottom:20px}
-  .sheet input{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:12px 14px;font-size:14px;margin-bottom:12px;outline:none;font-family:inherit}
-  .sheet input:focus{border-color:var(--brand)}
-  .sheet .btn-primary{width:100%;padding:12px;font-size:15px;margin-top:6px}
-  .sheet .switch{color:var(--muted);font-size:13px;text-align:center;margin-top:16px}
-  .sheet .switch a{color:#a5b0ff;cursor:pointer;text-decoration:none}
-  .form-msg{font-size:13px;min-height:18px;margin-bottom:4px;color:#ff9c9c}
-  .form-msg.ok{color:#7ce3b1}
+  .auth-dialog{--el-dialog-border-radius:20px}
+  .auth-dialog .el-dialog__header{padding-bottom:2px}
+  .auth-hint{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .auth-switch{color:var(--muted);font-size:13px;text-align:center;margin-top:14px}
+  .auth-switch a{color:#a5b0ff;cursor:pointer}
 
   @media(max-width:900px){
     .stats{grid-template-columns:repeat(2,1fr)}
@@ -1882,12 +1680,18 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <body>
 <div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
 <div class="grid-bg"></div>
+<div id="app" v-cloak>
 <div class="wrap">
   <nav>
     <div class="brand"><span class="dot"></span>宠物乐园</div>
-    <div class="nav-btns" id="navBtns">
-      <button class="btn-ghost" onclick="openAuth('login')">登录</button>
-      <button class="btn-primary" onclick="openAuth('register')">注册</button>
+    <div class="nav-btns" v-if="loggedIn">
+      <span class="user-chip">✅ 已登录{{ userQQ ? ' · ' + userQQ : '' }}</span>
+      <el-button class="btn-grad" round @click="goPortal">仪表盘</el-button>
+      <el-button round plain @click="logout">退出登录</el-button>
+    </div>
+    <div class="nav-btns" v-else>
+      <el-button round plain @click="openAuth('login')">登录</el-button>
+      <el-button class="btn-grad" round @click="openAuth('register')">注册</el-button>
     </div>
   </nav>
 
@@ -1895,27 +1699,43 @@ _HOME_HTML = r"""<!DOCTYPE html>
     <div class="tag">QQ 群宠物养成 · 全服数据中心</div>
     <h1>砸蛋抽宠 · 养成对战<br>飞升渡劫 · 摸金探险</h1>
     <p>跨群神榜实时竞技，副本、姻缘、天赋觉醒、深渊秘境……<br>登录玩家中心，随时随地管理你的专属宠物。</p>
-    <div class="cta" id="heroCta">
-      <button class="btn-primary" onclick="openAuth('register')">立即加入</button>
-      <button class="btn-ghost" onclick="openAuth('login')">进入玩家中心</button>
+    <div class="cta" v-if="loggedIn">
+      <el-button class="btn-grad" size="large" round @click="goPortal">进入仪表盘</el-button>
+      <el-button size="large" round plain @click="logout">退出登录</el-button>
+    </div>
+    <div class="cta" v-else>
+      <el-button class="btn-grad" size="large" round @click="openAuth('register')">立即加入</el-button>
+      <el-button size="large" round plain @click="openAuth('login')">进入玩家中心</el-button>
     </div>
   </div>
 
   <div class="stats">
-    <div class="stat-card"><div class="num" id="stPlayers" data-v="0">0</div><div class="lbl">全服玩家</div></div>
-    <div class="stat-card"><div class="num" id="stGroups" data-v="0">0</div><div class="lbl">授权群聊</div></div>
-    <div class="stat-card"><div class="num" id="stPets" data-v="0">0</div><div class="lbl">在册宠物</div></div>
-    <div class="stat-card"><div class="num" id="stTomb" data-v="0">0</div><div class="lbl">摸金玩家</div></div>
+    <div class="stat-card"><div class="num">{{ fmt(disp.players) }}</div><div class="lbl">全服玩家</div></div>
+    <div class="stat-card"><div class="num">{{ fmt(disp.auth_groups) }}</div><div class="lbl">授权群聊</div></div>
+    <div class="stat-card"><div class="num">{{ fmt(disp.pets) }}</div><div class="lbl">在册宠物</div></div>
+    <div class="stat-card"><div class="num">{{ fmt(disp.tomb_players) }}</div><div class="lbl">摸金玩家</div></div>
   </div>
 
   <div class="section">
     <div class="section-head"><h2>🏅 宠物神榜</h2><span>全服跨群战力排行 · 前三每日可领神榜奖励</span></div>
     <div class="boards">
       <div class="board full">
-        <table>
-          <thead><tr><th>排名</th><th>昵称</th><th>等级</th><th>阶段</th><th>级别</th><th class="r">战力</th></tr></thead>
-          <tbody id="petRank"><tr><td class="empty-row" colspan="6">加载中…</td></tr></tbody>
-        </table>
+        <el-table :data="petRank" v-loading="loading" element-loading-background="transparent" empty-text="暂无宠物上榜">
+          <el-table-column label="排名" width="80">
+            <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="nickname" label="昵称" min-width="140" show-overflow-tooltip></el-table-column>
+          <el-table-column label="等级" width="90">
+            <template #default="s">Lv{{ s.row.level }}</template>
+          </el-table-column>
+          <el-table-column prop="stage" label="阶段" width="110"></el-table-column>
+          <el-table-column label="级别" width="120">
+            <template #default="s"><span class="q">{{ s.row.quality }}</span></template>
+          </el-table-column>
+          <el-table-column label="战力" align="right" min-width="110">
+            <template #default="s"><span class="pw">{{ fmtPower(s.row.power) }}</span></template>
+          </el-table-column>
+        </el-table>
       </div>
     </div>
   </div>
@@ -1926,26 +1746,41 @@ _HOME_HTML = r"""<!DOCTYPE html>
       <div class="board full">
         <h3>💰 摸金排行（全服）</h3>
         <div class="sub">按永久冥币总量排序</div>
-        <table>
-          <thead><tr><th>排名</th><th>用户</th><th class="r">冥币</th></tr></thead>
-          <tbody id="tombRank"><tr><td class="empty-row" colspan="3">加载中…</td></tr></tbody>
-        </table>
+        <el-table :data="tombRank" empty-text="暂无上榜数据">
+          <el-table-column label="排名" width="80">
+            <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="qq" label="用户" min-width="140"></el-table-column>
+          <el-table-column label="冥币" align="right" min-width="110">
+            <template #default="s"><span class="mb">{{ fmt(s.row.value) }}</span></template>
+          </el-table-column>
+        </el-table>
       </div>
       <div class="board">
         <h3>🔥 今日摸金神榜</h3>
-        <div class="sub" id="todaySub">统计今日 00:00 至今获得冥币</div>
-        <table>
-          <thead><tr><th>排名</th><th>用户</th><th class="r">今日获得</th></tr></thead>
-          <tbody id="tombToday"><tr><td class="empty-row" colspan="3">加载中…</td></tr></tbody>
-        </table>
+        <div class="sub">{{ todaySub }}</div>
+        <el-table :data="tombToday" empty-text="暂无上榜数据">
+          <el-table-column label="排名" width="70">
+            <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="qq" label="用户" min-width="120"></el-table-column>
+          <el-table-column label="今日获得" align="right" min-width="100">
+            <template #default="s"><span class="mb">{{ fmt(s.row.value) }}</span></template>
+          </el-table-column>
+        </el-table>
       </div>
       <div class="board">
         <h3>🌙 昨日摸金神榜</h3>
-        <div class="sub" id="ystSub">前三名可领取随机宠物经验奖励</div>
-        <table>
-          <thead><tr><th>排名</th><th>用户</th><th class="r">昨日获得</th></tr></thead>
-          <tbody id="tombYst"><tr><td class="empty-row" colspan="3">加载中…</td></tr></tbody>
-        </table>
+        <div class="sub">{{ ystSub }}</div>
+        <el-table :data="tombYst" empty-text="暂无上榜数据">
+          <el-table-column label="排名" width="70">
+            <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="qq" label="用户" min-width="120"></el-table-column>
+          <el-table-column label="昨日获得" align="right" min-width="100">
+            <template #default="s"><span class="mb">{{ fmt(s.row.value) }}</span></template>
+          </el-table-column>
+        </el-table>
       </div>
     </div>
   </div>
@@ -1969,7 +1804,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </div>
         <div class="go">前往充值 →</div>
       </a>
-      <a class="link-card" href="javascript:void(0)" onclick="goFeedback()">
+      <a class="link-card" @click="goFeedback">
         <div class="ic">📣</div>
         <div>
           <div class="t">问题反馈</div>
@@ -1980,149 +1815,152 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <footer>宠物乐园 · 数据每 30 秒更新 · <a href="/portal" style="color:#a5b0ff;text-decoration:none">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener" style="color:#a5b0ff;text-decoration:none">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener" style="color:#a5b0ff;text-decoration:none">充值入口</a></footer>
+  <footer>宠物乐园 · 数据每 30 秒更新 · <a href="/portal">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">充值入口</a></footer>
 </div>
 
-<div class="modal" id="authModal">
-  <div class="sheet">
-    <h3 id="authTitle">登录</h3>
-    <div class="hint" id="authHint">使用注册时的 QQ 号登录玩家中心</div>
-    <div class="form-msg" id="authMsg"></div>
-    <input id="authQQ" type="text" placeholder="QQ 号" autocomplete="username">
-    <input id="authPwd" type="password" placeholder="密码" autocomplete="current-password">
-    <input id="authPwd2" type="password" placeholder="确认密码" style="display:none" autocomplete="new-password">
-    <button class="btn-primary" id="authBtn">登录</button>
-    <div class="switch" id="authSwitch"></div>
-  </div>
+<el-dialog v-model="auth.show" :title="auth.mode==='register' ? '注册' : '登录'" width="400px" class="auth-dialog" align-center>
+  <div class="auth-hint">{{ auth.hint || (auth.mode==='register' ? '使用 QQ 号创建玩家中心账号' : '使用注册时的 QQ 号登录玩家中心') }}</div>
+  <el-form label-position="top" @submit.prevent="submitAuth">
+    <el-form-item label="QQ 号">
+      <el-input v-model="auth.qq" placeholder="请输入 QQ 号" size="large" autocomplete="username" clearable></el-input>
+    </el-form-item>
+    <el-form-item label="密码">
+      <el-input v-model="auth.pwd" type="password" :placeholder="auth.mode==='register' ? '至少 6 位' : '请输入密码'" size="large" show-password @keyup.enter="submitAuth"></el-input>
+    </el-form-item>
+    <el-form-item v-if="auth.mode==='register'" label="确认密码">
+      <el-input v-model="auth.pwd2" type="password" placeholder="再次输入密码" size="large" show-password @keyup.enter="submitAuth"></el-input>
+    </el-form-item>
+  </el-form>
+  <el-button class="btn-grad" size="large" round style="width:100%" :loading="auth.loading" @click="submitAuth">{{ auth.mode==='register' ? '注 册' : '登 录' }}</el-button>
+  <div class="auth-switch" v-if="auth.mode==='register'">已有账号？<a @click="openAuth('login')">直接登录</a></div>
+  <div class="auth-switch" v-else>还没有账号？<a @click="openAuth('register')">立即注册</a></div>
+</el-dialog>
 </div>
 
+<script src="/webstatic/vue.global.prod.js"></script>
+<script src="/webstatic/element-plus.full.min.js"></script>
+<script src="/webstatic/element-plus-zh-cn.min.js"></script>
 <script>
 const CSRF = "{{CSRF_TOKEN}}";
-let authMode = 'login';
-let homeLoggedIn = false;
-const $ = id => document.getElementById(id);
+const { createApp, reactive, ref, onMounted } = Vue;
+const { ElMessage } = ElementPlus;
 
-function goFeedback(){
-  if(homeLoggedIn){ location.href='/portal#feedback'; }
-  else { openAuth('login'); $('authHint').textContent = '登录后即可提交问题反馈'; }
-}
+createApp({
+  setup(){
+    const loggedIn = ref(false);
+    const userQQ = ref('');
+    const loading = ref(true);
+    const disp = reactive({players:0, auth_groups:0, pets:0, tomb_players:0});
+    const petRank = ref([]);
+    const tombRank = ref([]);
+    const tombToday = ref([]);
+    const tombYst = ref([]);
+    const todaySub = ref('统计今日 00:00 至今获得冥币');
+    const ystSub = ref('前三名可领取随机宠物经验奖励');
+    const auth = reactive({show:false, mode:'login', qq:'', pwd:'', pwd2:'', loading:false, hint:''});
 
-async function logout(){
-  try{ await fetch('/api/portal/logout', {method:'POST', headers:{'X-CSRF-Token': CSRF}}); }catch(e){}
-  location.reload();
-}
+    const fmt = n => Number(n||0).toLocaleString('zh-CN');
+    const fmtPower = bp => bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp);
 
-async function checkAuth(){
-  try{
-    const r = await fetch('/api/portal/me');
-    if(!r.ok) return;
-    const d = await r.json();
-    if(!d || !d.ok) return;
-    const qq = d.qq || (d.account && d.account.qq) || '';
-    homeLoggedIn = true;
-    $('navBtns').innerHTML =
-      (qq ? `<span class="user-chip">✅ 已登录 · ${String(qq).replace(/[&<>"']/g,'')}</span>` : '<span class="user-chip">✅ 已登录</span>') +
-      `<button class="btn-primary" onclick="location.href='/portal'">仪表盘</button>` +
-      `<button class="btn-ghost" onclick="logout()">退出登录</button>`;
-    $('heroCta').innerHTML =
-      `<button class="btn-primary" onclick="location.href='/portal'">进入仪表盘</button>` +
-      `<button class="btn-ghost" onclick="logout()">退出登录</button>`;
-  }catch(e){}
-}
-checkAuth();
-
-function openAuth(mode){
-  authMode = mode;
-  $('authMsg').textContent = '';
-  $('authQQ').value = ''; $('authPwd').value = ''; $('authPwd2').value = '';
-  const isReg = mode === 'register';
-  $('authTitle').textContent = isReg ? '注册' : '登录';
-  $('authHint').textContent = isReg ? '使用 QQ 号创建玩家中心账号' : '使用注册时的 QQ 号登录玩家中心';
-  $('authPwd2').style.display = isReg ? '' : 'none';
-  $('authBtn').textContent = isReg ? '注册' : '登录';
-  $('authSwitch').innerHTML = isReg
-    ? '已有账号？<a onclick="openAuth(\'login\')">直接登录</a>'
-    : '还没有账号？<a onclick="openAuth(\'register\')">立即注册</a>';
-  $('authModal').classList.add('show');
-}
-$('authModal').onclick = e => { if(e.target.id === 'authModal') $('authModal').classList.remove('show'); };
-
-async function post(path, data){
-  const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
-  return r.json();
-}
-
-$('authBtn').onclick = async () => {
-  const qq = $('authQQ').value.trim(), pwd = $('authPwd').value;
-  const box = $('authMsg');
-  box.classList.remove('ok');
-  if(!qq || !pwd){ box.textContent = '请填写 QQ 号和密码'; return; }
-  if(authMode === 'register'){
-    if(pwd.length < 6){ box.textContent = '密码至少 6 位'; return; }
-    if(pwd !== $('authPwd2').value){ box.textContent = '两次输入的密码不一致'; return; }
-  }
-  $('authBtn').disabled = true;
-  try{
-    const r = await post('/api/portal/' + authMode, {qq, password: pwd});
-    if(r.ok && authMode === 'register'){
-      box.classList.add('ok'); box.textContent = '注册成功，正在登录…';
-      const r2 = await post('/api/portal/login', {qq, password: pwd});
-      if(r2.ok){ location.href = '/portal'; return; }
-      openAuth('login'); $('authMsg').textContent = '注册成功，请登录';
-      return;
+    function animate(key, target){
+      const from = disp[key] || 0;
+      if(from === target){ disp[key] = target; return; }
+      const start = performance.now(), dur = 1200;
+      function tick(t){
+        const p = Math.min(1, (t - start) / dur);
+        const eased = 1 - Math.pow(1 - p, 3);
+        disp[key] = Math.round(from + (target - from) * eased);
+        if(p < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
     }
-    if(r.ok){ location.href = '/portal'; return; }
-    box.textContent = r.msg || '操作失败';
-  }catch(e){ box.textContent = '网络异常，请稍后再试'; }
-  finally{ $('authBtn').disabled = false; }
-};
 
-function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function fmt(n){ return Number(n).toLocaleString('zh-CN'); }
-function fmtPower(bp){ return bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp); }
-function rk(i){ return `<span class="rk ${i<=3?'g'+i:''}">${i}</span>`; }
+    async function post(path, data){
+      const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+      return r.json();
+    }
 
-function countUp(el, target){
-  const from = +el.dataset.v || 0;
-  el.dataset.v = target;
-  if(from === target){ el.textContent = fmt(target); return; }
-  const start = performance.now(), dur = 1200;
-  function tick(t){
-    const p = Math.min(1, (t - start) / dur);
-    const eased = 1 - Math.pow(1 - p, 3);
-    el.textContent = fmt(Math.round(from + (target - from) * eased));
-    if(p < 1) requestAnimationFrame(tick);
+    async function checkAuth(){
+      try{
+        const r = await fetch('/api/portal/me');
+        if(!r.ok) return;
+        const d = await r.json();
+        if(!d || !d.ok) return;
+        loggedIn.value = true;
+        userQQ.value = String(d.qq || (d.account && d.account.qq) || '');
+      }catch(e){}
+    }
+
+    async function loadHome(){
+      try{
+        const r = await (await fetch('/api/portal/home')).json();
+        if(!r.ok) return;
+        animate('players', r.stats.players);
+        animate('auth_groups', r.stats.auth_groups);
+        animate('pets', r.stats.pets);
+        animate('tomb_players', r.stats.tomb_players);
+        petRank.value = r.pet_rank || [];
+        tombRank.value = r.tomb_rank || [];
+        tombToday.value = r.tomb_today || [];
+        tombYst.value = r.tomb_yesterday || [];
+        todaySub.value = `统计 ${r.date_today} 00:00 至今获得冥币，每日 0 点重置`;
+        ystSub.value = `统计 ${r.date_yesterday} 全天 · 前三名可领取随机宠物经验奖励`;
+      }catch(e){
+      }finally{ loading.value = false; }
+    }
+
+    function openAuth(mode){
+      auth.mode = mode; auth.qq = ''; auth.pwd = ''; auth.pwd2 = ''; auth.hint = '';
+      auth.show = true;
+    }
+
+    function goFeedback(){
+      if(loggedIn.value){ location.href = '/portal#feedback'; }
+      else { openAuth('login'); auth.hint = '登录后即可提交问题反馈'; }
+    }
+
+    function goPortal(){ location.href = '/portal'; }
+
+    async function logout(){
+      try{ await fetch('/api/portal/logout', {method:'POST', headers:{'X-CSRF-Token': CSRF}}); }catch(e){}
+      ElMessage.success('已退出登录');
+      setTimeout(()=>location.reload(), 500);
+    }
+
+    async function submitAuth(){
+      const qq = auth.qq.trim(), pwd = auth.pwd;
+      if(!qq || !pwd){ ElMessage.warning('请填写 QQ 号和密码'); return; }
+      if(auth.mode === 'register'){
+        if(pwd.length < 6){ ElMessage.warning('密码至少 6 位'); return; }
+        if(pwd !== auth.pwd2){ ElMessage.warning('两次输入的密码不一致'); return; }
+      }
+      auth.loading = true;
+      try{
+        const r = await post('/api/portal/' + auth.mode, {qq, password: pwd});
+        if(r.ok && auth.mode === 'register'){
+          ElMessage.success('注册成功，正在登录…');
+          const r2 = await post('/api/portal/login', {qq, password: pwd});
+          if(r2.ok){ location.href = '/portal'; return; }
+          openAuth('login');
+          ElMessage.info('注册成功，请登录');
+          return;
+        }
+        if(r.ok){ ElMessage.success('登录成功，正在进入玩家中心…'); location.href = '/portal'; return; }
+        ElMessage.error(r.msg || '操作失败');
+      }catch(e){ ElMessage.error('网络异常，请稍后再试'); }
+      finally{ auth.loading = false; }
+    }
+
+    onMounted(()=>{
+      checkAuth();
+      loadHome();
+      setInterval(loadHome, 30000);
+    });
+
+    return {loggedIn, userQQ, loading, disp, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
+            auth, fmt, fmtPower, openAuth, goFeedback, goPortal, logout, submitAuth};
   }
-  requestAnimationFrame(tick);
-}
-
-function fillTomb(id, rows, cls){
-  const tb = $(id);
-  tb.innerHTML = rows && rows.length
-    ? rows.map((r,i)=>`<tr><td>${rk(i+1)}</td><td>${esc(r.qq)}</td><td class="r ${cls}">${fmt(r.value)}</td></tr>`).join('')
-    : '<tr><td class="empty-row" colspan="3">暂无上榜数据</td></tr>';
-}
-
-async function loadHome(){
-  try{
-    const r = await (await fetch('/api/portal/home')).json();
-    if(!r.ok) return;
-    countUp($('stPlayers'), r.stats.players);
-    countUp($('stGroups'), r.stats.auth_groups);
-    countUp($('stPets'), r.stats.pets);
-    countUp($('stTomb'), r.stats.tomb_players);
-    $('petRank').innerHTML = r.pet_rank && r.pet_rank.length
-      ? r.pet_rank.map((p,i)=>`<tr><td>${rk(i+1)}</td><td>${esc(p.nickname)}</td><td>Lv${p.level}</td><td>${esc(p.stage)}</td><td><span class="q">${esc(p.quality)}</span></td><td class="r pw">${fmtPower(p.power)}</td></tr>`).join('')
-      : '<tr><td class="empty-row" colspan="6">暂无宠物上榜</td></tr>';
-    fillTomb('tombRank', r.tomb_rank, 'mb');
-    fillTomb('tombToday', r.tomb_today, 'mb');
-    fillTomb('tombYst', r.tomb_yesterday, 'mb');
-    $('todaySub').textContent = `统计 ${r.date_today} 00:00 至今获得冥币，每日 0 点重置`;
-    $('ystSub').textContent = `统计 ${r.date_yesterday} 全天 · 前三名可领取随机宠物经验奖励`;
-  }catch(e){}
-}
-loadHome();
-setInterval(loadHome, 30000);
+}).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
 </script>
 </body>
 </html>
