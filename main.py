@@ -119,6 +119,7 @@ KNOWN_COMMANDS = {
     "宠物渡劫",
     "幻境寻宝",
     "宠物神仙劫",
+    "经验换仙元",
     "合成卡",
     "合成品质卡",
     "卡合成",
@@ -1043,6 +1044,8 @@ class PetParkPlugin(Star):
             return self._fantasy_treasure(player)
         if cmd == "宠物神仙劫":
             return self._immortal_calamity(player)
+        if cmd == "经验换仙元":
+            return self._exp_to_xianyuan(player)
 
         # ---- 神器 / 秘技 ----
         if cmd == "打造神器":
@@ -3649,6 +3652,23 @@ class PetParkPlugin(Star):
             return f"⚡ 神仙劫渡过，经验 +{e}！"
         p["hp"] = max(1, p["hp"] // 2)
         return "⚡ 神仙劫失败，宠物身受重伤，恢复后再来。"
+
+    def _exp_to_xianyuan(self, player: dict) -> str:
+        """飞升后宠物可手动把当前经验余额按 10万:1 兑换成仙元。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你没有宠物。"
+        if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
+            return "只有宠物飞升后才能把经验兑换成仙元。"
+        exp = p.get("exp", 0)
+        rate = data.ASCEND_XIANYUAN_PER_EXP
+        gain = exp // rate
+        if gain <= 0:
+            need = rate - (exp % rate)
+            return f"当前经验 {exp} 不足以兑换 1 仙元，还差 {need} 经验。"
+        p["exp"] = exp % rate
+        p["xianyuan"] = p.get("xianyuan", 0) + gain
+        return f"🌟 兑换成功！消耗 {gain * rate} 经验，获得 {gain} 仙元。当前仙元 {p['xianyuan']}，剩余经验 {p['exp']}。"
 
     # =====================================================================
     # 神器 / 秘技
