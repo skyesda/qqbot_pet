@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 
 from astrbot.api import logger
 
@@ -198,10 +199,17 @@ _JSON_RE = re.compile(r"\{[^{}]*\}")
 class AIRouter:
     """自然语言 → 标准指令 的路由器。"""
 
-    def __init__(self, context, enabled: bool = True, timeout: float = LLM_TIMEOUT):
+    def __init__(
+        self,
+        context,
+        enabled: bool = True,
+        timeout: float = LLM_TIMEOUT,
+        provider_id: str = "",
+    ):
         self._context = context
         self.enabled = enabled
         self.timeout = max(1.0, float(timeout))
+        self.provider_id = (provider_id or "").strip()
         # 缓存：规范化文本 → 指令行（或 "" 表示已确认无法识别）
         self._cache: dict[str, str] = {}
 
@@ -254,12 +262,21 @@ class AIRouter:
         self._cache[norm] = result or ""
         return result
 
-    async def _llm_route(self, text: str, known_commands: set[str]) -> str | None:
-        provider = None
+    def _get_provider(self):
+        if self.provider_id:
+            try:
+                p = self._context.get_provider_by_id(self.provider_id)
+                if p is not None:
+                    return p
+            except Exception:
+                pass
         try:
-            provider = self._context.get_using_provider()
+            return self._context.get_using_provider()
         except Exception:
-            provider = None
+            return None
+
+    async def _llm_route(self, text: str, known_commands: set[str]) -> str | None:
+        provider = self._get_provider()
         if provider is None:
             return None
         cmd_list = "、".join(sorted(known_commands))
@@ -269,15 +286,10 @@ class AIRouter:
             f"玩家消息：{text}\n"
             "输出JSON："
         )
+        start = time.monotonic()
         try:
-            resp = await asyncio.wait_for(
-                provider.text_chat(
-                    prompt=prompt,
-                    session_id=None,
-                    contexts=[],
-                    system_prompt=_SYSTEM_PROMPT,
-                ),
-                timeout=self.timeout,
+            completion = await asyncio.wait_for(
+                self._call_llm(provider, prompt), timeout=self.timeout
             )
         except asyncio.TimeoutError:
             logger.warning(
@@ -287,8 +299,52 @@ class AIRouter:
         except Exception as e:
             logger.warning(f"[petpark] AI 意图解析失败：{e}")
             return None
-        completion = getattr(resp, "completion_text", "") or ""
+        elapsed = time.monotonic() - start
+        logger.info(f"[petpark] AI 意图解析耗时 {elapsed:.2f}s：{completion[:80]!r}")
         return self._parse(completion, known_commands)
+
+    async def _call_llm(self, provider, prompt: str) -> str:
+        """调用 LLM。优先直接用 OpenAI 兼容 client（可关闭思考模式、限制输出长度，
+        大幅降低延迟），不可用时回退到 AstrBot 的 text_chat。"""
+        client = getattr(provider, "client", None)
+        model = None
+        try:
+            model = provider.get_model()
+        except Exception:
+            model = getattr(provider, "model_name", None)
+        if client is not None and model and hasattr(client, "chat"):
+            messages = [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+            # 意图解析只需几十个 token；思考模型（如 qwen-plus）默认会先输出
+            # 大段推理内容导致严重超时，这里显式关闭思考并限制输出长度。
+            for extra in (
+                {"enable_thinking": False, "thinking": {"type": "disabled"}},
+                {"enable_thinking": False},
+                None,
+            ):
+                try:
+                    kwargs = dict(
+                        model=model,
+                        messages=messages,
+                        temperature=0,
+                        max_tokens=100,
+                    )
+                    if extra:
+                        kwargs["extra_body"] = extra
+                    resp = await client.chat.completions.create(**kwargs)
+                    return resp.choices[0].message.content or ""
+                except Exception as e:
+                    if extra is None:
+                        logger.warning(f"[petpark] AI 直连调用失败，回退 text_chat：{e}")
+        resp = await provider.text_chat(
+            prompt=prompt,
+            session_id=None,
+            contexts=[],
+            system_prompt=_SYSTEM_PROMPT,
+        )
+        return getattr(resp, "completion_text", "") or ""
 
     @staticmethod
     def _parse(completion: str, known_commands: set[str]) -> str | None:

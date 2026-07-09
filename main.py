@@ -315,6 +315,7 @@ class PetParkPlugin(Star):
             context,
             enabled=bool(self.config.get("ai_router_enabled", True)),
             timeout=float(self.config.get("ai_router_timeout", 20)),
+            provider_id=str(self.config.get("ai_router_provider_id", "")),
         )
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()

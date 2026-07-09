@@ -131,6 +131,12 @@
     "type": "int",
     "default": 20
   },
+  "ai_router_provider_id": {
+    "description": "AI 意图解析使用的模型提供商 ID（留空=默认）",
+    "hint": "填 AstrBot 后台『服务提供商』里的 ID（如 deepseek/deepseek-v4-flash）。意图解析只需输出几十个 token，建议指定一个快的非思考模型；留空则使用当前默认聊天模型。",
+    "type": "string",
+    "default": ""
+  },
   "web_enabled": {
     "description": "启用专属管理网站",
     "hint": "开启后插件会在下方端口启动一个网页后台，可查看/增删改查数据库并批量生成卡密。修改后需重载插件生效。",
