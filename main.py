@@ -3766,19 +3766,28 @@ class PetParkPlugin(Star):
         busy = self._busy_reason(p)
         if busy:
             return busy
-        c = data.AWAKEN_COST
+        # 飞升后觉醒改用仙元，避免经验/积分在飞升后大幅贬值
+        is_ascended = data.STAGES.index(p["stage"]) >= data.STAGES.index("飞升")
+        c = data.ASCEND_AWAKEN_COST if is_ascended else data.AWAKEN_COST
         if data.STAGES.index(p["stage"]) < data.STAGES.index(c["stage"]):
             return f"觉醒要求宠物达到【{c['stage']}】阶段。"
         if p["level"] < c["level"]:
             return f"觉醒要求等级 Lv{c['level']}。"
-        if p["exp"] < c["exp"]:
-            return f"觉醒要求 {c['exp']} 经验（当前 {p['exp']}）。"
-        if self.store.get_currency(player, "积分") < c["jifen"]:
-            return f"觉醒要求 {c['jifen']} 积分。"
         if p["energy"] < c["energy"]:
             return f"觉醒要求 {c['energy']} 点精力。"
-        p["exp"] -= c["exp"]
-        self.store.add_currency(player, "积分", -c["jifen"])
+        if is_ascended:
+            if p.get("xianyuan", 0) < c["xianyuan"]:
+                return f"觉醒要求 {c['xianyuan']} 仙元（当前 {p.get('xianyuan', 0)}）。"
+            p["xianyuan"] -= c["xianyuan"]
+            cost_text = f"{c['xianyuan']} 仙元"
+        else:
+            if p["exp"] < c["exp"]:
+                return f"觉醒要求 {c['exp']} 经验（当前 {p['exp']}）。"
+            if self.store.get_currency(player, "积分") < c["jifen"]:
+                return f"觉醒要求 {c['jifen']} 积分。"
+            p["exp"] -= c["exp"]
+            self.store.add_currency(player, "积分", -c["jifen"])
+            cost_text = f"{c['exp']} 经验、{c['jifen']} 积分"
         p["energy"] -= c["energy"]
         # 可觉醒天赋（非定制宠物不能觉醒"需定制"的天赋）
         pool = [
@@ -3790,7 +3799,7 @@ class PetParkPlugin(Star):
         p["talent"] = random.choice(pool)
         cover = f"（覆盖原天赋 {old}）" if old else ""
         return (
-            f"🌟 觉醒成功！消耗 {c['exp']} 经验、{c['jifen']} 积分、{c['energy']} 点精力，"
+            f"🌟 觉醒成功！消耗 {cost_text}、{c['energy']} 点精力，"
             f"获得天赋【{p['talent']}】{cover}\n{data.TALENTS[p['talent']]['desc']}"
         )
 

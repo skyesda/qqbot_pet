@@ -686,6 +686,13 @@ AWAKEN_COST = {
     "jifen": 1_000_000,
     "energy": 100,
 }
+# 飞升后觉醒改用仙元：固定 200 仙元起步，避免经验和积分在飞升后贬值导致成本失衡
+ASCEND_AWAKEN_COST = {
+    "stage": "超究极体",
+    "level": 120,
+    "xianyuan": 200,
+    "energy": 100,
+}
 TALENT_RUNE_MAKE_COST = {"jifen": 500_000, "exp": 500_000, "energy": 50}
 TALENT_RUNE_USE_COST = {"jifen": 100_000, "exp": 100_000, "energy": 50}
 
