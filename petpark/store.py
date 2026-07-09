@@ -859,13 +859,19 @@ class PetStore:
 
     @classmethod
     def decrement_tomb_weapon(cls, player: dict, name: str) -> int | None:
-        """武器耐久 -1，耐久归 0 则破碎消失。返回剩余耐久（None 表示武器不存在）。"""
+        """武器耐久 -1，仅对装备背包中的武器生效；储物柜中的武器不掉耐久。
+        耐久归 0 则破碎消失。返回剩余耐久（None 表示武器不存在）。
+        """
         st = cls.tomb_state(player)
         weapons = st.get("weapons", {})
         if name not in weapons:
             return None
-        weapons[name]["durability"] -= 1
-        remaining = weapons[name]["durability"]
+        w = weapons[name]
+        # 保险柜中的武器不参与战斗耐久消耗
+        if w.get("location") != "equip":
+            return w.get("durability")
+        w["durability"] -= 1
+        remaining = w["durability"]
         if remaining <= 0:
             weapons.pop(name, None)
             if st.get("equipped_weapon") == name:
