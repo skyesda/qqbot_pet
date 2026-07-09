@@ -312,7 +312,9 @@ class PetParkPlugin(Star):
         self._tomb_coop_index: dict[str, str] = {}     # key: "{gid}\x1f{qq}" → coop_key
         # AI 意图路由：自然语言 → 标准指令（使用 AstrBot 当前启用的 LLM Provider）
         self._ai_router = AIRouter(
-            context, enabled=bool(self.config.get("ai_router_enabled", True))
+            context,
+            enabled=bool(self.config.get("ai_router_enabled", True)),
+            timeout=float(self.config.get("ai_router_timeout", 20)),
         )
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()

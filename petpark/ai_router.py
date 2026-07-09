@@ -19,8 +19,8 @@ import re
 
 from astrbot.api import logger
 
-# LLM 调用超时（秒），超时视为未识别，不阻塞用户
-LLM_TIMEOUT = 8.0
+# LLM 调用默认超时（秒），可在插件配置面板调整；超时视为未识别，不阻塞用户
+LLM_TIMEOUT = 20.0
 # 触发 AI 兜底的消息最大长度（过长多半是闲聊）
 MAX_TEXT_LEN = 50
 # 缓存上限
@@ -198,9 +198,10 @@ _JSON_RE = re.compile(r"\{[^{}]*\}")
 class AIRouter:
     """自然语言 → 标准指令 的路由器。"""
 
-    def __init__(self, context, enabled: bool = True):
+    def __init__(self, context, enabled: bool = True, timeout: float = LLM_TIMEOUT):
         self._context = context
         self.enabled = enabled
+        self.timeout = max(1.0, float(timeout))
         # 缓存：规范化文本 → 指令行（或 "" 表示已确认无法识别）
         self._cache: dict[str, str] = {}
 
@@ -276,10 +277,12 @@ class AIRouter:
                     contexts=[],
                     system_prompt=_SYSTEM_PROMPT,
                 ),
-                timeout=LLM_TIMEOUT,
+                timeout=self.timeout,
             )
         except asyncio.TimeoutError:
-            logger.warning("[petpark] AI 意图解析超时")
+            logger.warning(
+                f"[petpark] AI 意图解析超时（{self.timeout:g}s，可通过配置 ai_router_timeout 调整）"
+            )
             return None
         except Exception as e:
             logger.warning(f"[petpark] AI 意图解析失败：{e}")

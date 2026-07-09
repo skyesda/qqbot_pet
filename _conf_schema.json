@@ -125,6 +125,12 @@
     "type": "bool",
     "default": true
   },
+  "ai_router_timeout": {
+    "description": "AI 意图解析超时时间（秒）",
+    "hint": "调用 LLM 做意图解析的最长等待时间，超时则视为未识别、不回复。模型响应慢可调大（如 30），追求快可调小。默认 20 秒。",
+    "type": "int",
+    "default": 20
+  },
   "web_enabled": {
     "description": "启用专属管理网站",
     "hint": "开启后插件会在下方端口启动一个网页后台，可查看/增删改查数据库并批量生成卡密。修改后需重载插件生效。",
