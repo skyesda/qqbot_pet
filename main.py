@@ -25,6 +25,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
 from .petpark import data, images, pet as petmod
+from .petpark.ai_router import AIRouter
 from .petpark.store import PetStore
 
 try:
@@ -309,6 +310,10 @@ class PetParkPlugin(Star):
         # 摸金双排组队状态
         self._tomb_coop_teams: dict[str, dict] = {}   # key: "{gid}\x1f{leader_qq}"
         self._tomb_coop_index: dict[str, str] = {}     # key: "{gid}\x1f{qq}" → coop_key
+        # AI 意图路由：自然语言 → 标准指令（使用 AstrBot 当前启用的 LLM Provider）
+        self._ai_router = AIRouter(
+            context, enabled=bool(self.config.get("ai_router_enabled", True))
+        )
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
         self._patch_qqofficial_message_extensions()
@@ -702,6 +707,30 @@ class PetParkPlugin(Star):
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
             reply = f"宠物乐园处理出错：{e}"
+        # AI 意图路由兜底：精确指令未命中时，尝试把自然语言翻译为标准指令
+        effective_text = text
+        if reply is None:
+            routed = None
+            try:
+                allowed = (
+                    KNOWN_COMMANDS
+                    | set(data.DAILY_ACTIONS)
+                    | self._active_event_commands()
+                )
+                routed = await self._ai_router.route(text, allowed)
+            except Exception:
+                logger.exception("[petpark] AI 意图路由出错")
+            if routed and routed != text:
+                effective_text = routed
+                try:
+                    reply = self.dispatch(event, qq, group_id, routed)
+                except Exception as e:
+                    logger.exception("[petpark] AI 路由指令执行出错")
+                    reply = f"宠物乐园处理出错：{e}"
+                if isinstance(reply, str):
+                    reply = f"🤖 已识别：{routed}\n{reply}"
+                elif isinstance(reply, tuple):
+                    reply = (f"🤖 已识别：{routed}\n{reply[0]}", reply[1])
         # 部分指令返回 (文本, Markdown图片串) 二元组，把图片以 Markdown 语法内嵌到文本最前，
         # 与宠物图片发送方式保持一致（![alt #width #height](url)）。
         image_md = None
@@ -714,7 +743,7 @@ class PetParkPlugin(Star):
         if image_md:
             reply = f"{image_md}\n{reply}"
         # 在合适的地方附加 QQ 官方消息按钮，方便用户快捷发送指令
-        keyboard = self._keyboard_for_cmd(text)
+        keyboard = self._keyboard_for_cmd(effective_text)
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
         if self._is_group(group_id):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
