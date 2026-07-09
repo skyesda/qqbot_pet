@@ -511,6 +511,21 @@ class PetStore:
         st = PetStore.player_event_state(player, event_id)
         st["shop_bought"][item] = st["shop_bought"].get(item, 0) + max(1, int(count))
 
+    @staticmethod
+    def get_event_pity(player: dict, event_id: str, pity_name: str) -> int:
+        return PetStore.player_event_state(player, event_id).get("pity_counts", {}).get(pity_name, 0)
+
+    @staticmethod
+    def inc_event_pity(player: dict, event_id: str, pity_name: str) -> None:
+        st = PetStore.player_event_state(player, event_id)
+        st.setdefault("pity_counts", {})[pity_name] = st.get("pity_counts", {}).get(pity_name, 0) + 1
+
+    @staticmethod
+    def reset_event_pity(player: dict, event_id: str, pity_name: str) -> None:
+        st = PetStore.player_event_state(player, event_id)
+        if "pity_counts" in st and pity_name in st["pity_counts"]:
+            st["pity_counts"][pity_name] = 0
+
     # ----------------------------- 深渊秘境 -----------------------------
     @staticmethod
     def abyss_state(player: dict) -> dict:

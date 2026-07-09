@@ -2055,15 +2055,55 @@ class PetParkPlugin(Star):
             else:
                 self.store.add_currency(player, cur, -amt)
         self.store.inc_event_daily(player, eid, cmd)
+        entry, is_pity = self._event_gacha_draw_one(player, eid, cfg)
+        msg = entry.get("msg", "🎰 抽奖结果")
+        pity_text = "\n🎁 **本次为保底奖励！**" if is_pity else ""
+        return self._grant_event_reward(player, eid, cfg, entry.get("reward", {}), prefix=msg) + pity_text
+
+    def _event_gacha_draw_one(
+        self, player: dict, eid: str, cfg: dict
+    ) -> tuple[dict, bool]:
+        """单次活动抽奖抽取，返回 (奖池项, 是否保底)。"""
+        gacha = cfg.get("gacha", {})
+        pool = gacha.get("pool", [])
+        pity_cfg = gacha.get("pity", {})
+        pity_items = pity_cfg.get("items", []) if pity_cfg.get("enabled") else []
+
+        # 所有保底计数 +1
+        for pi in pity_items:
+            self.store.inc_event_pity(player, eid, pi.get("name", "保底"))
+
+        # 检查是否触发保底（按配置顺序优先）
+        triggered = None
+        for pi in pity_items:
+            count = self.store.get_event_pity(player, eid, pi.get("name", "保底"))
+            if count >= pi.get("threshold", 0) and pi.get("threshold", 0) > 0:
+                triggered = pi
+                break
+
+        if triggered:
+            target_item = triggered.get("reward_item", "")
+            for entry in pool:
+                if entry.get("reward", {}).get("item") == target_item:
+                    self.store.reset_event_pity(player, eid, triggered.get("name", "保底"))
+                    return entry, True
+
+        # 正常随机
         weights = [entry.get("weight", 1) for entry in pool]
         entry = random.choices(pool, weights=weights, k=1)[0]
-        msg = entry.get("msg", "🎰 抽奖结果")
-        return self._grant_event_reward(player, eid, cfg, entry.get("reward", {}), prefix=msg)
+
+        # 抽到保底物品则清零对应保底计数
+        reward_item = entry.get("reward", {}).get("item", "")
+        for pi in pity_items:
+            if pi.get("reward_item") == reward_item:
+                self.store.reset_event_pity(player, eid, pi.get("name", "保底"))
+
+        return entry, False
 
     def _event_gacha_multi(
         self, player: dict, eid: str, cfg: dict, times: int = 10
     ) -> str:
-        """活动抽奖 N 连抽：消耗 (times-1) 倍单次价格，结果以 Markdown 表格展示。"""
+        """活动抽奖 N 连抽：消耗 times 倍单次价格（是否折扣由活动配置 cost 决定），结果以 Markdown 表格展示。"""
         gacha = cfg.get("gacha", {})
         token = cfg.get("token", "代币")
         today = time.strftime("%Y-%m-%d")
@@ -2079,6 +2119,7 @@ class PetParkPlugin(Star):
         if not pool:
             return "奖池为空。"
         cost = gacha.get("cost", {})
+        # 十连消耗 = 单次价格 × (times - 1)，即 10 抽只收 9 抽的价格
         multi_cost = {cur: amt * (times - 1) for cur, amt in cost.items()}
         for cur, amt in multi_cost.items():
             if cur == token:
@@ -2094,23 +2135,28 @@ class PetParkPlugin(Star):
                 self.store.add_currency(player, cur, -amt)
         for _ in range(times):
             self.store.inc_event_daily(player, eid, cmd)
-        weights = [entry.get("weight", 1) for entry in pool]
-        entries = random.choices(pool, weights=weights, k=times)
-        cost_txt = " / ".join(f"{v} {k}" for k, v in multi_cost.items())
         lines = [
             f"## 🎰 {cmd}{times}连抽结果",
-            f"消耗：{cost_txt}",
+            f"消耗：{' / '.join(f'{v} {k}' for k, v in multi_cost.items())}",
             "",
             "| 序号 | 奖品 |",
             "|---:|:---|",
         ]
-        for i, entry in enumerate(entries, 1):
+        pity_hits = 0
+        for i in range(times):
+            entry, is_pity = self._event_gacha_draw_one(player, eid, cfg)
+            if is_pity:
+                pity_hits += 1
             msg = entry.get("msg", "🎰 奖励")
             reward_txt = self._grant_event_reward(
                 player, eid, cfg, entry.get("reward", {}), prefix=msg
             )
             cell = reward_txt.replace("\n", "<br>")
-            lines.append(f"| {i} | {cell} |")
+            if is_pity:
+                cell += " <span style='color:#ff6b6b'>[保底]</span>"
+            lines.append(f"| {i + 1} | {cell} |")
+        if pity_hits > 0:
+            lines.append(f"\n🎁 本次十连触发 {pity_hits} 次保底奖励。")
         return "\n".join(lines)
 
     def _grant_event_reward(self, player: dict, eid: str, cfg: dict, reward: dict, prefix: str = "") -> str:

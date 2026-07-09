@@ -1024,7 +1024,17 @@ function fieldHtml(){
    <div><label class="fld">抽奖指令</label><input id="f_gacha_cmd" placeholder="夏日抽奖"></div>
    <div><label class="fld">每日次数</label><input id="f_gacha_limit" type="number" value="5"></div>
   </div>
-  <div class="row"><div style="flex:1"><label class="fld">抽奖价格（如：贝壳 10）</label><input id="f_gacha_cost" placeholder="贝壳 10"></div></div>
+  <div class="row"><div style="flex:1"><label class="fld">抽奖价格（如：贝壳 15）</label><input id="f_gacha_cost" placeholder="贝壳 15"></div></div>
+  <div class="sec" style="margin-top:10px">保底设置</div>
+  <div class="chk"><input id="f_pity_enabled" type="checkbox"><label for="f_pity_enabled">启用大奖保底</label></div>
+  <div class="row">
+   <div style="flex:1"><label class="fld">大奖保底次数</label><input id="f_pity_big_threshold" type="number" value="1000" placeholder="如 1000"></div>
+   <div style="flex:2"><label class="fld">大奖物品名（须与奖池奖品一致）</label><input id="f_pity_big_item" placeholder="如：史诗卡"></div>
+  </div>
+  <div class="row">
+   <div style="flex:1"><label class="fld">小奖保底次数</label><input id="f_pity_small_threshold" type="number" value="500" placeholder="如 500"></div>
+   <div style="flex:2"><label class="fld">小奖物品名（须与奖池奖品一致）</label><input id="f_pity_small_item" placeholder="如：金币"></div>
+  </div>
   <div id="event_gacha_pool"></div>
   <button class="act ghost" type="button" onclick="eventAddGacha()" style="margin-top:6px">＋ 添加奖品</button>
   <div class="sec">活动副本</div>
@@ -1110,6 +1120,15 @@ function fillFields(v){
   g('f_gacha_cmd').value=gc.cmd||'';
   g('f_gacha_limit').value=gc.daily_limit!==undefined?gc.daily_limit:5;
   g('f_gacha_cost').value=eventCostToString(gc.cost||{});
+  const pity=gc.pity||{};
+  g('f_pity_enabled').checked=!!pity.enabled;
+  const pityItems=(pity.items||[]);
+  const big=pityItems.find(x=>x.name==='大奖保底')||{};
+  const small=pityItems.find(x=>x.name==='小奖保底')||{};
+  g('f_pity_big_threshold').value=big.threshold!==undefined?big.threshold:1000;
+  g('f_pity_big_item').value=big.reward_item||'';
+  g('f_pity_small_threshold').value=small.threshold!==undefined?small.threshold:500;
+  g('f_pity_small_item').value=small.reward_item||'';
   eventRenderActions(v.actions||{});
   eventRenderItems(v.event_items||{});
   eventRenderShop(v.shop||{}, v.event_items||{});
@@ -1195,8 +1214,24 @@ function applyFields(v){
    cmd:g('f_gacha_cmd').value.trim()||'抽奖',
    daily_limit:+g('f_gacha_limit').value||0,
    cost:eventCostFromString(g('f_gacha_cost').value),
+   pity:{
+    enabled:g('f_pity_enabled').checked,
+    items:[]
+   },
    pool:eventCollectGacha()
   };
+  if(g('f_pity_enabled').checked){
+   const bigThreshold=+g('f_pity_big_threshold').value||0;
+   const bigItem=g('f_pity_big_item').value.trim();
+   if(bigThreshold>0 && bigItem){
+    v.gacha.pity.items.push({name:'大奖保底',threshold:bigThreshold,reward_item:bigItem});
+   }
+   const smallThreshold=+g('f_pity_small_threshold').value||0;
+   const smallItem=g('f_pity_small_item').value.trim();
+   if(smallThreshold>0 && smallItem){
+    v.gacha.pity.items.push({name:'小奖保底',threshold:smallThreshold,reward_item:smallItem});
+   }
+  }
   v.dungeons=eventCollectDungeons();
   v.boss={
    enabled:g('f_boss_enabled').checked,
@@ -1255,7 +1290,12 @@ function openModal(k,v){
     '夏日冰饮':{cost:{贝壳:20},stock:{per_player:5},reward:{item:'夏日冰饮',count:1},desc:'恢复 200 精力并回满心情'},
     '遮阳帽':{cost:{贝壳:80},stock:{per_player:1},reward:{effect:{add_atk:20}},desc:'永久攻击 +20'}
    },
-   gacha:{enabled:true,cmd:'夏日抽奖',cost:{贝壳:10},daily_limit:5,pool:[
+   gacha:{enabled:true,cmd:'夏日抽奖',cost:{贝壳:15},daily_limit:5,
+    pity:{enabled:true,items:[
+     {name:'大奖保底',threshold:1000,reward_item:'史诗卡'},
+     {name:'小奖保底',threshold:500,reward_item:'金币'}
+    ]},
+    pool:[
     {weight:50,reward:{贝壳:5},msg:'安慰奖'},
     {weight:30,reward:{item:'夏日冰饮',count:1}},
     {weight:15,reward:{金币:500}},
