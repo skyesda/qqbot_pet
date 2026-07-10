@@ -416,7 +416,7 @@ class PetParkPlugin(Star):
             self.store.set_cooldown(
                 player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
             )
-            base = random.randint(80, 200) + p["level"] * 25
+            base = random.randint(50, 120) + p["level"] * 15
             exp = base * (2 if action == "双修" else 1)
             petmod.add_exp(p, exp)
             if action == "双修":
@@ -3504,7 +3504,7 @@ class PetParkPlugin(Star):
                     extra = f"\n💕 伴侣 `{p['love_target']}` 的好感度也 +{gain}。"
             return f"💕 约会愉快，好感度 +{gain}，当前 {p['favor']}。" + extra
         if action in ("修炼", "双修"):
-            base = random.randint(80, 200) + p["level"] * 25
+            base = random.randint(50, 120) + p["level"] * 15
             exp = base * (2 if action == "双修" else 1)
             petmod.add_exp(p, exp)
             if action == "双修":
@@ -3724,10 +3724,10 @@ class PetParkPlugin(Star):
             return "精力不足（需 50）。"
         p["energy"] -= 50
         if random.random() < 0.5:
-            e = random.randint(50000, 200000)
-            petmod.add_exp(p, e)
+            x = random.randint(*data.ascend_treasure_xianyuan(p["level"]))
+            petmod.add_xianyuan(p, x)
             self._inc_stat(player, "ascended_immortal_calamity")
-            return f"⚡ 神仙劫渡过，经验 +{e}！"
+            return f"⚡ 神仙劫渡过，仙元 +{x}！"
         p["hp"] = max(1, p["hp"] // 2)
         return "⚡ 神仙劫失败，宠物身受重伤，恢复后再来。"
 
@@ -4164,7 +4164,7 @@ class PetParkPlugin(Star):
                 defender["status"] = "死亡"
                 defender["mood"] = max(1, defender.get("mood", 5) - 1)
                 killed = True
-        exp = random.randint(300, 1500) + attacker["level"] * 5
+        exp = random.randint(150, 600) + attacker["level"] * 3
         # 七星化海：额外经验
         if attacker.get("talent") == "七星化海":
             exp = int(exp * (1 + random.uniform(0.1, 0.3)))

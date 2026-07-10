@@ -859,8 +859,8 @@ _DUNGEON_DEFS = [
     ("神陨星域", 200, "陨落星神"),
 ]
 # 副本奖励重平衡：
-# - 经验 ≈ 升到下一级所需经验的 35%，避免一次副本连升数级。
-#   _exp_to_next(lv) = 100 + lv * 80，因此经验 = int((100 + lv * 80) * 0.35)。
+# - 经验 ≈ 升到下一级所需经验的 25%，避免一次副本连升数级。
+#   _exp_to_next(lv) = 200 + lv * 100，因此经验 = int((200 + lv * 100) * 0.25)。
 # - 积分 ≈ 100 + lv * 8，保持为日常打工/修炼的 1~2 倍，但不再远超商城物价。
 # 副本统一精力消耗 10，降低日常门槛；经验/积分已重平衡，避免单局收益过高。
 DUNGEONS = {
@@ -869,7 +869,7 @@ DUNGEONS = {
         "energy": 10,
         "monster": monster,
         "power": lv * 1000,
-        "exp": int((100 + lv * 80) * 0.35),
+        "exp": int((200 + lv * 100) * 0.25),
         "jifen": 100 + lv * 8,
     }
     for name, lv, monster in _DUNGEON_DEFS
@@ -949,11 +949,11 @@ ASCEND_XIANYUAN_PER_EXP = 100000
 def ascend_xianyuan_to_next(level: int) -> int:
     """飞升/渡劫阶段，从当前等级升一级所需仙元。
 
-    采用线性递增：Lv1 约需 12 仙元，Lv100 约需 112 仙元，Lv220 约需 232 仙元。
-    整体节奏让幻境寻宝（10~15 分钟一次，约 30~80 仙元）成为主要来源，
-    同时日常经验（按 1:100000 折算）只起补充作用，避免经验奖励过猛导致等级失控。
+    采用线性递增：Lv120 约需 385 仙元，Lv220 约需 685 仙元。
+    整体节奏让幻境寻宝（10~15 分钟一次，约 100~180 仙元）成为主要来源，
+    大约 2~4 次寻宝可升 1 级；日常经验（按 1:100000 折算）只起补充作用。
     """
-    return 10 + level * 2
+    return 25 + level * 3
 
 
 # 飞升后才能用的幻境寻宝 / 神仙劫奖励范围
@@ -961,8 +961,8 @@ ASCEND_TREASURE = {
     "energy": 60,
     "jifen": (500, 3000),  # 积分基础范围
     "jifen_chance": 0.5,   # 50% 概率获得积分
-    "xianyuan": (3, 6),    # 每级系数，实际 = 等级 × 系数 + 基础
-    "xianyuan_base": 10,
+    "xianyuan": (0.8, 1.5),    # 每级系数，实际 = 等级 × 系数 + 基础
+    "xianyuan_base": 5,
     "cooldown": (600, 900),  # 10~15 分钟随机冷却
 }
 
@@ -970,11 +970,11 @@ ASCEND_TREASURE = {
 def ascend_treasure_xianyuan(level: int) -> tuple[int, int]:
     """幻境寻宝随等级提升的仙元奖励范围。
 
-    Lv1 约 13~26 仙元（足够升 1~2 级），Lv100 约 310~620 仙元，
-    Lv220 约 670~1340 仙元，整体与 `ascend_xianyuan_to_next(level)` 保持平衡。
+    Lv120 约 101~185 仙元，Lv220 约 181~335 仙元，
+    与 `ascend_xianyuan_to_next(level)` 保持平衡，约 2~4 次寻宝升 1 级。
     """
-    low = max(1, level * ASCEND_TREASURE["xianyuan"][0] + ASCEND_TREASURE["xianyuan_base"])
-    high = max(low, level * ASCEND_TREASURE["xianyuan"][1] + ASCEND_TREASURE["xianyuan_base"])
+    low = max(1, int(level * ASCEND_TREASURE["xianyuan"][0] + ASCEND_TREASURE["xianyuan_base"]))
+    high = max(low, int(level * ASCEND_TREASURE["xianyuan"][1] + ASCEND_TREASURE["xianyuan_base"]))
     return low, high
 
 
@@ -1006,10 +1006,10 @@ ASCEND_DUNGEONS = {
         "name": name,
         # 120级≈94000，220级≈214000，普通飞升玩家同级战力浮动后可胜
         "power": int(lv * 1200 - 50000),
-        # 每次奖励约等于当前等级升级消耗的 1/8，平均 8 次副本可升 1 级
-        "xianyuan": (max(1, (10 + lv * 2) // 10), max(2, (10 + lv * 2) // 6)),
+        # 每次奖励约等于当前等级升级消耗的 1/12~1/15，平均 12~15 次副本可升 1 级
+        "xianyuan": (max(1, (25 + lv * 3) // 15), max(2, (25 + lv * 3) // 10)),
         # 飞升后经验自动折算为仙元，作为小额添头
-        "exp": int((100 + lv * 80) * 0.5),
+        "exp": int((100 + lv * 80) * 0.3),
         "jifen": 200 + lv * 10,
         # 小概率掉落飞升常用道具
         "drop": {"item": "小精力瓶", "chance": 0.15, "count": 1},
@@ -1067,8 +1067,8 @@ ABYSS_MAX_ENERGY = 80
 ABYSS_MAX_COOLDOWN = 1800  # 30 分钟
 ABYSS_CORRUPTION_DECAY_INTERVAL = 1200  # 20 分钟
 ABYSS_CORRUPTION_DECAY_AMOUNT = 1
-ABYSS_EXP_BASE = 100
-ABYSS_EXP_PER_LEVEL = 80
+ABYSS_EXP_BASE = 200
+ABYSS_EXP_PER_LEVEL = 100
 
 
 def exp_to_next(level: int) -> int:
@@ -1082,7 +1082,7 @@ ABYSS_EVENTS = [
         "id": "guard",
         "name": "🗡️ 深渊守卫",
         "weight": 30,
-        "exp_mult": 0.3,
+        "exp_mult": 0.2,
         "crystal": (1, 3),
         "power_mult": 0.5,
     },
@@ -1090,10 +1090,10 @@ ABYSS_EVENTS = [
         "id": "chest",
         "name": "🎁 深渊宝箱",
         "weight": 25,
-        "exp_mult": 0.2,
+        "exp_mult": 0.12,
         "crystal": (1, 2),
         "mimic_chance": 0.2,
-        "mimic_exp_mult": 0.5,
+        "mimic_exp_mult": 0.3,
         "power_mult": 0.35,
     },
     {
@@ -1105,15 +1105,15 @@ ABYSS_EVENTS = [
         "id": "altar",
         "name": "🌀 古老祭坛",
         "weight": 15,
-        "exp_mult_safe": 0.2,
-        "exp_mult_sacrifice": 0.6,
+        "exp_mult_safe": 0.12,
+        "exp_mult_sacrifice": 0.35,
         "hp_sacrifice_pct": 0.15,
     },
     {
         "id": "blessing",
         "name": "✨ 深渊赐福",
         "weight": 10,
-        "exp_mult": 1.0,
+        "exp_mult": 0.6,
         "crystal": (2, 4),
         "heal": True,
         "power_mult": 0.0,  # 直接奖励，无战斗
@@ -1122,7 +1122,7 @@ ABYSS_EVENTS = [
         "id": "lord",
         "name": "👹 深渊领主",
         "weight": 5,
-        "exp_mult": 1.5,
+        "exp_mult": 0.9,
         "crystal": (3, 5),
         "power_mult": 1.2,
     },
@@ -1508,17 +1508,17 @@ TOMB_DESTINY_CARDS = {
 
 # 成功撤离后额外经验（区间随机，不影响现有财富），失败得一半
 TOMB_SUCCESS_EXP_RANGE = {
-    1: (800, 2000),
-    2: (1500, 4000),
-    3: (3000, 7000),
-    4: (5000, 10000),
+    1: (400, 1000),
+    2: (800, 2000),
+    3: (1500, 3500),
+    4: (2500, 5000),
 }
 
 # 今日摸金神榜前三奖励（宠物主经验），排名越靠前区间越高
 TOMB_DAILY_REWARD_EXP = {
-    1: (30000, 50000),
-    2: (15000, 30000),
-    3: (5000, 15000),
+    1: (15000, 25000),
+    2: (8000, 15000),
+    3: (2500, 7500),
 }
 
 

@@ -14,7 +14,7 @@ from . import data
 
 def _exp_to_next(level: int) -> int:
     """升到下一级所需经验。级别越高需求越高。"""
-    return 100 + level * 80
+    return 200 + level * 100
 
 
 def new_pet(species: str, quality: str, gender: str | None = None) -> dict:
