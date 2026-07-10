@@ -424,6 +424,11 @@ class PetParkPlugin(Star):
             # 宠物异常时跳过，等恢复后再继续
             if self._busy_reason(p):
                 continue
+            # 飞升后修炼/双修失效，自动关闭挂机
+            if self._pet_is_ascended(p):
+                ac["enabled"] = False
+                any_changed = True
+                continue
             # 优先双修，否则修炼
             action = "双修" if p.get("love_state") == "已婚" else "修炼"
             # 检查冷却
@@ -460,6 +465,8 @@ class PetParkPlugin(Star):
             return "你还没有宠物，发送『砸蛋』获取一只。"
         if not p.get("custom"):
             return "『自动修炼』仅限定制宠物使用。"
+        if enable and self._pet_is_ascended(p):
+            return "宠物已飞升，凡间的『修炼/双修』已无法带来增益，无法开启自动修炼。"
         ac = player.setdefault("auto_cultivation", {
             "enabled": False,
             "started_at": 0,
@@ -3543,6 +3550,8 @@ class PetParkPlugin(Star):
             return f"精力不足（需 {conf['energy']}，当前 {p['energy']}）。"
         if action == "冥想" and not p.get("custom"):
             return "『冥想』需要定制宠物才行。"
+        if action in ("修炼", "双修") and self._pet_is_ascended(p):
+            return "宠物已飞升，凡间的『修炼/双修』已无法带来增益，请通过『幻境寻宝』『宠物神仙劫』获取仙元。"
         if action == "双修" and p.get("love_state") != "已婚":
             return "『双修』需与伴侣结为夫妻才行，先通过『宠物求婚 / 同意求婚』结婚吧（单身/恋爱中可用『修炼』）。"
         if action == "修炼" and p.get("love_state") == "已婚":
@@ -3786,9 +3795,15 @@ class PetParkPlugin(Star):
             return busy
         if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
             return "宠物飞升后才能挑战神仙劫。"
+        cd = self._cooldown_block(player, "immortal_calamity", "宠物神仙劫")
+        if cd:
+            return cd
         if p["energy"] < 50:
             return "精力不足（需 50）。"
         p["energy"] -= 50
+        self.store.set_cooldown(
+            player, "immortal_calamity", random.randint(*data.DAILY_COOLDOWN_RANGE)
+        )
         if random.random() < 0.5:
             x = random.randint(*data.ascend_treasure_xianyuan(p["level"]))
             petmod.add_xianyuan(p, x)
