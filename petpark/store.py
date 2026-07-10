@@ -75,6 +75,7 @@ class PetStore:
         self._data.setdefault("custom_reviews", {})
         self._data.setdefault("portal_secret", "".join(random.choices("abcdef0123456789", k=32)))
         self._data.setdefault("tomb_players", {})
+        self._data.setdefault("ms_players", {})
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
 
@@ -1324,6 +1325,46 @@ class PetStore:
                 except OSError:
                     pass
         return fb is not None
+
+    # ----------------------------- 宠物扫雷（全服独立积分系统） -----------------------------
+    @staticmethod
+    def _default_ms_state() -> dict:
+        """全局扫雷状态默认值（按 QQ 全服共享）。"""
+        return {
+            "score": 0,
+            "wins": 0,
+            "plays": 0,
+            "best_time": {},
+            "pending_pet_exp": 0,
+        }
+
+    def ms_state(self, qq: str) -> dict:
+        """返回某 QQ 的全局扫雷状态，不存在则创建。"""
+        st = self._data.setdefault("ms_players", {}).setdefault(
+            str(qq), self._default_ms_state()
+        )
+        for k, v in self._default_ms_state().items():
+            st.setdefault(k, v)
+        return st
+
+    def all_ms_players(self) -> dict[str, dict]:
+        return self._data.setdefault("ms_players", {})
+
+    def add_ms_pending_pet_exp(self, qq: str, amount: int) -> int:
+        st = self.ms_state(qq)
+        st["pending_pet_exp"] = st.get("pending_pet_exp", 0) + max(0, int(amount))
+        return st["pending_pet_exp"]
+
+    def get_ms_pending_pet_exp(self, qq: str) -> int:
+        return self.ms_state(qq).get("pending_pet_exp", 0)
+
+    def consume_ms_pending_pet_exp(self, qq: str, amount: int) -> int:
+        """消费指定数量的待兑换扫雷宠物经验，返回实际消费数量。"""
+        st = self.ms_state(qq)
+        pending = st.get("pending_pet_exp", 0)
+        actual = min(pending, max(0, int(amount)))
+        st["pending_pet_exp"] = pending - actual
+        return actual
 
     @staticmethod
     def get_invited_users(player: dict) -> list[dict]:

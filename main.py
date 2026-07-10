@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import time
 import urllib.parse
 import uuid
@@ -37,6 +38,11 @@ except Exception:  # pragma: no cover - 兼容旧版本
 
 
 PLUGIN_NAME = "astrbot_plugin_petpark"
+
+# 扫雷紧凑指令：扫a1b2 / 插旗a1 / 旗a1 / 开始扫雷2
+_MS_COMPACT_RE = re.compile(r"^(扫|插旗|旗)((?:[a-zA-Z]\d{1,2})+)$")
+_MS_START_RE = re.compile(r"^开始扫雷([1-4])$")
+_MS_COORD_RE = re.compile(r"[a-zA-Z]\d{1,2}")
 
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
 KNOWN_COMMANDS = {
@@ -245,6 +251,20 @@ KNOWN_COMMANDS = {
     "摸金救援",
     "摸金捡取",
     "摸金传送",
+    # 扫雷
+    "扫雷",
+    "扫雷介绍",
+    "扫雷帮助",
+    "扫雷游戏",
+    "开始扫雷",
+    "扫",
+    "插旗",
+    "旗",
+    "扫雷地图",
+    "扫雷状态",
+    "放弃扫雷",
+    "扫雷排行",
+    "扫雷兑换",
 }
 
 
@@ -307,6 +327,8 @@ class PetParkPlugin(Star):
         self._broadcast_tasks: set = set()
         # 宠物摸金当局运行时状态（内存中，不持久化）
         self._tomb_sessions: dict[str, dict] = {}
+        # 扫雷当局运行时状态（内存中，不持久化，按 QQ 一人一局）
+        self._ms_sessions: dict[str, dict] = {}
         # 摸金双排组队状态
         self._tomb_coop_teams: dict[str, dict] = {}   # key: "{gid}\x1f{leader_qq}"
         self._tomb_coop_index: dict[str, str] = {}     # key: "{gid}\x1f{qq}" → coop_key
@@ -681,10 +703,21 @@ class PetParkPlugin(Star):
         rows.append([(f"🗺️ {dungeon_cmd}", dungeon_cmd)])
         return self._build_qq_keyboard(rows)
 
+    def _ms_menu_keyboard(self) -> dict:
+        return self._build_qq_keyboard(
+            [
+                [("🧨 开始扫雷", "开始扫雷"), ("🗺 扫雷地图", "扫雷地图")],
+                [("🏆 扫雷排行", "扫雷排行"), ("🎁 扫雷兑换", "扫雷兑换")],
+                [("📖 扫雷介绍", "扫雷介绍"), ("🏳 放弃扫雷", "放弃扫雷")],
+            ]
+        )
+
     def _keyboard_for_cmd(self, text: str) -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。"""
         if text in {"宠物菜单", "宠物指令", "宠物帮助", "管理菜单"}:
             return self._main_menu_keyboard()
+        if text in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
+            return self._ms_menu_keyboard()
         for cfg in self.store.active_events().values():
             if text == cfg.get("menu_cmd"):
                 return self._event_menu_keyboard(cfg)
@@ -915,6 +948,16 @@ class PetParkPlugin(Star):
         """处理一条指令。返回 None / 文本字符串 / (文本, 图片路径) 二元组。"""
         tokens = text.split()
         cmd = tokens[0]
+        # 扫雷紧凑指令归一化：扫a1b2 → 扫 a1b2；插旗a1 → 插旗 a1；开始扫雷2 → 开始扫雷 2
+        m = _MS_COMPACT_RE.match(cmd)
+        if m:
+            tokens = [m.group(1), m.group(2)] + tokens[1:]
+            cmd = tokens[0]
+        else:
+            m = _MS_START_RE.match(cmd)
+            if m:
+                tokens = ["开始扫雷", m.group(1)] + tokens[1:]
+                cmd = "开始扫雷"
         # 非本插件指令直接放行，避免为每条普通聊天创建玩家/群档案
         event_cmds = self._active_event_commands()
         if (
@@ -1235,6 +1278,24 @@ class PetParkPlugin(Star):
         # 摸金经验兑换
         if cmd in ("摸金兑换", "摸兑"):
             return self._tomb_redeem_exp(player, tokens)
+
+        # ---- 宠物扫雷 ----
+        if cmd in ("扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏"):
+            return self._ms_intro()
+        if cmd == "开始扫雷":
+            return self._ms_start(player, group_id, tokens)
+        if cmd == "扫":
+            return self._ms_sweep(player, tokens)
+        if cmd in ("插旗", "旗"):
+            return self._ms_flag(player, tokens)
+        if cmd in ("扫雷地图", "扫雷状态"):
+            return self._ms_status(player)
+        if cmd == "放弃扫雷":
+            return self._ms_forfeit(player)
+        if cmd == "扫雷排行":
+            return self._ms_rank(player)
+        if cmd == "扫雷兑换":
+            return self._ms_redeem_exp(player, tokens)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -2911,6 +2972,11 @@ class PetParkPlugin(Star):
                 "- 领取摸金奖励 · 摸金兑换",
                 "- 摸金组队 用户ID · 摸金准备 · 摸金队伍 · 摸金取消组队（双排）",
                 "- 摸金救援 · 摸金捡取 · 摸金传送（双排互动）",
+                "",
+                "【宠物扫雷】（全服积分排行）",
+                "- 扫雷介绍 · 开始扫雷 难度(1~4)",
+                "- 扫 坐标（支持多扫，如：扫a1b2）· 插旗 坐标",
+                "- 扫雷地图 · 放弃扫雷 · 扫雷排行 · 扫雷兑换",
                 "",
                 "【姻缘】",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
@@ -7459,6 +7525,472 @@ class PetParkPlugin(Star):
         if not found:
             return "四周看起来空荡荡的。"
         return "、".join(found) + "。"
+
+    # =====================================================================
+    # 宠物扫雷
+    # =====================================================================
+    @staticmethod
+    def _ms_intro() -> str:
+        lines = [
+            "## 🧨 宠物扫雷",
+            "> 翻开所有安全格即胜利，踩雷或超时即失败。",
+            "> 奖励宠物经验（暂存），发送「扫雷兑换」发放到当前群宠物。",
+            "",
+            "**难度一览**：",
+        ]
+        for lv, cfg in data.MS_DIFFICULTIES.items():
+            w, h = cfg["size"]
+            lines.append(
+                f"- 难度{lv} {cfg['name']}：{w}×{h} 格 · {cfg['mines']} 雷 · "
+                f"限时 {cfg['time'] // 60} 分钟 · 积分 +{cfg['score']}"
+            )
+        lines += [
+            "",
+            "**指令**：",
+            "- 开始扫雷 难度 （如：开始扫雷2，默认难度1）",
+            "- 扫 坐标 （支持多扫，如：扫a1b2 或 扫 a1 b2）",
+            "- 插旗 坐标 （标记/取消标记疑似雷，如：插旗a1）",
+            "- 扫雷地图 · 放弃扫雷 · 扫雷排行 · 扫雷兑换",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _ms_parse_coords(tokens: list[str]) -> list[tuple[int, int]]:
+        """把 a1b2 / a1 b2 等形式解析为 (x, y) 列表（0 基）。"""
+        raw = "".join(tokens[1:])
+        coords = []
+        for m in _MS_COORD_RE.findall(raw.lower()):
+            x = ord(m[0]) - ord("a")
+            y = int(m[1:]) - 1
+            coords.append((x, y))
+        return coords
+
+    @staticmethod
+    def _ms_coord_name(x: int, y: int) -> str:
+        return f"{chr(ord('a') + x)}{y + 1}"
+
+    @staticmethod
+    def _ms_neighbors(x: int, y: int, w: int, h: int):
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    yield nx, ny
+
+    def _ms_place_mines(self, session: dict, safe: tuple[int, int]) -> None:
+        """首次翻格后布雷：首格及其八邻不放雷，保证开局不炸。"""
+        w, h = session["w"], session["h"]
+        excluded = {safe} | set(self._ms_neighbors(safe[0], safe[1], w, h))
+        candidates = [
+            (x, y) for y in range(h) for x in range(w) if (x, y) not in excluded
+        ]
+        count = min(session["mines_total"], len(candidates))
+        session["mines"] = set(random.sample(candidates, count))
+        session["mines_total"] = count
+        numbers = {}
+        for y in range(h):
+            for x in range(w):
+                if (x, y) in session["mines"]:
+                    continue
+                numbers[(x, y)] = sum(
+                    1 for n in self._ms_neighbors(x, y, w, h) if n in session["mines"]
+                )
+        session["numbers"] = numbers
+
+    def _ms_open_cell(self, session: dict, x: int, y: int) -> None:
+        """翻开一格，0 则洪水式展开。"""
+        opened = session["opened"]
+        stack = [(x, y)]
+        while stack:
+            cx, cy = stack.pop()
+            if (cx, cy) in opened or (cx, cy) in session["mines"]:
+                continue
+            opened.add((cx, cy))
+            session["flags"].discard((cx, cy))
+            if session["numbers"].get((cx, cy), 0) == 0:
+                for n in self._ms_neighbors(cx, cy, session["w"], session["h"]):
+                    if n not in opened:
+                        stack.append(n)
+
+    @staticmethod
+    def _ms_load_fonts(size: int, small: int):
+        for font_path in (
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/PingFang.ttc",
+        ):
+            try:
+                return (
+                    ImageFont.truetype(font_path, size),
+                    ImageFont.truetype(font_path, small),
+                )
+            except Exception:
+                continue
+        return None, None
+
+    def _ms_draw_board(self, session: dict, reveal: bool = False, boom: tuple[int, int] | None = None) -> str:
+        """绘制扫雷棋盘，返回图片文件名。"""
+        cfg = data.MS_DIFFICULTIES[session["difficulty"]]
+        w, h = session["w"], session["h"]
+        cell = data.MS_CELL_SIZE
+        pad = data.MS_PADDING
+        header_h = 46
+        font, small_font = self._ms_load_fonts(18, 13)
+
+        remain = max(0, session["deadline"] - int(time.time()))
+        flags_left = session["mines_total"] - len(session["flags"])
+        title = (
+            f"扫雷 难度{session['difficulty']} {cfg['name']}　"
+            f"剩余雷标 {flags_left}　剩余时间 {remain // 60}:{remain % 60:02d}"
+        )
+        img_w = w * cell + pad * 2
+        img_h = h * cell + pad * 2 + header_h
+        img = Image.new("RGB", (img_w, img_h), data.MS_COLORS["bg"])
+        draw = ImageDraw.Draw(img)
+        title_w = int(draw.textlength(title, font=font)) if font else len(title) * 10
+        if title_w + pad * 2 > img_w:
+            img = Image.new("RGB", (title_w + pad * 2, img_h), data.MS_COLORS["bg"])
+            draw = ImageDraw.Draw(img)
+        draw.text((pad, 12), title, fill=data.MS_COLORS["text"], font=font)
+
+        # 棋盘居中
+        ox = (img.width - w * cell) // 2
+        oy = pad + header_h
+        for y in range(h):
+            for x in range(w):
+                cx = ox + x * cell
+                cy = oy + y * cell
+                pos = (x, y)
+                is_open = pos in session["opened"]
+                is_mine = session["mines"] is not None and pos in session["mines"]
+                show_mine = reveal and is_mine
+
+                if is_open or show_mine:
+                    base = data.MS_COLORS["open"] if (x + y) % 2 else data.MS_COLORS["open_alt"]
+                    if boom and pos == boom:
+                        base = data.MS_COLORS["boom"]
+                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=base)
+                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], outline=data.MS_COLORS["grid"], width=1)
+                    if show_mine:
+                        r = cell // 4
+                        mx, my = cx + cell // 2, cy + cell // 2
+                        draw.ellipse([mx - r, my - r, mx + r, my + r], fill=data.MS_COLORS["mine"])
+                        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+                            draw.line(
+                                [(mx, my), (mx + dx * (r + 5), my + dy * (r + 5))],
+                                fill=data.MS_COLORS["mine"],
+                                width=2,
+                            )
+                    elif is_open:
+                        num = session["numbers"].get(pos, 0)
+                        if num > 0 and font:
+                            color = data.MS_NUMBER_COLORS.get(num, data.MS_COLORS["text"])
+                            tw = draw.textlength(str(num), font=font)
+                            draw.text(
+                                (cx + (cell - tw) / 2, cy + cell / 2 - 10),
+                                str(num),
+                                fill=color,
+                                font=font,
+                            )
+                else:
+                    base = data.MS_COLORS["closed"] if (x + y) % 2 else data.MS_COLORS["closed_alt"]
+                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=base)
+                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], outline=(80, 105, 80), width=1)
+                    if pos in session["flags"]:
+                        fx, fy = cx + cell // 2, cy + cell // 2
+                        draw.line([(fx - 2, fy - 10), (fx - 2, fy + 11)], fill=(90, 60, 30), width=3)
+                        draw.polygon(
+                            [(fx - 2, fy - 10), (fx + 12, fy - 5), (fx - 2, fy)],
+                            fill=data.MS_COLORS["flag"],
+                        )
+                    elif small_font:
+                        label = self._ms_coord_name(x, y)
+                        tw = draw.textlength(label, font=small_font)
+                        draw.text(
+                            (cx + (cell - tw) / 2, cy + cell / 2 - 8),
+                            label,
+                            fill=data.MS_COLORS["coord"],
+                            font=small_font,
+                        )
+
+        filename = f"ms_{uuid.uuid4().hex}.png"
+        img.save(self.store.custom_images_dir / filename, "PNG")
+        return filename
+
+    def _ms_board_md(self, session: dict, reveal: bool = False, boom: tuple[int, int] | None = None) -> str:
+        url = self._tomb_image_url(self._ms_draw_board(session, reveal=reveal, boom=boom))
+        return f"![扫雷棋盘 #{images._IMG_DISPLAY} #{images._IMG_DISPLAY}]({url})"
+
+    def _ms_status_line(self, session: dict) -> str:
+        cfg = data.MS_DIFFICULTIES[session["difficulty"]]
+        remain = max(0, session["deadline"] - int(time.time()))
+        total_safe = session["w"] * session["h"] - session["mines_total"]
+        return (
+            f"> 难度{session['difficulty']} {cfg['name']}　"
+            f"进度 {len(session['opened'])}/{total_safe}　"
+            f"插旗 {len(session['flags'])}/{session['mines_total']}　"
+            f"剩余时间 {remain // 60}:{remain % 60:02d}"
+        )
+
+    def _ms_start(self, player: dict, group_id: str, tokens: list[str]):
+        qq = str(player.get("qq", ""))
+        session = self._ms_sessions.get(qq)
+        if session:
+            expired = self._ms_check_timeout(player, session)
+            if expired:
+                return expired
+            return (
+                f"你已有进行中的扫雷（发送「放弃扫雷」可结束）。\n{self._ms_status_line(session)}",
+                self._ms_board_md(session),
+            )
+        diff = 1
+        if len(tokens) > 1:
+            try:
+                diff = int(tokens[1])
+            except ValueError:
+                return "用法：开始扫雷 难度（1-4），如：开始扫雷2"
+        if diff not in data.MS_DIFFICULTIES:
+            return "难度只有 1-4：1简单 / 2普通 / 3困难 / 4地狱。"
+        cfg = data.MS_DIFFICULTIES[diff]
+        w, h = cfg["size"]
+        now = int(time.time())
+        session = {
+            "qq": qq,
+            "group_id": group_id,
+            "difficulty": diff,
+            "w": w,
+            "h": h,
+            "mines_total": cfg["mines"],
+            "mines": None,
+            "numbers": {},
+            "opened": set(),
+            "flags": set(),
+            "started_at": now,
+            "deadline": now + cfg["time"],
+        }
+        self._ms_sessions[qq] = session
+        return (
+            f"🧨 扫雷开始！难度{diff} {cfg['name']}：{w}×{h} 格，{cfg['mines']} 颗雷，"
+            f"限时 {cfg['time'] // 60} 分钟。\n"
+            f"发送「扫 坐标」翻格（支持多扫，如：扫a1b2），「插旗 坐标」标雷。\n"
+            f"{self._ms_status_line(session)}",
+            self._ms_board_md(session),
+        )
+
+    def _ms_check_timeout(self, player: dict, session: dict) -> str | None:
+        """超时则结算失败并返回结算文本，否则返回 None。"""
+        if int(time.time()) >= session["deadline"]:
+            return self._ms_settle(player, session, "timeout")
+        return None
+
+    def _ms_need_session(self, player: dict) -> dict | str:
+        session = self._ms_sessions.get(str(player.get("qq", "")))
+        if not session:
+            return "你没有进行中的扫雷，发送「开始扫雷 难度」开始游戏。"
+        return session
+
+    def _ms_sweep(self, player: dict, tokens: list[str]):
+        session = self._ms_need_session(player)
+        if isinstance(session, str):
+            return session
+        expired = self._ms_check_timeout(player, session)
+        if expired:
+            return expired
+        coords = self._ms_parse_coords(tokens)
+        if not coords:
+            return "用法：扫 坐标（支持多扫，如：扫a1b2 或 扫 a1 b2）。"
+        w, h = session["w"], session["h"]
+        results = []
+        for x, y in coords:
+            name = self._ms_coord_name(x, y)
+            if not (0 <= x < w and 0 <= y < h):
+                results.append(f"{name} 超出棋盘")
+                continue
+            if (x, y) in session["flags"]:
+                results.append(f"{name} 已插旗，请先取消")
+                continue
+            if (x, y) in session["opened"]:
+                results.append(f"{name} 已翻开")
+                continue
+            if session["mines"] is None:
+                self._ms_place_mines(session, (x, y))
+            if (x, y) in session["mines"]:
+                session["opened"].add((x, y))
+                return self._ms_settle(player, session, "boom", boom=(x, y))
+            self._ms_open_cell(session, x, y)
+            results.append(f"{name} 安全")
+        total_safe = w * h - session["mines_total"]
+        if session["mines"] is not None and len(session["opened"]) >= total_safe:
+            return self._ms_settle(player, session, "win")
+        note = "、".join(results) if results else "无有效操作"
+        return (
+            f"🔍 {note}\n{self._ms_status_line(session)}",
+            self._ms_board_md(session),
+        )
+
+    def _ms_flag(self, player: dict, tokens: list[str]):
+        session = self._ms_need_session(player)
+        if isinstance(session, str):
+            return session
+        expired = self._ms_check_timeout(player, session)
+        if expired:
+            return expired
+        coords = self._ms_parse_coords(tokens)
+        if not coords:
+            return "用法：插旗 坐标（如：插旗a1，再次插旗可取消）。"
+        w, h = session["w"], session["h"]
+        results = []
+        for x, y in coords:
+            name = self._ms_coord_name(x, y)
+            if not (0 <= x < w and 0 <= y < h):
+                results.append(f"{name} 超出棋盘")
+                continue
+            if (x, y) in session["opened"]:
+                results.append(f"{name} 已翻开")
+                continue
+            if (x, y) in session["flags"]:
+                session["flags"].discard((x, y))
+                results.append(f"{name} 已取消旗")
+            else:
+                session["flags"].add((x, y))
+                results.append(f"{name} 已插旗")
+        return (
+            f"🚩 {'、'.join(results)}\n{self._ms_status_line(session)}",
+            self._ms_board_md(session),
+        )
+
+    def _ms_status(self, player: dict):
+        session = self._ms_need_session(player)
+        if isinstance(session, str):
+            return session
+        expired = self._ms_check_timeout(player, session)
+        if expired:
+            return expired
+        return (
+            f"🗺 当前扫雷棋盘\n{self._ms_status_line(session)}",
+            self._ms_board_md(session),
+        )
+
+    def _ms_forfeit(self, player: dict):
+        session = self._ms_need_session(player)
+        if isinstance(session, str):
+            return session
+        return self._ms_settle(player, session, "forfeit")
+
+    def _ms_settle(self, player: dict, session: dict, reason: str, boom: tuple[int, int] | None = None):
+        """扫雷结算：win / boom / timeout / forfeit。"""
+        qq = str(player.get("qq", ""))
+        cfg = data.MS_DIFFICULTIES[session["difficulty"]]
+        st = self.store.ms_state(qq)
+        st["plays"] = st.get("plays", 0) + 1
+        total_safe = session["w"] * session["h"] - session["mines_total"]
+        opened_ratio = len(session["opened"]) / max(1, total_safe)
+        self._ms_sessions.pop(qq, None)
+
+        if reason == "win":
+            elapsed = int(time.time()) - session["started_at"]
+            st["wins"] = st.get("wins", 0) + 1
+            st["score"] = st.get("score", 0) + cfg["score"]
+            best = st.setdefault("best_time", {})
+            key = str(session["difficulty"])
+            if key not in best or elapsed < best[key]:
+                best[key] = elapsed
+            exp = random.randint(*cfg["exp"])
+            self.store.add_ms_pending_pet_exp(qq, exp)
+            if session["mines"] is None:
+                session["mines"] = set()
+            return (
+                f"🎉 扫雷成功！难度{session['difficulty']} {cfg['name']}，"
+                f"用时 {elapsed // 60}:{elapsed % 60:02d}。\n"
+                f"● 扫雷积分 +{cfg['score']}（累计 {st['score']}）\n"
+                f"● 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）",
+                self._ms_board_md(session, reveal=True),
+            )
+
+        # 失败：按进度给安慰经验
+        exp = int(cfg["exp"][0] * opened_ratio * data.MS_FAIL_EXP_RATIO)
+        exp_text = ""
+        if exp > 0:
+            self.store.add_ms_pending_pet_exp(qq, exp)
+            exp_text = f"\n● 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）"
+        if session["mines"] is None:
+            session["mines"] = set()
+        if reason == "boom":
+            return (
+                f"💥 踩到地雷（{self._ms_coord_name(*boom)}），扫雷失败！{exp_text}",
+                self._ms_board_md(session, reveal=True, boom=boom),
+            )
+        if reason == "timeout":
+            return (
+                f"⏰ 倒计时结束，扫雷失败！{exp_text}",
+                self._ms_board_md(session, reveal=True),
+            )
+        return f"🏳 已放弃本局扫雷。{exp_text.lstrip()}" if exp_text else "🏳 已放弃本局扫雷。"
+
+    def _ms_rank(self, player: dict) -> str:
+        """扫雷全服排行（按累计积分）。"""
+        entries = []
+        for qq, st in self.store.all_ms_players().items():
+            score = st.get("score", 0)
+            if score > 0:
+                entries.append((qq, score, st.get("wins", 0), st.get("plays", 0)))
+        entries.sort(key=lambda x: x[1], reverse=True)
+        if not entries:
+            return "暂无玩家登上扫雷排行。"
+        lines = ["## 🧨 扫雷排行（全服）"]
+        my_qq = str(player.get("qq", ""))
+        for i, (qq, score, wins, plays) in enumerate(entries[:10], start=1):
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
+            me = " ← 我" if qq == my_qq else ""
+            lines.append(
+                f"{medal} {self._tomb_display_qq(qq)}　积分 {score}　胜 {wins}/{plays}{me}"
+            )
+        my_rank = next((i for i, e in enumerate(entries, start=1) if e[0] == my_qq), None)
+        my_st = self.store.ms_state(my_qq)
+        if my_rank and my_rank > 10:
+            lines.append(f"…\n{my_rank}. {self._tomb_display_qq(my_qq)}　积分 {my_st.get('score', 0)}　胜 {my_st.get('wins', 0)}/{my_st.get('plays', 0)} ← 我")
+        elif not my_rank:
+            lines.append("> 你还没有扫雷积分，赢一局即可上榜。")
+        return "\n".join(lines)
+
+    def _ms_redeem_exp(self, player: dict, tokens: list[str]) -> str:
+        """把暂存的扫雷宠物经验兑换到当前群宠物。
+
+        用法：
+        - 扫雷兑换                 一键兑换全部
+        - 扫雷兑换 全部            一键兑换全部
+        - 扫雷兑换 10000           只兑换 10000 点
+        """
+        qq = str(player.get("qq", ""))
+        pending = self.store.get_ms_pending_pet_exp(qq)
+        if pending <= 0:
+            return "你没有待兑换的扫雷宠物经验。"
+        p = player.get("pet")
+        if not p:
+            return "你没有宠物，无法兑换经验。"
+        amount_str = tokens[1] if len(tokens) > 1 else ""
+        if amount_str and amount_str not in ("全部", "all"):
+            try:
+                amount = int(amount_str)
+            except ValueError:
+                return "用法：扫雷兑换 [数量/全部]，数量请填写整数。"
+            if amount <= 0:
+                return "兑换数量必须大于 0。"
+            if amount > pending:
+                return f"待兑换经验只有 {pending} 点，不足 {amount} 点。"
+        else:
+            amount = pending
+        actual = self.store.consume_ms_pending_pet_exp(qq, amount)
+        petmod.add_exp(p, actual)
+        remain = self.store.get_ms_pending_pet_exp(qq)
+        note = f"，还剩余 {remain} 点" if remain > 0 else "，已全部兑换"
+        return f"🎁 扫雷经验兑换成功！当前群宠物 +{actual} 经验{note}。{self._auto_level_note(player, p)}"
 
     # =====================================================================
     # 婚恋
