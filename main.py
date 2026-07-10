@@ -5668,6 +5668,19 @@ class PetParkPlugin(Star):
                     # 这些 effects 可能改了共享值，从 session 写回 coop
                     if k in self._TOMB_SHARED_KEYS:
                         coop[k] = session[k]
+            # 同步 status，避免 _tomb_commit 把 pick_card 覆盖回队长数据
+            session["status"] = "active"
+            # 命运卡牌的个人即时效果也同步给队友
+            eff = data.TOMB_DESTINY_CARDS[card_name]["effects"]
+            my_qq = str(player.get("qq", ""))
+            for pqq, pd in coop.get("players", {}).items():
+                if pqq == my_qq:
+                    continue
+                if "start_mingbi" in eff:
+                    pd["mingbi"] = pd.get("mingbi", 0) + eff["start_mingbi"]
+                if "start_hp_mod" in eff:
+                    pd["hp"] = max(1, pd.get("hp", data.TOMB_MAX_HP) + eff["start_hp_mod"])
+                    pd["hp_max"] = max(1, pd.get("hp_max", data.TOMB_MAX_HP) + eff["start_hp_mod"])
             self._tomb_commit(player, session, is_coop)
             entry_text = coop.pop("_entry_text", "## 进入摸金（双排）")
             entry_image = coop.pop("_entry_image_md", None)
@@ -6215,9 +6228,6 @@ class PetParkPlugin(Star):
                 coop = session.get("_coop_parent")
                 if coop:
                     return self._tomb_settle_coop(player, p, coop, "timeout")
-            return self._tomb_settle(player, p, session, "timeout")
-        return None
-        if int(time.time()) >= session.get("deadline", 0):
             return self._tomb_settle(player, p, session, "timeout")
         return None
 
