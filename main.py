@@ -6198,7 +6198,7 @@ class PetParkPlugin(Star):
         # 宠物经验改为暂存，用户发送『摸金兑换』后统一发放到当前群宠物
         exp_range = data.TOMB_SUCCESS_EXP_RANGE.get(session["difficulty"], (500, 2000))
         base_pet_exp = random.randint(*exp_range)
-        stored_pet_exp = base_pet_exp if is_success else (base_pet_exp // 2)
+        stored_pet_exp = base_pet_exp if is_success else (base_pet_exp // 10)
         if stored_pet_exp > 0:
             self.store.add_tomb_pending_pet_exp(player, stored_pet_exp)
         pet_exp_text = f"宠物经验 +{stored_pet_exp}（已暂存，发送『摸金兑换』可发放到当前群宠物）" if stored_pet_exp > 0 else ""
@@ -6291,7 +6291,7 @@ class PetParkPlugin(Star):
 
             exp_range = data.TOMB_SUCCESS_EXP_RANGE.get(coop["difficulty"], (500, 2000))
             base_pe = random.randint(*exp_range)
-            stored_pe = base_pe if is_success else (base_pe // 2)
+            stored_pe = base_pe if is_success else (base_pe // 10)
             if stored_pe > 0:
                 self.store.add_tomb_pending_pet_exp(pl, stored_pe)
 
