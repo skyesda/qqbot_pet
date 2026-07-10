@@ -1044,6 +1044,9 @@ ATTACK_ENERGY = 10
 EGG_COOLDOWN = 60  # 砸蛋冷却 1 分钟
 DUNGEON_COOLDOWN = 900  # 进入副本冷却 15 分钟
 DAILY_COOLDOWN_RANGE = (600, 1200)  # 修炼等日常活动冷却 10~20 分钟随机
+TRIBULATION_FAIL_COOLDOWN = 1800  # 渡劫失败后冷却 30 分钟
+BATTLE_COOLDOWN_RANGE = (600, 1200)  # 宠物攻击/跨群挑战冷却 10~20 分钟随机
+CRAFT_COOLDOWN_RANGE = (600, 1200)  # 觉醒/制符/使用天赋符/炼丹冷却 10~20 分钟随机
 
 # 各日常活动：精力消耗 + 说明
 DAILY_ACTIONS = {

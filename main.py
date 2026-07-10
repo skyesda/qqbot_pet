@@ -3756,7 +3756,13 @@ class PetParkPlugin(Star):
         busy = self._busy_reason(p)
         if busy:
             return busy
+        cd = self._cooldown_block(player, "渡劫", "宠物渡劫")
+        if cd:
+            return cd
         ok, msg = petmod.tribulation(p)
+        if not ok and msg.startswith("💥"):
+            self.store.set_cooldown(player, "渡劫", data.TRIBULATION_FAIL_COOLDOWN)
+            msg += f"\n‣ 天劫余威未散，{data.TRIBULATION_FAIL_COOLDOWN // 60} 分钟后才可再次渡劫。"
         return msg
 
     def _fantasy_treasure(self, player: dict) -> str:
@@ -3982,6 +3988,9 @@ class PetParkPlugin(Star):
         busy = self._busy_reason(p)
         if busy:
             return busy
+        cd = self._cooldown_block(player, "觉醒", "宠物觉醒")
+        if cd:
+            return cd
         # 飞升后觉醒改用仙元，避免经验/积分在飞升后大幅贬值
         is_ascended = self._pet_is_ascended(p)
         c = data.ASCEND_AWAKEN_COST if is_ascended else data.AWAKEN_COST
@@ -4005,6 +4014,9 @@ class PetParkPlugin(Star):
             self.store.add_currency(player, "积分", -c["jifen"])
             cost_text = f"{c['exp']} 经验、{c['jifen']} 积分"
         p["energy"] -= c["energy"]
+        self.store.set_cooldown(
+            player, "觉醒", random.randint(*data.CRAFT_COOLDOWN_RANGE)
+        )
         # 可觉醒天赋（非定制宠物不能觉醒"需定制"的天赋）
         pool = [
             n
@@ -4028,6 +4040,9 @@ class PetParkPlugin(Star):
             return busy
         if not p.get("talent"):
             return "宠物还没有觉醒天赋，无法制符。"
+        cd = self._cooldown_block(player, "制符", "制作天赋符")
+        if cd:
+            return cd
         c = (
             data.ASCEND_TALENT_RUNE_MAKE_COST
             if self._pet_is_ascended(p)
@@ -4036,6 +4051,9 @@ class PetParkPlugin(Star):
         err, cost_text = self._charge_cost(player, p, c, "制符")
         if err:
             return err
+        self.store.set_cooldown(
+            player, "制符", random.randint(*data.CRAFT_COOLDOWN_RANGE)
+        )
         rune = f"{p['talent']}符"
         self.store.add_item(player, rune, 1)
         return (
@@ -4058,6 +4076,9 @@ class PetParkPlugin(Star):
             return f"背包里没有『{rune}』。"
         if talent not in data.TALENTS:
             return f"未知天赋『{talent}』。"
+        cd = self._cooldown_block(player, "使用天赋符", "使用天赋符")
+        if cd:
+            return cd
         c = (
             data.ASCEND_TALENT_RUNE_USE_COST
             if self._pet_is_ascended(p)
@@ -4066,6 +4087,9 @@ class PetParkPlugin(Star):
         err, cost_text = self._charge_cost(player, p, c, "使用天赋符")
         if err:
             return err
+        self.store.set_cooldown(
+            player, "使用天赋符", random.randint(*data.CRAFT_COOLDOWN_RANGE)
+        )
         self.store.remove_item(player, rune)
         old = p.get("talent")
         p["talent"] = talent
@@ -4084,6 +4108,9 @@ class PetParkPlugin(Star):
             return busy
         if p.get("talent") != "绝影丹心":
             return "需要觉醒『绝影丹心』天赋的宠物才能炼丹。"
+        cd = self._cooldown_block(player, "炼丹", "炼丹")
+        if cd:
+            return cd
         c = (
             data.ASCEND_ELIXIR_CRAFT_COST
             if self._pet_is_ascended(p)
@@ -4092,6 +4119,9 @@ class PetParkPlugin(Star):
         err, cost_text = self._charge_cost(player, p, c, "炼丹")
         if err:
             return err
+        self.store.set_cooldown(
+            player, "炼丹", random.randint(*data.CRAFT_COOLDOWN_RANGE)
+        )
         elixir = random.choice(data.ELIXIR_NAMES)
         self.store.add_item(player, elixir, 1)
         return (
@@ -4323,10 +4353,16 @@ class PetParkPlugin(Star):
         tpet = tp["pet"]
         if petmod.is_dead(tpet):
             return "对方宠物已死亡。"
+        cd = self._cooldown_block(player, "对战", "宠物攻击")
+        if cd:
+            return cd
         petmod.refresh_energy(p)
         if p["energy"] < self.attack_energy:
             return f"发起攻击需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
         p["energy"] -= self.attack_energy
+        self.store.set_cooldown(
+            player, "对战", random.randint(*data.BATTLE_COOLDOWN_RANGE)
+        )
         return self._battle(p, tpet, player, tp)
 
     def _cross_attack(self, player: dict, group: dict, tokens: list[str]) -> str:
@@ -4358,10 +4394,16 @@ class PetParkPlugin(Star):
             target_player = random.choice(candidates)
         if not target_player or not target_player.get("pet"):
             return "目标没有宠物。"
+        cd = self._cooldown_block(player, "对战", "跨群挑战宠物")
+        if cd:
+            return cd
         petmod.refresh_energy(p)
         if p["energy"] < self.attack_energy:
             return f"发起挑战需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
         p["energy"] -= self.attack_energy
+        self.store.set_cooldown(
+            player, "对战", random.randint(*data.BATTLE_COOLDOWN_RANGE)
+        )
         return self._battle(p, target_player["pet"], player, target_player)
 
     @staticmethod
