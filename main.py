@@ -3923,6 +3923,43 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 天赋 / 炼丹
     # =====================================================================
+    @staticmethod
+    def _pet_is_ascended(p: dict) -> bool:
+        return data.STAGES.index(p["stage"]) >= data.STAGES.index("飞升")
+
+    def _charge_cost(self, player: dict, p: dict, cost: dict, action: str) -> tuple[str | None, str]:
+        """按消耗表检查并扣除（jifen/exp/xianyuan/energy）。
+
+        返回 (不足时的提示 | None, 消耗描述文本)。
+        """
+        parts = []
+        if cost.get("jifen"):
+            parts.append(f"{cost['jifen']} 积分")
+        if cost.get("exp"):
+            parts.append(f"{cost['exp']} 经验")
+        if cost.get("xianyuan"):
+            parts.append(f"{cost['xianyuan']} 仙元")
+        if cost.get("energy"):
+            parts.append(f"{cost['energy']} 精力")
+        cost_text = "、".join(parts)
+        if cost.get("jifen") and self.store.get_currency(player, "积分") < cost["jifen"]:
+            return f"{action}需要 {cost_text}。", cost_text
+        if cost.get("exp") and p["exp"] < cost["exp"]:
+            return f"{action}需要 {cost_text}。", cost_text
+        if cost.get("xianyuan") and p.get("xianyuan", 0) < cost["xianyuan"]:
+            return f"{action}需要 {cost_text}（当前仙元 {p.get('xianyuan', 0)}）。", cost_text
+        if cost.get("energy") and p["energy"] < cost["energy"]:
+            return f"{action}需要 {cost_text}。", cost_text
+        if cost.get("jifen"):
+            self.store.add_currency(player, "积分", -cost["jifen"])
+        if cost.get("exp"):
+            p["exp"] -= cost["exp"]
+        if cost.get("xianyuan"):
+            p["xianyuan"] = p.get("xianyuan", 0) - cost["xianyuan"]
+        if cost.get("energy"):
+            p["energy"] -= cost["energy"]
+        return None, cost_text
+
     def _awaken(self, player: dict) -> str:
         p = self._need_pet(player)
         if not p:
@@ -3931,7 +3968,7 @@ class PetParkPlugin(Star):
         if busy:
             return busy
         # 飞升后觉醒改用仙元，避免经验/积分在飞升后大幅贬值
-        is_ascended = data.STAGES.index(p["stage"]) >= data.STAGES.index("飞升")
+        is_ascended = self._pet_is_ascended(p)
         c = data.ASCEND_AWAKEN_COST if is_ascended else data.AWAKEN_COST
         if data.STAGES.index(p["stage"]) < data.STAGES.index(c["stage"]):
             return f"觉醒要求宠物达到【{c['stage']}】阶段。"
@@ -3976,20 +4013,18 @@ class PetParkPlugin(Star):
             return busy
         if not p.get("talent"):
             return "宠物还没有觉醒天赋，无法制符。"
-        c = data.TALENT_RUNE_MAKE_COST
-        if (
-            self.store.get_currency(player, "积分") < c["jifen"]
-            or p["exp"] < c["exp"]
-            or p["energy"] < c["energy"]
-        ):
-            return f"制符需要 {c['jifen']} 积分、{c['exp']} 经验、{c['energy']} 精力。"
-        self.store.add_currency(player, "积分", -c["jifen"])
-        p["exp"] -= c["exp"]
-        p["energy"] -= c["energy"]
+        c = (
+            data.ASCEND_TALENT_RUNE_MAKE_COST
+            if self._pet_is_ascended(p)
+            else data.TALENT_RUNE_MAKE_COST
+        )
+        err, cost_text = self._charge_cost(player, p, c, "制符")
+        if err:
+            return err
         rune = f"{p['talent']}符"
         self.store.add_item(player, rune, 1)
         return (
-            f"🪬 制符成功！消耗 {c['jifen']} 积分、{c['exp']} 经验、{c['energy']} 点精力，"
+            f"🪬 制符成功！消耗 {cost_text}，"
             f"获得『{rune}』，可『使用天赋符 {p['talent']}』赋予其它宠物该天赋。"
         )
 
@@ -4008,22 +4043,20 @@ class PetParkPlugin(Star):
             return f"背包里没有『{rune}』。"
         if talent not in data.TALENTS:
             return f"未知天赋『{talent}』。"
-        c = data.TALENT_RUNE_USE_COST
-        if (
-            self.store.get_currency(player, "积分") < c["jifen"]
-            or p["exp"] < c["exp"]
-            or p["energy"] < c["energy"]
-        ):
-            return f"使用天赋符需要 {c['jifen']} 积分、{c['exp']} 经验、{c['energy']} 精力。"
-        self.store.add_currency(player, "积分", -c["jifen"])
-        p["exp"] -= c["exp"]
-        p["energy"] -= c["energy"]
+        c = (
+            data.ASCEND_TALENT_RUNE_USE_COST
+            if self._pet_is_ascended(p)
+            else data.TALENT_RUNE_USE_COST
+        )
+        err, cost_text = self._charge_cost(player, p, c, "使用天赋符")
+        if err:
+            return err
         self.store.remove_item(player, rune)
         old = p.get("talent")
         p["talent"] = talent
         cover = f"（覆盖原天赋 {old}）" if old else ""
         return (
-            f"🪬 使用天赋符成功！消耗 {c['jifen']} 积分、{c['exp']} 经验、{c['energy']} 点精力"
+            f"🪬 使用天赋符成功！消耗 {cost_text}"
             f"与『{rune}』x1，宠物获得天赋【{talent}】{cover}。"
         )
 
@@ -4036,20 +4069,18 @@ class PetParkPlugin(Star):
             return busy
         if p.get("talent") != "绝影丹心":
             return "需要觉醒『绝影丹心』天赋的宠物才能炼丹。"
-        c = data.ELIXIR_CRAFT_COST
-        if (
-            p["exp"] < c["exp"]
-            or self.store.get_currency(player, "积分") < c["jifen"]
-            or p["energy"] < c["energy"]
-        ):
-            return f"炼丹需要 {c['exp']} 经验、{c['jifen']} 积分、{c['energy']} 精力。"
-        p["exp"] -= c["exp"]
-        self.store.add_currency(player, "积分", -c["jifen"])
-        p["energy"] -= c["energy"]
+        c = (
+            data.ASCEND_ELIXIR_CRAFT_COST
+            if self._pet_is_ascended(p)
+            else data.ELIXIR_CRAFT_COST
+        )
+        err, cost_text = self._charge_cost(player, p, c, "炼丹")
+        if err:
+            return err
         elixir = random.choice(data.ELIXIR_NAMES)
         self.store.add_item(player, elixir, 1)
         return (
-            f"⚗ 炼丹成功！消耗 {c['exp']} 经验、{c['jifen']} 积分、{c['energy']} 点精力，"
+            f"⚗ 炼丹成功！消耗 {cost_text}，"
             f"提炼出『{elixir}』x1！\n{data.ELIXIRS[elixir]['desc']}"
         )
 

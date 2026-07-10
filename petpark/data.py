@@ -695,6 +695,9 @@ ASCEND_AWAKEN_COST = {
 }
 TALENT_RUNE_MAKE_COST = {"jifen": 500_000, "exp": 500_000, "energy": 50}
 TALENT_RUNE_USE_COST = {"jifen": 100_000, "exp": 100_000, "energy": 50}
+# 飞升后经验类消耗统一改为仙元（参照觉醒：约为直接折算的 10~20 倍，避免仙元贬值）
+ASCEND_TALENT_RUNE_MAKE_COST = {"jifen": 500_000, "xianyuan": 100, "energy": 50}
+ASCEND_TALENT_RUNE_USE_COST = {"jifen": 100_000, "xianyuan": 20, "energy": 50}
 
 # ----------------------------------------------------------------------------
 # 炼丹系统：仙丹
@@ -729,6 +732,8 @@ ELIXIRS = {
 
 ELIXIR_NAMES = list(ELIXIRS.keys())
 ELIXIR_CRAFT_COST = {"exp": 200_000, "jifen": 200_000, "energy": 50}
+# 飞升后炼丹改用仙元
+ASCEND_ELIXIR_CRAFT_COST = {"xianyuan": 40, "jifen": 200_000, "energy": 50}
 
 # ----------------------------------------------------------------------------
 # 秘技系统（参悟秘技）：name -> {power, intel_req, level_req, desc}
