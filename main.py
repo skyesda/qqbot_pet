@@ -66,6 +66,25 @@ KNOWN_COMMANDS = {
     "我的信息",
     "个人信息",
     "签到",
+    "宗门签到",
+    "宗门信息",
+    "宗门名单",
+    "宗门报名",
+    "宗门战况",
+    "宗门对阵",
+    "宗门赛况",
+    "宗门战报",
+    "宗门历史",
+    "宗门倒计时",
+    "宗门排行",
+    "宗门商店",
+    "宗门兑换",
+    "宗门确认",
+    "宗门踢出",
+    "宗门公告",
+    "宗门任命副宗主",
+    "宗门撤销副宗主",
+    "宗门重选宗主",
     "兑换",
     "卡密兑换",
     "我要氪金",
@@ -276,8 +295,10 @@ KNOWN_COMMANDS = {
     "https://github.com/skyesda/qqbot_pet",
 )
 class PetParkPlugin(Star):
-    # 类级引用，用于插件重载时取消旧的后台自动修炼任务，防止多实例并行运行
+    # 类级引用，用于插件重载时取消旧的后台任务，防止多实例并行运行
     _auto_cultivation_task_ref: Any = None
+    _sect_war_task_ref: Any = None
+    _sect_daily_reset_task_ref: Any = None
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -354,6 +375,48 @@ class PetParkPlugin(Star):
         PetParkPlugin._auto_cultivation_task_ref = asyncio.create_task(
             self._auto_cultivation_loop()
         )
+        # 启动宗门战后台任务；重载插件时先取消旧任务
+        try:
+            if (
+                PetParkPlugin._sect_war_task_ref
+                and not PetParkPlugin._sect_war_task_ref.done()
+            ):
+                PetParkPlugin._sect_war_task_ref.cancel()
+        except Exception:
+            pass
+        PetParkPlugin._sect_war_task_ref = asyncio.create_task(
+            self._background_sect_war()
+        )
+        try:
+            if (
+                PetParkPlugin._sect_daily_reset_task_ref
+                and not PetParkPlugin._sect_daily_reset_task_ref.done()
+            ):
+                PetParkPlugin._sect_daily_reset_task_ref.cancel()
+        except Exception:
+            pass
+        PetParkPlugin._sect_daily_reset_task_ref = asyncio.create_task(
+            self._background_sect_daily_reset()
+        )
+
+    # 类级别后台任务引用，避免重载后并发
+    _sect_war_task_ref = None
+    _sect_daily_reset_task_ref = None
+
+    async def _background_sect_daily_reset(self) -> None:
+        """每天 00:00 执行宗门每日重置：赛季初始化、重选宗主、计算强制出战。"""
+        while True:
+            await asyncio.sleep(60)
+            now = time.localtime()
+            if now.tm_hour == 0 and now.tm_min == 0:
+                try:
+                    self._sect_ensure_season()
+                    for gid in list(self.store._data.get("groups", {}).keys()):
+                        self._sect_reset_daily(gid)
+                    await self.store.save()
+                except Exception as e:
+                    logger.exception(f"[petpark] 宗门每日重置异常：{e}")
+                await asyncio.sleep(120)
 
     def _start_web_admin(self) -> None:
         """在当前事件循环中后台启动管理网站；失败不影响插件主体。"""
@@ -1047,6 +1110,46 @@ class PetParkPlugin(Star):
         # ---- 每日签到 ----
         if cmd == "签到":
             return self._sign_in(player, group_id)
+
+        # ---- 宗门战 ----
+        if cmd == "宗门签到":
+            return self._sect_sign(player, group_id)
+        if cmd == "宗门信息":
+            return self._sect_info(player, group_id)
+        if cmd == "宗门名单":
+            return self._sect_list(group_id)
+        if cmd == "宗门报名":
+            return self._sect_enroll(player, group_id)
+        if cmd == "宗门战况":
+            return self._sect_status(group_id)
+        if cmd == "宗门对阵":
+            return self._sect_matchup(group_id)
+        if cmd == "宗门赛况":
+            return self._sect_live(group_id)
+        if cmd == "宗门战报":
+            return self._sect_battle_report(group_id)
+        if cmd == "宗门历史":
+            return self._sect_history(group_id)
+        if cmd == "宗门倒计时":
+            return self._sect_countdown(group_id)
+        if cmd == "宗门排行":
+            return self._sect_rank()
+        if cmd == "宗门商店":
+            return self._sect_shop(group_id)
+        if cmd == "宗门兑换":
+            return self._sect_buy(player, group_id, tokens)
+        if cmd == "宗门确认":
+            return self._sect_confirm_list(player, group_id)
+        if cmd == "宗门踢出":
+            return self._sect_kick_enroll(player, group_id, tokens)
+        if cmd == "宗门公告":
+            return self._sect_set_notice(player, group_id, tokens)
+        if cmd == "宗门任命副宗主":
+            return self._sect_appoint_deputy(player, group_id, tokens)
+        if cmd == "宗门撤销副宗主":
+            return self._sect_revoke_deputy(player, group_id, tokens)
+        if cmd == "宗门重选宗主":
+            return self._sect_re_elect(player, group_id)
 
         # ---- 卡密兑换 ----
         if cmd in ("兑换", "卡密兑换"):
@@ -8079,6 +8182,911 @@ class PetParkPlugin(Star):
         remain = self.store.get_ms_pending_pet_exp(qq)
         note = f"，还剩余 {remain} 点" if remain > 0 else "，已全部兑换"
         return f"🎁 扫雷经验兑换成功！当前群宠物 +{actual} 经验{note}。{self._auto_level_note(player, p)}"
+
+    # =====================================================================
+    # 宗门战 / 跨群联赛
+    # =====================================================================
+    def _sect_ensure_season(self) -> dict:
+        """确保当前赛季已初始化，返回赛季状态。"""
+        season = self.store._data.setdefault("sect_season", {})
+        now = time.localtime()
+        season_id = time.strftime("%Y-W%W", now)
+        if season.get("season_id") != season_id:
+            # 新赛季：老赛季结算已在上周日 23:59 完成，这里直接开启
+            season["season_id"] = season_id
+            season["started_at"] = int(time.time())
+            season["ended_at"] = 0
+            season["matches"] = []
+            season["rankings"] = {}
+            # 清零所有群的赛季相关数据
+            for group in self.store._data.get("groups", {}).values():
+                sect = group.setdefault("sect", self.store._default_group_sect())
+                sect["season_points"] = 0
+                sect["honor"] = 0
+                sect["win"] = 0
+                sect["lose"] = 0
+                sect["draw"] = 0
+                sect["battles"] = 0
+                for pl in self.store.all_players().values():
+                    pl.setdefault("sect", self.store._default_player_sect())
+                    pl["sect"]["season_contribution"] = 0
+                    pl["sect"]["wins"] = 0
+                    pl["sect"]["battles"] = 0
+        return season
+
+    @staticmethod
+    def _sect_ensure_today(sect: dict) -> None:
+        """确保 sect['today'] 是今天的数据。"""
+        today = time.strftime("%Y-%m-%d")
+        if sect.get("today", {}).get("date") != today:
+            sect["today"] = {
+                "date": today,
+                "enroll": [],
+                "forced": [],
+                "confirmed": [],
+                "signed": [],
+            }
+
+    def _sect_inc_active(self, player: dict, score: int) -> None:
+        """增加玩家活跃度。"""
+        psect = player.setdefault("sect", self.store._default_player_sect())
+        psect["active_score"] = psect.get("active_score", 0) + score
+        psect["last_active_at"] = int(time.time())
+
+    def _sect_is_master_or_deputy(self, player: dict, group_id: str) -> bool:
+        """判断玩家是否为当前群宗主或副宗主。"""
+        group = self.store.get_group(group_id)
+        sect = group.get("sect", {})
+        qq = str(player.get("qq", ""))
+        if qq == sect.get("master_qq", ""):
+            return True
+        if qq in sect.get("deputy_qqs", []):
+            return True
+        return False
+
+    def _sect_elect_master(self, group_id: str) -> dict | None:
+        """选举宗主：活跃玩家中战力最高者。"""
+        now = int(time.time())
+        week_ago = now - 7 * 86400
+        candidates = []
+        for pl in self.store.players_in_group(group_id).values():
+            pet = pl.get("pet")
+            if not pet or petmod.is_dead(pet):
+                continue
+            psect = pl.setdefault("sect", self.store._default_player_sect())
+            if psect.get("last_active_at", 0) < week_ago and psect.get("active_score", 0) == 0:
+                continue
+            candidates.append({
+                "qq": pl["qq"],
+                "player": pl,
+                "bp": petmod.battle_power(pet),
+                "active": psect.get("active_score", 0),
+            })
+        if not candidates:
+            return None
+        # 先按活跃度，再按战力
+        candidates.sort(key=lambda x: (x["active"], x["bp"]), reverse=True)
+        return candidates[0]["player"]
+
+    def _sect_today_forced(self, group_id: str) -> list[dict]:
+        """计算本群今日强制出战前三。"""
+        pets = []
+        for pl in self.store.players_in_group(group_id).values():
+            pet = pl.get("pet")
+            if not pet or petmod.is_dead(pet):
+                continue
+            pets.append({
+                "qq": pl["qq"],
+                "pet_name": pet["nickname"],
+                "nickname": pet["nickname"],
+                "bp": petmod.battle_power(pet),
+                "element": pet.get("element", ""),
+            })
+        pets.sort(key=lambda x: x["bp"], reverse=True)
+        return pets[:data.SECT_FORCED_COUNT]
+
+    def _sect_reset_daily(self, group_id: str) -> None:
+        """每天重置宗门今日数据并重新选举宗主、计算强制出战。"""
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        # 选举宗主
+        master = self._sect_elect_master(group_id)
+        if master:
+            sect["master_qq"] = master["qq"]
+        # 计算强制出战
+        sect["today"]["forced"] = self._sect_today_forced(group_id)
+        # 宗门名默认用群号
+        if not sect.get("name"):
+            sect["name"] = str(group_id)
+
+    def _sect_auto_confirm(self, group_id: str) -> None:
+        """如果宗主未确认，自动从报名中取战力前 7 组成确认名单。"""
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        if sect["today"]["confirmed"]:
+            return
+        forced = sect["today"]["forced"]
+        enroll = sorted(sect["today"]["enroll"], key=lambda x: x["bp"], reverse=True)
+        selected = enroll[:data.SECT_ENROLL_COUNT]
+        confirmed = []
+        for f in forced:
+            confirmed.append({**f, "kind": "强制"})
+        for e in selected:
+            confirmed.append({**e, "kind": "报名"})
+        sect["today"]["confirmed"] = confirmed
+
+    def _sect_enroll(self, player: dict, group_id: str) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你没有宠物。"
+        busy = self._busy_reason(p)
+        if busy:
+            return busy
+        now = time.localtime()
+        if now.tm_hour > data.SECT_ENROLL_DEADLINE_HOUR or (
+            now.tm_hour == data.SECT_ENROLL_DEADLINE_HOUR
+            and now.tm_min >= data.SECT_ENROLL_DEADLINE_MIN
+        ):
+            return "今日报名已截止（20:30 截止），请明天再来。"
+
+        self._sect_ensure_season()
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+
+        forced_qqs = {x["qq"] for x in sect["today"]["forced"]}
+        if player["qq"] in forced_qqs:
+            return "你已在今日强制出战名单中，无需报名。"
+
+        enroll = [e for e in sect["today"]["enroll"] if e["qq"] != player["qq"]]
+        if len(enroll) >= data.SECT_ENROLL_COUNT:
+            return f"今日报名名额已满（{data.SECT_ENROLL_COUNT}/{data.SECT_ENROLL_COUNT}），请明天再来。"
+
+        enroll.append({
+            "qq": player["qq"],
+            "nickname": player["qq"],
+            "pet_name": p["nickname"],
+            "bp": petmod.battle_power(p),
+            "element": p.get("element", ""),
+            "enrolled_at": int(time.time()),
+        })
+        sect["today"]["enroll"] = enroll
+        self._sect_inc_active(player, 1)
+        return (
+            f"## 🏯 宗门报名成功\n"
+            f"● 你的『{p['nickname']}』已加入报名队列（{len(enroll)}/{data.SECT_ENROLL_COUNT}）\n"
+            f"● 宗主将在 20:30 前确认最终出战名单。"
+        )
+
+    def _sect_confirm_list(self, player: dict, group_id: str) -> str:
+        if not self._sect_is_master_or_deputy(player, group_id):
+            return "仅宗主或副宗主可确认出战名单。"
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        now = time.localtime()
+        if now.tm_hour > data.SECT_ENROLL_DEADLINE_HOUR or (
+            now.tm_hour == data.SECT_ENROLL_DEADLINE_HOUR
+            and now.tm_min >= data.SECT_ENROLL_DEADLINE_MIN
+        ):
+            return "名单已锁定（20:30 后不可修改）。"
+
+        self._sect_auto_confirm(group_id)
+        return self._sect_format_confirmed(sect["today"]["confirmed"])
+
+    def _sect_kick_enroll(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        if not self._sect_is_master_or_deputy(player, group_id):
+            return "仅宗主或副宗主可管理报名列表。"
+        target = self._arg(tokens, 1)
+        if not target:
+            return "用法：宗门踢出 用户ID"
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        enroll = sect["today"]["enroll"]
+        new_enroll = [e for e in enroll if e["qq"] != target]
+        if len(new_enroll) == len(enroll):
+            return f"用户 `{target}` 不在今日报名列表中。"
+        sect["today"]["enroll"] = new_enroll
+        # 如果已确认，也移除
+        sect["today"]["confirmed"] = [
+            c for c in sect["today"]["confirmed"] if c["qq"] != target
+        ]
+        return f"已将 `{target}` 从今日报名列表中踢出。"
+
+    def _sect_set_notice(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        if not self._sect_is_master_or_deputy(player, group_id):
+            return "仅宗主或副宗主可设置公告。"
+        notice = " ".join(tokens[1:])
+        if not notice:
+            return "用法：宗门公告 内容"
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        sect["notice"] = notice[:200]
+        return f"🏯 宗门公告已更新：\n> {sect['notice']}"
+
+    def _sect_appoint_deputy(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        if player["qq"] != sect.get("master_qq", ""):
+            return "仅宗主可任命副宗主。"
+        target = self._arg(tokens, 1)
+        if not target:
+            return "用法：宗门任命副宗主 用户ID"
+        if target == player["qq"]:
+            return "不能任命自己。"
+        tp = self.store.get_player(target, group_id, create=False)
+        if not tp:
+            return f"用户 `{target}` 不在本群。"
+        deputies = sect.setdefault("deputy_qqs", [])
+        if target in deputies:
+            return "该用户已是副宗主。"
+        if len(deputies) >= data.SECT_MAX_DEPUTIES:
+            return f"副宗主最多 {data.SECT_MAX_DEPUTIES} 人。"
+        deputies.append(target)
+        return f"已任命 `{target}` 为副宗主。"
+
+    def _sect_revoke_deputy(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        if player["qq"] != sect.get("master_qq", ""):
+            return "仅宗主可撤销副宗主。"
+        target = self._arg(tokens, 1)
+        if not target:
+            return "用法：宗门撤销副宗主 用户ID"
+        deputies = sect.setdefault("deputy_qqs", [])
+        if target not in deputies:
+            return "该用户不是副宗主。"
+        deputies.remove(target)
+        return f"已撤销 `{target}` 的副宗主职位。"
+
+    def _sect_re_elect(self, player: dict, group_id: str) -> str:
+        if not self._sect_is_master_or_deputy(player, group_id):
+            return "仅宗主或副宗主可发起重选。"
+        master = self._sect_elect_master(group_id)
+        if not master:
+            return "本群暂无符合条件的宗主候选人（需有存活宠物且近 7 天活跃）。"
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        old = sect.get("master_qq", "")
+        sect["master_qq"] = master["qq"]
+        return (
+            f"🏯 宗主重选完成\n"
+            f"● 原宗主：`{old or '无'}`\n"
+            f"● 新宗主：`{master['qq']}`（活跃优先，战力最高）"
+        )
+
+    def _sect_sign(self, player: dict, group_id: str) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        if player["qq"] in sect["today"]["signed"]:
+            return "你今天已经宗门签到过了。"
+        sect["today"]["signed"].append(player["qq"])
+        self._sect_give_points(group_id, data.SECT_SIGN_POINTS)
+        self._sect_inc_active(player, 1)
+        return f"🏯 宗门签到成功，宗门积分 +{data.SECT_SIGN_POINTS}！"
+
+    def _sect_give_points(self, group_id: str, points: int) -> None:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        sect["points"] = sect.get("points", 0) + points
+        sect["season_points"] = sect.get("season_points", 0) + points
+        sect["exp"] = sect.get("exp", 0) + points
+        # 检查宗门升级
+        while True:
+            lvl = sect.get("level", 1)
+            need = data.SECT_LEVEL_EXP.get(lvl + 1)
+            if need is None or sect["exp"] < need:
+                break
+            sect["level"] = lvl + 1
+
+    def _sect_format_confirmed(self, confirmed: list[dict]) -> str:
+        lines = [f"## 🏯 已确认出战名单（{len(confirmed)}/{data.SECT_TEAM_SIZE}）"]
+        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 类型 |")
+        lines.append("|---|---|---|---|---|")
+        for i, e in enumerate(confirmed, 1):
+            lines.append(
+                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname', '-'))} | "
+                f"{self._fmt_power(e['bp'])} | {e.get('kind', '-')} |"
+            )
+        return "\n".join(lines)
+
+    def _sect_info(self, player: dict, group_id: str) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        lines = [
+            "## 🏯 宗门信息",
+            "| 项目 | 数值 |",
+            "|---|---|",
+            f"| 宗门名 | {sect.get('name', group_id)} |",
+            f"| 宗门等级 | Lv{sect.get('level', 1)} |",
+            f"| 宗门积分 | {sect.get('points', 0)} |",
+            f"| 本赛季积分 | {sect.get('season_points', 0)} |",
+            f"| 胜/平/败 | {sect.get('win',0)} / {sect.get('draw',0)} / {sect.get('lose',0)} |",
+            f"| 宗主 | `{sect.get('master_qq','未选举')}` |",
+            f"| 副宗主 | {', '.join(f'`{q}`' for q in sect.get('deputy_qqs',[])) or '无'} |",
+            f"| 公告 | {sect.get('notice','暂无公告')} |",
+        ]
+        return "\n".join(lines)
+
+    def _sect_list(self, group_id: str) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        forced = sect["today"]["forced"]
+        enroll = sect["today"]["enroll"]
+        confirmed = sect["today"]["confirmed"]
+
+        lines = [
+            "## 🏯 今日宗门出战名单",
+            f"**宗主**：`{sect.get('master_qq','未选举')}`",
+            f"**副宗主**：{', '.join(f'`{q}`' for q in sect.get('deputy_qqs',[])) or '无'}",
+            f"**宗门公告**：{sect.get('notice','暂无公告')}",
+            "",
+        ]
+        lines.append(f"### 强制出战（{len(forced)}/{data.SECT_FORCED_COUNT}）")
+        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 状态 |")
+        lines.append("|---|---|---|---|---|")
+        for i, e in enumerate(forced, 1):
+            lines.append(
+                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname','-'))} | "
+                f"{self._fmt_power(e['bp'])} | 强制 |"
+            )
+
+        lines.append(f"\n### 报名出战（{len(enroll)}/{data.SECT_ENROLL_COUNT}）")
+        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 报名时间 |")
+        lines.append("|---|---|---|---|---|")
+        for i, e in enumerate(enroll, 1):
+            t = time.strftime("%H:%M", time.localtime(e.get("enrolled_at", 0)))
+            lines.append(
+                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname','-'))} | "
+                f"{self._fmt_power(e['bp'])} | {t} |"
+            )
+
+        lines.append(f"\n### 已确认出战（{len(confirmed)}/{data.SECT_TEAM_SIZE}）")
+        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 类型 |")
+        lines.append("|---|---|---|---|---|")
+        for i, e in enumerate(confirmed, 1):
+            lines.append(
+                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname','-'))} | "
+                f"{self._fmt_power(e['bp'])} | {e.get('kind','-')} |"
+            )
+        return "\n".join(lines)
+
+    def _sect_status(self, group_id: str) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        now_ts = int(time.time())
+        now = time.localtime()
+        deadline_ts = int(time.mktime((
+            now.tm_year, now.tm_mon, now.tm_mday,
+            data.SECT_ENROLL_DEADLINE_HOUR, data.SECT_ENROLL_DEADLINE_MIN, 0,
+            0, 0, -1
+        )))
+        battle_ts = int(time.mktime((
+            now.tm_year, now.tm_mon, now.tm_mday, data.SECT_BATTLE_TIME, 0, 0,
+            0, 0, -1
+        )))
+
+        if now_ts < deadline_ts:
+            phase = "报名中"
+        elif now_ts < battle_ts:
+            phase = "公示期"
+        else:
+            phase = "已结束"
+
+        season = self.store._data.get("sect_season", {})
+        today = time.strftime("%Y-%m-%d")
+        opponent = None
+        result = None
+        my_score = opp_score = 0
+        for m in season.get("matches", []):
+            if m.get("date") != today:
+                continue
+            if m["group_a"] == group_id:
+                opponent = m["group_b"]
+                my_score = m.get("a_wins", 0)
+                opp_score = m.get("b_wins", 0)
+                break
+            if m["group_b"] == group_id:
+                opponent = m["group_a"]
+                my_score = m.get("b_wins", 0)
+                opp_score = m.get("a_wins", 0)
+                break
+
+        confirmed = sect["today"]["confirmed"]
+        my_bp = sum(x["bp"] for x in confirmed)
+
+        lines = ["## 🏯 宗门战况"]
+        lines.append("| 项目 | 状态 |")
+        lines.append("|---|---|")
+        lines.append(f"| 当前阶段 | {phase} |")
+        lines.append(f"| 开战时间 | {data.SECT_BATTLE_TIME:02d}:00 |")
+        lines.append(f"| 本群报名 | {len(sect['today']['enroll'])} / {data.SECT_ENROLL_COUNT} |")
+        lines.append(f"| 强制出战 | {len(sect['today']['forced'])} / {data.SECT_FORCED_COUNT} |")
+        lines.append(f"| 已确认出战 | {len(confirmed)} / {data.SECT_TEAM_SIZE} |")
+        lines.append(f"| 当前宗主 | `{sect.get('master_qq','未选举')}` |")
+
+        if opponent:
+            lines.append(f"| 对手 | `{opponent}` |")
+            lines.append(f"| 我方战力 | 约 {self._fmt_power(my_bp)} |")
+            if phase == "已结束":
+                if my_score > opp_score:
+                    rtxt = "🏆 胜利"
+                elif my_score < opp_score:
+                    rtxt = "❌ 失败"
+                else:
+                    rtxt = "🤝 平局"
+                lines.append(f"| 本轮结果 | {rtxt} |")
+                lines.append(f"| 比分 | {my_score} : {opp_score} |")
+        else:
+            lines.append(f"| 对手 | 尚未匹配 |")
+
+        return "\n".join(lines)
+
+    def _sect_countdown(self, group_id: str) -> str:
+        now = time.localtime()
+        now_ts = int(time.time())
+        battle_ts = int(time.mktime((
+            now.tm_year, now.tm_mon, now.tm_mday, data.SECT_BATTLE_TIME, 0, 0,
+            0, 0, -1
+        )))
+        if now_ts >= battle_ts:
+            return "今日宗门战已结束，下一场将于明日 21:00 开启。"
+        remain = battle_ts - now_ts
+        return (
+            f"## ⏳ 宗门战倒计时\n"
+            f"距离今日 {data.SECT_BATTLE_TIME:02d}:00 宗门战开战还有："
+            f"`{self._fmt_duration(remain)}`"
+        )
+
+    def _sect_matchup(self, group_id: str) -> str:
+        season = self.store._data.get("sect_season", {})
+        today = time.strftime("%Y-%m-%d")
+        match = None
+        for m in season.get("matches", []):
+            if m.get("date") == today and group_id in (m["group_a"], m["group_b"]):
+                match = m
+                break
+        if not match:
+            return "今日尚未匹配对手，请稍后再试。"
+
+        my_side = "A" if match["group_a"] == group_id else "B"
+        opp_side = "B" if my_side == "A" else "A"
+        my_name = self.store.get_group(match[f"group_{my_side.lower()}"]).get("sect", {}).get("name", match[f"group_{my_side.lower()}"])
+        opp_name = self.store.get_group(match[f"group_{opp_side.lower()}"]).get("sect", {}).get("name", match[f"group_{opp_side.lower()}"])
+
+        lines = ["## 🏯 今日宗门对阵", f"**{my_name}** vs **{opp_name}**\n"]
+        lines.append("| 轮次 | 我方 | 战力 | 敌方 | 战力 | 结果 |")
+        lines.append("|---|---|---|---|---|---|")
+        for r in match.get("rounds", []):
+            my_pet = r[my_side.lower()]
+            opp_pet = r[opp_side.lower()]
+            if r["winner"] == my_side:
+                result = "✅ 胜"
+            elif r["winner"] == opp_side:
+                result = "❌ 败"
+            else:
+                result = "—"
+            lines.append(
+                f"| {r['round']} | {my_pet.get('pet_name', my_pet.get('nickname','-'))}（`{my_pet['qq']}`） | "
+                f"{self._fmt_power(my_pet['bp'])} | "
+                f"{opp_pet.get('pet_name', opp_pet.get('nickname','-'))}（`{opp_pet['qq']}`） | "
+                f"{self._fmt_power(opp_pet['bp'])} | {result} |"
+            )
+        lines.append(
+            f"\n**最终结果**：{my_name} {match.get('a_wins',0)} : {match.get('b_wins',0)} {opp_name}"
+        )
+        return "\n".join(lines)
+
+    def _sect_live(self, group_id: str) -> str:
+        season = self.store._data.get("sect_season", {})
+        today = time.strftime("%Y-%m-%d")
+        match = None
+        for m in season.get("matches", []):
+            if m.get("date") == today and group_id in (m["group_a"], m["group_b"]):
+                match = m
+                break
+        if not match:
+            return "今日比赛尚未开始或已结束。"
+        rounds = match.get("rounds", [])
+        if not rounds:
+            return "比赛正在进行匹配..."
+        lines = ["## ⚔️ 宗门赛况"]
+        lines.append(f"当前轮次：第 {len(rounds)} 轮")
+        lines.append(f"比分：{match.get('a_wins',0)} : {match.get('b_wins',0)}")
+        lines.append("\n| 轮次 | 胜者 | 胜方宠物 | 败方宠物 |")
+        lines.append("|---|---|---|---|")
+        for r in rounds:
+            winner_qq = r[r["winner"].lower()]["qq"]
+            winner_pet = r[r["winner"].lower()].get("pet_name", r[r["winner"].lower()].get("nickname", "-"))
+            loser_side = "B" if r["winner"] == "A" else "A"
+            loser_pet = r[loser_side.lower()].get("pet_name", r[loser_side.lower()].get("nickname", "-"))
+            lines.append(f"| {r['round']} | `{winner_qq}` | {winner_pet} | {loser_pet} |")
+        return "\n".join(lines)
+
+    def _sect_battle_report(self, group_id: str) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        history = sect.get("history", [])
+        if not history:
+            return "暂无宗门战报。"
+        last = history[-1]
+        lines = [
+            "## 📜 宗门战报",
+            f"**比赛时间**：{time.strftime('%Y-%m-%d %H:%M', time.localtime(last.get('time',0)))}",
+            f"**对阵**：{last.get('my_name', group_id)} vs {last.get('opponent_name', '-')}",
+            f"**结果**：{last.get('result_text', '-')}（{last.get('my_wins',0)} : {last.get('opp_wins',0)}）",
+            f"**获得宗门积分**：+{last.get('points',0)}",
+            "",
+            "| 排名 | 玩家 | 宠物 | 战力 | 贡献 |",
+            "|---|---|---|---|---|",
+        ]
+        for i, c in enumerate(last.get("top_contributors", []), 1):
+            lines.append(
+                f"| {i} | `{c['qq']}` | {c.get('pet_name','-')} | "
+                f"{self._fmt_power(c.get('bp',0))} | {c.get('contrib',0)} |"
+            )
+        return "\n".join(lines)
+
+    def _sect_history(self, group_id: str) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        history = sect.get("history", [])
+        if not history:
+            return "本赛季暂无宗门战记录。"
+        lines = ["## 📚 宗门战历史"]
+        lines.append("| 日期 | 对手 | 结果 | 比分 | 积分 |")
+        lines.append("|---|---|---|---|---|")
+        for h in history[-20:]:
+            date = time.strftime("%m-%d", time.localtime(h.get("time", 0)))
+            opp = h.get("opponent_name", h.get("opponent", "-"))
+            result = h.get("result_text", "-")
+            score = f"{h.get('my_wins',0)}:{h.get('opp_wins',0)}"
+            points = h.get("points", 0)
+            lines.append(f"| {date} | {opp} | {result} | {score} | +{points} |")
+        return "\n".join(lines)
+
+    def _sect_rank(self) -> str:
+        groups = self.store._data.get("groups", {})
+        entries = []
+        for gid, g in groups.items():
+            if not g.get("cross"):
+                continue
+            sect = g.get("sect", {})
+            if not sect.get("enabled", True):
+                continue
+            score = sect.get("season_points", 0) * 10 + sect.get("win", 0) * 100
+            entries.append((gid, sect, score))
+        entries.sort(key=lambda x: x[2], reverse=True)
+
+        lines = ["## 🏯 宗门排行榜"]
+        lines.append("| 排名 | 宗门 | 等级 | 积分 | 胜/平/败 | 宗主 |")
+        lines.append("|---|---|---|---|---|---|")
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        for i, (gid, sect, score) in enumerate(entries[:20], 1):
+            name = sect.get("name", gid)
+            lines.append(
+                f"| {medals.get(i, i)} | {name} | Lv{sect.get('level',1)} | "
+                f"{sect.get('season_points',0)} | "
+                f"{sect.get('win',0)}/{sect.get('draw',0)}/{sect.get('lose',0)} | "
+                f"`{sect.get('master_qq','-')}` |"
+            )
+        return "\n".join(lines)
+
+    def _sect_shop(self, group_id: str) -> str:
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        points = sect.get("points", 0)
+        lines = [f"## 🏯 宗门商店（当前宗门积分：{points}）", ""]
+        lines.append("| 商品 | 宗门积分 | 类型 |")
+        lines.append("|---|---|---|")
+        for name, cfg in data.SECT_SHOP.items():
+            kind = "道具" if "item" in cfg else "货币"
+            lines.append(f"| {name} | {cfg['points']} | {kind} |")
+        lines.append("\n> 用法：`宗门兑换 商品名`\n> 仅宗主/副宗主可花费宗门积分。")
+        return "\n".join(lines)
+
+    def _sect_buy(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        if not self._sect_is_master_or_deputy(player, group_id):
+            return "仅宗主或副宗主可花费宗门积分。"
+        if len(tokens) < 2:
+            return "用法：宗门兑换 商品名"
+        name = tokens[1]
+        if name not in data.SECT_SHOP:
+            return f"商品『{name}』不存在。"
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        cfg = data.SECT_SHOP[name]
+        if sect.get("points", 0) < cfg["points"]:
+            return f"宗门积分不足（需要 {cfg['points']}，当前 {sect['points']}）。"
+        sect["points"] = sect.get("points", 0) - cfg["points"]
+        if "item" in cfg:
+            self.store.add_item(player, cfg["item"], cfg.get("count", 1))
+            return f"🏯 宗门兑换成功，获得 {cfg['item']} ×{cfg.get('count',1)}。"
+        if "currency" in cfg:
+            self.store.add_currency(player, cfg["currency"], cfg["amount"])
+            return f"🏯 宗门兑换成功，获得 {cfg['currency']} +{cfg['amount']}。"
+        return "兑换异常。"
+
+    def _sect_calc_power(self, group_id: str) -> int:
+        """计算本群已确认出战队伍的总战力。"""
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        confirmed = sect.get("today", {}).get("confirmed", [])
+        return sum(x["bp"] for x in confirmed)
+
+    # ---------------------------------------------------------------------
+    # 宗门战：匹配、战斗、结算、广播
+    # ---------------------------------------------------------------------
+    def _sect_match_making(self) -> list[tuple[str, str]]:
+        """按已确认队伍战力排序，相邻配对。"""
+        groups = self.store._data.get("groups", {})
+        candidates = []
+        for gid, g in groups.items():
+            if not g.get("enabled") or not g.get("cross"):
+                continue
+            sect = g.get("sect", {})
+            if not sect.get("enabled", True):
+                continue
+            confirmed = sect.get("today", {}).get("confirmed", [])
+            if len(confirmed) < data.SECT_MIN_BATTLE_MEMBERS:
+                continue
+            total_bp = sum(x["bp"] for x in confirmed)
+            candidates.append((gid, total_bp))
+        candidates.sort(key=lambda x: x[1])
+        matches = []
+        for i in range(0, len(candidates) - 1, 2):
+            matches.append((candidates[i][0], candidates[i + 1][0]))
+        return matches
+
+    def _sect_battle(self, group_a: str, group_b: str) -> dict:
+        """两个宗门车轮战。"""
+        today = time.strftime("%Y-%m-%d")
+        ga = self.store.get_group(group_a)
+        gb = self.store.get_group(group_b)
+        a_team = list(ga.get("sect", {}).get("today", {}).get("confirmed", []))
+        b_team = list(gb.get("sect", {}).get("today", {}).get("confirmed", []))
+        a_team.sort(key=lambda x: x["bp"], reverse=True)
+        b_team.sort(key=lambda x: x["bp"], reverse=True)
+
+        a_idx = b_idx = 0
+        a_wins = b_wins = 0
+        rounds = []
+        max_rounds = data.SECT_TEAM_SIZE * 2
+
+        for round_num in range(1, max_rounds + 1):
+            if a_idx >= len(a_team) or b_idx >= len(b_team):
+                break
+            a_pet = a_team[a_idx]
+            b_pet = b_team[b_idx]
+            a_eff = int(a_pet["bp"] * random.uniform(0.9, 1.1))
+            b_eff = int(b_pet["bp"] * random.uniform(0.9, 1.1))
+            # 属性克制
+            if data.restrains(a_pet.get("element", ""), b_pet.get("element", "")):
+                a_eff = int(a_eff * 1.2)
+            if data.restrains(b_pet.get("element", ""), a_pet.get("element", "")):
+                b_eff = int(b_eff * 1.2)
+
+            if a_eff >= b_eff:
+                winner = "A"
+                a_wins += 1
+                b_idx += 1
+            else:
+                winner = "B"
+                b_wins += 1
+                a_idx += 1
+
+            rounds.append({
+                "round": round_num,
+                "a": a_pet,
+                "b": b_pet,
+                "winner": winner,
+                "a_eff": a_eff,
+                "b_eff": b_eff,
+            })
+
+        if a_wins > b_wins:
+            winner_id = group_a
+        elif b_wins > a_wins:
+            winner_id = group_b
+        else:
+            winner_id = "draw"
+
+        return {
+            "date": today,
+            "time": int(time.time()),
+            "group_a": group_a,
+            "group_b": group_b,
+            "a_wins": a_wins,
+            "b_wins": b_wins,
+            "winner": winner_id,
+            "rounds": rounds,
+        }
+
+    def _sect_settle_match(self, result: dict) -> None:
+        g1, g2 = result["group_a"], result["group_b"]
+        winner = result["winner"]
+        today = result["date"]
+
+        # 宗门积分
+        if winner == "draw":
+            self._sect_give_points(g1, data.SECT_DRAW_POINTS)
+            self._sect_give_points(g2, data.SECT_DRAW_POINTS)
+            points_a = points_b = data.SECT_DRAW_POINTS
+        else:
+            self._sect_give_points(winner, data.SECT_WIN_POINTS)
+            loser = g2 if winner == g1 else g1
+            self._sect_give_points(loser, data.SECT_LOSE_POINTS)
+            points_a = data.SECT_WIN_POINTS if winner == g1 else data.SECT_LOSE_POINTS
+            points_b = data.SECT_WIN_POINTS if winner == g2 else data.SECT_LOSE_POINTS
+
+        # 宗门胜负记录
+        for gid, is_a in ((g1, True), (g2, False)):
+            group = self.store.get_group(gid)
+            sect = group.setdefault("sect", self.store._default_group_sect())
+            sect["battles"] = sect.get("battles", 0) + 1
+            my_wins = result["a_wins"] if is_a else result["b_wins"]
+            opp_wins = result["b_wins"] if is_a else result["a_wins"]
+            if winner == "draw":
+                sect["draw"] = sect.get("draw", 0) + 1
+            elif (winner == g1 and is_a) or (winner == g2 and not is_a):
+                sect["win"] = sect.get("win", 0) + 1
+            else:
+                sect["lose"] = sect.get("lose", 0) + 1
+
+        # 个人奖励、贡献、活跃
+        contributors = {g1: [], g2: []}
+        for side, gid in (("A", g1), ("B", g2)):
+            is_winner = (winner == gid) if winner != "draw" else False
+            is_draw = winner == "draw"
+            for r in result.get("rounds", []):
+                if r["winner"] != side:
+                    continue
+                qq = r[side.lower()]["qq"]
+                player = self.store.get_player(qq, gid, create=False)
+                if not player:
+                    continue
+                bp = r[side.lower()]["bp"]
+                contrib = int(bp / 10000) + 50
+                psect = player.setdefault("sect", self.store._default_player_sect())
+                psect["contribution"] = psect.get("contribution", 0) + contrib
+                psect["season_contribution"] = psect.get("season_contribution", 0) + contrib
+                psect["wins"] = psect.get("wins", 0) + 1
+                psect["battles"] = psect.get("battles", 0) + 1
+                psect["last_battle"] = int(time.time())
+                self._sect_inc_active(player, 5 if is_winner else 2)
+
+                if is_winner:
+                    self.store.add_currency(player, "积分", data.SECT_WIN_JIFEN)
+                    self.store.add_currency(player, "金币", data.SECT_WIN_COIN)
+                elif is_draw:
+                    self.store.add_currency(player, "积分", data.SECT_DRAW_JIFEN)
+                    self.store.add_currency(player, "金币", data.SECT_DRAW_COIN)
+                else:
+                    self.store.add_currency(player, "积分", data.SECT_LOSE_JIFEN)
+                    self.store.add_currency(player, "金币", data.SECT_LOSE_COIN)
+
+                contributors[gid].append({
+                    "qq": qq,
+                    "pet_name": r[side.lower()].get("pet_name", "-"),
+                    "bp": bp,
+                    "contrib": contrib,
+                })
+
+        # 写入历史
+        self._sect_record_history(result, contributors, points_a, points_b)
+
+    def _sect_record_history(
+        self,
+        result: dict,
+        contributors: dict[str, list[dict]],
+        points_a: int,
+        points_b: int,
+    ) -> None:
+        g1, g2 = result["group_a"], result["group_b"]
+        winner = result["winner"]
+        for gid, is_a in ((g1, True), (g2, False)):
+            group = self.store.get_group(gid)
+            sect = group.setdefault("sect", self.store._default_group_sect())
+            my_wins = result["a_wins"] if is_a else result["b_wins"]
+            opp_wins = result["b_wins"] if is_a else result["a_wins"]
+            opp_gid = g2 if is_a else g1
+            opp_name = self.store.get_group(opp_gid).get("sect", {}).get("name", opp_gid)
+            if winner == "draw":
+                rtxt = "🤝 平局"
+            elif (winner == g1 and is_a) or (winner == g2 and not is_a):
+                rtxt = "🏆 胜利"
+            else:
+                rtxt = "❌ 失败"
+            top = sorted(contributors.get(gid, []), key=lambda x: x["contrib"], reverse=True)[:5]
+            hist = {
+                "time": result["time"],
+                "opponent": opp_gid,
+                "opponent_name": opp_name,
+                "result_text": rtxt,
+                "my_wins": my_wins,
+                "opp_wins": opp_wins,
+                "points": points_a if is_a else points_b,
+                "top_contributors": top,
+            }
+            sect.setdefault("history", []).append(hist)
+
+    def _sect_announce_result(self, result: dict) -> None:
+        g1_name = self.store.get_group(result["group_a"]).get("sect", {}).get("name", result["group_a"])
+        g2_name = self.store.get_group(result["group_b"]).get("sect", {}).get("name", result["group_b"])
+        winner = result["winner"]
+        if winner == "draw":
+            rtxt = "🤝 平局"
+        else:
+            wname = g1_name if winner == result["group_a"] else g2_name
+            rtxt = f"🏆 胜方：`{wname}`"
+        text = (
+            f"## 🏯 宗门战结算\n"
+            f"**{g1_name}** vs **{g2_name}**\n"
+            f"比分：{result['a_wins']} : {result['b_wins']}\n"
+            f"{rtxt}\n"
+            f"> 参战成员已发放积分/金币奖励，发送 `宗门战报` 查看详情。"
+        )
+        self._broadcast_to_authorized_groups(text)
+
+    def _sect_handle_bye(self) -> None:
+        """处理轮空：本可参战但未匹配到对手的宗门给予少量积分。"""
+        season = self.store._data.get("sect_season", {})
+        today = time.strftime("%Y-%m-%d")
+        matched = set()
+        for m in season.get("matches", []):
+            if m.get("date") == today:
+                matched.add(m["group_a"])
+                matched.add(m["group_b"])
+        for gid, g in self.store._data.get("groups", {}).items():
+            if not g.get("enabled") or not g.get("cross"):
+                continue
+            sect = g.get("sect", {})
+            if not sect.get("enabled", True):
+                continue
+            if gid in matched:
+                continue
+            confirmed = sect.get("today", {}).get("confirmed", [])
+            if len(confirmed) >= data.SECT_MIN_BATTLE_MEMBERS:
+                self._sect_give_points(gid, data.SECT_BYE_POINTS)
+
+    def _sect_run_war(self) -> None:
+        """每日宗门战主入口：确认名单、匹配、战斗、结算、广播、轮空。"""
+        today = time.strftime("%Y-%m-%d")
+        self._sect_ensure_season()
+        # 为所有群自动确认名单
+        for gid in list(self.store._data.get("groups", {}).keys()):
+            self._sect_auto_confirm(gid)
+        # 匹配并战斗
+        matches = self._sect_match_making()
+        season = self.store._data.setdefault("sect_season", self.store._default_sect_season())
+        for g1, g2 in matches:
+            result = self._sect_battle(g1, g2)
+            self._sect_settle_match(result)
+            season.setdefault("matches", []).append(result)
+            self._sect_announce_result(result)
+        # 轮空
+        self._sect_handle_bye()
+
+    async def _background_sect_war(self) -> None:
+        """后台定时任务：每天 21:00 执行宗门战。"""
+        while True:
+            await asyncio.sleep(60)
+            now = time.localtime()
+            if now.tm_hour == data.SECT_BATTLE_TIME and now.tm_min == 0:
+                try:
+                    self._sect_run_war()
+                    await self.store.save()
+                except Exception as e:
+                    logger.exception(f"[petpark] 宗门战每日结算异常：{e}")
+                # 避免同一分钟内重复执行
+                await asyncio.sleep(120)
 
     # =====================================================================
     # 婚恋

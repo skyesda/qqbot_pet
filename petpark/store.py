@@ -76,6 +76,7 @@ class PetStore:
         self._data.setdefault("portal_secret", "".join(random.choices("abcdef0123456789", k=32)))
         self._data.setdefault("tomb_players", {})
         self._data.setdefault("ms_players", {})
+        self._data.setdefault("sect_season", self._default_sect_season())
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
 
@@ -101,6 +102,58 @@ class PetStore:
             migrated[self.make_key(gid, qq)] = pl
         if changed:
             self._data["players"] = migrated
+
+    @staticmethod
+    def _default_sect_season() -> dict:
+        """宗门战赛季全局状态默认值。"""
+        return {
+            "season_id": "",
+            "started_at": 0,
+            "ended_at": 0,
+            "matches": [],
+            "rankings": {},
+        }
+
+    @staticmethod
+    def _default_group_sect() -> dict:
+        """单个群的宗门数据默认值。"""
+        return {
+            "enabled": True,
+            "name": "",
+            "level": 1,
+            "exp": 0,
+            "points": 0,
+            "season_points": 0,
+            "win": 0,
+            "lose": 0,
+            "draw": 0,
+            "battles": 0,
+            "honor": 0,
+            "notice": "",
+            "master_qq": "",
+            "deputy_qqs": [],
+            "today": {
+                "date": "",
+                "enroll": [],
+                "forced": [],
+                "confirmed": [],
+                "signed": [],
+            },
+            "history": [],
+        }
+
+    @staticmethod
+    def _default_player_sect() -> dict:
+        """玩家宗门相关数据默认值。"""
+        return {
+            "contribution": 0,
+            "season_contribution": 0,
+            "wins": 0,
+            "battles": 0,
+            "last_battle": 0,
+            "active_score": 0,
+            "last_active_at": 0,
+        }
 
     @staticmethod
     def _default_tomb_state() -> dict:
@@ -198,10 +251,15 @@ class PetStore:
                 "abyss_crystal": 0,
                 "abyss_last_decay": 0,
                 "abyss_last_reset": "",
+                "sect": self._default_player_sect(),
             }
             qq = str(qq)
             players[key]["tomb"] = self._ensure_global_tomb(qq)
-        return players.get(key)
+        # 老玩家兼容：补充 sect 字段
+        pl = players.get(key)
+        if pl is not None:
+            pl.setdefault("sect", self._default_player_sect())
+        return pl
 
     def all_players(self) -> dict[str, dict]:
         """全服所有玩家（键为 群ID+用户ID）。用于跨群神榜。"""
@@ -224,7 +282,31 @@ class PetStore:
                 "enabled": self.default_enabled,
                 "cross": self.default_cross,
             }
-        return groups[group_id]
+        group = groups[group_id]
+        group.setdefault("enabled", self.default_enabled)
+        group.setdefault("cross", self.default_cross)
+        group.setdefault("sect", self._default_group_sect())
+        sect = group["sect"]
+        # 补充今日数据默认值并检查日期重置
+        today = time.strftime("%Y-%m-%d")
+        sect.setdefault("today", {
+            "date": "",
+            "enroll": [],
+            "forced": [],
+            "confirmed": [],
+            "signed": [],
+        })
+        if sect["today"].get("date") != today:
+            sect["today"] = {
+                "date": today,
+                "enroll": [],
+                "forced": [],
+                "confirmed": [],
+                "signed": [],
+            }
+        sect.setdefault("history", [])
+        sect.setdefault("deputy_qqs", [])
+        return group
 
     def next_sign_order(self, group_id: str, date_str: str) -> int:
         """记录并返回今天本群第几位签到（每天从 1 开始）。"""

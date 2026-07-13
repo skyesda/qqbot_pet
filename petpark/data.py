@@ -1597,3 +1597,53 @@ MS_NUMBER_COLORS = {
     7: (93, 64, 55),
     8: (69, 90, 100),
 }
+
+
+# ----------------------------------------------------------------------------
+# 宗门战 / 跨群联赛
+# ----------------------------------------------------------------------------
+SECT_BATTLE_TIME = 21  # 每天开打小时（24 小时制）
+SECT_ENROLL_DEADLINE_HOUR = 20
+SECT_ENROLL_DEADLINE_MIN = 30
+SECT_FORCED_COUNT = 3   # 强制出战人数
+SECT_ENROLL_COUNT = 7   # 报名出战人数
+SECT_TEAM_SIZE = SECT_FORCED_COUNT + SECT_ENROLL_COUNT  # 总出战 10 人
+SECT_MIN_BATTLE_MEMBERS = 5  # 最少几人才能参战
+SECT_MAX_DEPUTIES = 3   # 副宗主人数上限
+SECT_SIGN_POINTS = 5    # 宗门签到获得宗门积分
+SECT_WIN_POINTS = 50    # 宗门战胜利获得宗门积分
+SECT_LOSE_POINTS = 10   # 宗门战失败获得宗门积分
+SECT_DRAW_POINTS = 20   # 平局宗门积分
+SECT_BYE_POINTS = 5     # 轮空宗门积分
+SECT_WIN_JIFEN = 100    # 胜利个人积分奖励
+SECT_WIN_COIN = 500     # 胜利个人金币奖励
+SECT_LOSE_JIFEN = 30    # 失败个人积分奖励
+SECT_LOSE_COIN = 100    # 失败个人金币奖励
+SECT_DRAW_JIFEN = 50    # 平局个人积分奖励
+SECT_DRAW_COIN = 250    # 平局个人金币奖励
+
+# 宗门商店：宗门积分兑换商品
+#   points: 消耗宗门积分
+#   item + count: 发放道具
+#   currency + amount: 发放货币
+SECT_SHOP = {
+    "经验丹": {"points": 50, "item": "经验丹", "count": 1},
+    "进化神石": {"points": 300, "item": "进化神石", "count": 1},
+    "史诗卡": {"points": 1500, "item": "史诗卡", "count": 1},
+    "金币袋": {"points": 100, "currency": "金币", "amount": 1000},
+    "积分袋": {"points": 100, "currency": "积分", "amount": 200},
+}
+
+# 宗门等级经验表：赛季积分累计达到一定值升级
+SECT_LEVEL_EXP = {
+    1: 0,
+    2: 500,
+    3: 1500,
+    4: 3000,
+    5: 5000,
+    6: 8000,
+    7: 12000,
+    8: 17000,
+    9: 23000,
+    10: 30000,
+}
