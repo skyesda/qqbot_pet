@@ -7812,6 +7812,10 @@ class PetParkPlugin(Star):
         return f"{chr(ord('a') + x)}{y + 1}"
 
     @staticmethod
+    def _ms_col_name(x: int) -> str:
+        return chr(ord("a") + x)
+
+    @staticmethod
     def _ms_neighbors(x: int, y: int, w: int, h: int):
         for dy in (-1, 0, 1):
             for dx in (-1, 0, 1):
@@ -7877,33 +7881,77 @@ class PetParkPlugin(Star):
         return None, None
 
     def _ms_draw_board(self, session: dict, reveal: bool = False, boom: tuple[int, int] | None = None) -> str:
-        """绘制扫雷棋盘，返回图片文件名。"""
+        """绘制扫雷棋盘，返回图片文件名。
+
+        参考样式：顶部显示剩余雷数与难度；每个未翻开格子显示坐标；
+        右侧与底部绘制行列标尺（数字 / 字母）。
+        """
         cfg = data.MS_DIFFICULTIES[session["difficulty"]]
         w, h = session["w"], session["h"]
         cell = data.MS_CELL_SIZE
         pad = data.MS_PADDING
-        header_h = 46
-        font, small_font = self._ms_load_fonts(18, 13)
+        label_m = 28  # 右侧/底部标尺宽度
+        header_h = 56
+        font, small_font = self._ms_load_fonts(20, 12)
 
         remain = max(0, session["deadline"] - int(time.time()))
         flags_left = session["mines_total"] - len(session["flags"])
-        title = (
-            f"扫雷 难度{session['difficulty']} {cfg['name']}　"
-            f"剩余雷标 {flags_left}　剩余时间 {remain // 60}:{remain % 60:02d}"
-        )
-        img_w = w * cell + pad * 2
-        img_h = h * cell + pad * 2 + header_h
+
+        img_w = w * cell + pad * 2 + label_m
+        img_h = h * cell + pad * 2 + header_h + label_m
         img = Image.new("RGB", (img_w, img_h), data.MS_COLORS["bg"])
         draw = ImageDraw.Draw(img)
-        title_w = int(draw.textlength(title, font=font)) if font else len(title) * 10
-        if title_w + pad * 2 > img_w:
-            img = Image.new("RGB", (title_w + pad * 2, img_h), data.MS_COLORS["bg"])
-            draw = ImageDraw.Draw(img)
-        draw.text((pad, 12), title, fill=data.MS_COLORS["text"], font=font)
 
-        # 棋盘居中
-        ox = (img.width - w * cell) // 2
+        # ---- 顶部标题栏 ----
+        # 左侧：炸弹图标 + 剩余雷数
+        bomb_cx, bomb_cy = pad + 16, header_h // 2
+        r = 10
+        draw.ellipse(
+            [bomb_cx - r, bomb_cy - r, bomb_cx + r, bomb_cy + r],
+            fill=(40, 40, 40),
+            outline=(20, 20, 20),
+            width=2,
+        )
+        # 引信
+        draw.arc(
+            [bomb_cx - 4, bomb_cy - r - 7, bomb_cx + 6, bomb_cy - r + 2],
+            start=200,
+            end=340,
+            fill=(180, 60, 60),
+            width=2,
+        )
+        # 火花
+        draw.polygon(
+            [(bomb_cx + 5, bomb_cy - r - 5), (bomb_cx + 9, bomb_cy - r - 10), (bomb_cx + 7, bomb_cy - r - 4)],
+            fill=(255, 140, 0),
+        )
+
+        count_x = bomb_cx + r + 10
+        count_text = str(max(0, flags_left))
+        if font:
+            draw.text(
+                (count_x, bomb_cy - 12),
+                count_text,
+                fill=data.MS_COLORS["text"],
+                font=font,
+            )
+
+        # 右侧：难度
+        diff_text = f"难度：{cfg['name']}"
+        if font:
+            tw = draw.textlength(diff_text, font=font)
+            draw.text(
+                (img_w - pad - label_m - tw, bomb_cy - 12),
+                diff_text,
+                fill=data.MS_COLORS["text"],
+                font=font,
+            )
+
+        # ---- 棋盘原点 ----
+        ox = pad
         oy = pad + header_h
+
+        # ---- 绘制格子 ----
         for y in range(h):
             for x in range(w):
                 cx = ox + x * cell
@@ -7920,22 +7968,14 @@ class PetParkPlugin(Star):
                     draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=base)
                     draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], outline=data.MS_COLORS["grid"], width=1)
                     if show_mine:
-                        r = cell // 4
-                        mx, my = cx + cell // 2, cy + cell // 2
-                        draw.ellipse([mx - r, my - r, mx + r, my + r], fill=data.MS_COLORS["mine"])
-                        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, 1), (-1, 1), (1, -1)):
-                            draw.line(
-                                [(mx, my), (mx + dx * (r + 5), my + dy * (r + 5))],
-                                fill=data.MS_COLORS["mine"],
-                                width=2,
-                            )
+                        self._ms_draw_mine(draw, cx, cy, cell)
                     elif is_open:
                         num = session["numbers"].get(pos, 0)
                         if num > 0 and font:
                             color = data.MS_NUMBER_COLORS.get(num, data.MS_COLORS["text"])
                             tw = draw.textlength(str(num), font=font)
                             draw.text(
-                                (cx + (cell - tw) / 2, cy + cell / 2 - 10),
+                                (cx + (cell - tw) / 2, cy + cell / 2 - 11),
                                 str(num),
                                 fill=color,
                                 font=font,
@@ -7945,25 +7985,64 @@ class PetParkPlugin(Star):
                     draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=base)
                     draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], outline=(80, 105, 80), width=1)
                     if pos in session["flags"]:
-                        fx, fy = cx + cell // 2, cy + cell // 2
-                        draw.line([(fx - 2, fy - 10), (fx - 2, fy + 11)], fill=(90, 60, 30), width=3)
-                        draw.polygon(
-                            [(fx - 2, fy - 10), (fx + 12, fy - 5), (fx - 2, fy)],
-                            fill=data.MS_COLORS["flag"],
-                        )
+                        self._ms_draw_flag(draw, cx, cy, cell)
                     elif small_font:
                         label = self._ms_coord_name(x, y)
                         tw = draw.textlength(label, font=small_font)
                         draw.text(
-                            (cx + (cell - tw) / 2, cy + cell / 2 - 8),
+                            (cx + (cell - tw) / 2, cy + cell / 2 - 7),
                             label,
                             fill=data.MS_COLORS["coord"],
                             font=small_font,
                         )
 
+        # ---- 右侧行号标尺 ----
+        ruler_font = small_font or font
+        if ruler_font:
+            for y in range(h):
+                cy = oy + y * cell + cell // 2 - 7
+                label = str(y + 1)
+                tw = draw.textlength(label, font=ruler_font)
+                rx = ox + w * cell + (label_m - int(tw)) // 2
+                draw.text((rx, cy), label, fill=data.MS_COLORS["text"], font=ruler_font)
+
+        # ---- 底部列字母标尺 ----
+        if ruler_font:
+            for x in range(w):
+                cx = ox + x * cell + cell // 2
+                label = self._ms_col_name(x)
+                tw = draw.textlength(label, font=ruler_font)
+                bx = cx - int(tw) // 2
+                by = oy + h * cell + (label_m - 14) // 2
+                draw.text((bx, by), label, fill=data.MS_COLORS["text"], font=ruler_font)
+
         filename = f"ms_{uuid.uuid4().hex}.png"
         img.save(self.store.custom_images_dir / filename, "PNG")
         return filename
+
+    def _ms_draw_mine(self, draw: ImageDraw.Draw, cx: int, cy: int, cell: int) -> None:
+        """在格子内绘制地雷。"""
+        r = cell // 4
+        mx, my = cx + cell // 2, cy + cell // 2
+        draw.ellipse([mx - r, my - r, mx + r, my + r], fill=data.MS_COLORS["mine"])
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+            draw.line(
+                [(mx, my), (mx + dx * (r + 5), my + dy * (r + 5))],
+                fill=data.MS_COLORS["mine"],
+                width=2,
+            )
+
+    def _ms_draw_flag(self, draw: ImageDraw.Draw, cx: int, cy: int, cell: int) -> None:
+        """在格子内绘制旗帜。"""
+        fx, fy = cx + cell // 2, cy + cell // 2
+        draw.line([(fx - 2, fy - 10), (fx - 2, fy + 11)], fill=(90, 60, 30), width=3)
+        draw.polygon(
+            [(fx - 2, fy - 10), (fx + 12, fy - 5), (fx - 2, fy)],
+            fill=data.MS_COLORS["flag"],
+        )
+
+    def _ms_col_name(self, x: int) -> str:
+        return chr(ord("a") + x)
 
     def _ms_board_md(self, session: dict, reveal: bool = False, boom: tuple[int, int] | None = None) -> str:
         url = self._tomb_image_url(self._ms_draw_board(session, reveal=reveal, boom=boom))
