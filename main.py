@@ -401,10 +401,31 @@ class PetParkPlugin(Star):
         PetParkPlugin._sect_daily_reset_task_ref = asyncio.create_task(
             self._background_sect_daily_reset()
         )
+        try:
+            if (
+                PetParkPlugin._sect_forced_refresh_task_ref
+                and not PetParkPlugin._sect_forced_refresh_task_ref.done()
+            ):
+                PetParkPlugin._sect_forced_refresh_task_ref.cancel()
+        except Exception:
+            pass
+        PetParkPlugin._sect_forced_refresh_task_ref = asyncio.create_task(
+            self._background_sect_forced_refresh()
+        )
 
     # 类级别后台任务引用，避免重载后并发
     _sect_war_task_ref = None
     _sect_daily_reset_task_ref = None
+    _sect_forced_refresh_task_ref = None
+
+    async def _background_sect_forced_refresh(self) -> None:
+        """每分钟刷新一次所有群的强制出战名单。"""
+        while True:
+            await asyncio.sleep(60)
+            try:
+                self._sect_refresh_forced_all()
+            except Exception as e:
+                logger.exception(f"[petpark] 宗门强制出战刷新异常：{e}")
 
     async def _background_sect_daily_reset(self) -> None:
         """每天 00:00 执行宗门每日重置：赛季初始化、重选宗主、计算强制出战。"""
@@ -8346,6 +8367,49 @@ class PetParkPlugin(Star):
             })
         pets.sort(key=lambda x: x["bp"], reverse=True)
         return pets[:data.SECT_FORCED_COUNT]
+
+    def _sect_refresh_forced_for_group(self, group_id: str) -> None:
+        """重新计算本群强制出战前三，并同步调整报名列表。"""
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        self._sect_ensure_today(sect)
+        old_forced = {e["qq"] for e in sect["today"]["forced"]}
+        new_forced = self._sect_today_forced(group_id)
+        new_forced_q = {e["qq"] for e in new_forced}
+
+        # 从报名列表中移除新进入强制前三的玩家
+        enroll = [e for e in sect["today"]["enroll"] if e["qq"] not in new_forced_q]
+
+        # 对跌出强制的玩家，若报名未满则加回报名列表末尾
+        dropped = old_forced - new_forced_q
+        for qq in dropped:
+            if len(enroll) >= data.SECT_ENROLL_COUNT:
+                break
+            pl = self.store.get_player(qq, group_id, create=False)
+            if not pl:
+                continue
+            pet = pl.get("pet")
+            if not pet or petmod.is_dead(pet):
+                continue
+            enroll.append({
+                "qq": qq,
+                "nickname": qq,
+                "pet_name": pet["nickname"],
+                "bp": petmod.battle_power(pet),
+                "element": pet.get("element", ""),
+                "enrolled_at": int(time.time()),
+            })
+
+        sect["today"]["forced"] = new_forced
+        sect["today"]["enroll"] = enroll
+
+    def _sect_refresh_forced_all(self) -> None:
+        """刷新所有群的强制出战名单。"""
+        for gid in list(self.store._data.get("groups", {}).keys()):
+            try:
+                self._sect_refresh_forced_for_group(gid)
+            except Exception:
+                logger.exception(f"[petpark] 刷新宗门强制出战失败：{gid}")
 
     def _sect_reset_daily(self, group_id: str) -> None:
         """每天重置宗门今日数据并重新选举宗主、计算强制出战。"""
