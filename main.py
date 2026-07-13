@@ -2547,6 +2547,24 @@ class PetParkPlugin(Star):
                 info = data.TALENTS[name]
                 tag = "（需定制宠物）" if info.get("need_custom") else ""
                 return f"## 📘 {name}{tag}\n{info.get('desc', '')}"
+            if name in data.SECT_SHOP:
+                cfg = data.SECT_SHOP[name]
+                cost_type = cfg.get("cost_type", "sect_points")
+                if cost_type == "sect_points":
+                    price = f"{cfg['points']} 宗门积分（宗主/副宗主可兑换）"
+                else:
+                    price = f"{cfg['contribution']} 宗门贡献（个人资产，任何人可兑换）"
+                reward = ""
+                if "item" in cfg:
+                    reward = f"获得 {cfg['item']} ×{cfg.get('count', 1)}"
+                elif "currency" in cfg:
+                    reward = f"获得 {cfg['currency']} +{cfg['amount']}"
+                return (
+                    f"## 📘 宗门商店·{name}\n"
+                    f"{cfg.get('desc', '')}\n\n"
+                    f"> 价格：{price}\n"
+                    f"> 兑换后：{reward}"
+                )
             # 活动自定义道具
             event_item = self._event_item_def(name)
             if event_item:
@@ -8652,16 +8670,49 @@ class PetParkPlugin(Star):
             )
         return "\n".join(lines)
 
+    def _sect_get_rank(self, group_id: str) -> int:
+        """返回本群在当前宗门排行榜中的名次。"""
+        groups = self.store._data.get("groups", {})
+        entries = []
+        for gid, g in groups.items():
+            if not g.get("cross"):
+                continue
+            sect = g.get("sect", {})
+            if not sect.get("enabled", True):
+                continue
+            entries.append((gid, (sect.get("level", 1), sect.get("total_points", 0))))
+        entries.sort(key=lambda x: x[1], reverse=True)
+        for i, (gid, _) in enumerate(entries, 1):
+            if gid == group_id:
+                return i
+        return 0
+
     def _sect_info(self, player: dict, group_id: str) -> str:
         self._sect_ensure_master(group_id)
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
+        rank = self._sect_get_rank(group_id)
+        psect = player.setdefault("sect", self.store._default_player_sect())
+        signed = player["qq"] in sect["today"]["signed"]
+        forced_qqs = {e["qq"] for e in sect["today"]["forced"]}
+        enroll_qqs = {e["qq"] for e in sect["today"]["enroll"]}
+        confirmed = sect["today"]["confirmed"]
+        if player["qq"] in forced_qqs:
+            my_status = "强制出战"
+        elif player["qq"] in enroll_qqs:
+            my_status = "已报名"
+        elif any(e["qq"] == player["qq"] for e in confirmed):
+            my_status = "已确认出战"
+        else:
+            my_status = "未报名"
+
         lines = [
             "## 🏯 宗门信息",
             "| 项目 | 数值 |",
             "|---|---|",
-            f"| 宗门名 | {sect.get('name', group_id)} |",
+            f"| 当前宗门 | {sect.get('name', group_id)} |",
+            f"| 全服排名 | 第 {rank} 名 |",
             f"| 宗门等级 | Lv{sect.get('level', 1)} |",
             f"| 累计宗门积分 | {sect.get('total_points', 0)} |",
             f"| 当前可用积分 | {sect.get('points', 0)} |",
@@ -8670,6 +8721,10 @@ class PetParkPlugin(Star):
             f"| 宗主 | `{sect.get('master_qq','未选举')}` |",
             f"| 副宗主 | {', '.join(f'`{q}`' for q in sect.get('deputy_qqs',[])) or '无'} |",
             f"| 公告 | {sect.get('notice','暂无公告')} |",
+            f"| 今日签到 | {'已签到 ✅' if signed else '未签到 ❌'} |",
+            f"| 今日出战状态 | {my_status} |",
+            f"| 我的宗门贡献 | {psect.get('contribution', 0)} |",
+            f"| 累计宗门贡献 | {psect.get('total_contribution', 0)} |",
         ]
         return "\n".join(lines)
 

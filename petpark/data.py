@@ -1631,12 +1631,12 @@ SECT_DRAW_COIN = 250    # 平局个人金币奖励
 #   item + count: 发放道具
 #   currency + amount: 发放货币
 SECT_SHOP = {
-    "经验丹": {"cost_type": "sect_points", "points": 50, "item": "经验丹", "count": 1},
-    "进化神石": {"cost_type": "sect_points", "points": 300, "item": "进化神石", "count": 1},
-    "史诗卡": {"cost_type": "sect_points", "points": 1500, "item": "史诗卡", "count": 1},
-    "金币袋": {"cost_type": "sect_points", "points": 100, "currency": "金币", "amount": 1000},
-    "积分袋": {"cost_type": "sect_points", "points": 100, "currency": "积分", "amount": 200},
-    "神秘宝箱": {"cost_type": "contribution", "contribution": 100, "item": "神秘宝箱", "count": 1},
+    "经验丹": {"cost_type": "sect_points", "points": 50, "item": "经验丹", "count": 1, "desc": "使用后宠物获得经验。"},
+    "进化神石": {"cost_type": "sect_points", "points": 300, "item": "进化神石", "count": 1, "desc": "宠物进化所需道具。"},
+    "史诗卡": {"cost_type": "sect_points", "points": 1500, "item": "史诗卡", "count": 1, "desc": "可将宠物品质提升至史诗。"},
+    "金币袋": {"cost_type": "sect_points", "points": 100, "currency": "金币", "amount": 1000, "desc": "打开获得 1000 金币。"},
+    "积分袋": {"cost_type": "sect_points", "points": 100, "currency": "积分", "amount": 200, "desc": "打开获得 200 积分。"},
+    "神秘宝箱": {"cost_type": "contribution", "contribution": 100, "item": "神秘宝箱", "count": 1, "desc": "宗门贡献兑换的神秘宝箱，可开出随机道具。"},
 }
 
 # 宗门贡献获取配置
