@@ -146,8 +146,9 @@ class PetStore:
     def _default_player_sect() -> dict:
         """玩家宗门相关数据默认值。"""
         return {
-            "contribution": 0,
-            "season_contribution": 0,
+            "contribution": 0,          # 当前可用宗门贡献（可消耗）
+            "total_contribution": 0,    # 历史累计宗门贡献
+            "season_contribution": 0,   # 本赛季累计宗门贡献
             "wins": 0,
             "battles": 0,
             "last_battle": 0,

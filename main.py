@@ -83,6 +83,7 @@ KNOWN_COMMANDS = {
     "宗门确认",
     "宗门踢出",
     "宗门公告",
+    "宗门改名",
     "宗门任命副宗主",
     "宗门撤销副宗主",
     "宗门重选宗主",
@@ -1148,6 +1149,8 @@ class PetParkPlugin(Star):
             return self._sect_kick_enroll(player, group_id, tokens)
         if cmd == "宗门公告":
             return self._sect_set_notice(player, group_id, tokens)
+        if cmd == "宗门改名":
+            return self._sect_rename(player, group_id, tokens)
         if cmd == "宗门任命副宗主":
             return self._sect_appoint_deputy(player, group_id, tokens)
         if cmd == "宗门撤销副宗主":
@@ -8273,8 +8276,33 @@ class PetParkPlugin(Star):
         candidates.sort(key=lambda x: (x["bp"], x["active"]), reverse=True)
         return candidates[0]["player"]
 
+    def _sect_generate_name(self) -> str:
+        """生成全服唯一的宗门名：宗门 + 6 位随机字符。"""
+        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        existing = set()
+        for g in self.store._data.get("groups", {}).values():
+            sect = g.get("sect", {})
+            if sect.get("name"):
+                existing.add(sect["name"])
+        while True:
+            suffix = "".join(random.choices(chars, k=6))
+            name = f"宗门{suffix}"
+            if name not in existing:
+                return name
+
+    def _sect_ensure_name(self, group_id: str) -> str:
+        """确保本群有宗门名；没有则自动生成唯一名称。"""
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        if sect.get("name"):
+            return sect["name"]
+        name = self._sect_generate_name()
+        sect["name"] = name
+        return name
+
     def _sect_ensure_master(self, group_id: str) -> str | None:
-        """确保本群已有宗主；没有则立即选举并返回宗主 QQ。"""
+        """确保本群已有宗主和宗门名；没有则立即选举并返回宗主 QQ。"""
+        self._sect_ensure_name(group_id)
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         if sect.get("master_qq"):
@@ -8441,6 +8469,27 @@ class PetParkPlugin(Star):
         sect["notice"] = notice[:200]
         return f"🏯 宗门公告已更新：\n> {sect['notice']}"
 
+    def _sect_rename(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        if not self._sect_is_master_or_deputy(player, group_id):
+            return "仅宗主或副宗主可修改宗门名。"
+        name = " ".join(tokens[1:]).strip()
+        if not name:
+            return "用法：宗门改名 新宗门名"
+        if len(name) > 20:
+            return "宗门名不能超过 20 个字。"
+        # 检查全服唯一
+        for gid, g in self.store._data.get("groups", {}).items():
+            if gid == group_id:
+                continue
+            sect = g.get("sect", {})
+            if sect.get("name") == name:
+                return f"宗门名『{name}』已被其他宗门使用，请换一个。"
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        old = sect.get("name", group_id)
+        sect["name"] = name
+        return f"🏯 宗门名已由『{old}』改为『{name}』"
+
     def _sect_appoint_deputy(self, player: dict, group_id: str, tokens: list[str]) -> str:
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
@@ -8501,7 +8550,16 @@ class PetParkPlugin(Star):
         sect["today"]["signed"].append(player["qq"])
         self._sect_give_points(group_id, data.SECT_SIGN_POINTS)
         self._sect_inc_active(player, 1)
-        return f"🏯 宗门签到成功，宗门积分 +{data.SECT_SIGN_POINTS}！"
+        # 个人宗门贡献
+        psect = player.setdefault("sect", self.store._default_player_sect())
+        psect["contribution"] = psect.get("contribution", 0) + data.SECT_CONTRIBUTION_SIGN
+        psect["total_contribution"] = psect.get("total_contribution", 0) + data.SECT_CONTRIBUTION_SIGN
+        psect["season_contribution"] = psect.get("season_contribution", 0) + data.SECT_CONTRIBUTION_SIGN
+        return (
+            f"🏯 宗门签到成功！\n"
+            f"● 宗门积分 +{data.SECT_SIGN_POINTS}\n"
+            f"● 个人宗门贡献 +{data.SECT_CONTRIBUTION_SIGN}"
+        )
 
     def _sect_give_points(self, group_id: str, points: int) -> None:
         group = self.store.get_group(group_id)
@@ -8832,7 +8890,7 @@ class PetParkPlugin(Star):
             "### 二、宗主与副宗主",
             "- **宗主**：本群当前宠物战力最高者自动担任（战力优先）。",
             "- **副宗主**：由宗主任命，最多 3 人，可协助管理报名名单。",
-            "- **权限**：宗主/副宗主可确认出战名单、踢出报名者、设置公告、花费宗门积分兑换商店商品。",
+            "- **权限**：宗主/副宗主可确认出战名单、踢出报名者、设置公告、修改宗门名、花费宗门积分兑换商店商品。",
             "",
             "### 三、每日时间安排",
             "| 时间 | 事件 |",
@@ -8849,19 +8907,20 @@ class PetParkPlugin(Star):
             f"  - **{data.SECT_ENROLL_COUNT} 人报名出战**：普通成员发送 `宗门报名` 参与，宗主可踢出不合格者。",
             "- 战斗采用 **车轮战**：双方按战力从高到低依次 1v1，胜者留下继续打，败者换下一只，直到一方全部退场。",
             "",
-            "### 五、宗门积分",
-            "| 来源 | 积分 |",
-            "|---|---|",
-            f"| 宗门签到 | +{data.SECT_SIGN_POINTS} |",
-            f"| 宗门战胜利 | +{data.SECT_WIN_POINTS} |",
-            f"| 宗门战失败 | +{data.SECT_LOSE_POINTS} |",
-            f"| 宗门战平局 | +{data.SECT_DRAW_POINTS} |",
-            f"| 轮空（匹配不到对手） | +{data.SECT_BYE_POINTS} |",
-            "- 宗门积分是**全宗共享资产**，宗主/副宗主可用于宗门商店兑换。",
+            "### 五、宗门积分与宗门贡献",
+            "| 来源 | 宗门积分（全宗共享） | 宗门贡献（个人资产） |",
+            "|---|---|---|",
+            f"| 宗门签到 | +{data.SECT_SIGN_POINTS} | +{data.SECT_CONTRIBUTION_SIGN} |",
+            f"| 宗门战参战 | — | +{data.SECT_CONTRIBUTION_BATTLE_LOSE} |",
+            f"| 宗门战回合胜利 | — | 额外 +{data.SECT_CONTRIBUTION_BATTLE} |",
+            "- **宗门积分**：全宗共享资产，宗主/副宗主可用于宗门商店兑换。",
+            "- **宗门贡献**：个人资产，任何人都可以在宗门商店兑换专属商品。",
             "",
             "### 六、宗门商店",
             "- 发送 `宗门商店` 查看可兑换商品。",
-            "- 发送 `宗门兑换 商品名` 兑换（仅宗主/副宗主可操作）。",
+            "- 宗门积分商品：仅宗主/副宗主可兑换。",
+            "- 宗门贡献商品：任何人可用自己的贡献兑换。",
+            "- 发送 `宗门兑换 商品名` 进行兑换。",
             "",
             "### 七、完整指令列表",
             "| 指令 | 说明 | 权限 |",
@@ -8876,13 +8935,14 @@ class PetParkPlugin(Star):
             "| `宗门历史` | 查看本赛季历史记录 | 所有人 |",
             "| `宗门倒计时` | 显示距离开战时间 | 所有人 |",
             "| `宗门排行` | 全服宗门排行榜 | 所有人 |",
-            "| `宗门签到` | 每日签到，宗门积分 +5 | 所有人 |",
+            "| `宗门签到` | 每日签到，宗门积分/贡献 + | 所有人 |",
             "| `宗门报名` | 报名今日出战 | 所有人 |",
             "| `宗门商店` | 查看宗门商店 | 所有人 |",
-            "| `宗门兑换 商品名` | 花费宗门积分兑换 | 宗主/副宗主 |",
+            "| `宗门兑换 商品名` | 花费宗门积分/贡献兑换 | 见商品说明 |",
             "| `宗门确认` | 确认最终出战名单 | 宗主/副宗主 |",
             "| `宗门踢出 QQ` | 踢出报名者 | 宗主/副宗主 |",
             "| `宗门公告 内容` | 设置宗门公告 | 宗主/副宗主 |",
+            "| `宗门改名 名称` | 修改宗门名 | 宗主/副宗主 |",
             "| `宗门任命副宗主 QQ` | 任命副宗主 | 宗主 |",
             "| `宗门撤销副宗主 QQ` | 撤销副宗主 | 宗主 |",
             "| `宗门重选宗主` | 立即重新选举宗主 | 宗主/副宗主/管理员 |",
@@ -8890,7 +8950,7 @@ class PetParkPlugin(Star):
             "",
             "### 八、新手建议流程",
             "1. 发送 `宗门信息` 查看本群宗门状态。",
-            "2. 发送 `宗门签到` 积累宗门积分。",
+            "2. 发送 `宗门签到` 积累宗门积分与个人贡献。",
             "3. 如果你是战力前三，会自动强制出战；否则发送 `宗门报名`。",
             "4. 20:30 后发送 `宗门名单` 查看最终出战阵容。",
             "5. 21:00 后发送 `宗门战报` 查看战果与奖励。",
@@ -8901,18 +8961,23 @@ class PetParkPlugin(Star):
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         points = sect.get("points", 0)
-        lines = [f"## 🏯 宗门商店（当前宗门积分：{points}）", ""]
-        lines.append("| 商品 | 宗门积分 | 类型 |")
-        lines.append("|---|---|---|")
+        lines = [f"## 🏯 宗门商店（宗门积分：{points}）", ""]
+        lines.append("| 商品 | 价格 | 类型 | 说明 |")
+        lines.append("|---|---|---|---|")
         for name, cfg in data.SECT_SHOP.items():
             kind = "道具" if "item" in cfg else "货币"
-            lines.append(f"| {name} | {cfg['points']} | {kind} |")
-        lines.append("\n> 用法：`宗门兑换 商品名`\n> 仅宗主/副宗主可花费宗门积分。")
+            cost_type = cfg.get("cost_type", "sect_points")
+            if cost_type == "sect_points":
+                price = f"{cfg['points']} 宗门积分"
+                note = "宗主/副宗主可兑换"
+            else:
+                price = f"{cfg['contribution']} 宗门贡献"
+                note = "个人资产，任何人可兑换"
+            lines.append(f"| {name} | {price} | {kind} | {note} |")
+        lines.append("\n> 用法：`宗门兑换 商品名`")
         return "\n".join(lines)
 
     def _sect_buy(self, player: dict, group_id: str, tokens: list[str]) -> str:
-        if not self._sect_is_master_or_deputy(player, group_id):
-            return "仅宗主或副宗主可花费宗门积分。"
         if len(tokens) < 2:
             return "用法：宗门兑换 商品名"
         name = tokens[1]
@@ -8921,9 +8986,26 @@ class PetParkPlugin(Star):
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         cfg = data.SECT_SHOP[name]
-        if sect.get("points", 0) < cfg["points"]:
-            return f"宗门积分不足（需要 {cfg['points']}，当前 {sect['points']}）。"
-        sect["points"] = sect.get("points", 0) - cfg["points"]
+        cost_type = cfg.get("cost_type", "sect_points")
+
+        if cost_type == "sect_points":
+            # 宗门积分：全宗共享，仅宗主/副宗主可花
+            if not self._sect_is_master_or_deputy(player, group_id):
+                return "仅宗主或副宗主可花费宗门积分。"
+            need = cfg.get("points", 0)
+            if sect.get("points", 0) < need:
+                return f"宗门积分不足（需要 {need}，当前 {sect['points']}）。"
+            sect["points"] = sect.get("points", 0) - need
+        elif cost_type == "contribution":
+            # 宗门贡献：个人资产，任何人可花
+            psect = player.setdefault("sect", self.store._default_player_sect())
+            need = cfg.get("contribution", 0)
+            if psect.get("contribution", 0) < need:
+                return f"个人宗门贡献不足（需要 {need}，当前 {psect['contribution']}）。"
+            psect["contribution"] = psect.get("contribution", 0) - need
+        else:
+            return "商品配置异常。"
+
         if "item" in cfg:
             self.store.add_item(player, cfg["item"], cfg.get("count", 1))
             return f"🏯 宗门兑换成功，获得 {cfg['item']} ×{cfg.get('count',1)}。"
@@ -9059,28 +9141,45 @@ class PetParkPlugin(Star):
                 sect["lose"] = sect.get("lose", 0) + 1
 
         # 个人奖励、贡献、活跃
-        contributors = {g1: [], g2: []}
-        for side, gid in (("A", g1), ("B", g2)):
-            is_winner = (winner == gid) if winner != "draw" else False
-            is_draw = winner == "draw"
-            for r in result.get("rounds", []):
-                if r["winner"] != side:
-                    continue
-                qq = r[side.lower()]["qq"]
+        contributors: dict[str, list[dict]] = {g1: [], g2: []}
+        seen: dict[str, set[str]] = {g1: set(), g2: set()}  # 避免同一玩家多轮重复发货币
+        for r in result.get("rounds", []):
+            for side_key, gid in (("a", g1), ("b", g2)):
+                pet_info = r[side_key]
+                qq = pet_info["qq"]
                 player = self.store.get_player(qq, gid, create=False)
                 if not player:
                     continue
-                bp = r[side.lower()]["bp"]
-                contrib = int(bp / 10000) + 50
+                is_round_winner = r.get("winner", "").lower() == side_key
+                is_guild_winner = (winner == gid) if winner != "draw" else False
+                is_draw = winner == "draw"
+
+                # 宗门贡献：参战基础 + 回合胜利额外
+                contrib = data.SECT_CONTRIBUTION_BATTLE_LOSE
+                if is_round_winner:
+                    contrib += data.SECT_CONTRIBUTION_BATTLE
                 psect = player.setdefault("sect", self.store._default_player_sect())
                 psect["contribution"] = psect.get("contribution", 0) + contrib
+                psect["total_contribution"] = psect.get("total_contribution", 0) + contrib
                 psect["season_contribution"] = psect.get("season_contribution", 0) + contrib
-                psect["wins"] = psect.get("wins", 0) + 1
                 psect["battles"] = psect.get("battles", 0) + 1
+                if is_round_winner:
+                    psect["wins"] = psect.get("wins", 0) + 1
                 psect["last_battle"] = int(time.time())
-                self._sect_inc_active(player, 5 if is_winner else 2)
+                self._sect_inc_active(player, 5 if is_guild_winner else 2)
 
-                if is_winner:
+                contributors[gid].append({
+                    "qq": qq,
+                    "pet_name": pet_info.get("pet_name", "-"),
+                    "bp": pet_info.get("bp", 0),
+                    "contrib": contrib,
+                })
+
+                # 货币奖励按玩家只发一次（以最终宗门胜负为准）
+                if qq in seen[gid]:
+                    continue
+                seen[gid].add(qq)
+                if is_guild_winner:
                     self.store.add_currency(player, "积分", data.SECT_WIN_JIFEN)
                     self.store.add_currency(player, "金币", data.SECT_WIN_COIN)
                 elif is_draw:
@@ -9089,13 +9188,6 @@ class PetParkPlugin(Star):
                 else:
                     self.store.add_currency(player, "积分", data.SECT_LOSE_JIFEN)
                     self.store.add_currency(player, "金币", data.SECT_LOSE_COIN)
-
-                contributors[gid].append({
-                    "qq": qq,
-                    "pet_name": r[side.lower()].get("pet_name", "-"),
-                    "bp": bp,
-                    "contrib": contrib,
-                })
 
         # 写入历史
         self._sect_record_history(result, contributors, points_a, points_b)

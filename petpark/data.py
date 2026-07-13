@@ -1622,17 +1622,27 @@ SECT_LOSE_COIN = 100    # 失败个人金币奖励
 SECT_DRAW_JIFEN = 50    # 平局个人积分奖励
 SECT_DRAW_COIN = 250    # 平局个人金币奖励
 
-# 宗门商店：宗门积分兑换商品
-#   points: 消耗宗门积分
+# 宗门商店：宗门积分 / 宗门贡献 兑换商品
+#   cost_type: 消耗类型
+#     - "sect_points": 宗门积分（全宗共享，仅宗主/副宗主可花）
+#     - "contribution": 宗门贡献（个人资产，任何人可花）
+#   points: 消耗宗门积分（cost_type=sect_points 时）
+#   contribution: 消耗宗门贡献（cost_type=contribution 时）
 #   item + count: 发放道具
 #   currency + amount: 发放货币
 SECT_SHOP = {
-    "经验丹": {"points": 50, "item": "经验丹", "count": 1},
-    "进化神石": {"points": 300, "item": "进化神石", "count": 1},
-    "史诗卡": {"points": 1500, "item": "史诗卡", "count": 1},
-    "金币袋": {"points": 100, "currency": "金币", "amount": 1000},
-    "积分袋": {"points": 100, "currency": "积分", "amount": 200},
+    "经验丹": {"cost_type": "sect_points", "points": 50, "item": "经验丹", "count": 1},
+    "进化神石": {"cost_type": "sect_points", "points": 300, "item": "进化神石", "count": 1},
+    "史诗卡": {"cost_type": "sect_points", "points": 1500, "item": "史诗卡", "count": 1},
+    "金币袋": {"cost_type": "sect_points", "points": 100, "currency": "金币", "amount": 1000},
+    "积分袋": {"cost_type": "sect_points", "points": 100, "currency": "积分", "amount": 200},
+    "神秘宝箱": {"cost_type": "contribution", "contribution": 100, "item": "神秘宝箱", "count": 1},
 }
+
+# 宗门贡献获取配置
+SECT_CONTRIBUTION_SIGN = 1       # 宗门签到获得贡献
+SECT_CONTRIBUTION_BATTLE = 5     # 宗门战每场胜利获得贡献（参战者）
+SECT_CONTRIBUTION_BATTLE_LOSE = 2  # 宗门战失败获得贡献
 
 # 宗门等级经验表：赛季积分累计达到一定值升级
 SECT_LEVEL_EXP = {
