@@ -85,6 +85,7 @@ KNOWN_COMMANDS = {
     "宗门任命副宗主",
     "宗门撤销副宗主",
     "宗门重选宗主",
+    "宗门选举",
     "兑换",
     "卡密兑换",
     "我要氪金",
@@ -1150,6 +1151,8 @@ class PetParkPlugin(Star):
             return self._sect_revoke_deputy(player, group_id, tokens)
         if cmd == "宗门重选宗主":
             return self._sect_re_elect(player, group_id)
+        if cmd == "宗门选举":
+            return self._sect_manual_elect(player, group_id)
 
         # ---- 卡密兑换 ----
         if cmd in ("兑换", "卡密兑换"):
@@ -8245,7 +8248,7 @@ class PetParkPlugin(Star):
         return False
 
     def _sect_elect_master(self, group_id: str) -> dict | None:
-        """选举宗主：活跃玩家中战力最高者。"""
+        """选举宗主：战力最高者优先；同战力时活跃度更高者优先。"""
         now = int(time.time())
         week_ago = now - 7 * 86400
         candidates = []
@@ -8254,8 +8257,7 @@ class PetParkPlugin(Star):
             if not pet or petmod.is_dead(pet):
                 continue
             psect = pl.setdefault("sect", self.store._default_player_sect())
-            if psect.get("last_active_at", 0) < week_ago and psect.get("active_score", 0) == 0:
-                continue
+            # 初始无活跃数据时也允许参选
             candidates.append({
                 "qq": pl["qq"],
                 "player": pl,
@@ -8264,9 +8266,38 @@ class PetParkPlugin(Star):
             })
         if not candidates:
             return None
-        # 先按活跃度，再按战力
-        candidates.sort(key=lambda x: (x["active"], x["bp"]), reverse=True)
+        # 先按战力，再按活跃度
+        candidates.sort(key=lambda x: (x["bp"], x["active"]), reverse=True)
         return candidates[0]["player"]
+
+    def _sect_ensure_master(self, group_id: str) -> str | None:
+        """确保本群已有宗主；没有则立即选举并返回宗主 QQ。"""
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        if sect.get("master_qq"):
+            return sect["master_qq"]
+        master = self._sect_elect_master(group_id)
+        if master:
+            sect["master_qq"] = master["qq"]
+            return master["qq"]
+        return None
+
+    def _sect_manual_elect(self, player: dict, group_id: str) -> str:
+        """手动触发宗主选举。"""
+        if not self._sect_is_master_or_deputy(player, group_id):
+            return "仅宗主或副宗主可手动触发宗主选举。"
+        master = self._sect_elect_master(group_id)
+        if not master:
+            return "本群暂无符合条件的宗主候选人（需有存活宠物）。"
+        group = self.store.get_group(group_id)
+        sect = group.setdefault("sect", self.store._default_group_sect())
+        old = sect.get("master_qq", "")
+        sect["master_qq"] = master["qq"]
+        return (
+            f"🏯 宗主选举完成\n"
+            f"● 原宗主：`{old or '无'}`\n"
+            f"● 新宗主：`{master['qq']}`（活跃优先，战力最高）"
+        )
 
     def _sect_today_forced(self, group_id: str) -> list[dict]:
         """计算本群今日强制出战前三。"""
@@ -8495,6 +8526,7 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _sect_info(self, player: dict, group_id: str) -> str:
+        self._sect_ensure_master(group_id)
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
@@ -8514,6 +8546,7 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _sect_list(self, group_id: str) -> str:
+        self._sect_ensure_master(group_id)
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
@@ -8558,6 +8591,7 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _sect_status(self, group_id: str) -> str:
+        self._sect_ensure_master(group_id)
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
