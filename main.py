@@ -79,6 +79,7 @@ KNOWN_COMMANDS = {
     "宗门倒计时",
     "宗门排行",
     "宗门商店",
+    "宗门升级",
     "宗门兑换",
     "宗门确认",
     "宗门踢出",
@@ -1162,6 +1163,8 @@ class PetParkPlugin(Star):
             return self._sect_rank(group_id)
         if cmd == "宗门商店":
             return self._sect_shop(group_id)
+        if cmd == "宗门升级":
+            return self._sect_level_up(player, group_id)
         if cmd == "宗门兑换":
             return self._sect_buy(player, group_id, tokens)
         if cmd == "宗门确认":
@@ -8173,7 +8176,7 @@ class PetParkPlugin(Star):
         return f"🏳 已放弃本局扫雷。{exp_text.lstrip()}" if exp_text else "🏳 已放弃本局扫雷。"
 
     def _ms_rank(self, player: dict) -> str:
-        """扫雷全服排行（按累计积分）。"""
+        """扫雷全服排行（按累计积分），使用 Markdown 表格展示。"""
         entries = []
         for qq, st in self.store.all_ms_players().items():
             score = st.get("score", 0)
@@ -8184,18 +8187,28 @@ class PetParkPlugin(Star):
             return "暂无玩家登上扫雷排行。"
         lines = ["## 🧨 扫雷排行（全服）"]
         my_qq = str(player.get("qq", ""))
-        for i, (qq, score, wins, plays) in enumerate(entries[:10], start=1):
-            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
-            me = " ← 我" if qq == my_qq else ""
-            lines.append(
-                f"{medal} {self._tomb_display_qq(qq)}　积分 {score}　胜 {wins}/{plays}{me}"
-            )
         my_rank = next((i for i, e in enumerate(entries, start=1) if e[0] == my_qq), None)
         my_st = self.store.ms_state(my_qq)
-        if my_rank and my_rank > 10:
-            lines.append(f"…\n{my_rank}. {self._tomb_display_qq(my_qq)}　积分 {my_st.get('score', 0)}　胜 {my_st.get('wins', 0)}/{my_st.get('plays', 0)} ← 我")
-        elif not my_rank:
+        if my_rank:
+            lines.append(f"> 我的排名：**{my_rank}**　·　我的积分：**{my_st.get('score', 0)}**")
+        else:
             lines.append("> 你还没有扫雷积分，赢一局即可上榜。")
+        lines.append("")
+        lines.append("| 排名 | 用户 | 积分 | 胜场 | 总局数 |")
+        lines.append("|:--:|:--:|--:|--:|--:|")
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        for i, (qq, score, wins, plays) in enumerate(entries[:10], start=1):
+            rk = medals.get(i, str(i))
+            display = self._tomb_display_qq(qq).replace("|", "丨")
+            lines.append(
+                f"| {rk} | {display} | {score} | {wins} | {plays} |"
+            )
+        if my_rank and my_rank > 10:
+            display = self._tomb_display_qq(my_qq).replace("|", "丨")
+            lines.append(
+                f"| {my_rank} | {display} | {my_st.get('score', 0)} | "
+                f"{my_st.get('wins', 0)} | {my_st.get('plays', 0)} |"
+            )
         return "\n".join(lines)
 
     def _ms_redeem_exp(self, player: dict, tokens: list[str]) -> str:
@@ -8651,13 +8664,47 @@ class PetParkPlugin(Star):
         sect["total_points"] = sect.get("total_points", 0) + points
         sect["season_points"] = sect.get("season_points", 0) + points
         sect["exp"] = sect.get("exp", 0) + points
-        # 检查宗门升级（基于历史累计 total_points）
+        self._sect_check_level_up(sect)
+
+    def _sect_check_level_up(self, sect: dict) -> int:
+        """根据累计 total_points 检查并提升宗门等级，返回实际提升的级数。"""
+        gained = 0
         while True:
             lvl = sect.get("level", 1)
             need = data.SECT_LEVEL_EXP.get(lvl + 1)
             if need is None or sect.get("total_points", 0) < need:
                 break
             sect["level"] = lvl + 1
+            gained += 1
+        return gained
+
+    def _sect_level_up(self, player: dict, group_id: str) -> str:
+        """手动触发宗门升级检查（基于累计宗门积分）。"""
+        group = self.store.get_group(group_id)
+        sect = group.get("sect")
+        if not sect:
+            return "本群尚未建立宗门。"
+        if str(player.get("qq", "")) != str(sect.get("master_qq", "")):
+            return "只有宗主可以使用宗门升级指令。"
+        old_level = sect.get("level", 1)
+        gained = self._sect_check_level_up(sect)
+        new_level = sect.get("level", 1)
+        if gained > 0:
+            return (
+                f"🏯 **宗门升级成功！**\n"
+                f"由 Lv{old_level} 提升至 **Lv{new_level}**。\n"
+                f"> 累计宗门积分：{sect.get('total_points', 0)}"
+            )
+        lvl = new_level
+        need = data.SECT_LEVEL_EXP.get(lvl + 1)
+        if need is None:
+            return f"🏯 宗门已达最高等级 Lv{lvl}，无法继续升级。"
+        progress = sect.get("total_points", 0)
+        remain = need - progress
+        return (
+            f"🏯 宗门升级条件不足（当前 Lv{lvl}）。\n"
+            f"> 累计积分 {progress}/{need}，还需 {remain} 点宗门积分可升至 Lv{lvl + 1}。"
+        )
 
     def _sect_format_confirmed(self, confirmed: list[dict]) -> str:
         lines = [f"## 🏯 已确认出战名单（{len(confirmed)}/{data.SECT_TEAM_SIZE}）"]
