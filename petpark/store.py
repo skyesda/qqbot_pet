@@ -122,7 +122,8 @@ class PetStore:
             "name": "",
             "level": 1,
             "exp": 0,
-            "points": 0,
+            "points": 0,          # 当前可用宗门积分（可消耗）
+            "total_points": 0,    # 历史累计宗门积分（用于升级）
             "season_points": 0,
             "win": 0,
             "lose": 0,

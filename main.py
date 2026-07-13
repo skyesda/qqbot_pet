@@ -1138,7 +1138,7 @@ class PetParkPlugin(Star):
         if cmd == "宗门倒计时":
             return self._sect_countdown(group_id)
         if cmd == "宗门排行":
-            return self._sect_rank()
+            return self._sect_rank(group_id)
         if cmd == "宗门商店":
             return self._sect_shop(group_id)
         if cmd == "宗门兑换":
@@ -8562,16 +8562,18 @@ class PetParkPlugin(Star):
         )
 
     def _sect_give_points(self, group_id: str, points: int) -> None:
+        """增加宗门积分：points 为可用积分，total_points 为累计积分并用于升级。"""
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         sect["points"] = sect.get("points", 0) + points
+        sect["total_points"] = sect.get("total_points", 0) + points
         sect["season_points"] = sect.get("season_points", 0) + points
         sect["exp"] = sect.get("exp", 0) + points
-        # 检查宗门升级
+        # 检查宗门升级（基于历史累计 total_points）
         while True:
             lvl = sect.get("level", 1)
             need = data.SECT_LEVEL_EXP.get(lvl + 1)
-            if need is None or sect["exp"] < need:
+            if need is None or sect.get("total_points", 0) < need:
                 break
             sect["level"] = lvl + 1
 
@@ -8597,7 +8599,8 @@ class PetParkPlugin(Star):
             "|---|---|",
             f"| 宗门名 | {sect.get('name', group_id)} |",
             f"| 宗门等级 | Lv{sect.get('level', 1)} |",
-            f"| 宗门积分 | {sect.get('points', 0)} |",
+            f"| 累计宗门积分 | {sect.get('total_points', 0)} |",
+            f"| 当前可用积分 | {sect.get('points', 0)} |",
             f"| 本赛季积分 | {sect.get('season_points', 0)} |",
             f"| 胜/平/败 | {sect.get('win',0)} / {sect.get('draw',0)} / {sect.get('lose',0)} |",
             f"| 宗主 | `{sect.get('master_qq','未选举')}` |",
@@ -8847,7 +8850,8 @@ class PetParkPlugin(Star):
             lines.append(f"| {date} | {opp} | {result} | {score} | +{points} |")
         return "\n".join(lines)
 
-    def _sect_rank(self) -> str:
+    def _sect_rank(self, group_id: str) -> str:
+        """宗门排行榜：先按等级，同等级按历史累计宗门积分；显示前 10 + 当前宗门排名。"""
         groups = self.store._data.get("groups", {})
         entries = []
         for gid, g in groups.items():
@@ -8856,21 +8860,39 @@ class PetParkPlugin(Star):
             sect = g.get("sect", {})
             if not sect.get("enabled", True):
                 continue
-            score = sect.get("season_points", 0) * 10 + sect.get("win", 0) * 100
-            entries.append((gid, sect, score))
+            # 排序键：(等级, 历史累计积分)
+            level = sect.get("level", 1)
+            total = sect.get("total_points", 0)
+            entries.append((gid, sect, (level, total)))
+        # 先按等级降序，再按累计积分降序
         entries.sort(key=lambda x: x[2], reverse=True)
+
+        # 计算当前宗门排名
+        my_rank = None
+        for i, (gid, _, _) in enumerate(entries, 1):
+            if gid == group_id:
+                my_rank = i
+                break
 
         lines = ["## 🏯 宗门排行榜"]
         lines.append("| 排名 | 宗门 | 等级 | 积分 | 胜/平/败 | 宗主 |")
         lines.append("|---|---|---|---|---|---|")
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        for i, (gid, sect, score) in enumerate(entries[:20], 1):
+        for i, (gid, sect, _) in enumerate(entries[:10], 1):
             name = sect.get("name", gid)
             lines.append(
                 f"| {medals.get(i, i)} | {name} | Lv{sect.get('level',1)} | "
-                f"{sect.get('season_points',0)} | "
+                f"{sect.get('total_points',0)} | "
                 f"{sect.get('win',0)}/{sect.get('draw',0)}/{sect.get('lose',0)} | "
                 f"`{sect.get('master_qq','-')}` |"
+            )
+
+        if my_rank is not None:
+            my_sect = self.store.get_group(group_id).get("sect", {})
+            my_name = my_sect.get("name", group_id)
+            lines.append(
+                f"\n> 本宗 `{my_name}` 当前排名：**第 {my_rank} 名** "
+                f"（Lv{my_sect.get('level',1)} / {my_sect.get('total_points',0)} 积分）"
             )
         return "\n".join(lines)
 
@@ -8907,13 +8929,14 @@ class PetParkPlugin(Star):
             f"  - **{data.SECT_ENROLL_COUNT} 人报名出战**：普通成员发送 `宗门报名` 参与，宗主可踢出不合格者。",
             "- 战斗采用 **车轮战**：双方按战力从高到低依次 1v1，胜者留下继续打，败者换下一只，直到一方全部退场。",
             "",
-            "### 五、宗门积分与宗门贡献",
-            "| 来源 | 宗门积分（全宗共享） | 宗门贡献（个人资产） |",
+            "### 五、宗门积分与升级",
+            "| 来源 | 宗门积分（累计/可用） | 宗门贡献（个人资产） |",
             "|---|---|---|",
             f"| 宗门签到 | +{data.SECT_SIGN_POINTS} | +{data.SECT_CONTRIBUTION_SIGN} |",
-            f"| 宗门战参战 | — | +{data.SECT_CONTRIBUTION_BATTLE_LOSE} |",
-            f"| 宗门战回合胜利 | — | 额外 +{data.SECT_CONTRIBUTION_BATTLE} |",
-            "- **宗门积分**：全宗共享资产，宗主/副宗主可用于宗门商店兑换。",
+            f"| 宗门战参战 | 按胜负增加 | +{data.SECT_CONTRIBUTION_BATTLE_LOSE} |",
+            f"| 宗门战回合胜利 | 按胜负增加 | 额外 +{data.SECT_CONTRIBUTION_BATTLE} |",
+            "- **宗门积分**：分为『累计积分』（用于升级、排行榜）和『可用积分』（宗门商店消耗）。",
+            "- **宗门升级**：累计宗门积分达到阈值后自动升级，消耗可用积分不影响等级。",
             "- **宗门贡献**：个人资产，任何人都可以在宗门商店兑换专属商品。",
             "",
             "### 六、宗门商店",
