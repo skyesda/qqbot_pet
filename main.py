@@ -5455,7 +5455,7 @@ class PetParkPlugin(Star):
         """将虚拟 session 中的玩家私有字段写回双排父 session。"""
         if not is_coop:
             return
-        coop = virtual.pop("_coop_parent", None)
+        coop = virtual.get("_coop_parent")
         if not coop:
             return
         qq = str(player.get("qq", ""))
@@ -5504,6 +5504,11 @@ class PetParkPlugin(Star):
         tp, err = self._find_target(group_id, target_qq)
         if err:
             return err
+        # 清理指向已不存在队伍的过期索引，避免邀请被旧数据阻塞
+        for qq in (my_qq, target_qq):
+            old_key = self._tomb_coop_index.get(self._tomb_key(group_id, qq))
+            if old_key and old_key not in self._tomb_coop_teams:
+                self._tomb_coop_index.pop(self._tomb_key(group_id, qq), None)
         if self._tomb_is_in_coop(player):
             return "你已经有队伍了，发送「摸金取消组队」退出当前队伍。"
         if self._tomb_is_in_coop(tp):
@@ -6155,6 +6160,7 @@ class PetParkPlugin(Star):
             x, y = session["player_pos"]["x"], session["player_pos"]["y"]
         cells = session["map"]["cells"]
         if cells[y][x] != "C":
+            session["pending"] = None
             self._tomb_commit(player, session, is_coop)
             return "当前位置没有宝箱。"
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
@@ -6213,31 +6219,35 @@ class PetParkPlugin(Star):
         inv[name] -= 1
         if inv[name] <= 0:
             inv.pop(name, None)
+
+        result = f"已使用『{name}』。"
         if effect == "heal_tomb":
             heal = data.TOMB_ITEMS[name].get("amount", 30)
             heal_mult = self._get_card_effect(session, "heal_item_mult", 1.0)
             heal = max(1, int(heal * heal_mult))
             session["hp"] = min(session["hp_max"], session["hp"] + heal)
-            return f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
-        if effect == "heal_tomb_pct":
+            result = f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
+        elif effect == "heal_tomb_pct":
             heal = max(1, int(session["hp_max"] * data.TOMB_ITEMS[name].get("amount", 0.3)))
             heal_mult = self._get_card_effect(session, "heal_item_mult", 1.0)
             heal = max(1, int(heal * heal_mult))
             session["hp"] = min(session["hp_max"], session["hp"] + heal)
-            return f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
-        if effect == "avoid_monster":
+            result = f"💊 使用『{name}』，摸金HP +{heal}（{session['hp']}/{session['hp_max']}）。"
+        elif effect == "avoid_monster":
             session["buffs"]["avoid_monster"] = True
-            return f"🕯 使用『{name}』，下一次移动不会触发怪物。"
-        if effect == "auto_win":
+            result = f"🕯 使用『{name}』，下一次移动不会触发怪物。"
+        elif effect == "auto_win":
             session["buffs"]["auto_win"] = True
-            return f"📌 使用『{name}』，下一场战斗锁定必胜。"
-        if effect == "chest_bonus":
+            result = f"📌 使用『{name}』，下一场战斗锁定必胜。"
+        elif effect == "chest_bonus":
             session["buffs"]["chest_bonus"] = True
-            return f"⛏ 使用『{name}』，下一次开箱冥币 +30%。"
-        if effect == "revive":
+            result = f"⛏ 使用『{name}』，下一次开箱冥币 +30%。"
+        elif effect == "revive":
             session["buffs"]["revive"] = True
-            return f"🧧 使用『{name}』，摸金HP归0时自动复活到1并强制撤离。"
-        return f"已使用『{name}』。"
+            result = f"🧧 使用『{name}』，摸金HP归0时自动复活到1并强制撤离。"
+
+        self._tomb_commit(player, session, is_coop)
+        return result
 
     def _tomb_evacuate(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -6279,31 +6289,57 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
-        session = self._tomb_sessions.get(key)
+        session, is_coop = self._tomb_prepare(player)
         if not session:
             return self._tomb_status_outside(player)
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
-        pos = session["player_pos"]
-        inv = session.get("inventory", {})
-        inv_text = "、".join(f"{k}×{v}" for k, v in inv.items() if v > 0) or "空"
-        remain = self._tomb_time_left(session)
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         image_md = self._tomb_player_map_md(session)
-        wep = session.get("weapon", "")
-        wep_text = f"{wep}(攻+{session.get('weapon_attack', 0)})" if wep else "徒手"
-        level = self.store.get_tomb_level(player)
-        power = data.tomb_player_attack(level, session.get("weapon_attack", 0))
+        remain = self._tomb_time_left(session)
+        card_line = ""
+        if session.get("destiny_card"):
+            card_line = f"● 命运卡牌：【{session['destiny_card']}】\n"
         pending = session.get("pending")
         pending_text = ""
         if pending:
             pmap = {"C": "宝箱待开（开箱/跳过）", "M": "怪物待战（战斗/逃跑）", "S": "祭坛待祭拜（祭拜/跳过）"}
             pending_text = f"\n● 当前：{pmap.get(pending['type'], '')}"
-        card_line = ""
-        if session.get("destiny_card"):
-            card_line = f"● 命运卡牌：【{session['destiny_card']}】\n"
+
+        if is_coop:
+            coop = session.get("_coop_parent")
+            my_qq = str(player.get("qq", ""))
+            lines = [f"## 🏺 摸态 · {cfg['name']}（双排）", card_line.rstrip()]
+            total_mingbi = 0
+            for qq, pd in coop.get("players", {}).items():
+                total_mingbi += pd.get("mingbi", 0)
+                pos = pd.get("player_pos", {})
+                inv = pd.get("inventory", {})
+                inv_text = "、".join(f"{k}×{v}" for k, v in inv.items() if v > 0) or "空"
+                wep = pd.get("weapon", "")
+                wep_text = f"{wep}(攻+{pd.get('weapon_attack', 0)})" if wep else "徒手"
+                level = self.store.get_tomb_level({"qq": qq})
+                power = data.tomb_player_attack(level, pd.get("weapon_attack", 0))
+                label = "我" if qq == my_qq else "队友"
+                lines.append(
+                    f"● {label} `{qq}`：HP {pd.get('hp', 0)}/{pd.get('hp_max', 0)}　"
+                    f"战力 {power}（{wep_text}）\n"
+                    f"　位置：({pos.get('x', 0)},{pos.get('y', 0)})　"
+                    f"逃跑 {pd.get('escapes', 0)}/{data.TOMB_ESCAPES_PER_RAID}　"
+                    f"眩晕 {pd.get('stunned', 0)}\n"
+                    f"　冥币 {pd.get('mingbi', 0)}　背包 {inv_text}"
+                )
+            lines.append(f"● 合计冥币：{total_mingbi} / {session['required']}　剩余时间：{remain}{pending_text}")
+            return "\n".join(lines), image_md
+
+        pos = session["player_pos"]
+        inv = session.get("inventory", {})
+        inv_text = "、".join(f"{k}×{v}" for k, v in inv.items() if v > 0) or "空"
+        wep = session.get("weapon", "")
+        wep_text = f"{wep}(攻+{session.get('weapon_attack', 0)})" if wep else "徒手"
+        level = self.store.get_tomb_level(player)
+        power = data.tomb_player_attack(level, session.get("weapon_attack", 0))
         text = (
             f"## 🏺 摸态 · {cfg['name']}\n"
             f"{card_line}"
@@ -6854,11 +6890,17 @@ class PetParkPlugin(Star):
         pending = session.get("pending")
         if not pending or pending.get("type") not in ("M", "B"):
             return "这里没有要战斗的怪物（移动到怪物格或BOSS格才会遭遇）。"
+        x, y = pending["x"], pending["y"]
+        cells = session["map"]["cells"]
+        if cells[y][x] != pending["type"]:
+            session["pending"] = None
+            self._tomb_commit(player, session, is_coop)
+            return "该目标已被处理。"
         is_boss = pending.get("type") == "B"
         result = self._tomb_battle(player, p, session, summoned=False, forced_win=False, is_boss=is_boss)
-        self._tomb_commit(player, session, is_coop)
         if self._tomb_session_exists(player):
             session["pending"] = None
+        self._tomb_commit(player, session, is_coop)
         return result
 
     def _tomb_altar_cmd(self, player: dict) -> str:
@@ -6881,10 +6923,19 @@ class PetParkPlugin(Star):
             return "🌀 祭坛被命运之力封印，无法祭拜。"
         x, y = pending["x"], pending["y"]
         cells = session["map"]["cells"]
+        if cells[y][x] != "S":
+            session["pending"] = None
+            self._tomb_commit(player, session, is_coop)
+            return "该祭坛已被处理。"
         cells[y][x] = "."
         self._tomb_refresh_map(session)
         session["pending"] = None
-        return self._tomb_altar_event(player, p, session)
+        self._tomb_commit(player, session, is_coop)
+        result = self._tomb_altar_event(player, p, session)
+        # 祭坛事件可能触发战斗/死亡并结算，若 session 仍存在则把收益写回
+        if self._tomb_session_exists(player):
+            self._tomb_commit(player, session, is_coop)
+        return result
 
     def _tomb_flee(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -6904,14 +6955,19 @@ class PetParkPlugin(Star):
             return "这里没有可以逃跑的怪物。"
         if session.get("escapes", 0) <= 0 and not self._get_card_effect(session, "escape_guaranteed", False):
             return "🏃 逃跑次数已用完，只能战斗或使用道具。"
-        if not self._get_card_effect(session, "escape_guaranteed", False):
-            session["escapes"] -= 1
         x, y = pending["x"], pending["y"]
         cells = session["map"]["cells"]
+        if cells[y][x] != "M":
+            session["pending"] = None
+            self._tomb_commit(player, session, is_coop)
+            return "该目标已被处理。"
+        if not self._get_card_effect(session, "escape_guaranteed", False):
+            session["escapes"] -= 1
         cells[y][x] = "."
         self._tomb_refresh_map(session)
         session["pending"] = None
         session["player_pos"] = dict(session.get("prev_pos", session["player_pos"]))
+        self._tomb_commit(player, session, is_coop)
         return (
             f"🏃 你成功逃脱，退回上一格，怪物已消失在墓道中。"
             f"剩余逃跑次数 {session['escapes']}/{data.TOMB_ESCAPES_PER_RAID}。"
@@ -6932,9 +6988,14 @@ class PetParkPlugin(Star):
         pending = session["pending"]
         x, y = pending["x"], pending["y"]
         cells = session["map"]["cells"]
+        if cells[y][x] != pending["type"]:
+            session["pending"] = None
+            self._tomb_commit(player, session, is_coop)
+            return "该目标已被处理。"
         cells[y][x] = "."
         self._tomb_refresh_map(session)
         session["pending"] = None
+        self._tomb_commit(player, session, is_coop)
         return "你选择离开，目标已消失在墓道中。可继续 上/下/左/右 移动。"
 
     # --------------------------- 双排互动 ---------------------------
@@ -7492,7 +7553,7 @@ class PetParkPlugin(Star):
                 continue
 
         # 顶部标题（全中文，避免英文）
-        mode_label = "（双排）" if session.get("players") else ""
+        mode_label = "（双排）" if session.get("_is_coop") or "players" in session else ""
         title = f"摸金地图{mode_label}  难度{session['difficulty']}  {cfg['name']}"
         if font:
             draw.text((pad, 12), title, fill=data.TOMB_COLORS["text"], font=font)

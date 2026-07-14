@@ -856,10 +856,24 @@ class PetStore:
     def consume_tomb_token(cls, player: dict, count: int = 1) -> bool:
         """消耗 count 枚棺椁令（先储物柜后装备背包），返回是否成功。"""
         st = cls.tomb_state(player)
-        for loc in ("storage", "equip"):
-            if cls.remove_tomb_item(player, data.TOMB_EXTRA_TOKEN, count, loc):
-                return True
-        return False
+        storage = st.setdefault("storage_items", {})
+        equip = st.setdefault("equip_items", {})
+        token = data.TOMB_EXTRA_TOKEN
+        have_storage = storage.get(token, 0)
+        have_equip = equip.get(token, 0)
+        if have_storage + have_equip < count:
+            return False
+        from_storage = min(have_storage, count)
+        if from_storage:
+            storage[token] = have_storage - from_storage
+            if storage[token] <= 0:
+                storage.pop(token, None)
+        remain = count - from_storage
+        if remain:
+            equip[token] = have_equip - remain
+            if equip[token] <= 0:
+                equip.pop(token, None)
+        return True
 
     @classmethod
     def get_tomb_token_count(cls, player: dict) -> int:
