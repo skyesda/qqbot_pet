@@ -60,6 +60,7 @@ class WebAdmin:
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
         app.router.add_post("/api/boss_respawn", self._api_boss_respawn)
         app.router.add_post("/api/test_sect_broadcast", self._api_test_sect_broadcast)
+        app.router.add_post("/api/test_sect_war_full", self._api_test_sect_war_full)
         app.router.add_get("/api/portal_accounts", self._api_portal_accounts)
         app.router.add_post("/api/portal_accounts/reset_password", self._api_portal_reset_password)
         app.router.add_post("/api/portal_accounts/delete", self._api_portal_delete_account)
@@ -440,6 +441,159 @@ class WebAdmin:
         return self._json(
             {"ok": bool(ok), "msg": "定向推送成功" if ok else "定向推送失败（无 umo/未授权/发送异常，详见日志）"}
         )
+
+    async def _api_test_sect_war_full(self, request):
+        """临时测试：用模拟数据在指定两个群完整跑一遍宗门战广播链路（真实投递到 QQ 群）。
+
+        依次触发：对阵公布 -> 开战 -> 第1/2回合 -> 决赛战报，共 5 条广播 × 2 群 = 10 条。
+        使用模拟宠物/成员填充出战名单，跑完即还原两群 sect、赛季 matches 及模拟玩家，不影响真实数据。
+        """
+        import asyncio
+        import copy
+
+        from . import pet as petmod
+
+        self._require(request)
+        form = await request.post()
+        ga = (form.get("group_a") or "").strip()
+        gb = (form.get("group_b") or "").strip()
+        if not ga or not gb:
+            return self._json({"ok": False, "msg": "缺少 group_a / group_b"})
+        if ga == gb:
+            return self._json({"ok": False, "msg": "两个群不能相同"})
+        gw = self._command_gateway
+        if gw is None:
+            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
+        store = gw.store
+        groups = store._data.get("groups", {})
+        if ga not in groups or gb not in groups:
+            return self._json({"ok": False, "msg": "群不存在于 groups"})
+
+        # 预检：两群 umo / 授权 / 开关状态
+        pre = []
+        for gid in (ga, gb):
+            g = groups[gid]
+            umo = g.get("umo")
+            authed = gw._is_group_authorized(gid)
+            pre.append(
+                f"{gid}: umo={'有' if umo else '无'}, 授权={'是' if authed else '否'}, "
+                f"enabled={g.get('enabled')}, cross={g.get('cross')}"
+            )
+
+        today = time.strftime("%Y-%m-%d")
+        season = gw._sect_ensure_season()
+        # 快照（含模拟玩家碰撞兜底）
+        sect_a_bak = copy.deepcopy(groups[ga].get("sect", {}))
+        sect_b_bak = copy.deepcopy(groups[gb].get("sect", {}))
+        season_bak = copy.deepcopy(store._data.get("sect_season", {}))
+        players = store._data.setdefault("players", {})
+        sim_keys: list[str] = []
+        collide_bak: dict = {}
+
+        def make_sim_pet(idx: int, src=None) -> dict:
+            if isinstance(src, dict):
+                p = copy.deepcopy(src)
+            else:
+                p = {
+                    "nickname": f"测试战宠{idx}", "species": "幼龙", "quality": "史诗",
+                    "element": "金", "gender": "男", "stage": "成熟期", "level": 60,
+                    "exp": 0, "hp": 3000, "hp_max": 3000, "atk": 180, "def": 90,
+                    "intel": 90, "mood": 5, "energy": 100, "energy_max": 100,
+                    "status": "正常", "love_state": "单身", "love_target": None,
+                    "favor": 0, "artifact": None, "talent": None, "skills": [],
+                    "custom": False, "ascended": False, "frozen_until": 0,
+                }
+            p["nickname"] = f"测试战宠{idx}"
+            p["hp"] = p.get("hp_max", 3000) or 3000
+            p["hp_max"] = p.get("hp_max", 3000) or 3000
+            p["status"] = "正常"
+            p["mood"] = 5
+            return p
+
+        def find_real_pet(gid):
+            for k, pl in players.items():
+                if "\x1f" in k and k.split("\x1f", 1)[0] == gid:
+                    pet = pl.get("pet")
+                    if pet and not petmod.is_dead(pet):
+                        return pet
+            return None
+
+        steps = []
+        ok = False
+        msg = ""
+        try:
+            for gi, gid in enumerate((ga, gb)):
+                g = groups[gid]
+                sect = g.setdefault("sect", store._default_group_sect())
+                if not sect.get("name"):
+                    sect["name"] = "测试宗门甲" if gi == 0 else "测试宗门乙"
+                gw._sect_ensure_today(sect)
+                src_pet = find_real_pet(gid)
+                confirmed = []
+                for i in range(5):
+                    qq = f"9000000{gi * 5 + i + 1}"
+                    key = store.make_key(gid, qq)
+                    if key in players:
+                        collide_bak[key] = copy.deepcopy(players[key])
+                    else:
+                        sim_keys.append(key)
+                    pl = store.get_player(qq, gid, create=True)
+                    pl["qq"] = qq
+                    pl["group"] = gid
+                    pet = make_sim_pet(i + 1, src_pet)
+                    pl["pet"] = pet
+                    confirmed.append({"qq": qq, "bp": petmod.battle_power(pet)})
+                sect["today"]["confirmed"] = confirmed
+                sect["today"]["date"] = today
+
+            # 初始化双方 war 状态并写入今日赛季对阵
+            gw._sect_init_war(ga, gb)
+            gw._sect_init_war(gb, ga)
+            season.setdefault("matches", []).append({
+                "date": today, "time": int(time.time()),
+                "group_a": ga, "group_b": gb,
+                "a_wins": 0, "b_wins": 0, "winner": "",
+            })
+            await store.save()
+
+            # 依次触发整套广播（真实投递到两个 QQ 群）
+            await asyncio.sleep(1)
+            await gw._sect_broadcast_matchup(ga, gb)
+            steps.append("对阵公布")
+            await asyncio.sleep(2)
+            await gw._sect_war_start()
+            steps.append("开战")
+            await asyncio.sleep(2)
+            await gw._sect_war_round_end(1, False)
+            steps.append("第1回合")
+            await asyncio.sleep(2)
+            await gw._sect_war_round_end(2, False)
+            steps.append("第2回合")
+            await asyncio.sleep(2)
+            await gw._sect_war_round_end(3, True)
+            steps.append("决赛战报")
+            await store.save()
+            ok = True
+            msg = "宗门战整套广播已依次推送（5 条 × 2 群 = 10 条），请到两个 QQ 群核对。"
+        except Exception as e:
+            ok = False
+            msg = f"执行异常: {e}"
+            logger.exception("[petpark] 宗门战整套广播测试异常")
+        finally:
+            # 还原：两群 sect、赛季、模拟玩家
+            try:
+                groups[ga]["sect"] = sect_a_bak
+                groups[gb]["sect"] = sect_b_bak
+                store._data["sect_season"] = season_bak
+                for key in sim_keys:
+                    players.pop(key, None)
+                for key, bak in collide_bak.items():
+                    players[key] = bak
+                await store.save()
+            except Exception:
+                logger.exception("[petpark] 宗门战整套广播测试还原失败")
+
+        return self._json({"ok": ok, "msg": msg, "steps": steps, "precheck": pre})
 
     # --------------------------- 网页账号管理 ---------------------------
     async def _api_portal_accounts(self, request):
