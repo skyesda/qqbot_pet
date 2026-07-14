@@ -59,6 +59,7 @@ class WebAdmin:
         app.router.add_post("/api/delete", self._api_delete)
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
         app.router.add_post("/api/boss_respawn", self._api_boss_respawn)
+        app.router.add_post("/api/test_sect_broadcast", self._api_test_sect_broadcast)
         app.router.add_get("/api/portal_accounts", self._api_portal_accounts)
         app.router.add_post("/api/portal_accounts/reset_password", self._api_portal_reset_password)
         app.router.add_post("/api/portal_accounts/delete", self._api_portal_delete_account)
@@ -414,6 +415,31 @@ class WebAdmin:
             except Exception:
                 logger.exception("[petpark] 后台复活 Boss 广播失败")
         return self._json({"ok": True, "msg": f"Boss {bname} 已复活并全服播报"})
+
+    async def _api_test_sect_broadcast(self, request):
+        """临时：向指定群发送一条定向广播测试消息，验证 _send_to_group 通路。"""
+        from aiohttp import web
+
+        self._require(request)
+        data = await request.post()
+        gid = (data.get("group_id") or "").strip()
+        if not gid:
+            return self._json({"ok": False, "msg": "缺少 group_id"})
+        gw = self._command_gateway
+        if gw is None:
+            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
+        text = (
+            "## 🧪 宗门定向广播测试\n"
+            "本消息由 _send_to_group 主动推送。若你在本群看到此消息，说明定向主动广播功能正常。\n"
+            "> 此为测试广播，可忽略。"
+        )
+        try:
+            ok = await gw._send_to_group(gid, text)
+        except Exception as e:
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        return self._json(
+            {"ok": bool(ok), "msg": "定向推送成功" if ok else "定向推送失败（无 umo/未授权/发送异常，详见日志）"}
+        )
 
     # --------------------------- 网页账号管理 ---------------------------
     async def _api_portal_accounts(self, request):

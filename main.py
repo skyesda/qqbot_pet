@@ -9547,16 +9547,23 @@ class PetParkPlugin(Star):
         from astrbot.api.event import MessageChain
         group = self.store.get_group(group_id)
         umo = group.get("umo")
-        if not umo or not self._is_group_authorized(group_id):
+        if not umo:
+            logger.warning(f"[petpark] 定向广播跳过：群 {group_id} 未记录 umo（群内尚无消息触发过）")
+            return False
+        if not self._is_group_authorized(group_id):
+            logger.warning(f"[petpark] 定向广播跳过：群 {group_id} 未授权或授权已过期")
             return False
         try:
             await self.context.send_message(
                 umo, MessageChain().message(text).use_markdown(True)
             )
+            logger.info(f"[petpark] 已向群 {group_id} 定向推送成功")
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[petpark] 向群 {group_id} 定向 Markdown 推送失败：{e}，尝试纯文本降级")
             try:
                 await self.context.send_message(umo, MessageChain().message(text))
+                logger.info(f"[petpark] 已向群 {group_id} 定向推送成功（纯文本降级）")
                 return True
             except Exception:
                 logger.exception(f"[petpark] 向群 {group_id} 定向推送失败")
