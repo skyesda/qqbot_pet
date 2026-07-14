@@ -6928,7 +6928,9 @@ class PetParkPlugin(Star):
         is_boss = pending.get("type") == "B"
         result = self._tomb_battle(player, p, session, summoned=False, forced_win=False, is_boss=is_boss)
         if self._tomb_session_exists(player):
-            session["pending"] = None
+            # 闪避时怪物格仍保留，必须保持 pending；只有怪物被真正清理后才清空
+            if cells[y][x] not in ("M", "B"):
+                session["pending"] = None
         self._tomb_commit(player, session, is_coop)
         return result
 
@@ -6982,6 +6984,8 @@ class PetParkPlugin(Star):
         pending = session.get("pending")
         if not pending or pending.get("type") not in ("M", "B"):
             return "这里没有可以逃跑的怪物或BOSS。"
+        if pending.get("type") == "B":
+            return "👹 BOSS 战无法逃跑，必须战斗！"
         if session.get("escapes", 0) <= 0 and not self._get_card_effect(session, "escape_guaranteed", False):
             return "🏃 逃跑次数已用完，只能战斗或使用道具。"
         x, y = pending["x"], pending["y"]
@@ -7020,8 +7024,11 @@ class PetParkPlugin(Star):
             return "当前没有待交互的对象。"
         pending = session["pending"]
         x, y = pending["x"], pending["y"]
+        ptype = pending.get("type", "")
+        if ptype in ("M", "B"):
+            return "👹 怪物和 BOSS 无法跳过，请发送『战斗』或『逃跑』。"
         cells = session["map"]["cells"]
-        if cells[y][x] != pending["type"]:
+        if cells[y][x] != ptype:
             session["pending"] = None
             self._tomb_commit(player, session, is_coop)
             return "该目标已被处理。"
