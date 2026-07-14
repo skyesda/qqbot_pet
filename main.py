@@ -5652,14 +5652,15 @@ class PetParkPlugin(Star):
         name = tokens[1]
         count = self._parse_count(tokens, 2) if len(tokens) > 2 else 1
         if name in data.TOMB_WEAPONS:
+            # 武器按名称唯一存储（有耐久），不支持批量购买
+            count = 1
             price = data.TOMB_WEAPONS[name]["price"]
             total = price * count
             if self.store.get_tomb_mingbi(player) < total:
                 return f"冥币不足（需 {total}，当前 {self.store.get_tomb_mingbi(player)}）。"
             self.store.add_tomb_mingbi(player, -total)
-            for _ in range(count):
-                self.store.add_tomb_weapon(player, name, "storage")
-            return f"🗡 已购买『{name}』×{count}，消耗 {total} 冥币（存入储物柜）。发送 `摸带 {name}` 带入装备背包，再 `摸装 {name}` 装备。"
+            self.store.add_tomb_weapon(player, name, "storage")
+            return f"🗡 已购买『{name}』，消耗 {total} 冥币（存入储物柜）。发送 `摸带 {name}` 带入装备背包，再 `摸装 {name}` 装备。"
         if name not in data.TOMB_ITEMS:
             return f"摸金商店没有『{name}』。"
         price = data.TOMB_ITEMS[name]["price"]
@@ -6370,6 +6371,9 @@ class PetParkPlugin(Star):
         session, is_coop = self._tomb_prepare(player)
         if not session:
             return "你没有进行中的摸金探险。"
+        settle = self._tomb_check_timeout(player, p, session)
+        if settle:
+            return settle
         if is_coop:
             coop = session.get("_coop_parent")
             if coop:
