@@ -5488,9 +5488,9 @@ class PetParkPlugin(Star):
 
     # ---- 双排辅助结束 ----
 
-    def _tomb_pending_monster(self, session: dict) -> bool:
+    def _tomb_pending_battle(self, session: dict) -> bool:
         pending = session.get("pending")
-        return bool(pending and pending.get("type") == "M")
+        return bool(pending and pending.get("type") in ("M", "B"))
 
     # --------------------------- 双排组队 ---------------------------
     def _tomb_team_invite(self, player: dict, group_id: str, tokens: list[str]) -> str:
@@ -6066,8 +6066,8 @@ class PetParkPlugin(Star):
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
-        if self._tomb_pending_monster(session):
-            return "👹 你遭遇了怪物，必须先『战斗』或『逃跑』才能离开！"
+        if self._tomb_pending_battle(session):
+            return "👹 你遭遇了怪物或BOSS，必须先『战斗』或『逃跑』才能离开！"
         if session.get("stunned", 0) > 0:
             session["stunned"] -= 1
             self._tomb_commit(player, session, is_coop)
@@ -6263,8 +6263,8 @@ class PetParkPlugin(Star):
         settle = self._tomb_check_timeout(player, p, session)
         if settle:
             return settle
-        if self._tomb_pending_monster(session):
-            return "👹 你还有未处理的怪物，必须先『战斗』或『逃跑』才能撤离！"
+        if self._tomb_pending_battle(session):
+            return "👹 你还有未处理的怪物或BOSS，必须先『战斗』或『逃跑』才能撤离！"
         x, y = session["player_pos"]["x"], session["player_pos"]["y"]
         cells = session["map"]["cells"]
         if cells[y][x] != "E" and cells[y][x] != "X":
