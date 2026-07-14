@@ -5460,6 +5460,10 @@ class PetParkPlugin(Star):
         coop = virtual.get("_coop_parent")
         if not coop:
             return
+        # 防御：若 coop 已被结算并移出索引，避免继续写回已分离的 dict
+        coop_key = self._tomb_key(coop.get("group_id", ""), coop.get("leader", ""))
+        if coop_key not in self._tomb_coop_teams or self._tomb_coop_teams[coop_key] is not coop:
+            return
         qq = str(player.get("qq", ""))
         if qq not in coop.get("players", {}):
             return
@@ -5840,7 +5844,6 @@ class PetParkPlugin(Star):
                 "status": "active",
                 "stunned": 0,
                 "mingbi": 0,
-                "equip_items": dict(player_st.get("equip_items", {})),
             }
 
         now = int(time.time())
@@ -6201,6 +6204,9 @@ class PetParkPlugin(Star):
         if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
             return "当前状态无法执行此操作。"
+        settle = self._tomb_check_timeout(player, p, session)
+        if settle:
+            return settle
         if len(tokens) < 2:
             return "用法：摸用 道具名"
         name = tokens[1]
@@ -6321,7 +6327,8 @@ class PetParkPlugin(Star):
                 inv_text = "、".join(f"{k}×{v}" for k, v in inv.items() if v > 0) or "空"
                 wep = pd.get("weapon", "")
                 wep_text = f"{wep}(攻+{pd.get('weapon_attack', 0)})" if wep else "徒手"
-                level = self.store.get_tomb_level({"qq": qq})
+                pl = self.store.get_player(qq, coop.get("group_id", player.get("group", "")), create=False)
+                level = self.store.get_tomb_level(pl) if pl else 1
                 power = data.tomb_player_attack(level, pd.get("weapon_attack", 0))
                 label = "我" if qq == my_qq else "队友"
                 lines.append(
@@ -6507,6 +6514,14 @@ class PetParkPlugin(Star):
                 self.store.add_tomb_mingbi(pl, kept)
                 stats["fail"] = stats.get("fail", 0) + 1
                 total_mingbi += kept
+            elif reason == "death":
+                kept = int(gained * 0.2)
+                self.store.add_tomb_mingbi(pl, kept)
+                stats["fail"] = stats.get("fail", 0) + 1
+                total_mingbi += kept
+            elif reason == "timeout":
+                stats["fail"] = stats.get("fail", 0) + 1
+                # 超时不保留冥币，与单人超时结算一致
             else:
                 kept = int(gained * 0.2)
                 self.store.add_tomb_mingbi(pl, kept)
@@ -6644,6 +6659,7 @@ class PetParkPlugin(Star):
                 tx, ty = random.choice(floors)
                 cells[y][x] = "."
                 self._tomb_refresh_map(session)
+                session["prev_pos"] = dict(session["player_pos"])
                 session["player_pos"] = {"x": tx, "y": ty}
                 session["visited"].add((tx, ty))
                 return f"🌀 传送门将你吸入，传送到了 ({tx},{ty})！"
@@ -6770,11 +6786,10 @@ class PetParkPlugin(Star):
                     broke_text = f"　⚠️『{weapon}』耐久耗尽破碎！"
                     break
 
-        if not summoned and cells[y][x] in ("M", "B"):
-            cells[y][x] = "."
-            self._tomb_refresh_map(session)
-
         if forced_win or session["buffs"].pop("auto_win", False):
+            if not summoned and cells[y][x] in ("M", "B"):
+                cells[y][x] = "."
+                self._tomb_refresh_map(session)
             gain_min, gain_max = cfg["monster_mingbi"]
             if is_boss:
                 gain_min = int(gain_min * data.TOMB_BOSS_MINGBI_MULT)
@@ -6795,9 +6810,14 @@ class PetParkPlugin(Star):
         my_power = int(my_power * player_atk_mult)
         b = data.TOMB_BATTLE
 
-        # 闪避：免伤撤退，怪物仍在原地
+        # 闪避：免伤撤退，怪物仍在原地（不清空格子）
         if random.random() < b["dodge_chance"]:
             return f"💨 你灵巧闪避，全身而退，怪物仍在原地。{broke_text}"
+
+        # 正式交战后才清空怪物/BOSS 格
+        if not summoned and cells[y][x] in ("M", "B"):
+            cells[y][x] = "."
+            self._tomb_refresh_map(session)
 
         # 命运卡牌：随机范围扩展
         luck_mult = self._get_card_effect(session, "luck_range_mult", 1.0)
@@ -6989,6 +7009,9 @@ class PetParkPlugin(Star):
         if session.get("status") in ("downed", "pick_card"):
             self._tomb_commit(player, session, is_coop)
             return "当前状态无法执行此操作。"
+        settle = self._tomb_check_timeout(player, p, session)
+        if settle:
+            return settle
         if not session.get("pending"):
             return "当前没有待交互的对象。"
         pending = session["pending"]
@@ -7013,6 +7036,8 @@ class PetParkPlugin(Star):
         coop = self._tomb_get_coop(player)
         if not coop or not coop.get("active"):
             return "你不在组队摸金中。"
+        if int(time.time()) >= coop.get("deadline", 0):
+            return self._tomb_settle_coop(player, p, coop, "timeout")
         qq = str(player.get("qq", ""))
         tqq = self._tomb_teammate_qq(player, coop)
         if not tqq:
@@ -7047,6 +7072,8 @@ class PetParkPlugin(Star):
         coop = self._tomb_get_coop(player)
         if not coop or not coop.get("active"):
             return "你不在组队摸金中。"
+        if int(time.time()) >= coop.get("deadline", 0):
+            return self._tomb_settle_coop(player, p, coop, "timeout")
         qq = str(player.get("qq", ""))
         tqq = self._tomb_teammate_qq(player, coop)
         mydata = coop["players"].get(qq, {})
@@ -7084,6 +7111,8 @@ class PetParkPlugin(Star):
         coop = self._tomb_get_coop(player)
         if not coop or not coop.get("active"):
             return "你不在组队摸金中。"
+        if int(time.time()) >= coop.get("deadline", 0):
+            return self._tomb_settle_coop(player, p, coop, "timeout")
         qq = str(player.get("qq", ""))
         tqq = self._tomb_teammate_qq(player, coop)
         if len(tokens) < 3:
