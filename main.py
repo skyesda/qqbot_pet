@@ -5368,10 +5368,12 @@ class PetParkPlugin(Star):
         return self.store.make_key(group_id, qq)
 
     def _tomb_in_raid(self, player: dict) -> bool:
+        """检查玩家是否正在进行活跃的摸金探险（单人或已开局的 coop）。"""
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
         if key in self._tomb_sessions:
             return True
-        return self._tomb_get_coop(player) is not None
+        coop = self._tomb_get_coop(player)
+        return coop is not None and coop.get("active", False)
 
     # ---- 命运卡牌 ----
     def _tomb_draw_cards(self) -> list[str]:
@@ -5493,7 +5495,7 @@ class PetParkPlugin(Star):
     # --------------------------- 双排组队 ---------------------------
     def _tomb_team_invite(self, player: dict, group_id: str, tokens: list[str]) -> str:
         """摸金组队 用户ID —— 邀请队友组建双排队伍。"""
-        if self._tomb_in_raid(player):
+        if self._tomb_session_exists(player):
             return "你已在摸金中，请先结束当前探险（摸撤/摸弃）。"
         target_qq = self._arg(tokens, 1)
         if not target_qq:
@@ -5513,7 +5515,7 @@ class PetParkPlugin(Star):
             return "你已经有队伍了，发送「摸金取消组队」退出当前队伍。"
         if self._tomb_is_in_coop(tp):
             return f"用户 {target_qq} 已经在另一个队伍中了。"
-        if self._tomb_in_raid(tp):
+        if self._tomb_session_exists(tp):
             return f"用户 {target_qq} 正在摸金中，无法组队。"
         coop_key = self._tomb_key(group_id, my_qq)
         if coop_key in self._tomb_coop_teams:
@@ -6509,6 +6511,7 @@ class PetParkPlugin(Star):
                 kept = int(gained * 0.2)
                 self.store.add_tomb_mingbi(pl, kept)
                 stats["fail"] = stats.get("fail", 0) + 1
+                total_mingbi += kept
 
         # 清理双排数据
         for qq in (coop["leader"], coop["teammate"]):
@@ -6523,6 +6526,8 @@ class PetParkPlugin(Star):
             return "## 全队覆灭...\n装备背包全部掉落。"
         elif reason == "forfeit":
             return f"## 队伍放弃探险\n共保留 {total_mingbi} 冥币。"
+        elif reason == "revive":
+            return f"## 招魂幡复活撤离\n共保留 {total_mingbi} 冥币。"
         elif reason == "timeout":
             return "## 时间耗尽！\n全队撤离失败，装备背包全部掉落。"
         return f"## 结算完成"
@@ -6951,13 +6956,13 @@ class PetParkPlugin(Star):
         if settle:
             return settle
         pending = session.get("pending")
-        if not pending or pending.get("type") != "M":
-            return "这里没有可以逃跑的怪物。"
+        if not pending or pending.get("type") not in ("M", "B"):
+            return "这里没有可以逃跑的怪物或BOSS。"
         if session.get("escapes", 0) <= 0 and not self._get_card_effect(session, "escape_guaranteed", False):
             return "🏃 逃跑次数已用完，只能战斗或使用道具。"
         x, y = pending["x"], pending["y"]
         cells = session["map"]["cells"]
-        if cells[y][x] != "M":
+        if cells[y][x] != pending["type"]:
             session["pending"] = None
             self._tomb_commit(player, session, is_coop)
             return "该目标已被处理。"
@@ -6968,8 +6973,9 @@ class PetParkPlugin(Star):
         session["pending"] = None
         session["player_pos"] = dict(session.get("prev_pos", session["player_pos"]))
         self._tomb_commit(player, session, is_coop)
+        label = "BOSS" if pending.get("type") == "B" else "怪物"
         return (
-            f"🏃 你成功逃脱，退回上一格，怪物已消失在墓道中。"
+            f"🏃 你成功从{label}战中逃脱，退回上一格，目标已消失在墓道中。"
             f"剩余逃跑次数 {session['escapes']}/{data.TOMB_ESCAPES_PER_RAID}。"
         )
 
@@ -7670,7 +7676,7 @@ class PetParkPlugin(Star):
         legend_lines = [
             "红菱=出口  金箱=宝箱  白骷髅=怪物  紫刺=陷阱",
             "蓝珠=祭坛  黄圆=金币  绿雾=毒雾  紫环=传送",
-            f"青滴=生命泉  {'红骷髅=BOSS  ' if cfg.get('bosses', 0) > 0 else ''}需带回 {cfg['required']} 冥币",
+            f"青滴=生命泉  {'红骷髅=BOSS  ' if cfg.get('bosses', 0) > 0 else ''}需带回 {session.get('required', cfg['required'])} 冥币",
         ]
         for i, line in enumerate(legend_lines):
             if small_font:
