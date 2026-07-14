@@ -297,6 +297,7 @@ class PetStore:
             "forced": [],
             "confirmed": [],
             "signed": [],
+            "war": None,
         })
         if sect["today"].get("date") != today:
             sect["today"] = {
@@ -305,6 +306,7 @@ class PetStore:
                 "forced": [],
                 "confirmed": [],
                 "signed": [],
+                "war": None,
             }
         sect.setdefault("history", [])
         sect.setdefault("deputy_qqs", [])

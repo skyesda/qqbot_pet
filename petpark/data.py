@@ -1644,7 +1644,7 @@ SECT_CONTRIBUTION_SIGN = 1       # 宗门签到获得贡献
 SECT_CONTRIBUTION_BATTLE = 5     # 宗门战每场胜利获得贡献（参战者）
 SECT_CONTRIBUTION_BATTLE_LOSE = 2  # 宗门战失败获得贡献
 
-# 宗门等级经验表：赛季积分累计达到一定值升级
+# 宗门等级经验表：历史累计宗门积分达到一定值升级
 SECT_LEVEL_EXP = {
     1: 0,
     2: 500,
@@ -1657,3 +1657,25 @@ SECT_LEVEL_EXP = {
     9: 23000,
     10: 30000,
 }
+
+# ----------------------------------------------------------------------------
+# 宗门战新流程时间轴（每日）
+#   20:30 自动匹配并定向广播  20:40 第1回合开始
+#   20:50 第1回合结束  21:00 第2回合结束  21:10 第3回合结束（决赛）
+# ----------------------------------------------------------------------------
+SECT_WAR_MATCH_HOUR = 20
+SECT_WAR_MATCH_MIN = 30
+SECT_WAR_START_HOUR = 20
+SECT_WAR_START_MIN = 40
+SECT_WAR_ROUNDS = 3            # 总回合数
+SECT_WAR_ROUND_MINUTES = 10    # 每回合时长（分钟）
+
+# 加油机制
+SECT_CHEER_MIN = 1000          # 单次加油最小战力
+SECT_CHEER_MAX = 20000         # 单次加油最大战力
+SECT_CHEER_CD_MIN = 30         # 加油冷却最小秒数
+SECT_CHEER_CD_MAX = 120        # 加油冷却最大秒数
+
+# 回合结束扣血（占最大血量百分比）
+SECT_WAR_HP_LOSS_MIN_PCT = 5
+SECT_WAR_HP_LOSS_MAX_PCT = 15
