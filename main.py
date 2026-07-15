@@ -1242,7 +1242,7 @@ class PetParkPlugin(Star):
         if cmd == "宠物状态":
             return self._status_text(player)
         if cmd == "喂食":
-            return self._feed(player, tokens)
+            return self._feed(player, group_id, tokens)
 
         # ---- 日常活动 ----
         if text in data.DAILY_ACTIONS:
@@ -3456,7 +3456,7 @@ class PetParkPlugin(Star):
             tip = "，可使用『九转还魂丹』复活（发送：宠物复活）"
         return f"『{p['nickname']}』当前状态：{s}{tip}。"
 
-    def _feed(self, player: dict, tokens: list[str]) -> str:
+    def _feed(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
@@ -3470,7 +3470,15 @@ class PetParkPlugin(Star):
             if not self.store.remove_item(player, "相思豆"):
                 return "你没有『相思豆』。"
             p["favor"] = min(data.FAVOR_MAX, p["favor"] + 50)
-            return f"喂食相思豆，好感度 +50，当前 {p['favor']}。"
+            extra = ""
+            if p.get("love_target"):
+                tp = self.store.get_player(p["love_target"], group_id, create=False)
+                if tp and tp.get("pet"):
+                    tp["pet"]["favor"] = min(
+                        data.FAVOR_MAX, tp["pet"]["favor"] + 50
+                    )
+                    extra = f"\n伴侣 {p['love_target']} 的好感度也 +50。"
+            return f"喂食相思豆，好感度 +50，当前 {p['favor']}。" + extra
         return self._use_item(player, ["使用", name, "1"])
 
     # =====================================================================
