@@ -194,6 +194,10 @@ class WebAdmin:
             }
         )
 
+    @staticmethod
+    def _record_fingerprint(record: Any) -> str:
+        return json.dumps(record, ensure_ascii=False, sort_keys=True)
+
     async def _api_upsert(self, request):
         self._require(request)
         body = await request.json()
@@ -204,14 +208,34 @@ class WebAdmin:
             return self._json({"ok": False, "msg": "键不能为空"})
         if not isinstance(value, dict):
             return self._json({"ok": False, "msg": "记录内容必须是 JSON 对象"})
+        existing = self.store._data.get(table, {}).get(key)
+        # 乐观锁：编辑已有记录时必须携带打开编辑框时的原始快照（base），
+        # 若与当前数据不一致，说明期间数据已被游戏进程更新，拒绝写入，
+        # 防止旧页面快照整条覆盖玩家最新进度。
+        if existing is not None:
+            base = body.get("base")
+            if not isinstance(base, dict):
+                return self._json({
+                    "ok": False,
+                    "msg": "缺少原始数据快照，请刷新页面后重新编辑（防止旧数据覆盖）",
+                })
+            if self._record_fingerprint(base) != self._record_fingerprint(existing):
+                return self._json({
+                    "ok": False,
+                    "msg": "该记录在你打开编辑后已被更新，为防止旧数据覆盖已拒绝保存；"
+                           "请刷新列表后重新编辑",
+                })
         # 保存活动时保留运行时 Boss 状态，避免后台编辑把当前血量/伤害排行清空
         if table == "events":
-            existing = self.store._data.get(table, {}).get(key)
             if isinstance(existing, dict) and "_boss_state" in existing \
                     and "_boss_state" not in value:
                 value["_boss_state"] = existing["_boss_state"]
         self.store._data.setdefault(table, {})[key] = value
         await self.store.save()
+        logger.info(
+            f"[petpark][webadmin] upsert {table}/{key} "
+            f"({'更新' if existing is not None else '新增'}) by {request.remote}"
+        )
         return self._json({"ok": True})
 
     async def _api_delete(self, request):
@@ -219,8 +243,10 @@ class WebAdmin:
         body = await request.json()
         table = self._table(body.get("table", ""))
         key = str(body.get("key", ""))
-        self.store._data.get(table, {}).pop(key, None)
+        removed = self.store._data.get(table, {}).pop(key, None)
         await self.store.save()
+        if removed is not None:
+            logger.info(f"[petpark][webadmin] delete {table}/{key} by {request.remote}")
         return self._json({"ok": True})
 
     async def _api_gen_cards(self, request):
@@ -876,7 +902,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 </div>
 </div></div>
 <script>
-let cur='players', cache={}, editKey=null, META={};
+let cur='players', cache={}, editKey=null, editSnapshot=null, META={};
 let paCache=[];
 
 async function loadPortalAccounts(){
@@ -1584,8 +1610,14 @@ function applyFields(v){
  return v;
 }
 function g(id){return document.getElementById(id);}
-function editRow(k){openModal(k,JSON.parse(JSON.stringify(cache[k]||{})));}
-function addRow(){openModal('',{});}
+async function editRow(k){
+ // 编辑前先拉取最新数据，并记录原始快照供保存时做乐观锁校验
+ const r=await api('/api/list',{table:cur});cache=r.data||{};render();
+ if(!(k in cache)){alert('该记录已不存在，列表已刷新');return;}
+ editSnapshot=JSON.parse(JSON.stringify(cache[k]));
+ openModal(k,JSON.parse(JSON.stringify(cache[k])));
+}
+function addRow(){editSnapshot=null;openModal('',{});}
 function keyLabel(){return cur==='players'?'玩家键（群号\\x1fQQ号）':cur==='groups'?'群号':cur==='events'?'活动ID':'卡密码';}
 function openModal(k,v){
  editKey=k;
@@ -1652,11 +1684,13 @@ async function saveRow(){
  if(!key){const nk=g('newkey');key=nk?nk.value.trim():'';if(!key){alert('请填写键');return;}}
  let base;try{base=JSON.parse(g('mval').value||'{}');}catch(e){alert('高级 JSON 格式错误: '+e);return;}
  const v=applyFields(base);
- const r=await api('/api/upsert',{table:cur,key:key,value:v});
- if(!r.ok){alert(r.msg||'保存失败');return;}
+ const payload={table:cur,key:key,value:v};
+ if(editSnapshot!==null)payload.base=editSnapshot;
+ const r=await api('/api/upsert',payload);
+ if(!r.ok){alert(r.msg||'保存失败');load();return;}
  closeModal();load();
 }
-function closeModal(){g('modal').style.display='none';editKey=null;}
+function closeModal(){g('modal').style.display='none';editKey=null;editSnapshot=null;}
 async function delRow(k){if(!confirm('确认删除 '+k+' ?'))return;await api('/api/delete',{table:cur,key:k});load();}
 async function genCards(){
  const cardType=g('card_type').value;
