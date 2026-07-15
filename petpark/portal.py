@@ -15,8 +15,12 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
+import smtplib
 import time
+from email.header import Header
+from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -32,6 +36,22 @@ _CSRF_HEADER = "X-CSRF-Token"
 _LOGIN_COOLDOWN = 900  # 15 分钟
 _LOGIN_MAX_ATTEMPTS = 5
 
+# 邮箱验证码发送端配置
+_EMAIL_SMTP = {
+    "enabled": True,
+    "smtp_host": "smtp.qq.com",
+    "smtp_port": 465,
+    "use_ssl": True,
+    "username": "1808344406@qq.com",
+    "auth_code": "carwvuyvfjntfbeg",
+    "from_email": "1808344406@qq.com",
+}
+_EMAIL_CODE_TTL = 60  # 验证码有效期（秒）
+_EMAIL_SEND_INTERVAL = 60  # 同一邮箱重发间隔（秒）
+_EMAIL_CODE_MAX_TRIES = 5
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_PURPOSE_LABEL = {"register": "注册", "login": "登录", "bind": "绑定邮箱"}
+
 
 class PlayerPortal:
     def __init__(self, store, broadcast_callback=None, command_gateway=None):
@@ -39,6 +59,8 @@ class PlayerPortal:
         self.broadcast_callback = broadcast_callback
         self.command_gateway = command_gateway
         self._attempts: dict[str, dict] = {}
+        self._email_codes: dict[str, dict] = {}
+        self._email_send_at: dict[str, float] = {}
 
     # --------------------------- 工具：密码与会话 ---------------------------
     @staticmethod
@@ -131,6 +153,94 @@ class PlayerPortal:
 
     def _reset_rate(self, key: str) -> None:
         self._attempts.pop(key, None)
+
+    # --------------------------- 工具：邮箱验证码 ---------------------------
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        return str(email or "").strip().lower()
+
+    def _send_email_sync(self, to_email: str, code: str, purpose_label: str) -> None:
+        cfg = _EMAIL_SMTP
+        msg = MIMEText(
+            f"您的{purpose_label}验证码为：{code}\n"
+            f"验证码 {_EMAIL_CODE_TTL} 秒内有效，请尽快完成验证。\n"
+            "若非本人操作，请忽略本邮件。",
+            "plain",
+            "utf-8",
+        )
+        msg["Subject"] = Header(f"宠物乐园 · {purpose_label}验证码", "utf-8")
+        msg["From"] = cfg["from_email"]
+        msg["To"] = to_email
+        if cfg.get("use_ssl"):
+            server = smtplib.SMTP_SSL(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
+        else:
+            server = smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"], timeout=15)
+            server.starttls()
+        try:
+            server.login(cfg["username"], cfg["auth_code"])
+            server.sendmail(cfg["from_email"], [to_email], msg.as_string())
+        finally:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+    def _verify_email_code(self, purpose: str, email: str, code: str) -> tuple[bool, str]:
+        email = self._normalize_email(email)
+        code = str(code or "").strip()
+        if not code:
+            return False, "请输入邮箱验证码"
+        key = f"{purpose}:{email}"
+        rec = self._email_codes.get(key)
+        now = int(time.time())
+        if not rec or rec.get("exp", 0) < now:
+            self._email_codes.pop(key, None)
+            return False, "验证码已过期，请重新获取"
+        if rec.get("tries", 0) >= _EMAIL_CODE_MAX_TRIES:
+            self._email_codes.pop(key, None)
+            return False, "验证码错误次数过多，请重新获取"
+        if not secrets.compare_digest(str(rec.get("code", "")), code):
+            rec["tries"] = rec.get("tries", 0) + 1
+            return False, "验证码错误"
+        self._email_codes.pop(key, None)
+        return True, ""
+
+    async def _api_send_email_code(self, request: web.Request) -> web.Response:
+        if not _EMAIL_SMTP.get("enabled"):
+            return web.json_response({"ok": False, "msg": "邮箱验证功能未启用"})
+        body = await request.json()
+        email = self._normalize_email(body.get("email", ""))
+        purpose = str(body.get("purpose", "")).strip()
+        if purpose not in _EMAIL_PURPOSE_LABEL:
+            return web.json_response({"ok": False, "msg": "参数不正确"})
+        if not _EMAIL_RE.match(email):
+            return web.json_response({"ok": False, "msg": "邮箱格式不正确"})
+        if purpose in ("register", "bind"):
+            if self.store.get_account_by_email(email):
+                return web.json_response({"ok": False, "msg": "该邮箱已被注册"})
+        else:  # login
+            if not self.store.get_account_by_email(email):
+                return web.json_response({"ok": False, "msg": "该邮箱未绑定任何账号"})
+        now = time.time()
+        last = self._email_send_at.get(email, 0)
+        if now - last < _EMAIL_SEND_INTERVAL:
+            remain = int(_EMAIL_SEND_INTERVAL - (now - last))
+            return web.json_response({"ok": False, "msg": f"发送过于频繁，请 {remain} 秒后再试"})
+        code = f"{secrets.randbelow(1000000):06d}"
+        try:
+            await asyncio.to_thread(
+                self._send_email_sync, email, code, _EMAIL_PURPOSE_LABEL[purpose]
+            )
+        except Exception as e:
+            logger.warning(f"[petpark] 邮件发送失败 {email}: {e}")
+            return web.json_response({"ok": False, "msg": "邮件发送失败，请稍后再试"})
+        self._email_send_at[email] = now
+        self._email_codes[f"{purpose}:{email}"] = {
+            "code": code,
+            "exp": int(now) + _EMAIL_CODE_TTL,
+            "tries": 0,
+        }
+        return web.json_response({"ok": True, "msg": "验证码已发送，请查收邮箱", "ttl": _EMAIL_CODE_TTL})
 
     # --------------------------- 工具：数据格式化 ---------------------------
     def _format_pet(self, player: dict, group_id: str, qq: str) -> dict:
@@ -248,6 +358,9 @@ class PlayerPortal:
         app.router.add_get("/portal", self._portal_page)
         app.router.add_post("/api/portal/register", self._api_register)
         app.router.add_post("/api/portal/login", self._api_login)
+        app.router.add_post("/api/portal/send_email_code", self._api_send_email_code)
+        app.router.add_post("/api/portal/login_email", self._api_login_email)
+        app.router.add_post("/api/portal/bind_email", self._api_bind_email)
         app.router.add_post("/api/portal/logout", self._api_logout)
         app.router.add_get("/api/portal/me", self._api_me)
         app.router.add_post("/api/portal/bind", self._api_bind)
@@ -366,6 +479,8 @@ class PlayerPortal:
         body = await request.json()
         qq = str(body.get("qq", "")).strip()
         password = str(body.get("password", ""))
+        email = self._normalize_email(body.get("email", ""))
+        code = str(body.get("code", "")).strip()
         ip = request.remote or "unknown"
         ok, msg = self._check_rate(f"{ip}:{qq}")
         if not ok:
@@ -374,11 +489,18 @@ class PlayerPortal:
             return web.json_response({"ok": False, "msg": "QQ 号格式不正确"})
         if len(password) < 6:
             return web.json_response({"ok": False, "msg": "密码长度至少 6 位"})
+        if not _EMAIL_RE.match(email):
+            return web.json_response({"ok": False, "msg": "邮箱格式不正确"})
         if self.store.get_account_by_qq(qq):
             return web.json_response({"ok": False, "msg": "该 QQ 号已注册"})
+        if self.store.get_account_by_email(email):
+            return web.json_response({"ok": False, "msg": "该邮箱已被注册"})
+        ok, msg = self._verify_email_code("register", email, code)
+        if not ok:
+            return web.json_response({"ok": False, "msg": msg})
         salt = self._make_salt()
         phash = self._hash_password(password, salt)
-        account = self.store.create_account(qq, phash, salt)
+        account = self.store.create_account(qq, phash, salt, email=email)
         await self.store.save()
         self._reset_rate(f"{ip}:{qq}")
         return web.json_response({"ok": True, "msg": "注册成功", "account_id": account["id"]})
@@ -396,11 +518,76 @@ class PlayerPortal:
             return web.json_response({"ok": False, "msg": "账号或密码错误"})
         if account["password_hash"] != self._hash_password(password, account["salt"]):
             return web.json_response({"ok": False, "msg": "账号或密码错误"})
+        self._reset_rate(f"{ip}:{qq}")
+        if not account.get("email"):
+            return web.json_response({
+                "ok": False,
+                "need_bind_email": True,
+                "msg": "该账号尚未绑定邮箱，请先绑定邮箱后再登录",
+            })
         account["last_login"] = int(time.time())
         await self.store.save()
         self._reset_rate(f"{ip}:{qq}")
         csrf = secrets.token_urlsafe(24)
         resp = web.json_response({"ok": True, "msg": "登录成功"})
+        self._set_session(resp, account["id"], csrf)
+        return resp
+
+    async def _api_login_email(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        email = self._normalize_email(body.get("email", ""))
+        code = str(body.get("code", "")).strip()
+        ip = request.remote or "unknown"
+        ok, msg = self._check_rate(f"{ip}:email:{email}")
+        if not ok:
+            return web.json_response({"ok": False, "msg": msg})
+        if not _EMAIL_RE.match(email):
+            return web.json_response({"ok": False, "msg": "邮箱格式不正确"})
+        account = self.store.get_account_by_email(email)
+        if not account:
+            return web.json_response({"ok": False, "msg": "该邮箱未绑定任何账号"})
+        ok, msg = self._verify_email_code("login", email, code)
+        if not ok:
+            return web.json_response({"ok": False, "msg": msg})
+        account["last_login"] = int(time.time())
+        await self.store.save()
+        self._reset_rate(f"{ip}:email:{email}")
+        csrf = secrets.token_urlsafe(24)
+        resp = web.json_response({"ok": True, "msg": "登录成功"})
+        self._set_session(resp, account["id"], csrf)
+        return resp
+
+    async def _api_bind_email(self, request: web.Request) -> web.Response:
+        """老账号首次登录时强制绑定邮箱：校验 QQ+密码后绑定并直接登录。"""
+        body = await request.json()
+        qq = str(body.get("qq", "")).strip()
+        password = str(body.get("password", ""))
+        email = self._normalize_email(body.get("email", ""))
+        code = str(body.get("code", "")).strip()
+        ip = request.remote or "unknown"
+        ok, msg = self._check_rate(f"{ip}:{qq}")
+        if not ok:
+            return web.json_response({"ok": False, "msg": msg})
+        account = self.store.get_account_by_qq(qq)
+        if not account:
+            return web.json_response({"ok": False, "msg": "账号或密码错误"})
+        if account["password_hash"] != self._hash_password(password, account["salt"]):
+            return web.json_response({"ok": False, "msg": "账号或密码错误"})
+        if account.get("email"):
+            return web.json_response({"ok": False, "msg": "该账号已绑定邮箱，请直接登录"})
+        if not _EMAIL_RE.match(email):
+            return web.json_response({"ok": False, "msg": "邮箱格式不正确"})
+        if self.store.get_account_by_email(email):
+            return web.json_response({"ok": False, "msg": "该邮箱已被其他账号绑定"})
+        ok, msg = self._verify_email_code("bind", email, code)
+        if not ok:
+            return web.json_response({"ok": False, "msg": msg})
+        account["email"] = email
+        account["last_login"] = int(time.time())
+        await self.store.save()
+        self._reset_rate(f"{ip}:{qq}")
+        csrf = secrets.token_urlsafe(24)
+        resp = web.json_response({"ok": True, "msg": "绑定成功，已登录"})
         self._set_session(resp, account["id"], csrf)
         return resp
 
@@ -2002,22 +2189,40 @@ _HOME_HTML = r"""<!DOCTYPE html>
   <footer>宠物乐园 · 数据每 30 秒更新 · <a href="/portal">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">充值入口</a></footer>
 </div>
 
-<el-dialog v-model="auth.show" :title="auth.mode==='register' ? '注册' : '登录'" width="400px" class="auth-dialog" align-center>
-  <div class="auth-hint">{{ auth.hint || (auth.mode==='register' ? '使用 QQ 号创建玩家中心账号' : '使用注册时的 QQ 号登录玩家中心') }}</div>
+<el-dialog v-model="auth.show" :title="authTitle" width="400px" class="auth-dialog" align-center>
+  <div class="auth-hint">{{ authHint }}</div>
+  <el-tabs v-if="auth.mode==='login'" v-model="auth.tab">
+    <el-tab-pane label="密码登录" name="pwd"></el-tab-pane>
+    <el-tab-pane label="邮箱验证码登录" name="email"></el-tab-pane>
+  </el-tabs>
   <el-form label-position="top" @submit.prevent="submitAuth">
-    <el-form-item label="QQ 号">
-      <el-input v-model="auth.qq" placeholder="请输入 QQ 号" size="large" autocomplete="username" clearable></el-input>
-    </el-form-item>
-    <el-form-item label="密码">
-      <el-input v-model="auth.pwd" type="password" :placeholder="auth.mode==='register' ? '至少 6 位' : '请输入密码'" size="large" show-password @keyup.enter="submitAuth"></el-input>
-    </el-form-item>
-    <el-form-item v-if="auth.mode==='register'" label="确认密码">
-      <el-input v-model="auth.pwd2" type="password" placeholder="再次输入密码" size="large" show-password @keyup.enter="submitAuth"></el-input>
-    </el-form-item>
+    <template v-if="auth.mode==='register' || (auth.mode==='login' && auth.tab==='pwd')">
+      <el-form-item label="QQ 号">
+        <el-input v-model="auth.qq" placeholder="请输入 QQ 号" size="large" autocomplete="username" clearable></el-input>
+      </el-form-item>
+      <el-form-item label="密码">
+        <el-input v-model="auth.pwd" type="password" :placeholder="auth.mode==='register' ? '至少 6 位' : '请输入密码'" size="large" show-password @keyup.enter="submitAuth"></el-input>
+      </el-form-item>
+      <el-form-item v-if="auth.mode==='register'" label="确认密码">
+        <el-input v-model="auth.pwd2" type="password" placeholder="再次输入密码" size="large" show-password></el-input>
+      </el-form-item>
+    </template>
+    <template v-if="auth.mode!=='login' || auth.tab==='email'">
+      <el-form-item label="邮箱">
+        <el-input v-model="auth.email" placeholder="请输入邮箱地址" size="large" autocomplete="email" clearable></el-input>
+      </el-form-item>
+      <el-form-item label="邮箱验证码">
+        <div style="display:flex;gap:10px;width:100%">
+          <el-input v-model="auth.code" placeholder="6 位验证码" size="large" maxlength="6" @keyup.enter="submitAuth" style="flex:1"></el-input>
+          <el-button size="large" round plain :disabled="auth.countdown>0" :loading="auth.sending" @click="sendCode" style="white-space:nowrap">{{ auth.countdown>0 ? auth.countdown + 's' : '获取验证码' }}</el-button>
+        </div>
+      </el-form-item>
+    </template>
   </el-form>
-  <el-button class="btn-grad" size="large" round style="width:100%" :loading="auth.loading" @click="submitAuth">{{ auth.mode==='register' ? '注 册' : '登 录' }}</el-button>
+  <el-button class="btn-grad" size="large" round style="width:100%" :loading="auth.loading" @click="submitAuth">{{ auth.mode==='register' ? '注 册' : (auth.mode==='bind' ? '绑定并登录' : '登 录') }}</el-button>
   <div class="auth-switch" v-if="auth.mode==='register'">已有账号？<a @click="openAuth('login')">直接登录</a></div>
-  <div class="auth-switch" v-else>还没有账号？<a @click="openAuth('register')">立即注册</a></div>
+  <div class="auth-switch" v-else-if="auth.mode==='login'">还没有账号？<a @click="openAuth('register')">立即注册</a></div>
+  <div class="auth-switch" v-else>绑错账号？<a @click="openAuth('login')">返回登录</a></div>
 </el-dialog>
 </div>
 
@@ -2041,7 +2246,13 @@ createApp({
     const tombYst = ref([]);
     const todaySub = ref('统计今日 00:00 至今获得冥币');
     const ystSub = ref('前三名可领取随机宠物经验奖励');
-    const auth = reactive({show:false, mode:'login', qq:'', pwd:'', pwd2:'', loading:false, hint:''});
+    const auth = reactive({show:false, mode:'login', tab:'pwd', qq:'', pwd:'', pwd2:'', email:'', code:'', loading:false, sending:false, countdown:0, hint:''});
+    let cdTimer = null;
+    const authTitle = Vue.computed(() => auth.mode==='register' ? '注册' : (auth.mode==='bind' ? '绑定邮箱' : '登录'));
+    const authHint = Vue.computed(() => auth.hint || (
+      auth.mode==='register' ? '使用 QQ 号创建账号，需邮箱验证后方可注册' :
+      auth.mode==='bind' ? '该账号尚未绑定邮箱，绑定后才能登录' :
+      (auth.tab==='email' ? '使用已绑定的邮箱接收验证码登录' : '使用注册时的 QQ 号登录玩家中心')));
 
     const fmt = n => Number(n||0).toLocaleString('zh-CN');
     const fmtPower = bp => bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp);
@@ -2094,8 +2305,31 @@ createApp({
     }
 
     function openAuth(mode){
-      auth.mode = mode; auth.qq = ''; auth.pwd = ''; auth.pwd2 = ''; auth.hint = '';
+      auth.mode = mode; auth.tab = 'pwd'; auth.qq = ''; auth.pwd = ''; auth.pwd2 = '';
+      auth.email = ''; auth.code = ''; auth.hint = '';
       auth.show = true;
+    }
+
+    function startCountdown(sec){
+      auth.countdown = sec;
+      if(cdTimer) clearInterval(cdTimer);
+      cdTimer = setInterval(() => {
+        auth.countdown -= 1;
+        if(auth.countdown <= 0){ clearInterval(cdTimer); cdTimer = null; auth.countdown = 0; }
+      }, 1000);
+    }
+
+    async function sendCode(){
+      const email = auth.email.trim();
+      if(!email){ ElMessage.warning('请先输入邮箱地址'); return; }
+      const purpose = auth.mode==='register' ? 'register' : (auth.mode==='bind' ? 'bind' : 'login');
+      auth.sending = true;
+      try{
+        const r = await post('/api/portal/send_email_code', {email, purpose});
+        if(r.ok){ ElMessage.success(r.msg || '验证码已发送'); startCountdown(60); }
+        else ElMessage.error(r.msg || '发送失败');
+      }catch(e){ ElMessage.error('网络异常，请稍后再试'); }
+      finally{ auth.sending = false; }
     }
 
     function goFeedback(){
@@ -2113,15 +2347,16 @@ createApp({
 
     async function submitAuth(){
       const qq = auth.qq.trim(), pwd = auth.pwd;
-      if(!qq || !pwd){ ElMessage.warning('请填写 QQ 号和密码'); return; }
-      if(auth.mode === 'register'){
-        if(pwd.length < 6){ ElMessage.warning('密码至少 6 位'); return; }
-        if(pwd !== auth.pwd2){ ElMessage.warning('两次输入的密码不一致'); return; }
-      }
+      const email = auth.email.trim(), code = auth.code.trim();
       auth.loading = true;
       try{
-        const r = await post('/api/portal/' + auth.mode, {qq, password: pwd});
-        if(r.ok && auth.mode === 'register'){
+        if(auth.mode === 'register'){
+          if(!qq || !pwd){ ElMessage.warning('请填写 QQ 号和密码'); return; }
+          if(pwd.length < 6){ ElMessage.warning('密码至少 6 位'); return; }
+          if(pwd !== auth.pwd2){ ElMessage.warning('两次输入的密码不一致'); return; }
+          if(!email || !code){ ElMessage.warning('请填写邮箱并获取验证码'); return; }
+          const r = await post('/api/portal/register', {qq, password: pwd, email, code});
+          if(!r.ok){ ElMessage.error(r.msg || '注册失败'); return; }
           ElMessage.success('注册成功，正在登录…');
           const r2 = await post('/api/portal/login', {qq, password: pwd});
           if(r2.ok){ location.href = '/portal'; return; }
@@ -2129,7 +2364,28 @@ createApp({
           ElMessage.info('注册成功，请登录');
           return;
         }
+        if(auth.mode === 'bind'){
+          if(!email || !code){ ElMessage.warning('请填写邮箱并获取验证码'); return; }
+          const r = await post('/api/portal/bind_email', {qq, password: pwd, email, code});
+          if(!r.ok){ ElMessage.error(r.msg || '绑定失败'); return; }
+          ElMessage.success('绑定成功，正在进入玩家中心…'); location.href = '/portal';
+          return;
+        }
+        if(auth.tab === 'email'){
+          if(!email || !code){ ElMessage.warning('请填写邮箱并获取验证码'); return; }
+          const r = await post('/api/portal/login_email', {email, code});
+          if(!r.ok){ ElMessage.error(r.msg || '登录失败'); return; }
+          ElMessage.success('登录成功，正在进入玩家中心…'); location.href = '/portal';
+          return;
+        }
+        if(!qq || !pwd){ ElMessage.warning('请填写 QQ 号和密码'); return; }
+        const r = await post('/api/portal/login', {qq, password: pwd});
         if(r.ok){ ElMessage.success('登录成功，正在进入玩家中心…'); location.href = '/portal'; return; }
+        if(r.need_bind_email){
+          auth.mode = 'bind'; auth.email = ''; auth.code = ''; auth.hint = '';
+          ElMessage.warning(r.msg || '请先绑定邮箱');
+          return;
+        }
         ElMessage.error(r.msg || '操作失败');
       }catch(e){ ElMessage.error('网络异常，请稍后再试'); }
       finally{ auth.loading = false; }
@@ -2218,7 +2474,7 @@ createApp({
     });
 
     return {loggedIn, userQQ, loading, disp, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
-            auth, fmt, fmtPower, openAuth, goFeedback, goPortal, logout, submitAuth};
+            auth, authTitle, authHint, fmt, fmtPower, openAuth, goFeedback, goPortal, logout, submitAuth, sendCode};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
 </script>

@@ -1102,13 +1102,25 @@ class PetStore:
                 return acc
         return None
 
-    def create_account(self, qq: str, password_hash: str, salt: str) -> dict:
+    def get_account_by_email(self, email: str) -> Optional[dict]:
+        email = str(email or "").strip().lower()
+        if not email:
+            return None
+        for acc in self.accounts().values():
+            if str(acc.get("email") or "").strip().lower() == email:
+                return acc
+        return None
+
+    def create_account(
+        self, qq: str, password_hash: str, salt: str, email: Optional[str] = None
+    ) -> dict:
         """创建门户账号。调用方需确保 QQ 未被注册。"""
         qq = str(qq)
         account_id = self.gen_card_code("U")  # 复用卡密生成器产生随机 ID
         account = {
             "id": account_id,
             "qq": qq,
+            "email": (email or "").strip().lower() or None,
             "password_hash": password_hash,
             "salt": salt,
             "bound_pets": [],  # [{group, qq, nick?}]
