@@ -51,6 +51,8 @@ class PetStore:
         self.custom_images_dir.mkdir(parents=True, exist_ok=True)
         self.feedback_images_dir = self.path.parent / "feedback_images"
         self.feedback_images_dir.mkdir(parents=True, exist_ok=True)
+        self.app_release_dir = self.path.parent / "app_release"
+        self.app_release_dir.mkdir(parents=True, exist_ok=True)
         self.start_coin = start_coin
         self.start_jifen = start_jifen
         self.start_diamond = start_diamond
@@ -1375,6 +1377,10 @@ class PetStore:
     # ------------------------------------------------------------------
     # 玩家反馈（Bug / 建议）
     # ------------------------------------------------------------------
+    def app_release(self) -> dict:
+        """安卓 App 发布信息：{version_code, version_name, changelog, filename, updated_at}。"""
+        return self._data.setdefault("app_release", {})
+
     def feedbacks(self) -> dict:
         return self._data.setdefault("feedbacks", {})
 

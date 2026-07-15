@@ -73,6 +73,8 @@ class WebAdmin:
         app.router.add_post("/api/feedbacks", self._api_feedbacks)
         app.router.add_post("/api/feedbacks/reply", self._api_feedback_reply)
         app.router.add_post("/api/feedbacks/delete", self._api_feedback_delete)
+        app.router.add_post("/api/app_release/info", self._api_app_release_info)
+        app.router.add_post("/api/app_release/upload", self._api_app_release_upload)
 
         portal = PlayerPortal(
             self.store,
@@ -318,6 +320,62 @@ class WebAdmin:
         if ok:
             await self.store.save()
         return self._json({"ok": ok, "msg": "已删除" if ok else "反馈记录不存在"})
+
+    async def _api_app_release_info(self, request):
+        self._require(request)
+        rel = self.store.app_release()
+        return self._json({"ok": True, "data": {
+            "version_code": rel.get("version_code", 0),
+            "version_name": rel.get("version_name", ""),
+            "changelog": rel.get("changelog", ""),
+            "filename": rel.get("filename", ""),
+            "size": rel.get("size", 0),
+            "updated_at": rel.get("updated_at"),
+        }})
+
+    async def _api_app_release_upload(self, request):
+        self._require(request)
+        reader = await request.multipart()
+        version_code = 0
+        version_name = ""
+        changelog = ""
+        apk_bytes = b""
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "version_code":
+                version_code = int((await part.text()).strip() or 0)
+            elif part.name == "version_name":
+                version_name = (await part.text()).strip()
+            elif part.name == "changelog":
+                changelog = (await part.text()).strip()
+            elif part.name == "apk":
+                apk_bytes = await part.read(decode=False)
+        if version_code <= 0 or not version_name:
+            return self._json({"ok": False, "msg": "请填写版本号（version_code 为正整数）和版本名"})
+        rel = self.store.app_release()
+        if apk_bytes:
+            if apk_bytes[:2] != b"PK":
+                return self._json({"ok": False, "msg": "文件不是有效的 APK"})
+            filename = f"petpark_{version_code}.apk"
+            (self.store.app_release_dir / filename).write_bytes(apk_bytes)
+            old = rel.get("filename", "")
+            if old and old != filename:
+                try:
+                    (self.store.app_release_dir / old).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            rel["filename"] = filename
+            rel["size"] = len(apk_bytes)
+        elif not rel.get("filename"):
+            return self._json({"ok": False, "msg": "请选择 APK 文件"})
+        rel["version_code"] = version_code
+        rel["version_name"] = version_name
+        rel["changelog"] = changelog
+        rel["updated_at"] = int(time.time())
+        await self.store.save()
+        return self._json({"ok": True, "msg": "发布成功"})
 
     async def _api_custom_pets(self, request):
         self._require(request)
@@ -759,6 +817,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="custom_reviews" onclick="tab('custom_reviews')">定制审核</button>
 <button data-t="custom_pets" onclick="tab('custom_pets')">定制管理</button>
 <button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button>
+<button data-t="app_release" onclick="tab('app_release')">App 发布</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -949,6 +1008,46 @@ function renderCustomPets(){
    ? `<table><thead><tr><th>群号</th><th>用户ID</th><th>账号QQ</th><th>宠物昵称</th><th>种类名称</th><th>品质</th><th>标签</th><th>定制图</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无已解锁定制的宠物</div>`;
 }
+function fsize(n){n=Number(n)||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(2)+' MB';}
+async function loadAppRelease(){
+ document.getElementById('count').textContent='';
+ document.getElementById('extrawrap').innerHTML='';
+ let rel={};
+ try{ const r=await api('/api/app_release/info',{}); rel=r.data||{}; }catch(e){}
+ const cur=rel.filename?`当前线上版本：<b>${esc(rel.version_name||'')}</b>（versionCode ${esc(rel.version_code||0)}），文件 ${esc(rel.filename)}（${fsize(rel.size)}），发布于 ${fdate(rel.updated_at)}`:'当前尚未发布任何版本。';
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:640px">
+  <div class="muted" style="margin-bottom:14px;line-height:1.7">${cur}</div>
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:20px">
+   <h3 style="margin:0 0 14px">发布新版本</h3>
+   <div style="display:flex;flex-direction:column;gap:12px">
+    <label>版本号 versionCode（必须比当前大的整数）<input id="ar_code" type="number" placeholder="如 2" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8dfef;border-radius:9px" value="${esc((rel.version_code||0)+1)}"></label>
+    <label>版本名 versionName（展示给用户，如 1.0.1）<input id="ar_name" placeholder="如 1.0.1" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8dfef;border-radius:9px"></label>
+    <label>更新说明（可选，多行）<textarea id="ar_log" rows="4" placeholder="本次更新内容…" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical"></textarea></label>
+    <label>APK 文件（不选则仅更新版本信息）<input id="ar_apk" type="file" accept=".apk,application/vnd.android.package-archive" style="margin-top:5px"></label>
+    <div><button class="act" onclick="uploadApp()">发布</button> <span class="muted" id="ar_msg"></span></div>
+   </div>
+  </div>
+ </div>`;
+}
+async function uploadApp(){
+ const code=document.getElementById('ar_code').value.trim();
+ const name=document.getElementById('ar_name').value.trim();
+ const log=document.getElementById('ar_log').value.trim();
+ const f=document.getElementById('ar_apk').files[0];
+ const msg=document.getElementById('ar_msg');
+ if(!code||Number(code)<=0){msg.textContent='请填写正确的版本号';return;}
+ if(!name){msg.textContent='请填写版本名';return;}
+ const fd=new FormData();
+ fd.append('version_code',code); fd.append('version_name',name); fd.append('changelog',log);
+ if(f) fd.append('apk',f,f.name);
+ msg.textContent='上传中…';
+ try{
+  const r=await (await fetch('/api/app_release/upload',{method:'POST',body:fd})).json();
+  msg.textContent=r.msg||(r.ok?'发布成功':'发布失败');
+  if(r.ok) setTimeout(loadAppRelease,800);
+ }catch(e){ msg.textContent='上传失败：'+e; }
+}
 let fbCache=[], fbStatus='pending';
 async function loadFeedbacks(status){
  if(status===undefined) status=fbStatus;
@@ -1036,11 +1135,13 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
  else if(t==='feedbacks') loadFeedbacks();
+ else if(t==='app_release') loadAppRelease();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}

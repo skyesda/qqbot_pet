@@ -422,6 +422,8 @@ class PlayerPortal:
         app.router.add_post("/api/portal/feedback/delete", self._api_feedback_delete)
         app.router.add_get("/chat", self._chat_page)
         app.router.add_post("/api/portal/chat", self._api_chat_send)
+        app.router.add_get("/api/app/version", self._api_app_version)
+        app.router.add_get("/app_download/latest.apk", self._app_download)
         app.router.add_static(
             "/feedback_images",
             path=self.store.feedback_images_dir,
@@ -1005,6 +1007,34 @@ class PlayerPortal:
         if reply is None:
             reply = "😶 没有听懂这条指令…发送「宠物菜单」可以查看全部可用指令哦。"
         return web.json_response({"ok": True, "reply": reply, "image_md": image_md})
+
+    # --------------------------- 安卓 App 版本 / 下载 ---------------------------
+    async def _api_app_version(self, request: web.Request) -> web.Response:
+        rel = self.store.app_release()
+        if not rel.get("filename"):
+            return web.json_response({"ok": False, "msg": "暂无发布版本"})
+        return web.json_response({
+            "ok": True,
+            "version_code": int(rel.get("version_code", 0) or 0),
+            "version_name": str(rel.get("version_name", "")),
+            "changelog": str(rel.get("changelog", "")),
+            "url": "/app_download/latest.apk",
+            "updated_at": rel.get("updated_at"),
+        })
+
+    async def _app_download(self, request: web.Request) -> web.StreamResponse:
+        rel = self.store.app_release()
+        filename = str(rel.get("filename", "") or "")
+        path = (self.store.app_release_dir / filename) if filename else None
+        if not filename or not path.exists():
+            raise web.HTTPNotFound(text="暂无发布版本")
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": "application/vnd.android.package-archive",
+                "Content-Disposition": 'attachment; filename="petpark.apk"',
+            },
+        )
 
     # --------------------------- 道具使用 / 卡密兑换 / 改密 ---------------------------
     async def _api_use_item(self, request: web.Request) -> web.Response:
