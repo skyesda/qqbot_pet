@@ -50,7 +50,7 @@ _EMAIL_CODE_TTL = 60  # 验证码有效期（秒）
 _EMAIL_SEND_INTERVAL = 60  # 同一邮箱重发间隔（秒）
 _EMAIL_CODE_MAX_TRIES = 5
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_EMAIL_PURPOSE_LABEL = {"register": "注册", "login": "登录", "bind": "绑定邮箱"}
+_EMAIL_PURPOSE_LABEL = {"register": "注册", "login": "登录", "bind": "绑定邮箱", "chpwd": "修改密码"}
 
 
 class PlayerPortal:
@@ -205,13 +205,48 @@ class PlayerPortal:
         self._email_codes.pop(key, None)
         return True, ""
 
+    @staticmethod
+    def _mask_email(email: str) -> str:
+        email = str(email or "")
+        if "@" not in email:
+            return email
+        name, domain = email.split("@", 1)
+        if len(name) <= 2:
+            masked = name[:1] + "***"
+        else:
+            masked = name[:2] + "***" + name[-1:]
+        return f"{masked}@{domain}"
+
+    async def _send_code_to(self, email: str, purpose: str) -> tuple[bool, str]:
+        """发送验证码到指定邮箱（含重发间隔限制）。"""
+        now = time.time()
+        last = self._email_send_at.get(email, 0)
+        if now - last < _EMAIL_SEND_INTERVAL:
+            remain = int(_EMAIL_SEND_INTERVAL - (now - last))
+            return False, f"发送过于频繁，请 {remain} 秒后再试"
+        code = f"{secrets.randbelow(1000000):06d}"
+        try:
+            await asyncio.to_thread(
+                self._send_email_sync, email, code, _EMAIL_PURPOSE_LABEL[purpose]
+            )
+        except Exception as e:
+            logger.warning(f"[petpark] 邮件发送失败 {email}: {e}")
+            return False, "邮件发送失败，请稍后再试"
+        self._email_send_at[email] = now
+        self._email_codes[f"{purpose}:{email}"] = {
+            "code": code,
+            "exp": int(now) + _EMAIL_CODE_TTL,
+            "tries": 0,
+        }
+        return True, "验证码已发送，请查收邮箱"
+
     async def _api_send_email_code(self, request: web.Request) -> web.Response:
         if not _EMAIL_SMTP.get("enabled"):
             return web.json_response({"ok": False, "msg": "邮箱验证功能未启用"})
         body = await request.json()
         email = self._normalize_email(body.get("email", ""))
         purpose = str(body.get("purpose", "")).strip()
-        if purpose not in _EMAIL_PURPOSE_LABEL:
+        if purpose not in ("register", "login", "bind"):
             return web.json_response({"ok": False, "msg": "参数不正确"})
         if not _EMAIL_RE.match(email):
             return web.json_response({"ok": False, "msg": "邮箱格式不正确"})
@@ -221,26 +256,28 @@ class PlayerPortal:
         else:  # login
             if not self.store.get_account_by_email(email):
                 return web.json_response({"ok": False, "msg": "该邮箱未绑定任何账号"})
-        now = time.time()
-        last = self._email_send_at.get(email, 0)
-        if now - last < _EMAIL_SEND_INTERVAL:
-            remain = int(_EMAIL_SEND_INTERVAL - (now - last))
-            return web.json_response({"ok": False, "msg": f"发送过于频繁，请 {remain} 秒后再试"})
-        code = f"{secrets.randbelow(1000000):06d}"
-        try:
-            await asyncio.to_thread(
-                self._send_email_sync, email, code, _EMAIL_PURPOSE_LABEL[purpose]
-            )
-        except Exception as e:
-            logger.warning(f"[petpark] 邮件发送失败 {email}: {e}")
-            return web.json_response({"ok": False, "msg": "邮件发送失败，请稍后再试"})
-        self._email_send_at[email] = now
-        self._email_codes[f"{purpose}:{email}"] = {
-            "code": code,
-            "exp": int(now) + _EMAIL_CODE_TTL,
-            "tries": 0,
-        }
-        return web.json_response({"ok": True, "msg": "验证码已发送，请查收邮箱", "ttl": _EMAIL_CODE_TTL})
+        ok, msg = await self._send_code_to(email, purpose)
+        return web.json_response({"ok": ok, "msg": msg, "ttl": _EMAIL_CODE_TTL})
+
+    async def _api_send_chpwd_code(self, request: web.Request) -> web.Response:
+        """向当前登录账号的绑定邮箱发送修改密码验证码。"""
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        if not _EMAIL_SMTP.get("enabled"):
+            return web.json_response({"ok": False, "msg": "邮箱验证功能未启用"})
+        account = self.store.get_account(sess.get("aid"))
+        if not account:
+            return web.json_response({"ok": False, "msg": "账号不存在"})
+        email = self._normalize_email(account.get("email", ""))
+        if not email:
+            return web.json_response({"ok": False, "msg": "该账号尚未绑定邮箱，请重新登录完成绑定"})
+        ok, msg = await self._send_code_to(email, "chpwd")
+        return web.json_response({
+            "ok": ok,
+            "msg": msg,
+            "email": self._mask_email(email),
+            "ttl": _EMAIL_CODE_TTL,
+        })
 
     # --------------------------- 工具：数据格式化 ---------------------------
     def _format_pet(self, player: dict, group_id: str, qq: str) -> dict:
@@ -372,6 +409,7 @@ class PlayerPortal:
         app.router.add_get("/api/portal/item_info", self._api_item_info)
         app.router.add_post("/api/portal/redeem", self._api_redeem)
         app.router.add_post("/api/portal/change_password", self._api_change_password)
+        app.router.add_post("/api/portal/send_chpwd_code", self._api_send_chpwd_code)
         app.router.add_post("/api/portal/pet_action", self._api_pet_action)
         app.router.add_post("/api/portal/feedback", self._api_feedback_submit)
         app.router.add_get("/api/portal/feedback", self._api_feedback_list)
@@ -618,7 +656,11 @@ class PlayerPortal:
             })
         return web.json_response({
             "ok": True,
-            "account": {"id": account["id"], "qq": account["qq"]},
+            "account": {
+                "id": account["id"],
+                "qq": account["qq"],
+                "email_masked": self._mask_email(account.get("email") or ""),
+            },
             "bound_pets": bound,
         })
 
@@ -1016,7 +1058,7 @@ class PlayerPortal:
         self._check_csrf(request)
         sess = self._require_session(request)
         body = await request.json()
-        old_password = str(body.get("old_password", ""))
+        code = str(body.get("code", "")).strip()
         new_password = str(body.get("new_password", ""))
         if len(new_password) < 6:
             return web.json_response({"ok": False, "msg": "新密码至少 6 位"})
@@ -1026,9 +1068,12 @@ class PlayerPortal:
         ok_rate, why = self._check_rate(f"chpwd:{sess.get('aid')}")
         if not ok_rate:
             return web.json_response({"ok": False, "msg": why})
-        expected = self._hash_password(old_password, account.get("salt", ""))
-        if not secrets.compare_digest(expected, account.get("password_hash", "")):
-            return web.json_response({"ok": False, "msg": "旧密码不正确"})
+        email = self._normalize_email(account.get("email", ""))
+        if not email:
+            return web.json_response({"ok": False, "msg": "该账号尚未绑定邮箱，请重新登录完成绑定"})
+        ok_code, msg = self._verify_email_code("chpwd", email, code)
+        if not ok_code:
+            return web.json_response({"ok": False, "msg": msg})
         salt = self._make_salt()
         account["salt"] = salt
         account["password_hash"] = self._hash_password(new_password, salt)
@@ -1411,9 +1456,13 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
 <!-- 修改密码 -->
 <el-dialog v-model="pwd.show" title="🔒 修改密码" width="420px" align-center>
+  <p class="muted" style="margin:-6px 0 10px">验证码将发送至绑定邮箱{{ account && account.email_masked ? '：' + account.email_masked : '' }}</p>
   <el-form label-position="top" @submit.prevent="changePwd">
-    <el-form-item label="旧密码">
-      <el-input v-model="pwd.old" type="password" show-password placeholder="当前密码"></el-input>
+    <el-form-item label="邮箱验证码">
+      <div style="display:flex;gap:10px;width:100%">
+        <el-input v-model="pwd.code" placeholder="6 位验证码" maxlength="6" style="flex:1"></el-input>
+        <el-button round plain :disabled="pwd.countdown>0" :loading="pwd.sending" @click="sendPwdCode" style="white-space:nowrap">{{ pwd.countdown>0 ? pwd.countdown + 's' : '获取验证码' }}</el-button>
+      </div>
     </el-form-item>
     <el-form-item label="新密码">
       <el-input v-model="pwd.n1" type="password" show-password placeholder="至少 6 位"></el-input>
@@ -1576,7 +1625,8 @@ createApp({
     const autoCultivating = ref(false);
 
     const bind = reactive({show:false, group:'', qq:'', loading:false});
-    const pwd = reactive({show:false, old:'', n1:'', n2:'', loading:false});
+    const pwd = reactive({show:false, code:'', n1:'', n2:'', loading:false, sending:false, countdown:0});
+    let pwdCdTimer = null;
     const fb = reactive({show:false, kind:'bug', content:'', time:'', group:'', user:'', files:[], submitting:false, list:[], listLoading:false});
     const custom = reactive({code:'', nickname:'', showQQ:'', redeeming:false,
       editShow:false, species:'', blob:null, previewUrl:'', submitting:false});
@@ -1672,14 +1722,29 @@ createApp({
     }
 
     // ---- 修改密码 ----
-    function openPwd(){ pwd.old=''; pwd.n1=''; pwd.n2=''; pwd.show=true; }
+    function openPwd(){ pwd.code=''; pwd.n1=''; pwd.n2=''; pwd.show=true; }
+    async function sendPwdCode(){
+      pwd.sending = true;
+      try{
+        const r = await api('/api/portal/send_chpwd_code','POST',{});
+        if(r && r.ok){
+          ElMessage.success((r.msg || '验证码已发送') + (r.email ? '（' + r.email + '）' : ''));
+          pwd.countdown = 60;
+          if(pwdCdTimer) clearInterval(pwdCdTimer);
+          pwdCdTimer = setInterval(() => {
+            pwd.countdown -= 1;
+            if(pwd.countdown <= 0){ clearInterval(pwdCdTimer); pwdCdTimer = null; pwd.countdown = 0; }
+          }, 1000);
+        } else { ElMessage.error((r && r.msg) || '发送失败'); }
+      } finally { pwd.sending = false; }
+    }
     async function changePwd(){
-      if(!pwd.old || !pwd.n1){ ElMessage.warning('请填写旧密码和新密码'); return; }
+      if(!pwd.code){ ElMessage.warning('请先获取并填写邮箱验证码'); return; }
       if(pwd.n1.length < 6){ ElMessage.warning('新密码至少 6 位'); return; }
       if(pwd.n1 !== pwd.n2){ ElMessage.warning('两次输入的新密码不一致'); return; }
       pwd.loading = true;
       try{
-        const r = await api('/api/portal/change_password','POST',{old_password:pwd.old, new_password:pwd.n1});
+        const r = await api('/api/portal/change_password','POST',{code:pwd.code, new_password:pwd.n1});
         if(r && r.ok){ ElMessage.success('密码修改成功'); pwd.show = false; }
         else { ElMessage.error((r && r.msg) || '修改失败'); }
       } finally { pwd.loading = false; }
@@ -1894,7 +1959,7 @@ createApp({
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       bind, pwd, fb, custom, crop,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
-      loadPet, logout, doBind, openPwd, changePwd, petAction, useItem, showItemInfo, redeem,
+      loadPet, logout, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       openFeedback, pickFbImages, submitFeedback,
       redeemCustom, openCustomEdit, submitCustom, toggleAutoCultivation,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};
