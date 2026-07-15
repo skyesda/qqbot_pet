@@ -2739,6 +2739,9 @@ _HOME_HTML = r"""<!DOCTYPE html>
       <el-button class="btn-grad" size="large" round @click="openAuth('register')">立即加入</el-button>
       <el-button size="large" round plain @click="openAuth('login')">进入玩家中心</el-button>
     </div>
+    <div class="cta" v-if="appVer.ok">
+      <el-button size="large" round plain @click="downloadApp">📱 下载安卓 App（{{ appVer.version_name }}）</el-button>
+    </div>
   </div>
 
   <div class="stats reveal">
@@ -2901,6 +2904,7 @@ createApp({
     const userQQ = ref('');
     const loading = ref(true);
     const disp = reactive({players:0, auth_groups:0, pets:0, tomb_players:0});
+    const appVer = reactive({ok:false, version_name:'', url:''});
     const petRank = ref([]);
     const tombRank = ref([]);
     const tombToday = ref([]);
@@ -2999,6 +3003,18 @@ createApp({
     }
 
     function goPortal(){ location.href = '/portal'; }
+
+    async function loadAppVer(){
+      try{
+        const r = await (await fetch('/api/app/version')).json();
+        if(r && r.ok && r.url){
+          appVer.ok = true;
+          appVer.version_name = r.version_name || '';
+          appVer.url = r.url;
+        }
+      }catch(e){}
+    }
+    function downloadApp(){ if(appVer.url) location.href = appVer.url; }
 
     async function logout(){
       try{ await fetch('/api/portal/logout', {method:'POST', headers:{'X-CSRF-Token': CSRF}}); }catch(e){}
@@ -3129,13 +3145,14 @@ createApp({
     onMounted(()=>{
       checkAuth();
       loadHome();
+      loadAppVer();
       setInterval(loadHome, 30000);
       initParticles();
       initMotion();
     });
 
-    return {loggedIn, userQQ, loading, disp, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
-            auth, authTitle, authHint, fmt, fmtPower, openAuth, goFeedback, goPortal, logout, submitAuth, sendCode};
+    return {loggedIn, userQQ, loading, disp, appVer, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
+            auth, authTitle, authHint, fmt, fmtPower, openAuth, goFeedback, goPortal, downloadApp, logout, submitAuth, sendCode};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
 </script>
