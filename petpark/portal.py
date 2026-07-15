@@ -416,8 +416,10 @@ class PlayerPortal:
         app.router.add_post("/api/portal/change_password", self._api_change_password)
         app.router.add_post("/api/portal/send_chpwd_code", self._api_send_chpwd_code)
         app.router.add_post("/api/portal/pet_action", self._api_pet_action)
+        app.router.add_get("/feedback", self._feedback_page)
         app.router.add_post("/api/portal/feedback", self._api_feedback_submit)
         app.router.add_get("/api/portal/feedback", self._api_feedback_list)
+        app.router.add_post("/api/portal/feedback/delete", self._api_feedback_delete)
         app.router.add_static(
             "/feedback_images",
             path=self.store.feedback_images_dir,
@@ -442,6 +444,16 @@ class PlayerPortal:
         html = _PORTAL_HTML.replace("{{CSRF_TOKEN}}", csrf)
         response = web.Response(text=html, content_type="text/html")
         # 刷新 Cookie 过期时间
+        self._set_session(response, sess["aid"], csrf)
+        return response
+
+    async def _feedback_page(self, request: web.Request) -> web.Response:
+        sess = self._current_session(request)
+        if not sess:
+            raise web.HTTPFound("/")
+        csrf = sess.get("csrf")
+        html = _FEEDBACK_HTML.replace("{{CSRF_TOKEN}}", csrf)
+        response = web.Response(text=html, content_type="text/html")
         self._set_session(response, sess["aid"], csrf)
         return response
 
@@ -930,6 +942,23 @@ class PlayerPortal:
         sess = self._require_session(request)
         return web.json_response({"ok": True, "data": self.store.account_feedbacks(sess["aid"])})
 
+    async def _api_feedback_delete(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        fid = str(body.get("id", "")).strip()
+        fb = self.store.feedbacks().get(fid)
+        if not fb or fb.get("account_id") != sess.get("aid"):
+            return web.json_response({"ok": False, "msg": "反馈记录不存在"})
+        if fb.get("status") == "resolved":
+            return web.json_response({"ok": False, "msg": "该反馈已由管理员处理，无法删除"})
+        self.store.delete_feedback(fid)
+        await self.store.save()
+        return web.json_response({"ok": True, "msg": "反馈已删除"})
+
     # --------------------------- 道具使用 / 卡密兑换 / 改密 ---------------------------
     async def _api_use_item(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
@@ -1204,19 +1233,6 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
   .upload-plus{font-size:26px;color:#aab1c5;line-height:1}
   .upload-text{font-size:13px;font-weight:700;margin-top:5px}
   .upload-hint{font-size:12px;color:var(--muted);margin-top:3px}
-  .fb-img-preview{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-  .fb-thumb{position:relative}
-  .fb-thumb img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
-  .fb-thumb .rm{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:none;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;line-height:20px;cursor:pointer;padding:0}
-  .fb-list{display:flex;flex-direction:column;gap:10px;margin-top:10px;max-height:320px;overflow-y:auto}
-  .fb-item{border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13px}
-  .fb-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-  .fb-date{margin-left:auto;color:var(--muted);font-size:12px}
-  .fb-body{white-space:pre-wrap;line-height:1.6}
-  .fb-meta{color:var(--muted);font-size:12px;margin-top:4px}
-  .fb-imgs{display:flex;gap:6px;margin-top:8px}
-  .fb-imgs img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
-  .fb-reply{margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:9px 12px;color:#166534;white-space:pre-wrap;line-height:1.6}
   .fld{display:block;font-size:12.5px;font-weight:700;color:#3c455c;margin:12px 0 7px}
 
   .crop-wrap{display:flex;justify-content:center;margin:10px 0}
@@ -1279,7 +1295,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
     </div>
     <div class="side-btns">
       <el-button type="primary" plain round @click="bind.show = true">＋ 绑定新宠物</el-button>
-      <el-button type="warning" round @click="openFeedback">📣 问题反馈</el-button>
+      <el-button type="warning" round @click="goFeedback">📣 问题反馈</el-button>
     </div>
     <p class="side-tip">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
     <div class="side-foot">
@@ -1482,61 +1498,6 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
   </template>
 </el-dialog>
 
-<!-- 问题反馈 -->
-<el-dialog v-model="fb.show" title="📣 问题反馈" width="580px" align-center top="4vh">
-  <p class="muted" style="margin:-6px 0 10px">反馈 Bug 或提出建议，管理员处理后可在下方「我的反馈」查看回复。</p>
-  <el-tabs v-model="fb.kind">
-    <el-tab-pane label="🐞 反馈 Bug" name="bug"></el-tab-pane>
-    <el-tab-pane label="💡 提出建议" name="suggestion"></el-tab-pane>
-  </el-tabs>
-  <label class="fld" style="margin-top:2px">{{ fb.kind==='bug' ? '问题描述' : '建议内容' }}</label>
-  <el-input v-model="fb.content" type="textarea" :rows="4" maxlength="2000" show-word-limit
-    :placeholder="fb.kind==='bug' ? '请详细描述遇到的问题：操作了什么、预期结果、实际结果…' : '说说你希望增加或改进的功能…'"></el-input>
-  <template v-if="fb.kind==='bug'">
-    <label class="fld">发生时间</label>
-    <el-date-picker v-model="fb.time" type="datetime" placeholder="选择问题发生的时间" style="width:100%" format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm"></el-date-picker>
-    <div style="display:flex;gap:8px;margin-top:12px">
-      <el-input v-model="fb.group" placeholder="对应的 QQ 群号"></el-input>
-      <el-input v-model="fb.user" placeholder="对应的用户 ID"></el-input>
-    </div>
-  </template>
-  <label class="fld">图片截图（可选，最多 3 张）</label>
-  <input ref="fbFileInput" type="file" accept="image/*" multiple style="display:none" @change="pickFbImages">
-  <div class="upload-zone" @click="$refs.fbFileInput.click()">
-    <div class="upload-plus">＋</div>
-    <div class="upload-text">点击选择图片</div>
-    <div class="upload-hint">支持 jpg / png / gif / webp，单张不超过 5MB</div>
-  </div>
-  <div class="fb-img-preview" v-if="fb.files.length">
-    <div v-for="(f,i) in fb.files" :key="i" class="fb-thumb">
-      <img :src="f.url"><button class="rm" @click="fb.files.splice(i,1)">×</button>
-    </div>
-  </div>
-  <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
-    <el-button round @click="fb.show=false">关闭</el-button>
-    <el-button type="primary" round :loading="fb.submitting" @click="submitFeedback">提交反馈</el-button>
-  </div>
-  <div class="sec-title" style="margin-top:20px">📬 我的反馈</div>
-  <div class="fb-list" v-loading="fb.listLoading">
-    <span v-if="!fb.list.length && !fb.listLoading" class="muted">还没有提交过反馈</span>
-    <div v-for="f in fb.list" :key="f.id" class="fb-item">
-      <div class="fb-head">
-        <el-tag :type="f.kind==='bug' ? 'danger' : 'primary'" size="small" round>{{ f.kind==='bug' ? 'Bug' : '建议' }}</el-tag>
-        <el-tag :type="f.status==='resolved' ? 'success' : 'warning'" size="small" round>{{ f.status==='resolved' ? '已回复' : '处理中' }}</el-tag>
-        <span class="fb-date">{{ fmtDate(f.created_at) }}</span>
-      </div>
-      <div class="fb-body">{{ f.content }}</div>
-      <div v-if="f.kind==='bug'" class="fb-meta">发生时间：{{ f.occur_time || '—' }} · 群号：{{ f.group || '—' }} · 用户ID：{{ f.user_id || '—' }}</div>
-      <div class="fb-imgs" v-if="(f.images||[]).length">
-        <el-image v-for="im in f.images" :key="im" :src="'/feedback_images/'+im"
-          :preview-src-list="(f.images||[]).map(x=>'/feedback_images/'+x)" fit="cover"
-          style="width:56px;height:56px;border-radius:8px;border:1px solid var(--line)"></el-image>
-      </div>
-      <div v-if="f.reply" class="fb-reply">💬 管理员回复：{{ f.reply }}</div>
-    </div>
-  </div>
-</el-dialog>
-
 <!-- 修改宠物形象 -->
 <el-dialog v-model="custom.editShow" title="✨ 修改宠物形象" width="480px" align-center>
   <p class="muted" style="margin:-6px 0 4px">定制专属形象与种类名称，审核通过后生效。</p>
@@ -1632,7 +1593,6 @@ createApp({
     const bind = reactive({show:false, group:'', qq:'', loading:false});
     const pwd = reactive({show:false, code:'', n1:'', n2:'', loading:false, sending:false, countdown:0});
     let pwdCdTimer = null;
-    const fb = reactive({show:false, kind:'bug', content:'', time:'', group:'', user:'', files:[], submitting:false, list:[], listLoading:false});
     const custom = reactive({code:'', nickname:'', showQQ:'', redeeming:false,
       editShow:false, species:'', blob:null, previewUrl:'', submitting:false});
     const crop = reactive({show:false, zoom:100});
@@ -1655,8 +1615,8 @@ createApp({
       account.value = me.account;
       pets.value = me.bound_pets || [];
       if(location.hash === '#feedback'){
-        history.replaceState(null, '', location.pathname);
-        openFeedback();
+        location.href = '/feedback';
+        return;
       }
       if(pets.value.length) await loadPet(pets.value[0]);
     }
@@ -1813,53 +1773,7 @@ createApp({
     }
 
     // ---- 反馈 ----
-    function openFeedback(){
-      fb.kind='bug'; fb.content=''; fb.time=''; fb.group=''; fb.user=''; fb.files=[];
-      fb.show = true;
-      loadFeedbacks();
-    }
-    async function loadFeedbacks(){
-      fb.listLoading = true;
-      try{
-        const r = await api('/api/portal/feedback');
-        fb.list = (r && r.data) || [];
-      } finally { fb.listLoading = false; }
-    }
-    function pickFbImages(e){
-      for(const f of e.target.files){
-        if(fb.files.length >= 3){ ElMessage.warning('最多上传 3 张图片'); break; }
-        if(f.size > 5*1024*1024){ ElMessage.warning(`图片「${f.name}」超过 5MB，已跳过`); continue; }
-        fb.files.push({file:f, url:URL.createObjectURL(f)});
-      }
-      e.target.value = '';
-    }
-    async function submitFeedback(){
-      const content = fb.content.trim();
-      if(!content){ ElMessage.warning(fb.kind==='bug' ? '请填写问题描述' : '请填写建议内容'); return; }
-      const fd = new FormData();
-      fd.append('kind', fb.kind);
-      fd.append('content', content);
-      if(fb.kind==='bug'){
-        if(!fb.time){ ElMessage.warning('请填写发生时间'); return; }
-        if(!fb.group.trim()){ ElMessage.warning('请填写对应的 QQ 群号'); return; }
-        if(!fb.user.trim()){ ElMessage.warning('请填写对应的用户 ID'); return; }
-        fd.append('occur_time', fb.time);
-        fd.append('group_id', fb.group.trim());
-        fd.append('user_id', fb.user.trim());
-      }
-      fb.files.forEach((f,i)=>fd.append(`image${i}`, f.file, f.file.name));
-      fb.submitting = true;
-      try{
-        const r = await fetch('/api/portal/feedback', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd}).then(x=>x.json()).catch(()=>null);
-        if(r && r.ok){
-          ElMessage.success(r.msg || '反馈已提交');
-          fb.content=''; fb.files=[];
-          loadFeedbacks();
-        } else {
-          ElMessage.error((r && r.msg) || '提交失败，请稍后重试');
-        }
-      } finally { fb.submitting = false; }
-    }
+    function goFeedback(){ location.href = '/feedback'; }
 
     // ---- 定制 ----
     async function redeemCustom(){
@@ -1962,12 +1876,303 @@ createApp({
 
     return {account, pets, current, data, pet, petLoading, blankImg:BLANK_IMG,
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
-      bind, pwd, fb, custom, crop,
+      bind, pwd, custom, crop,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
       loadPet, logout, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
-      openFeedback, pickFbImages, submitFeedback,
+      goFeedback,
       redeemCustom, openCustomEdit, submitCustom, toggleAutoCultivation,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};
+  }
+}).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
+</script>
+</body>
+</html>
+"""
+
+
+_FEEDBACK_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问题反馈 · 宠物乐园</title>
+<link rel="stylesheet" href="/webstatic/element-plus.min.css">
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#fff; --line:#e6e9f2; --text:#1f2534; --muted:#8a93a8;
+    --brand:#6366f1; --brand2:#a855f7; --grad:linear-gradient(135deg,#6366f1,#a855f7);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--text); min-height:100vh;
+  }
+  [v-cloak]{display:none}
+  .topbar{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .topbar-inner{max-width:880px;margin:0 auto;display:flex;align-items:center;gap:14px;padding:14px 20px}
+  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;text-decoration:none;transition:.16s;padding:6px 10px;border-radius:10px}
+  .back-link:hover{color:var(--brand);background:#f2f3ff}
+  .topbar-title{font-size:16px;font-weight:800;display:flex;align-items:center;gap:9px}
+  .topbar-title::before{content:'';width:10px;height:10px;border-radius:3px;background:var(--grad)}
+  .wrap{max-width:880px;margin:0 auto;padding:26px 20px 60px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 2px 10px rgba(30,40,80,.04)}
+  .card + .card{margin-top:22px}
+  .card-title{font-size:16px;font-weight:800;display:flex;align-items:center;gap:9px;margin-bottom:6px}
+  .card-title::before{content:'';width:4px;height:16px;border-radius:2px;background:var(--grad)}
+  .card-desc{color:var(--muted);font-size:13px;line-height:1.7;margin-bottom:14px}
+  .muted{color:var(--muted);font-size:12.5px;line-height:1.7}
+  .fld{display:block;font-size:12.5px;font-weight:700;color:#3c455c;margin:12px 0 7px}
+  .upload-zone{border:1.5px dashed #c9cede;border-radius:14px;padding:18px;text-align:center;cursor:pointer;transition:.16s;background:#fafbfe}
+  .upload-zone:hover{border-color:var(--brand);background:#f5f6ff}
+  .upload-plus{font-size:26px;color:#aab1c5;line-height:1}
+  .upload-text{font-size:13px;font-weight:700;margin-top:5px}
+  .upload-hint{font-size:12px;color:var(--muted);margin-top:3px}
+  .fb-img-preview{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .fb-thumb{position:relative}
+  .fb-thumb img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+  .fb-thumb .rm{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:none;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;line-height:20px;cursor:pointer;padding:0}
+  .submit-row{display:flex;justify-content:flex-end;margin-top:18px}
+  .list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+  .list-count{color:var(--muted);font-size:12.5px;font-weight:600}
+  .fb-rows{display:flex;flex-direction:column;margin-top:10px}
+  .fb-row{display:flex;align-items:center;gap:12px;padding:14px 4px;border-bottom:1px solid var(--line)}
+  .fb-row:last-child{border-bottom:none}
+  .fb-row-main{flex:1;min-width:0}
+  .fb-row-top{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+  .fb-row-date{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+  .fb-row-text{font-size:13.5px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3c455c}
+  .fb-row-btns{display:flex;gap:8px;flex:0 0 auto}
+  .fb-row-btns .el-button{margin:0}
+  .empty-tip{color:var(--muted);font-size:13.5px;padding:30px 0;text-align:center}
+  .pager{display:flex;justify-content:center;margin-top:16px}
+  .dt-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .dt-date{margin-left:auto;color:var(--muted);font-size:12.5px}
+  .dt-body{white-space:pre-wrap;line-height:1.7;font-size:13.5px;background:#f8f9fd;border:1px solid var(--line);border-radius:12px;padding:13px 15px;max-height:300px;overflow-y:auto;word-break:break-word}
+  .dt-meta{color:var(--muted);font-size:12.5px;margin-top:10px;line-height:1.8}
+  .dt-imgs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .dt-reply{margin-top:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:11px 14px;color:#166534;white-space:pre-wrap;line-height:1.7;font-size:13.5px}
+  .dt-reply .rt{font-weight:800;margin-bottom:4px;font-size:12.5px}
+  @media(max-width:640px){
+    .wrap{padding:18px 12px 44px}
+    .card{padding:17px;border-radius:15px}
+    .fb-row{flex-direction:column;align-items:stretch;gap:9px}
+    .fb-row-btns{justify-content:flex-end}
+    .el-dialog{--el-dialog-width:calc(100vw - 28px) !important;width:calc(100vw - 28px) !important;max-width:calc(100vw - 28px)}
+    .el-message-box{max-width:calc(100vw - 28px)}
+    .el-message{max-width:calc(100vw - 24px)}
+  }
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="back-link" href="/portal">← 返回玩家中心</a>
+      <div class="topbar-title">问题反馈</div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="card">
+      <div class="card-title">提交反馈</div>
+      <p class="card-desc">遇到 Bug 或有好的想法都可以在这里告诉我们，管理员处理后可在下方记录中查看回复。</p>
+      <el-tabs v-model="form.kind">
+        <el-tab-pane label="🐞 反馈 Bug" name="bug"></el-tab-pane>
+        <el-tab-pane label="💡 提出建议" name="suggestion"></el-tab-pane>
+      </el-tabs>
+      <label class="fld" style="margin-top:2px">{{ form.kind==='bug' ? '问题描述' : '建议内容' }}</label>
+      <el-input v-model="form.content" type="textarea" :rows="4" maxlength="2000" show-word-limit
+        :placeholder="form.kind==='bug' ? '请详细描述遇到的问题：操作了什么、预期结果、实际结果…' : '说说你希望增加或改进的功能…'"></el-input>
+      <template v-if="form.kind==='bug'">
+        <label class="fld">发生时间</label>
+        <el-date-picker v-model="form.time" type="datetime" placeholder="选择问题发生的时间" style="width:100%" format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm"></el-date-picker>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <el-input v-model="form.group" placeholder="对应的 QQ 群号"></el-input>
+          <el-input v-model="form.user" placeholder="对应的用户 ID"></el-input>
+        </div>
+      </template>
+      <label class="fld">图片截图（可选，最多 3 张）</label>
+      <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="pickImages">
+      <div class="upload-zone" @click="$refs.fileInput.click()">
+        <div class="upload-plus">＋</div>
+        <div class="upload-text">点击选择图片</div>
+        <div class="upload-hint">支持 jpg / png / gif / webp，单张不超过 5MB</div>
+      </div>
+      <div class="fb-img-preview" v-if="form.files.length">
+        <div v-for="(f,i) in form.files" :key="i" class="fb-thumb">
+          <img :src="f.url"><button class="rm" @click="form.files.splice(i,1)">×</button>
+        </div>
+      </div>
+      <div class="submit-row">
+        <el-button type="primary" round :loading="form.submitting" @click="submitFeedback">提交反馈</el-button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="list-head">
+        <div class="card-title" style="margin-bottom:0">我的反馈记录</div>
+        <span class="list-count" v-if="list.length">共 {{ list.length }} 条</span>
+      </div>
+      <div v-loading="listLoading">
+        <div v-if="!list.length && !listLoading" class="empty-tip">还没有提交过反馈</div>
+        <div class="fb-rows" v-else>
+          <div v-for="f in pageList" :key="f.id" class="fb-row">
+            <div class="fb-row-main">
+              <div class="fb-row-top">
+                <el-tag :type="f.kind==='bug' ? 'danger' : 'primary'" size="small" round>{{ f.kind==='bug' ? 'Bug' : '建议' }}</el-tag>
+                <el-tag :type="f.status==='resolved' ? 'success' : 'warning'" size="small" round>{{ f.status==='resolved' ? '已回复' : '处理中' }}</el-tag>
+                <span class="fb-row-date">{{ fmtDate(f.created_at) }}</span>
+              </div>
+              <div class="fb-row-text">{{ f.content }}</div>
+            </div>
+            <div class="fb-row-btns">
+              <el-button size="small" round @click="openDetail(f)">详情</el-button>
+              <el-button v-if="f.status!=='resolved'" size="small" type="danger" plain round
+                :loading="deleting===f.id" @click="removeFeedback(f)">删除</el-button>
+            </div>
+          </div>
+        </div>
+        <div class="pager" v-if="list.length > pageSize">
+          <el-pagination layout="prev, pager, next" background small
+            :total="list.length" :page-size="pageSize" v-model:current-page="page"></el-pagination>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 反馈详情 -->
+  <el-dialog v-model="detail.show" title="反馈详情" width="560px" align-center top="6vh">
+    <template v-if="detail.item">
+      <div class="dt-head">
+        <el-tag :type="detail.item.kind==='bug' ? 'danger' : 'primary'" size="small" round>{{ detail.item.kind==='bug' ? 'Bug' : '建议' }}</el-tag>
+        <el-tag :type="detail.item.status==='resolved' ? 'success' : 'warning'" size="small" round>{{ detail.item.status==='resolved' ? '已回复' : '处理中' }}</el-tag>
+        <span class="dt-date">提交于 {{ fmtDate(detail.item.created_at) }}</span>
+      </div>
+      <div class="dt-body">{{ detail.item.content }}</div>
+      <div v-if="detail.item.kind==='bug'" class="dt-meta">
+        发生时间：{{ detail.item.occur_time || '—' }}<br>
+        QQ 群号：{{ detail.item.group || '—' }} · 用户 ID：{{ detail.item.user_id || '—' }}
+      </div>
+      <div class="dt-imgs" v-if="(detail.item.images||[]).length">
+        <el-image v-for="im in detail.item.images" :key="im" :src="'/feedback_images/'+im"
+          :preview-src-list="(detail.item.images||[]).map(x=>'/feedback_images/'+x)" fit="cover" preview-teleported
+          style="width:76px;height:76px;border-radius:10px;border:1px solid var(--line)"></el-image>
+      </div>
+      <div v-if="detail.item.reply" class="dt-reply">
+        <div class="rt">💬 管理员回复{{ detail.item.replied_at ? '（' + fmtDate(detail.item.replied_at) + '）' : '' }}</div>{{ detail.item.reply }}
+      </div>
+    </template>
+    <template #footer>
+      <el-button v-if="detail.item && detail.item.status!=='resolved'" type="danger" plain round
+        :loading="deleting===(detail.item && detail.item.id)" @click="removeFeedback(detail.item)">删除该反馈</el-button>
+      <el-button round @click="detail.show=false">关闭</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script src="/webstatic/vue.global.prod.js"></script>
+<script src="/webstatic/element-plus.full.min.js"></script>
+<script src="/webstatic/element-plus-zh-cn.min.js"></script>
+<script>
+const CSRF_TOKEN = '{{CSRF_TOKEN}}';
+const { createApp, reactive, ref, computed, onMounted } = Vue;
+const { ElMessage, ElMessageBox } = ElementPlus;
+
+async function api(path, method='GET', body=null){
+  const opts = {method, headers:{'X-CSRF-Token':CSRF_TOKEN}};
+  if(body){ opts.headers['Content-Type']='application/json'; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  if(r.status === 401 || r.status === 403){ location.href = '/'; return null; }
+  return r.json().catch(()=>null);
+}
+
+createApp({
+  setup(){
+    const form = reactive({kind:'bug', content:'', time:'', group:'', user:'', files:[], submitting:false});
+    const list = ref([]);
+    const listLoading = ref(false);
+    const page = ref(1);
+    const pageSize = 10;
+    const detail = reactive({show:false, item:null});
+    const deleting = ref('');
+
+    const pageList = computed(()=> list.value.slice((page.value-1)*pageSize, page.value*pageSize));
+    const fmtDate = ts => new Date((ts||0)*1000).toLocaleString('zh-CN',{hour12:false});
+
+    async function loadList(){
+      listLoading.value = true;
+      try{
+        const r = await api('/api/portal/feedback');
+        const data = (r && r.data) || [];
+        data.sort((a,b)=>(a.created_at||0)-(b.created_at||0));
+        list.value = data;
+        const maxPage = Math.max(1, Math.ceil(data.length/pageSize));
+        if(page.value > maxPage) page.value = maxPage;
+      } finally { listLoading.value = false; }
+    }
+
+    function pickImages(e){
+      for(const f of e.target.files){
+        if(form.files.length >= 3){ ElMessage.warning('最多上传 3 张图片'); break; }
+        if(f.size > 5*1024*1024){ ElMessage.warning(`图片「${f.name}」超过 5MB，已跳过`); continue; }
+        form.files.push({file:f, url:URL.createObjectURL(f)});
+      }
+      e.target.value = '';
+    }
+
+    async function submitFeedback(){
+      const content = form.content.trim();
+      if(!content){ ElMessage.warning(form.kind==='bug' ? '请填写问题描述' : '请填写建议内容'); return; }
+      const fd = new FormData();
+      fd.append('kind', form.kind);
+      fd.append('content', content);
+      if(form.kind==='bug'){
+        if(!form.time){ ElMessage.warning('请填写发生时间'); return; }
+        if(!form.group.trim()){ ElMessage.warning('请填写对应的 QQ 群号'); return; }
+        if(!form.user.trim()){ ElMessage.warning('请填写对应的用户 ID'); return; }
+        fd.append('occur_time', form.time);
+        fd.append('group_id', form.group.trim());
+        fd.append('user_id', form.user.trim());
+      }
+      form.files.forEach((f,i)=>fd.append(`image${i}`, f.file, f.file.name));
+      form.submitting = true;
+      try{
+        const r = await fetch('/api/portal/feedback', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd}).then(x=>x.json()).catch(()=>null);
+        if(r && r.ok){
+          ElMessage.success(r.msg || '反馈已提交');
+          form.content=''; form.files=[]; form.time=''; form.group=''; form.user='';
+          await loadList();
+        } else {
+          ElMessage.error((r && r.msg) || '提交失败，请稍后重试');
+        }
+      } finally { form.submitting = false; }
+    }
+
+    function openDetail(f){ detail.item = f; detail.show = true; }
+
+    async function removeFeedback(f){
+      if(!f) return;
+      try{
+        await ElMessageBox.confirm('删除后无法恢复，确定要删除这条反馈吗？', '删除确认',
+          {confirmButtonText:'删除', cancelButtonText:'取消', type:'warning'});
+      }catch(e){ return; }
+      deleting.value = f.id;
+      try{
+        const r = await api('/api/portal/feedback/delete','POST',{id:f.id});
+        if(r && r.ok){
+          ElMessage.success(r.msg || '反馈已删除');
+          if(detail.item && detail.item.id === f.id) detail.show = false;
+          await loadList();
+        } else {
+          ElMessage.error((r && r.msg) || '删除失败');
+        }
+      } finally { deleting.value = ''; }
+    }
+
+    onMounted(loadList);
+
+    return {form, list, listLoading, page, pageSize, detail, deleting, pageList,
+      fmtDate, pickImages, submitFeedback, openDetail, removeFeedback};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
 </script>
@@ -2403,7 +2608,7 @@ createApp({
     }
 
     function goFeedback(){
-      if(loggedIn.value){ location.href = '/portal#feedback'; }
+      if(loggedIn.value){ location.href = '/feedback'; }
       else { openAuth('login'); auth.hint = '登录后即可提交问题反馈'; }
     }
 
