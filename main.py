@@ -137,6 +137,8 @@ KNOWN_COMMANDS = {
     "宠物侦查",
     "赠送宠物",
     "放生宠物",
+    "锁定宠物",
+    "解锁宠物",
     "宠物改名",
     "宠物变性",
     "宠物复活",
@@ -1233,6 +1235,10 @@ class PetParkPlugin(Star):
             return self._gift_pet(player, group_id, tokens)
         if cmd == "放生宠物":
             return self._release(player)
+        if cmd in ("锁定宠物", "宠物锁定"):
+            return self._lock_pet(player, True)
+        if cmd in ("解锁宠物", "宠物解锁"):
+            return self._lock_pet(player, False)
         if cmd == "宠物改名":
             return self._rename(player, tokens)
         if cmd == "宠物变性":
@@ -3087,6 +3093,7 @@ class PetParkPlugin(Star):
                 "【入门】",
                 "- 砸蛋 · 购买宠物 · 我的宠物 · 宠物状态",
                 "- 宠物改名 · 宠物变性 · 赠送宠物 · 放生宠物",
+                "- 锁定宠物 · 解锁宠物（锁定后无法放生/赠送，防误操作）",
                 "- 宠物侦查 用户ID",
                 "",
                 "【商城 / 背包】",
@@ -3388,6 +3395,8 @@ class PetParkPlugin(Star):
         tp, err = self._find_target(group_id, target)
         if err:
             return err
+        if p.get("locked"):
+            return "🔒 宠物已锁定，无法赠送。如需赠送请先发送『解锁宠物』。"
         if tp.get("pet"):
             return "对方已经有宠物了，无法接收。"
         tp["pet"] = p
@@ -3398,8 +3407,24 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
+        if p.get("locked"):
+            return f"🔒 『{p['nickname']}』已锁定，无法放生。如需放生请先发送『解锁宠物』。"
         player["pet"] = None
         return f"已放生『{p['nickname']}』，江湖再见。"
+
+    def _lock_pet(self, player: dict, lock: bool) -> str:
+        p = self._need_pet(player)
+        if not p:
+            return "你没有宠物。"
+        if lock:
+            if p.get("locked"):
+                return f"🔒 『{p['nickname']}』已处于锁定状态。"
+            p["locked"] = True
+            return f"🔒 已锁定『{p['nickname']}』，锁定期间无法放生或赠送，发送『解锁宠物』可解除。"
+        if not p.get("locked"):
+            return f"『{p['nickname']}』当前未锁定。"
+        p["locked"] = False
+        return f"🔓 已解锁『{p['nickname']}』，现在可以放生或赠送了。"
 
     def _rename(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)

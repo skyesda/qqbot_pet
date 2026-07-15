@@ -27,6 +27,15 @@ MAX_TEXT_LEN = 50
 # 缓存上限
 CACHE_MAX = 512
 
+# 高危指令：后果不可逆，禁止由 AI 路由自动执行，必须玩家手动发送完整指令
+DANGEROUS_COMMANDS = {
+    "放生宠物",
+    "赠送宠物",
+    "清空背包",
+    "丢弃",
+    "宠物变性",
+}
+
 # ---------------------------------------------------------------------------
 # 第 2 层：本地同义词 / 正则规则
 # ---------------------------------------------------------------------------
@@ -73,7 +82,6 @@ SYNONYMS: dict[str, str] = {
     "看我的宠物": "我的宠物",
     "查看我的宠物": "我的宠物",
     "信息": "我的信息",
-    "放生": "放生宠物",
     "改名": "宠物改名",
     "复活宠物": "宠物复活",
     "炼个丹": "炼丹",
@@ -151,7 +159,6 @@ _PET_KEYWORDS = (
 
 # 带参数指令的用法说明（写进 LLM 提示词，保证生成的指令行参数格式正确）
 _USAGE = """转让 用户ID 物品名 数量
-赠送宠物 用户ID
 赠送金币 用户ID 数量
 赠送积分 用户ID 数量
 赠送钻石 用户ID 数量
@@ -248,6 +255,8 @@ class AIRouter:
         if not self.enabled:
             return None
         local = self.match_local(text)
+        if local and local.split()[0] in DANGEROUS_COMMANDS:
+            return None
         if local and local.split()[0] in known_commands:
             return local
         # LLM 兜底触发条件：长度合理且疑似宠物相关
@@ -360,5 +369,7 @@ class AIRouter:
             return None
         cmd = cmd.strip()
         if not cmd or cmd.split()[0] not in known_commands:
+            return None
+        if cmd.split()[0] in DANGEROUS_COMMANDS:
             return None
         return cmd
