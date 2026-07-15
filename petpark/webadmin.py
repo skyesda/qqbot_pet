@@ -48,7 +48,7 @@ class WebAdmin:
     async def start(self) -> None:
         from aiohttp import web
 
-        app = web.Application()
+        app = web.Application(client_max_size=200 * 1024 * 1024)
         app.router.add_get("/admin", self._index)
         app.router.add_get("/login", self._login_page)
         app.router.add_post("/login", self._login_submit)
