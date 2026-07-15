@@ -1775,7 +1775,10 @@ class PetParkPlugin(Star):
 
         groups = self.store._data.get("groups", {})
         all_gids = list(groups.keys())
-        authorized = [gid for gid in all_gids if self._is_group_authorized(gid)]
+        authorized = [
+            gid for gid in all_gids
+            if self._is_group_authorized(gid) and groups[gid].get("enabled", True)
+        ]
         with_umo = [gid for gid in authorized if groups[gid].get("umo")]
         targets = [(gid, groups[gid].get("umo")) for gid in with_umo]
 
@@ -9585,6 +9588,9 @@ class PetParkPlugin(Star):
             return False
         if not self._is_group_authorized(group_id):
             logger.warning(f"[petpark] 定向广播跳过：群 {group_id} 未授权或授权已过期")
+            return False
+        if not group.get("enabled", True):
+            logger.info(f"[petpark] 定向广播跳过：群 {group_id} 已关闭宠物乐园")
             return False
         try:
             await self.context.send_message(
