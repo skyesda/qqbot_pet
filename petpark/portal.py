@@ -1909,14 +1909,13 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
   }
   [v-cloak]{display:none}
   .topbar{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-  .topbar-inner{max-width:880px;margin:0 auto;display:flex;align-items:center;gap:14px;padding:14px 20px}
+  .topbar-inner{max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:14px;padding:14px 20px}
   .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;text-decoration:none;transition:.16s;padding:6px 10px;border-radius:10px}
   .back-link:hover{color:var(--brand);background:#f2f3ff}
   .topbar-title{font-size:16px;font-weight:800;display:flex;align-items:center;gap:9px}
   .topbar-title::before{content:'';width:10px;height:10px;border-radius:3px;background:var(--grad)}
-  .wrap{max-width:880px;margin:0 auto;padding:26px 20px 60px}
+  .wrap{max-width:1200px;margin:0 auto;padding:26px 20px 60px;display:grid;grid-template-columns:minmax(340px,5fr) minmax(380px,6fr);gap:22px;align-items:start}
   .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 2px 10px rgba(30,40,80,.04)}
-  .card + .card{margin-top:22px}
   .card-title{font-size:16px;font-weight:800;display:flex;align-items:center;gap:9px;margin-bottom:6px}
   .card-title::before{content:'';width:4px;height:16px;border-radius:2px;background:var(--grad)}
   .card-desc{color:var(--muted);font-size:13px;line-height:1.7;margin-bottom:14px}
@@ -1952,8 +1951,11 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
   .dt-imgs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
   .dt-reply{margin-top:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:11px 14px;color:#166534;white-space:pre-wrap;line-height:1.7;font-size:13.5px}
   .dt-reply .rt{font-weight:800;margin-bottom:4px;font-size:12.5px}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+  }
   @media(max-width:640px){
-    .wrap{padding:18px 12px 44px}
+    .wrap{padding:18px 12px 44px;gap:16px}
     .card{padding:17px;border-radius:15px}
     .fb-row{flex-direction:column;align-items:stretch;gap:9px}
     .fb-row-btns{justify-content:flex-end}
