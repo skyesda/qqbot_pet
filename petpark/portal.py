@@ -420,6 +420,8 @@ class PlayerPortal:
         app.router.add_post("/api/portal/feedback", self._api_feedback_submit)
         app.router.add_get("/api/portal/feedback", self._api_feedback_list)
         app.router.add_post("/api/portal/feedback/delete", self._api_feedback_delete)
+        app.router.add_get("/chat", self._chat_page)
+        app.router.add_post("/api/portal/chat", self._api_chat_send)
         app.router.add_static(
             "/feedback_images",
             path=self.store.feedback_images_dir,
@@ -959,6 +961,51 @@ class PlayerPortal:
         await self.store.save()
         return web.json_response({"ok": True, "msg": "反馈已删除"})
 
+    # --------------------------- 宠物对话 ---------------------------
+    async def _chat_page(self, request: web.Request) -> web.Response:
+        sess = self._current_session(request)
+        if not sess:
+            raise web.HTTPFound("/")
+        csrf = sess.get("csrf")
+        html = _CHAT_HTML.replace("{{CSRF_TOKEN}}", csrf)
+        response = web.Response(text=html, content_type="text/html")
+        self._set_session(response, sess["aid"], csrf)
+        return response
+
+    async def _api_chat_send(self, request: web.Request) -> web.Response:
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        gw = self.command_gateway
+        if gw is None or not hasattr(gw, "web_dispatch"):
+            return web.json_response({"ok": False, "msg": "对话服务未就绪，请重载插件后重试"})
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        text = str(body.get("text", "")).strip()
+        if not group_id or not qq:
+            return web.json_response({"ok": False, "msg": "参数不完整"})
+        if not text:
+            return web.json_response({"ok": False, "msg": "消息不能为空"})
+        if len(text) > 200:
+            return web.json_response({"ok": False, "msg": "消息太长啦，请控制在 200 字以内"})
+        owner = self.store.account_for_pet(group_id, qq)
+        if owner != sess.get("aid"):
+            raise web.HTTPForbidden(text="你没有绑定该宠物")
+        try:
+            reply = await gw.web_dispatch(qq, group_id, text)
+        except Exception as e:
+            logger.exception("[petpark] 网页对话执行出错")
+            return web.json_response({"ok": True, "reply": f"宠物乐园处理出错：{e}", "image_md": None})
+        image_md = None
+        if isinstance(reply, tuple):
+            reply, image_md = reply
+        if reply is None:
+            reply = "😶 没有听懂这条指令…发送「宠物菜单」可以查看全部可用指令哦。"
+        return web.json_response({"ok": True, "reply": reply, "image_md": image_md})
+
     # --------------------------- 道具使用 / 卡密兑换 / 改密 ---------------------------
     async def _api_use_item(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
@@ -1295,6 +1342,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
     </div>
     <div class="side-btns">
       <el-button type="primary" plain round @click="bind.show = true">＋ 绑定新宠物</el-button>
+      <el-button type="success" round @click="goChat">💬 宠物对话</el-button>
       <el-button type="warning" round @click="goFeedback">📣 问题反馈</el-button>
     </div>
     <p class="side-tip">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
@@ -1772,8 +1820,9 @@ createApp({
       } finally { redeeming.value = false; }
     }
 
-    // ---- 反馈 ----
+    // ---- 反馈 / 对话 ----
     function goFeedback(){ location.href = '/feedback'; }
+    function goChat(){ location.href = '/chat'; }
 
     // ---- 定制 ----
     async function redeemCustom(){
@@ -1879,7 +1928,7 @@ createApp({
       bind, pwd, custom, crop,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
       loadPet, logout, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
-      goFeedback,
+      goFeedback, goChat,
       redeemCustom, openCustomEdit, submitCustom, toggleAutoCultivation,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};
   }
@@ -2173,6 +2222,261 @@ createApp({
 
     return {form, list, listLoading, page, pageSize, detail, deleting, pageList,
       fmtDate, pickImages, submitFeedback, openDetail, removeFeedback};
+  }
+}).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
+</script>
+</body>
+</html>
+"""
+
+
+_CHAT_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>宠物对话 · 宠物乐园</title>
+<link rel="stylesheet" href="/webstatic/element-plus.min.css">
+<style>
+  :root{
+    --bg:#eef1f7; --line:#e2e6f0; --text:#1f2534; --muted:#8a93a8;
+    --brand:#6366f1; --bubble-me:#4f9bff; --bubble-bot:#ffffff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--text);
+  }
+  [v-cloak]{display:none}
+  .frame{max-width:860px;margin:0 auto;height:100vh;height:100dvh;display:flex;flex-direction:column;background:#f3f5fa;box-shadow:0 0 40px rgba(30,40,80,.08)}
+  .topbar{flex:0 0 auto;background:rgba(255,255,255,.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .topbar-inner{display:flex;align-items:center;gap:12px;padding:11px 16px}
+  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;transition:.16s;padding:6px 9px;border-radius:10px;white-space:nowrap}
+  .back-link:hover{color:var(--brand);background:#f2f3ff}
+  .top-title{min-width:0}
+  .top-title .t{font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top-title .s{font-size:11.5px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .chat-body{flex:1 1 auto;overflow-y:auto;padding:18px 16px 8px;scroll-behavior:smooth}
+  .day-tip{text-align:center;margin:6px 0 14px}
+  .day-tip span{display:inline-block;background:#dde2ee;color:#7a8299;font-size:11.5px;border-radius:9px;padding:3px 10px}
+  .msg{display:flex;gap:9px;margin-bottom:16px;align-items:flex-start}
+  .msg.me{flex-direction:row-reverse}
+  .avatar{flex:0 0 38px;width:38px;height:38px;border-radius:50%;overflow:hidden;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:19px}
+  .avatar img{width:100%;height:100%;object-fit:cover}
+  .msg-col{max-width:74%;min-width:0;display:flex;flex-direction:column}
+  .msg.me .msg-col{align-items:flex-end}
+  .msg-name{font-size:11.5px;color:#98a0b4;margin:0 2px 4px}
+  .bubble{position:relative;background:var(--bubble-bot);border-radius:4px 14px 14px 14px;padding:10px 13px;font-size:14px;line-height:1.65;word-break:break-word;box-shadow:0 1px 3px rgba(30,40,80,.07);white-space:pre-wrap}
+  .msg.me .bubble{background:var(--bubble-me);color:#fff;border-radius:14px 4px 14px 14px}
+  .bubble.pending{color:var(--muted)}
+  .bubble b{font-weight:800}
+  .bubble .h{display:block;font-weight:800;font-size:14.5px;margin:2px 0}
+  .bubble img{max-width:100%;border-radius:10px;display:block;margin:4px 0}
+  .typing{display:inline-flex;gap:4px;align-items:center;padding:4px 2px}
+  .typing i{width:6px;height:6px;border-radius:50%;background:#b6bdd0;animation:blink 1.2s infinite}
+  .typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
+  @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+  .chips{flex:0 0 auto;display:flex;gap:8px;overflow-x:auto;padding:8px 16px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:12.5px;color:#3c455c;cursor:pointer;transition:.15s;user-select:none;white-space:nowrap}
+  .chip:hover{border-color:var(--brand);color:var(--brand);background:#f5f6ff}
+  .inputbar{flex:0 0 auto;display:flex;gap:10px;align-items:flex-end;padding:10px 16px 14px;background:rgba(255,255,255,.95);border-top:1px solid var(--line)}
+  .inputbar textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:14px;background:#fff;padding:10px 13px;font-size:14px;line-height:1.5;font-family:inherit;outline:none;max-height:110px;transition:border-color .15s}
+  .inputbar textarea:focus{border-color:var(--brand)}
+  .send-btn{flex:0 0 auto;border:none;border-radius:14px;background:var(--bubble-me);color:#fff;font-size:14px;font-weight:700;padding:10px 22px;cursor:pointer;transition:.15s}
+  .send-btn:disabled{background:#c2cbde;cursor:not-allowed}
+  .empty-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--muted)}
+  .empty-wrap .e{font-size:42px}
+  @media(max-width:640px){
+    .msg-col{max-width:82%}
+    .chat-body{padding:14px 10px 6px}
+    .inputbar{padding:8px 10px 12px}
+    .chips{padding:8px 10px}
+  }
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="frame">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="back-link" href="/portal">← 玩家中心</a>
+        <div class="top-title" v-if="current">
+          <div class="t">{{ current.nickname }} 的小窝</div>
+          <div class="s">群 {{ current.group_id }} · ID {{ current.qq }}</div>
+        </div>
+        <div class="top-title" v-else><div class="t">宠物对话</div></div>
+        <div class="top-right">
+          <el-select v-if="pets.length > 1" v-model="petIdx" size="small" style="width:150px" @change="switchPet">
+            <el-option v-for="(p,i) in pets" :key="i" :label="p.nickname + '（群' + p.group_id + '）'" :value="i"></el-option>
+          </el-select>
+          <el-button size="small" round @click="clearHistory" v-if="msgs.length">清空记录</el-button>
+        </div>
+      </div>
+    </header>
+
+    <template v-if="current">
+      <main class="chat-body" ref="bodyEl">
+        <div class="day-tip"><span>与『{{ current.nickname }}』的对话 · 模拟群 {{ current.group_id }}</span></div>
+        <div v-for="(m,i) in msgs" :key="i" class="msg" :class="{me: m.role==='me'}">
+          <div class="avatar">
+            <img v-if="m.role==='me' && userAvatar" :src="userAvatar">
+            <img v-else-if="m.role==='bot' && current.image_url" :src="current.image_url">
+            <span v-else>{{ m.role==='me' ? '🙂' : '🐾' }}</span>
+          </div>
+          <div class="msg-col">
+            <div class="msg-name">{{ m.role==='me' ? myName : current.nickname }}</div>
+            <div class="bubble" :class="{pending: m.pending}">
+              <div v-if="m.pending" class="typing"><i></i><i></i><i></i></div>
+              <span v-else v-html="m.html"></span>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <div class="chips">
+        <span class="chip" v-for="c in quickCmds" :key="c" @click="sendText(c)">{{ c }}</span>
+      </div>
+
+      <div class="inputbar">
+        <textarea ref="inputEl" v-model="draft" rows="1" maxlength="200"
+          placeholder="像在 QQ 群里一样发消息，例如：签到、我的宠物、帮我升级…"
+          @keydown.enter.exact.prevent="sendText()"
+          @input="autoGrow"></textarea>
+        <button class="send-btn" :disabled="sending || !draft.trim()" @click="sendText()">发送</button>
+      </div>
+    </template>
+
+    <div class="empty-wrap" v-else-if="loaded">
+      <div class="e">🐣</div>
+      <div>还没有绑定宠物，先去玩家中心绑定一只吧</div>
+      <el-button type="primary" round @click="location.href='/portal'">前往绑定</el-button>
+    </div>
+  </div>
+</div>
+
+<script src="/webstatic/vue.global.prod.js"></script>
+<script src="/webstatic/element-plus.full.min.js"></script>
+<script src="/webstatic/element-plus-zh-cn.min.js"></script>
+<script>
+const CSRF_TOKEN = '{{CSRF_TOKEN}}';
+const { createApp, ref, computed, onMounted, nextTick } = Vue;
+const { ElMessage, ElMessageBox } = ElementPlus;
+
+async function api(path, method='GET', body=null){
+  const opts = {method, headers:{'X-CSRF-Token':CSRF_TOKEN}};
+  if(body){ opts.headers['Content-Type']='application/json'; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  if(r.status === 401 || r.status === 403){ location.href = '/'; return null; }
+  return r.json().catch(()=>null);
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// 轻量 Markdown 渲染：图片 / 标题 / 加粗 / 行内代码
+function renderReply(text, imageMd){
+  let imgs = '';
+  const collect = src => { for(const m of String(src||'').matchAll(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g)) imgs += '<img src="' + escapeHtml(m[1]) + '">'; };
+  collect(imageMd);
+  let t = String(text||'').replace(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g, (mm,u)=>{ imgs += '<img src="' + escapeHtml(u) + '">'; return ''; });
+  t = escapeHtml(t.trim());
+  t = t.replace(/^#{1,4}\s*(.+)$/gm, '<span class="h">$1</span>');
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  t = t.replace(/`([^`]+)`/g, '<b>$1</b>');
+  return imgs + t;
+}
+
+createApp({
+  setup(){
+    const pets = ref([]);
+    const petIdx = ref(0);
+    const account = ref(null);
+    const loaded = ref(false);
+    const msgs = ref([]);
+    const draft = ref('');
+    const sending = ref(false);
+    const bodyEl = ref(null);
+    const inputEl = ref(null);
+    const quickCmds = ['签到','我的宠物','宠物状态','查看背包','宠物升级','宠物菜单','宠物排行','自动修炼状态'];
+
+    const current = computed(()=> pets.value[petIdx.value] || null);
+    const myName = computed(()=> account.value ? 'QQ ' + account.value.qq : '我');
+    const userAvatar = computed(()=>{
+      const q = account.value && account.value.qq;
+      return q && /^\d{5,}$/.test(q) ? 'https://q1.qlogo.cn/g?b=qq&nk=' + q + '&s=100' : '';
+    });
+
+    const histKey = () => current.value ? 'petchat:' + current.value.group_id + ':' + current.value.qq : '';
+
+    function loadHistory(){
+      msgs.value = [];
+      try{
+        const raw = localStorage.getItem(histKey());
+        if(raw) msgs.value = JSON.parse(raw).slice(-200);
+      }catch(e){}
+      scrollBottom();
+    }
+    function saveHistory(){
+      try{ localStorage.setItem(histKey(), JSON.stringify(msgs.value.filter(m=>!m.pending).slice(-200))); }catch(e){}
+    }
+    function clearHistory(){
+      ElMessageBox.confirm('清空当前宠物的对话记录？', '提示', {confirmButtonText:'清空', cancelButtonText:'取消', type:'warning'})
+        .then(()=>{ msgs.value = []; saveHistory(); }).catch(()=>{});
+    }
+
+    function scrollBottom(){
+      nextTick(()=>{ if(bodyEl.value) bodyEl.value.scrollTop = bodyEl.value.scrollHeight; });
+    }
+    function autoGrow(e){
+      const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(110, el.scrollHeight) + 'px';
+    }
+
+    function switchPet(){ loadHistory(); }
+
+    async function sendText(preset){
+      const text = (preset !== undefined ? preset : draft.value).trim();
+      if(!text || sending.value || !current.value) return;
+      if(preset === undefined) draft.value = '';
+      if(inputEl.value){ inputEl.value.style.height = 'auto'; }
+      msgs.value.push({role:'me', html: escapeHtml(text)});
+      const pending = {role:'bot', pending:true, html:''};
+      msgs.value.push(pending);
+      scrollBottom();
+      sending.value = true;
+      try{
+        const r = await api('/api/portal/chat','POST',{group_id: current.value.group_id, qq: current.value.qq, text});
+        pending.pending = false;
+        if(r && r.ok){
+          pending.html = renderReply(r.reply, r.image_md);
+        } else {
+          pending.html = escapeHtml((r && r.msg) || '发送失败，请稍后重试');
+        }
+      } catch(e){
+        pending.pending = false;
+        pending.html = '网络异常，请稍后重试';
+      } finally {
+        sending.value = false;
+        saveHistory();
+        scrollBottom();
+      }
+    }
+
+    onMounted(async ()=>{
+      const me = await api('/api/portal/me');
+      if(!me || !me.ok){ location.href = '/'; return; }
+      account.value = me.account;
+      pets.value = me.bound_pets || [];
+      loaded.value = true;
+      if(pets.value.length) loadHistory();
+    });
+
+    return {pets, petIdx, account, loaded, msgs, draft, sending, bodyEl, inputEl,
+      quickCmds, current, myName, userAvatar, location,
+      sendText, switchPet, clearHistory, autoGrow};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
 </script>

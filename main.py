@@ -293,6 +293,60 @@ KNOWN_COMMANDS = {
     "扫雷兑换",
 }
 
+# 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
+WEB_BLOCKED_COMMANDS = {
+    # 不可逆 / 资产转移
+    "放生宠物",
+    "赠送宠物",
+    "宠物变性",
+    "清空背包",
+    "丢弃",
+    "转让",
+    "赠送金币",
+    "赠送积分",
+    "赠送钻石",
+    # 获取宠物（应在群内进行）
+    "砸蛋",
+    "购买宠物",
+    # 群管理 / 授权 / 广播类
+    "开启宠物乐园",
+    "关闭宠物乐园",
+    "开启宠物跨群",
+    "关闭宠物跨群",
+    "加金币",
+    "减金币",
+    "加积分",
+    "减积分",
+    "加钻石",
+    "减钻石",
+    "任命小管理",
+    "任命小管理员",
+    "撤销小管理",
+    "撤销小管理员",
+    "小管理列表",
+    "我的管理额度",
+    "授权",
+    "授权本群",
+}
+
+
+class _WebEvent:
+    """网页端宠物对话的伪事件：仅提供 dispatch 所需的最小接口。"""
+
+    role = ""
+
+    def __init__(self, qq: str):
+        self._qq = qq
+
+    def get_sender_id(self) -> str:
+        return self._qq
+
+    def get_group_id(self) -> str:
+        return ""
+
+    def get_sender_name(self) -> str:
+        return ""
+
 
 @register(
     PLUGIN_NAME,
@@ -918,6 +972,56 @@ class PetParkPlugin(Star):
             return Comp.At(qq=qq)
         except Exception:
             return None
+
+    # =====================================================================
+    # 网页端宠物对话入口（由玩家中心调用）
+    # =====================================================================
+    WEB_BLOCKED_TIP = "🚫 该指令仅支持在 QQ 群内使用哦，请回群里发送。"
+
+    async def web_dispatch(self, qq: str, group_id: str, text: str):
+        """以绑定的用户/群身份执行一条指令，返回与 dispatch 相同的结果。
+
+        屏蔽不适合网页端的指令（放生/砸蛋/赠送/管理与授权类等），
+        未命中精确指令时走 AI 意图路由（同样排除被屏蔽指令）。
+        """
+        text = (text or "").strip()
+        if not text:
+            return None
+        tokens = text.split()
+        if tokens[0] in WEB_BLOCKED_COMMANDS or text in WEB_BLOCKED_COMMANDS:
+            return self.WEB_BLOCKED_TIP
+        event = _WebEvent(qq)
+        try:
+            reply = self.dispatch(event, qq, group_id, text)
+        except Exception as e:
+            logger.exception("[petpark] 网页端指令执行出错")
+            return f"宠物乐园处理出错：{e}"
+        if reply is None:
+            routed = None
+            try:
+                allowed = (
+                    KNOWN_COMMANDS
+                    | set(data.DAILY_ACTIONS)
+                    | self._active_event_commands()
+                ) - WEB_BLOCKED_COMMANDS
+                routed = await self._ai_router.route(text, allowed)
+            except Exception:
+                logger.exception("[petpark] 网页端 AI 意图路由出错")
+            if routed and routed != text:
+                if routed.split()[0] in WEB_BLOCKED_COMMANDS:
+                    return self.WEB_BLOCKED_TIP
+                try:
+                    reply = self.dispatch(event, qq, group_id, routed)
+                except Exception as e:
+                    logger.exception("[petpark] 网页端 AI 路由指令执行出错")
+                    reply = f"宠物乐园处理出错：{e}"
+                if isinstance(reply, str):
+                    reply = f"🤖 已识别：{routed}\n{reply}"
+                elif isinstance(reply, tuple):
+                    reply = (f"🤖 已识别：{routed}\n{reply[0]}", reply[1])
+        if reply is not None:
+            await self.store.save()
+        return reply
 
     async def terminate(self):
         await self.store.save()
