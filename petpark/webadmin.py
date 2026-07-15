@@ -58,6 +58,7 @@ class WebAdmin:
         app.router.add_post("/api/upsert", self._api_upsert)
         app.router.add_post("/api/delete", self._api_delete)
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
+        app.router.add_post("/api/cards/batch_delete", self._api_cards_batch_delete)
         app.router.add_post("/api/boss_respawn", self._api_boss_respawn)
         app.router.add_post("/api/test_sect_broadcast", self._api_test_sect_broadcast)
         app.router.add_post("/api/test_sect_war_full", self._api_test_sect_war_full)
@@ -248,6 +249,30 @@ class WebAdmin:
         if removed is not None:
             logger.info(f"[petpark][webadmin] delete {table}/{key} by {request.remote}")
         return self._json({"ok": True})
+
+    async def _api_cards_batch_delete(self, request):
+        """批量删除卡密：keys 指定卡密列表，或 mode=used 删除全部已使用卡密。"""
+        self._require(request)
+        body = await request.json()
+        cards = self.store._data.setdefault("cards", {})
+        mode = str(body.get("mode", "")).strip()
+        if mode == "used":
+            keys = [k for k, v in cards.items() if isinstance(v, dict) and v.get("used")]
+        else:
+            req_keys = body.get("keys")
+            if not isinstance(req_keys, list) or not req_keys:
+                return self._json({"ok": False, "msg": "请选择要删除的卡密"})
+            keys = [str(k) for k in req_keys if str(k) in cards]
+        if not keys:
+            return self._json({"ok": False, "msg": "没有可删除的卡密"})
+        for k in keys:
+            cards.pop(k, None)
+        await self.store.save()
+        logger.info(
+            f"[petpark][webadmin] batch_delete cards ×{len(keys)} "
+            f"(mode={mode or 'keys'}) by {request.remote}"
+        )
+        return self._json({"ok": True, "deleted": len(keys)})
 
     async def _api_gen_cards(self, request):
         self._require(request)
@@ -864,6 +889,8 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <input id="pre" placeholder="前缀(可选,如VIP)" style="width:130px">
 <button class="act" onclick="genCards()">批量生成</button>
 <button class="ghost act" onclick="exportUnused()">导出未用卡密</button>
+<button class="act del" onclick="cardsDeleteSelected()">删除选中</button>
+<button class="act del" onclick="cardsDeleteUsed()">删除已使用</button>
 </div>
 <div id="genout" class="muted" style="margin-bottom:8px"></div>
 </div>
@@ -1252,14 +1279,31 @@ function renderCards(){
  let total=0,used=0;
  let rows='';
  for(const k of Object.keys(cache)){const v=cache[k];total++;if(v.used)used++;if(!match(k,v))continue;
-  rows+=`<tr><td class="k">${esc(k)}</td>
+  rows+=`<tr><td><input type="checkbox" class="cardchk" value="${esc(k)}"></td><td class="k">${esc(k)}</td>
    <td>${cardContentHtml(v)}</td>
    <td><span class="tag ${v.used?'used':'unused'}">${v.used?'已使用':'未使用'}</span></td>
    <td class="muted">${v.used_by?esc(v.used_by.replace(String.fromCharCode(31),' / ')):'—'}</td>
    <td class="muted">${fdate(v.created_at)}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
  document.getElementById('cardstats').innerHTML=`<div class="stat"><div class="n">${total}</div><div class="l">卡密总数</div></div><div class="stat"><div class="n">${total-used}</div><div class="l">未使用</div></div><div class="stat"><div class="n">${used}</div><div class="l">已使用</div></div>`;
- shell('<th>卡密</th><th>套餐内容</th><th>状态</th><th>使用者</th><th>创建时间</th><th>操作</th>',rows);
+ shell('<th><input type="checkbox" onclick="cardsToggleAll(this)"></th><th>卡密</th><th>套餐内容</th><th>状态</th><th>使用者</th><th>创建时间</th><th>操作</th>',rows);
+}
+function cardsToggleAll(box){document.querySelectorAll('.cardchk').forEach(c=>c.checked=box.checked);}
+async function cardsDeleteSelected(){
+ if(cur!=='cards'){alert('请先切换到卡密页');return;}
+ const keys=[...document.querySelectorAll('.cardchk:checked')].map(c=>c.value);
+ if(!keys.length){alert('请先勾选要删除的卡密');return;}
+ if(!confirm('确认删除选中的 '+keys.length+' 个卡密？'))return;
+ const r=await api('/api/cards/batch_delete',{keys});
+ alert(r.ok?('已删除 '+r.deleted+' 个卡密'):(r.msg||'删除失败'));
+ load();
+}
+async function cardsDeleteUsed(){
+ if(cur!=='cards'){alert('请先切换到卡密页');return;}
+ if(!confirm('确认删除全部已使用的卡密？'))return;
+ const r=await api('/api/cards/batch_delete',{mode:'used'});
+ alert(r.ok?('已删除 '+r.deleted+' 个已使用卡密'):(r.msg||'删除失败'));
+ load();
 }
 function eventDate(ts){
  if(!ts)return '—';
