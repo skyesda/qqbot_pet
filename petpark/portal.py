@@ -348,7 +348,12 @@ class PlayerPortal:
         """汇总玩家所有活动冷却：日常活动 + 固定玩法 + 限时活动。"""
         now = int(time.time())
         entries = []
+        married = (player.get("pet") or {}).get("love_state") == "已婚"
         for action in data.DAILY_ACTIONS:
+            if action == "双修" and not married:
+                continue
+            if action == "修炼" and married:
+                continue
             entries.append({
                 "name": action,
                 "remaining": self.store.cooldown_remaining(player, f"日常:{action}"),
