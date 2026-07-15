@@ -2249,7 +2249,7 @@ _CHAT_HTML = r"""<!DOCTYPE html>
     background:var(--bg); color:var(--text);
   }
   [v-cloak]{display:none}
-  .frame{max-width:860px;margin:0 auto;height:100vh;height:100dvh;display:flex;flex-direction:column;background:#f3f5fa;box-shadow:0 0 40px rgba(30,40,80,.08)}
+  .frame{width:100%;height:100vh;height:100dvh;display:flex;flex-direction:column;background:#f3f5fa}
   .topbar{flex:0 0 auto;background:rgba(255,255,255,.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
   .topbar-inner{display:flex;align-items:center;gap:12px;padding:11px 16px}
   .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;transition:.16s;padding:6px 9px;border-radius:10px;white-space:nowrap}
@@ -2268,12 +2268,19 @@ _CHAT_HTML = r"""<!DOCTYPE html>
   .msg-col{max-width:74%;min-width:0;display:flex;flex-direction:column}
   .msg.me .msg-col{align-items:flex-end}
   .msg-name{font-size:11.5px;color:#98a0b4;margin:0 2px 4px}
-  .bubble{position:relative;background:var(--bubble-bot);border-radius:4px 14px 14px 14px;padding:10px 13px;font-size:14px;line-height:1.65;word-break:break-word;box-shadow:0 1px 3px rgba(30,40,80,.07);white-space:pre-wrap}
+  .bubble{position:relative;background:var(--bubble-bot);border-radius:4px 14px 14px 14px;padding:10px 13px;font-size:14px;line-height:1.65;word-break:break-word;box-shadow:0 1px 3px rgba(30,40,80,.07);overflow-x:auto}
   .msg.me .bubble{background:var(--bubble-me);color:#fff;border-radius:14px 4px 14px 14px}
   .bubble.pending{color:var(--muted)}
   .bubble b{font-weight:800}
   .bubble .h{display:block;font-weight:800;font-size:14.5px;margin:2px 0}
   .bubble img{max-width:100%;border-radius:10px;display:block;margin:4px 0}
+  .bubble table{border-collapse:collapse;margin:6px 0;font-size:12.5px;width:max-content;max-width:100%}
+  .bubble th,.bubble td{border:1px solid #e4e8f2;padding:4px 8px;text-align:center;white-space:nowrap}
+  .bubble th{background:#f4f6fc;font-weight:800}
+  .bubble tr:nth-child(even) td{background:#fafbfe}
+  .msg.me .bubble table th,.msg.me .bubble td{border-color:rgba(255,255,255,.4)}
+  .bubble .quote{display:block;border-left:3px solid #c9cede;background:#f6f8fc;color:#5b6478;border-radius:0 8px 8px 0;padding:5px 10px;margin:5px 0;font-size:13px}
+  .bubble hr{border:none;border-top:1px solid #e4e8f2;margin:8px 0}
   .typing{display:inline-flex;gap:4px;align-items:center;padding:4px 2px}
   .typing i{width:6px;height:6px;border-radius:50%;background:#b6bdd0;animation:blink 1.2s infinite}
   .typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
@@ -2377,17 +2384,62 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// 轻量 Markdown 渲染：图片 / 标题 / 加粗 / 行内代码
-function renderReply(text, imageMd){
-  let imgs = '';
-  const collect = src => { for(const m of String(src||'').matchAll(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g)) imgs += '<img src="' + escapeHtml(m[1]) + '">'; };
-  collect(imageMd);
-  let t = String(text||'').replace(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g, (mm,u)=>{ imgs += '<img src="' + escapeHtml(u) + '">'; return ''; });
-  t = escapeHtml(t.trim());
-  t = t.replace(/^#{1,4}\s*(.+)$/gm, '<span class="h">$1</span>');
+// 轻量 Markdown 渲染：表格 / 标题 / 引用 / 加粗 / 行内代码 / 图片 / 分隔线
+function inlineMd(s){
+  let t = escapeHtml(s);
   t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
   t = t.replace(/`([^`]+)`/g, '<b>$1</b>');
-  return imgs + t;
+  return t;
+}
+// 图片地址修正：站内图片（定制形象/地图等）改为同源路径，避免 https 页面下的混合内容被浏览器拦截
+function fixImgUrl(u){
+  const m = String(u).match(/\/(custom_images|feedback_images)\/.+$/);
+  return m ? m[0] : u;
+}
+function isTableRow(l){ return /^\|.*\|\s*$/.test(l.trim()); }
+function isTableSep(l){ return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(l.trim()); }
+function splitCells(l){
+  let t = l.trim();
+  if(t.startsWith('|')) t = t.slice(1);
+  if(t.endsWith('|')) t = t.slice(0,-1);
+  return t.split('|').map(c=>c.trim());
+}
+function renderReply(text, imageMd){
+  let imgs = '';
+  const collect = src => { for(const m of String(src||'').matchAll(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g)) imgs += '<img src="' + escapeHtml(fixImgUrl(m[1])) + '">'; };
+  collect(imageMd);
+  let t = String(text||'').replace(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g, (mm,u)=>{ imgs += '<img src="' + escapeHtml(fixImgUrl(u)) + '">'; return ''; });
+  const lines = t.trim().split(/\r?\n/);
+  const out = [];
+  let i = 0;
+  while(i < lines.length){
+    const line = lines[i];
+    // 表格：表头行 + 分隔行 + 若干数据行
+    if(isTableRow(line) && i+1 < lines.length && isTableSep(lines[i+1])){
+      const head = splitCells(line);
+      let rows = [];
+      i += 2;
+      while(i < lines.length && isTableRow(lines[i]) && !isTableSep(lines[i])){
+        rows.push(splitCells(lines[i])); i++;
+      }
+      let html = '<table><thead><tr>' + head.map(c=>'<th>'+inlineMd(c)+'</th>').join('') + '</tr></thead><tbody>';
+      for(const r of rows) html += '<tr>' + r.map(c=>'<td>'+inlineMd(c)+'</td>').join('') + '</tr>';
+      out.push(html + '</tbody></table>');
+      continue;
+    }
+    const trimmed = line.trim();
+    if(!trimmed){ out.push('<br>'); i++; continue; }
+    if(/^-{3,}$/.test(trimmed)){ out.push('<hr>'); i++; continue; }
+    let m = trimmed.match(/^#{1,4}\s*(.+)$/);
+    if(m){ out.push('<span class="h">'+inlineMd(m[1])+'</span>'); i++; continue; }
+    m = trimmed.match(/^&gt;\s?(.*)$/) || trimmed.match(/^>\s?(.*)$/);
+    if(m){ out.push('<span class="quote">'+inlineMd(m[1])+'</span>'); i++; continue; }
+    out.push(inlineMd(line) + '<br>');
+    i++;
+  }
+  let body = out.join('');
+  body = body.replace(/(<br>)+$/,'').replace(/(<\/table>|<\/span>|<hr>)<br>/g, '$1');
+  return imgs + body;
 }
 
 createApp({
@@ -2442,7 +2494,7 @@ createApp({
       if(!text || sending.value || !current.value) return;
       if(preset === undefined) draft.value = '';
       if(inputEl.value){ inputEl.value.style.height = 'auto'; }
-      msgs.value.push({role:'me', html: escapeHtml(text)});
+      msgs.value.push({role:'me', html: escapeHtml(text).replace(/\n/g,'<br>')});
       const pending = {role:'bot', pending:true, html:''};
       msgs.value.push(pending);
       scrollBottom();
