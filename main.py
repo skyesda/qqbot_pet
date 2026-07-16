@@ -44,6 +44,9 @@ _MS_COMPACT_RE = re.compile(r"^(扫|插旗|旗)((?:[a-zA-Z]\d{1,2})+)$")
 _MS_START_RE = re.compile(r"^开始扫雷([1-4])$")
 _MS_COORD_RE = re.compile(r"[a-zA-Z]\d{1,2}")
 
+# QQ 官方群消息中 @成员 的文本形式：<@openid> 或 <@!openid>
+_MENTION_RE = re.compile(r"<@!?([0-9A-Za-z_\-]+)>")
+
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
 KNOWN_COMMANDS = {
     # 管理
@@ -411,6 +414,8 @@ class PetParkPlugin(Star):
         self._tomb_sessions: dict[str, dict] = {}
         # 扫雷当局运行时状态（内存中，不持久化，按 QQ 一人一局）
         self._ms_sessions: dict[str, dict] = {}
+        # 群消息滚动缓存：群ID\x1f发送者 → deque[(message_id, 时间戳)]，供撤回指令用
+        self._group_msg_log: dict[str, deque] = {}
         # 摸金双排组队状态
         self._tomb_coop_teams: dict[str, dict] = {}   # key: "{gid}\x1f{leader_qq}"
         self._tomb_coop_index: dict[str, str] = {}     # key: "{gid}\x1f{qq}" → coop_key
@@ -890,8 +895,18 @@ class PetParkPlugin(Star):
             umo = getattr(event, "unified_msg_origin", None)
             if umo:
                 self.store.get_group(group_id)["umo"] = umo
+            mid = str(
+                getattr(getattr(event, "message_obj", None), "message_id", "") or ""
+            )
+            if mid:
+                self._group_msg_log.setdefault(
+                    f"{group_id}\x1f{qq}", deque(maxlen=30)
+                ).append((mid, time.time()))
         try:
-            reply = self.dispatch(event, qq, group_id, text)
+            if re.match(r"^(撤回消息|撤回)(\s|<@|$)", text):
+                reply = await self._cmd_recall_member(event, qq, group_id, text)
+            else:
+                reply = self.dispatch(event, qq, group_id, text)
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
             reply = f"宠物乐园处理出错：{e}"
@@ -1115,6 +1130,121 @@ class PetParkPlugin(Star):
                 except Exception:
                     pass
         return str(getattr(event, "role", "")).lower() in ("admin", "owner")
+
+    # =====================================================================
+    # 群主/管理员撤回群成员消息（QQ 官方 v2 API）
+    # =====================================================================
+    async def _cmd_recall_member(
+        self, event, qq: str, group_id: str, text: str
+    ) -> str | None:
+        """「撤回 @成员 [数量]」：撤回被 @ 成员最近发送的 N 条消息。
+
+        仅群主/管理员（含插件管理员白名单）可用；机器人需被设为群管理员
+        才有权撤回成员消息；仅能撤回 2 分钟内且机器人接收到过的消息。
+
+        Args:
+            event: 消息事件。
+            qq: 发送者 openid。
+            group_id: 群 openid。
+            text: 去除@机器人后的消息文本。
+
+        Returns:
+            回复文本；若判定不是撤回指令则返回 None 走正常路由。
+        """
+        body = re.sub(r"^(撤回消息|撤回)", "", text, count=1).strip()
+        # 解析目标成员：优先事件里的 @ 提及，其次文本中的 <@openid>
+        targets: list[str] = []
+        raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        for m in getattr(raw, "mentions", None) or []:
+            mid = str(getattr(m, "id", "") or "")
+            if mid and not getattr(m, "is_you", False) and mid not in targets:
+                targets.append(mid)
+        for mid in _MENTION_RE.findall(body):
+            if mid not in targets:
+                targets.append(mid)
+        rest = _MENTION_RE.sub(" ", body).split()
+        if not targets:
+            if body:
+                return None  # 普通聊天里出现「撤回」二字，不当作指令
+            return (
+                "## 🗑️ 撤回成员消息\n"
+                "用法：`撤回 @成员 [数量]`（数量默认 1，最多 10）\n"
+                "仅群主/管理员可用；只能撤回该成员最近 2 分钟内、且机器人"
+                "接收到过的消息（机器人需为群管理员）。"
+            )
+        if not self._is_group(group_id):
+            return "🚫 该指令仅支持在群聊内使用。"
+        api = getattr(getattr(event, "bot", None), "api", None)
+        if api is None:
+            return "❌ 当前平台不支持撤回操作（需 QQ 官方机器人）。"
+        try:
+            from botpy.http import Route
+        except Exception:
+            return "❌ 当前平台不支持撤回操作（需 QQ 官方机器人）。"
+        # 数量：取剩余 token 中第一个数字，默认 1，上限 10
+        count = 1
+        for tok in rest:
+            if tok.isdigit():
+                count = max(1, min(10, int(tok)))
+                break
+        # 权限：插件管理员白名单直接放行，否则查询群成员角色
+        if qq not in self.admins:
+            try:
+                info = await api._http.request(
+                    Route(
+                        "GET",
+                        "/v2/groups/{group_openid}/members/{member_openid}",
+                        group_openid=group_id,
+                        member_openid=qq,
+                    )
+                )
+                role = str((info or {}).get("member_role", "member"))
+            except Exception as e:
+                logger.warning(f"[petpark] 查询群成员角色失败：{e}")
+                return "❌ 无法校验你的群身份（查询群成员接口失败），已拒绝撤回。"
+            if role not in ("owner", "admin"):
+                return "❌ 仅群主或管理员可以撤回成员消息。"
+        target = targets[0]
+        key = f"{group_id}\x1f{target}"
+        log = self._group_msg_log.get(key) or deque()
+        now = time.time()
+        cand = [mid for mid, ts in reversed(log) if now - ts <= 120]
+        if not cand:
+            return (
+                "❌ 没有找到该成员最近可撤回的消息。\n"
+                "只能撤回 2 分钟内、且机器人接收到过（如 @机器人）的消息。"
+            )
+        ok, fail = 0, 0
+        for mid in cand[:count]:
+            try:
+                await api._http.request(
+                    Route(
+                        "DELETE",
+                        "/v2/groups/{group_openid}/messages/{message_id}",
+                        group_openid=group_id,
+                        message_id=mid,
+                    )
+                )
+                ok += 1
+            except Exception as e:
+                fail += 1
+                logger.warning(f"[petpark] 撤回消息 {mid} 失败：{e}")
+            self._group_msg_log[key] = deque(
+                (p for p in log if p[0] != mid), maxlen=30
+            )
+            log = self._group_msg_log[key]
+        result = f"## 🗑️ 撤回成员消息\n已撤回该成员 **{ok}** 条消息"
+        if fail:
+            result += (
+                f"，另有 {fail} 条撤回失败\n"
+                "（可能超过 2 分钟，或机器人未被设置为群管理员）"
+            )
+        result += "。"
+        logger.info(
+            f"[petpark] 群 {group_id} 内 {qq} 撤回成员 {target} 消息 "
+            f"成功{ok}条/失败{fail}条"
+        )
+        return result
 
     # =====================================================================
     # 路由
