@@ -36,6 +36,10 @@ from . import data
 
 
 class PetStore:
+    # 当前活跃实例：供 classmethod 形式的摸金接口定位全局 tomb_players 表，
+    # 避免仅依赖 player["tomb"] 的对象引用共享（引用一旦被替换就会跨群分叉）
+    _active: "PetStore | None" = None
+
     def __init__(
         self,
         data_path: Path,
@@ -61,6 +65,7 @@ class PetStore:
         self._lock = asyncio.Lock()
         self._data: dict[str, Any] = {"players": {}, "groups": {}}
         self._load()
+        PetStore._active = self
 
     # ----------------------------- 基础读写 -----------------------------
     def _load(self) -> None:
@@ -732,8 +737,25 @@ class PetStore:
     # ----------------------------- 宠物摸金（独立财富系统） -----------------------------
     @classmethod
     def tomb_state(cls, player: dict) -> dict:
-        """返回玩家摸金状态（全局按 QQ 共享）。"""
+        """返回玩家摸金状态（全局按 QQ 共享）。
+
+        总是以全局 tomb_players[qq] 为准：若玩家身上挂的是一份脱离全局的
+        旧副本（如后台编辑整条替换过玩家记录），先保留更富的一份并重新
+        统一引用，确保摸金数据跨群互通。
+        """
         st = player.get("tomb")
+        store = cls._active
+        qq = str(player.get("qq", ""))
+        if store is not None and qq:
+            g = store._data["tomb_players"].setdefault(qq, cls._default_tomb_state())
+            if isinstance(st, dict) and st is not g:
+                if st.get("mingbi", 0) > g.get("mingbi", 0) or (
+                    st.get("mingbi", 0) == g.get("mingbi", 0)
+                    and st.get("level", 1) > g.get("level", 1)
+                ):
+                    g.clear()
+                    g.update(st)
+            st = player["tomb"] = g
         if not st or not isinstance(st, dict):
             st = player.setdefault("tomb", cls._default_tomb_state())
         # 兼容旧数据字段
