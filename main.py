@@ -10323,32 +10323,47 @@ class PetParkPlugin(Star):
     async def _background_sect_war(self) -> None:
         """后台定时任务：宗门战时间轴。
         20:30 匹配 ｜ 20:40 开战 ｜ 20:50/21:00/21:10 回合结算（21:10 为决赛）。"""
-        fired: dict = {}
+        # fired 持久化到 store，避免插件重载/重启后同一分钟内重复触发
+        fired = self.store._data.setdefault("sect_war_fired", {})
         while True:
             await asyncio.sleep(20)
             now = self._bj_localtime()
             h, m = now.tm_hour, now.tm_min
             today = self._bj_today()
+            # 清理非今日的过期 fired 记录
+            for k in list(fired.keys()):
+                if not k.startswith(today):
+                    del fired[k]
             try:
                 if h == data.SECT_WAR_MATCH_HOUR and m == data.SECT_WAR_MATCH_MIN:
-                    if fired.get("match") != today:
-                        fired["match"] = today
+                    key = f"{today}_match"
+                    if fired.get(key) != 1:
+                        fired[key] = 1
+                        logger.info(f"[petpark] 宗门战匹配触发 {today} {h:02d}:{m:02d}")
                         await self._sect_war_match()
                 elif h == data.SECT_WAR_START_HOUR and m == data.SECT_WAR_START_MIN:
-                    if fired.get("start") != today:
-                        fired["start"] = today
+                    key = f"{today}_start"
+                    if fired.get(key) != 1:
+                        fired[key] = 1
+                        logger.info(f"[petpark] 宗门战开战触发 {today} {h:02d}:{m:02d}")
                         await self._sect_war_start()
                 elif h == 20 and m == 50:
-                    if fired.get("r1") != today:
-                        fired["r1"] = today
+                    key = f"{today}_r1"
+                    if fired.get(key) != 1:
+                        fired[key] = 1
+                        logger.info(f"[petpark] 宗门战第1回合结算 {today} {h:02d}:{m:02d}")
                         await self._sect_war_round_end(1, False)
                 elif h == 21 and m == 0:
-                    if fired.get("r2") != today:
-                        fired["r2"] = today
+                    key = f"{today}_r2"
+                    if fired.get(key) != 1:
+                        fired[key] = 1
+                        logger.info(f"[petpark] 宗门战第2回合结算 {today} {h:02d}:{m:02d}")
                         await self._sect_war_round_end(2, False)
                 elif h == 21 and m == 10:
-                    if fired.get("r3") != today:
-                        fired["r3"] = today
+                    key = f"{today}_r3"
+                    if fired.get(key) != 1:
+                        fired[key] = 1
+                        logger.info(f"[petpark] 宗门战第3回合结算 {today} {h:02d}:{m:02d}")
                         await self._sect_war_round_end(3, True)
             except Exception:
                 logger.exception("[petpark] 宗门战时间轴异常")
