@@ -3041,6 +3041,10 @@ class PetParkPlugin(Star):
             return "⚠️ 用法：`兑换 卡密`（例如：兑换 ABCD23XY...）"
         code = tokens[1].strip()
         used_by = self.store.make_key(group_id, qq)
+        # 自动修炼卡走专用兑换
+        card = self.store.cards().get(code.upper())
+        if card and int(card.get("auto_cultivation_days", 0) or 0) > 0:
+            return self._redeem_auto_cultivation_card(player, group_id, qq, tokens)
         rewards, items, err = self.store.redeem_card(code, player, used_by)
         if rewards is None and items is None:
             return f"❌ 兑换失败：{err}"

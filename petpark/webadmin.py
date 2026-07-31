@@ -1277,6 +1277,8 @@ function packageHtml(v){
  return parts.length?parts.join(' ＋ '):'<span class="muted">—</span>';
 }
 function cardContentHtml(v){
+ const acDays=+(v.auto_cultivation_days||0);
+ if(acDays>0)return `<span class="diamond">🧘 自动修炼 ${acDays} 天</span>`;
  const days=+(v.auth_days||0);
  if(days>0)return `<span class="diamond">🔐 群授权 ${days} 天</span>`;
  return packageHtml(v);
