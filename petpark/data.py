@@ -873,7 +873,7 @@ DUNGEONS = {
         "level_req": lv,
         "energy": 10,
         "monster": monster,
-        "power": lv * 1000,
+        "power": lv * 950,
         "exp": int((200 + lv * 100) * 0.25),
         "jifen": 100 + lv * 8,
     }
@@ -1009,8 +1009,8 @@ ASCEND_DUNGEONS = {
         "level_req": lv,
         "energy": 30,
         "name": name,
-        # 120级≈94000，220级≈214000，普通飞升玩家同级战力浮动后可胜
-        "power": int(lv * 1200 - 50000),
+        # 120级≈89300，220级≈203300，普通飞升玩家同级战力浮动后可胜
+        "power": int(lv * 1140 - 47500),
         # 每次奖励约等于当前等级升级消耗的 1/12~1/15，平均 12~15 次副本可升 1 级
         "xianyuan": (max(1, (25 + lv * 3) // 15), max(2, (25 + lv * 3) // 10)),
         # 飞升后经验自动折算为仙元，作为小额添头
@@ -1263,7 +1263,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 1,
         "entry_tokens": 0,
         "monster_mult": 0.40,
-        "monster_power": 20,
+        "monster_power": 19,
         "chest_mingbi": (15, 30),
         "monster_mingbi": (5, 15),
     },
@@ -1285,7 +1285,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 5,
         "entry_tokens": 0,
         "monster_mult": 0.60,
-        "monster_power": 45,
+        "monster_power": 43,
         "chest_mingbi": (20, 45),
         "monster_mingbi": (10, 20),
     },
@@ -1307,7 +1307,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 10,
         "entry_tokens": 1,
         "monster_mult": 0.85,
-        "monster_power": 85,
+        "monster_power": 81,
         "chest_mingbi": (35, 70),
         "monster_mingbi": (15, 35),
     },
@@ -1329,7 +1329,7 @@ TOMB_DIFFICULTIES = {
         "tomb_level_req": 15,
         "entry_tokens": 2,
         "monster_mult": 1.15,
-        "monster_power": 140,
+        "monster_power": 133,
         "chest_mingbi": (55, 110),
         "monster_mingbi": (20, 45),
     },

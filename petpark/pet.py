@@ -309,10 +309,10 @@ def skill_power(pet: dict) -> int:
 
 
 def battle_power(pet: dict) -> int:
-    """战力 = 攻击*3 + (智力+防御)*2 + (生命*心情) + 武器加成 + 秘技加成"""
+    """战力 = (攻击+防御)*2 + 智力*1 + (生命上限*心情) + 武器加成 + 秘技加成"""
     bp = (
-        pet["atk"] * 3
-        + (pet["intel"] + pet["def"]) * 2
+        (pet["atk"] + pet["def"]) * 2
+        + pet["intel"]
         + pet["hp_max"] * pet.get("mood", 5)
         + artifact_power(pet)
         + skill_power(pet)
