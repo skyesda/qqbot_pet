@@ -254,6 +254,7 @@ class PetStore:
                     "total_sessions": 0,
                     "total_exp": 0,
                     "last_run_at": 0,
+                    "card_until": 0,
                 },
                 "abyss_corruption": 0,
                 "abyss_pity": 0,
@@ -1245,6 +1246,75 @@ class PetStore:
         card["used_at"] = int(time.time())
         self.add_pet_tag(pet, "定制")
         return pet, None
+
+    @staticmethod
+    def auto_cultivation_active(player: dict) -> bool:
+        """判断玩家当前宠物是否享有自动修炼权限。
+
+        定制宠物永久有效；非定制宠物需自动修炼卡在有效期内。
+        """
+        pet = player.get("pet")
+        if pet and pet.get("custom"):
+            return True
+        ac = player.get("auto_cultivation", {})
+        until = int(ac.get("card_until", 0) or 0)
+        return until > int(time.time())
+
+    def create_auto_cultivation_cards(
+        self, count: int = 1, prefix: str = ""
+    ) -> list[str]:
+        """批量生成自动修炼卡密：1 张卡 = 1 天自动修炼权限。"""
+        count = max(1, int(count))
+        cards = self.cards()
+        created: list[str] = []
+        now = int(time.time())
+        for _ in range(count):
+            code = self.gen_card_code(prefix)
+            cards[code] = {
+                "auto_cultivation_days": 1,
+                "used": False,
+                "used_by": None,
+                "used_at": None,
+                "created_at": now,
+            }
+            created.append(code)
+        return created
+
+    def redeem_auto_cultivation_card(
+        self, code: str, player: dict, used_by: str
+    ) -> tuple[Optional[int], Optional[str]]:
+        """兑换自动修炼卡：成功返回 (天数, None)，失败返回 (None, 原因)。"""
+        code = str(code).strip().upper()
+        cards = self.cards()
+        card = cards.get(code)
+        if card is None:
+            return None, "卡密不存在或输入有误"
+        days = int(card.get("auto_cultivation_days", 0) or 0)
+        if days <= 0:
+            return None, "这不是自动修炼卡"
+        if card.get("used"):
+            return None, "该卡密已被使用"
+        pet = player.get("pet")
+        if not pet:
+            return None, "你没有宠物，无法使用自动修炼卡"
+        if pet.get("custom"):
+            return None, "你的宠物已是定制宠物，已永久享有自动修炼权限，无需此卡"
+        now = int(time.time())
+        ac = player.setdefault("auto_cultivation", {
+            "enabled": False,
+            "started_at": 0,
+            "total_sessions": 0,
+            "total_exp": 0,
+            "last_run_at": 0,
+            "card_until": 0,
+        })
+        cur = int(ac.get("card_until", 0) or 0)
+        base = cur if cur > now else now
+        ac["card_until"] = base + days * 86400
+        card["used"] = True
+        card["used_by"] = used_by
+        card["used_at"] = now
+        return days, None
 
     def unlock_pet_custom(self, player: dict) -> tuple[bool, str]:
         """直接为当前宠物解锁定制权限（内部/测试用）。"""

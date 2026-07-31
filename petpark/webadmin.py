@@ -285,6 +285,11 @@ class WebAdmin:
                     count=int(body.get("count", 1)),
                     prefix=body.get("prefix", ""),
                 )
+            elif card_type == "auto_cultivation":
+                codes = self.store.create_auto_cultivation_cards(
+                    count=int(body.get("count", 1)),
+                    prefix=body.get("prefix", ""),
+                )
             elif auth_days > 0:
                 codes = self.store.create_auth_cards(
                     days=auth_days,
@@ -878,6 +883,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <select id="card_type" onchange="cardTypeChange()" style="width:130px">
  <option value="">货币/道具卡</option>
  <option value="custom_pet">宠物定制卡</option>
+ <option value="auto_cultivation">自动修炼卡</option>
 </select>
 <input id="amt_coin" type="number" placeholder="金币面额" style="width:120px">
 <input id="amt_jifen" type="number" placeholder="积分面额" style="width:120px">
@@ -1741,6 +1747,8 @@ async function genCards(){
  let payload;
  if(cardType==='custom_pet'){
   payload={card_type:'custom_pet',count:+g('cnt').value,prefix:g('pre').value};
+ }else if(cardType==='auto_cultivation'){
+  payload={card_type:'auto_cultivation',count:+g('cnt').value,prefix:g('pre').value};
  }else{
   const authdays=+g('amt_authdays').value||0;
   if(authdays>0){
@@ -1762,11 +1770,12 @@ async function genCards(){
  load();
 }
 function cardTypeChange(){
- const isCustom=g('card_type').value==='custom_pet';
- ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays'].forEach(id=>{const el=g(id);if(el)el.style.display=isCustom?'none':'';});
+ const t=g('card_type').value;
+ const hideRewards=(t==='custom_pet'||t==='auto_cultivation');
+ ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays'].forEach(id=>{const el=g(id);if(el)el.style.display=hideRewards?'none':'';});
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天';}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(c+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天';}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(c+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }

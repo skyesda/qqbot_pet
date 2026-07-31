@@ -97,6 +97,7 @@ KNOWN_COMMANDS = {
     "宗门选举",
     "兑换",
     "卡密兑换",
+    "修炼卡",
     "我要氪金",
     "查看说明",
     # 群授权
@@ -568,8 +569,8 @@ class PetParkPlugin(Star):
             if not ac or not ac.get("enabled"):
                 continue
             p = player.get("pet")
-            if not p or not p.get("custom"):
-                # 非定制宠物自动关闭挂机
+            if not p or not self.store.auto_cultivation_active(player):
+                # 无宠物或权限失效时自动关闭挂机
                 ac["enabled"] = False
                 any_changed = True
                 continue
@@ -615,8 +616,11 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』获取一只。"
-        if not p.get("custom"):
-            return "『自动修炼』仅限定制宠物使用。"
+        if not self.store.auto_cultivation_active(player):
+            return (
+                "你的宠物尚未获得自动修炼权限。\n"
+                "定制宠物永久享有该权限；非定制宠物请使用『修炼卡 卡密』激活。"
+            )
         if enable and self._pet_is_ascended(p):
             return "宠物已飞升，凡间的『修炼/双修』已无法带来增益，无法开启自动修炼。"
         ac = player.setdefault("auto_cultivation", {
@@ -625,10 +629,11 @@ class PetParkPlugin(Star):
             "total_sessions": 0,
             "total_exp": 0,
             "last_run_at": 0,
+            "card_until": 0,
         })
         if enable:
             if ac.get("enabled"):
-                return "你的定制宠物已经在自动修炼中，发送『自动修炼状态』查看进度。"
+                return "你的宠物已经在自动修炼中，发送『自动修炼状态』查看进度。"
             ac["enabled"] = True
             ac["started_at"] = int(time.time())
             return (
@@ -638,7 +643,7 @@ class PetParkPlugin(Star):
             )
         else:
             if not ac.get("enabled"):
-                return "你的定制宠物当前没有开启自动修炼。"
+                return "你的宠物当前没有开启自动修炼。"
             ac["enabled"] = False
             return f"⏹ 已关闭『{p['nickname']}』的自动修炼。累计挂机 {ac.get('total_sessions', 0)} 次，共获得 {ac.get('total_exp', 0)} 经验。"
 
@@ -649,7 +654,7 @@ class PetParkPlugin(Star):
             return "你还没有宠物。"
         ac = player.get("auto_cultivation", {})
         if not ac:
-            return "你的定制宠物尚未开启过自动修炼。"
+            return "你的宠物尚未开启过自动修炼。"
         status = "🟢 运行中" if ac.get("enabled") else "🔴 已停止"
         started = ac.get("started_at", 0)
         started_txt = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(started)) if started else "—"
@@ -659,10 +664,19 @@ class PetParkPlugin(Star):
         remain_cd = self.store.cooldown_remaining(player, f"日常:{action}")
         cd_txt = self._fmt_duration(remain_cd) if remain_cd > 0 else "已就绪"
         petmod.refresh_energy(p)
+        if p.get("custom"):
+            perm_txt = "永久（定制宠物）"
+        else:
+            until = int(ac.get("card_until", 0) or 0)
+            if until > int(time.time()):
+                perm_txt = self._fmt_remain(until)
+            else:
+                perm_txt = "已到期"
         return (
             f"## 🧘 自动修炼状态\n"
             f"状态：{status}\n"
-            f"宠物：{p['nickname']}（定制）\n"
+            f"宠物：{p['nickname']}\n"
+            f"权限：{perm_txt}\n"
             f"模式：优先 {action}\n"
             f"精力：{p['energy']}/{p['energy_max']}\n"
             f"下次可修炼：{cd_txt}\n"
@@ -1428,6 +1442,8 @@ class PetParkPlugin(Star):
         # ---- 卡密兑换 ----
         if cmd in ("兑换", "卡密兑换"):
             return self._redeem(player, group_id, qq, tokens)
+        if cmd == "修炼卡":
+            return self._redeem_auto_cultivation_card(player, group_id, qq, tokens)
         if cmd == "我要氪金":
             return self._pay_link()
 
@@ -3040,6 +3056,26 @@ class PetParkPlugin(Star):
             lines.append(f"📦 **获得道具**　{name} ×{cnt}")
         lines.append("━━━━━━━━━━━━━━")
         return "\n".join(lines)
+
+    def _redeem_auto_cultivation_card(
+        self, player: dict, group_id: str, qq: str, tokens: list[str]
+    ) -> str:
+        if len(tokens) < 2 or not tokens[1].strip():
+            return "⚠️ 用法：`修炼卡 卡密`（例如：修炼卡 ABCD23XY...）"
+        code = tokens[1].strip()
+        used_by = self.store.make_key(group_id, qq)
+        days, err = self.store.redeem_auto_cultivation_card(code, player, used_by)
+        if days is None:
+            return f"❌ 使用失败：{err}"
+        until = player["auto_cultivation"]["card_until"]
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
+        return (
+            f"## 🧘 自动修炼卡使用成功\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"获得 {days} 天自动修炼权限\n"
+            f"到期时间：{when}\n"
+            f"发送『开启自动修炼』即可开始挂机"
+        )
 
     def _pay_link(self) -> str:
         return (
