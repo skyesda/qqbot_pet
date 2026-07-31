@@ -366,6 +366,7 @@ class PetParkPlugin(Star):
     _auto_cultivation_task_ref: Any = None
     _sect_war_task_ref: Any = None
     _sect_daily_reset_task_ref: Any = None
+    _sect_war_lock = asyncio.Lock()  # 宗门战操作用锁，防止并发重入
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -561,7 +562,7 @@ class PetParkPlugin(Star):
                 break
 
     async def _auto_cultivation_tick(self) -> None:
-        """单次扫描并执行所有符合条件的自动修炼。"""
+        """单次扫描并执行所有符合条件的自动修炼/幻境寻宝。"""
         now = int(time.time())
         any_changed = False
         for key, player in list(self.store.all_players().items()):
@@ -577,37 +578,54 @@ class PetParkPlugin(Star):
             # 宠物异常时跳过，等恢复后再继续
             if self._busy_reason(p):
                 continue
-            # 飞升后修炼/双修失效，自动关闭挂机
             if self._pet_is_ascended(p):
-                ac["enabled"] = False
+                # 飞升后自动切换为幻境寻宝
+                if self.store.cooldown_remaining(player, "fantasy_treasure") > 0:
+                    continue
+                petmod.refresh_energy(p)
+                energy_cost = data.ASCEND_TREASURE.get("energy", 60)
+                if p["energy"] < energy_cost:
+                    continue
+                p["energy"] -= energy_cost
+                self.store.set_cooldown(
+                    player, "fantasy_treasure", random.randint(*data.ASCEND_TREASURE["cooldown"])
+                )
+                xianyuan = random.randint(*data.ascend_treasure_xianyuan(p["level"]))
+                petmod.add_xianyuan(p, xianyuan)
+                if random.random() < data.ASCEND_TREASURE.get("jifen_chance", 0.5):
+                    jifen = random.randint(*data.ASCEND_TREASURE.get("jifen", (500, 3000)))
+                    self.store.add_currency(player, "积分", jifen)
+                self._inc_stat(player, "ascended_fantasy_treasure")
+                ac["total_sessions"] = ac.get("total_sessions", 0) + 1
+                ac["total_exp"] = ac.get("total_exp", 0) + xianyuan
+                ac["last_run_at"] = now
                 any_changed = True
-                continue
-            # 优先双修，否则修炼
-            action = "双修" if p.get("love_state") == "已婚" else "修炼"
-            # 检查冷却
-            if self.store.cooldown_remaining(player, f"日常:{action}") > 0:
-                continue
-            petmod.refresh_energy(p)
-            conf = data.DAILY_ACTIONS[action]
-            if p["energy"] < conf["energy"]:
-                continue
-            # 执行修炼/双修
-            p["energy"] -= conf["energy"]
-            self.store.set_cooldown(
-                player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
-            )
-            base = random.randint(50, 120) + p["level"] * 15
-            exp = base * (2 if action == "双修" else 1)
-            petmod.add_exp(p, exp)
-            if action == "双修":
-                self._inc_stat(player, "shuangxiu")
-            # 自动升级（不发送消息，静默处理）
-            petmod.auto_level_up(p)
-            # 更新统计
-            ac["total_sessions"] = ac.get("total_sessions", 0) + 1
-            ac["total_exp"] = ac.get("total_exp", 0) + exp
-            ac["last_run_at"] = now
-            any_changed = True
+            else:
+                # 未飞升：优先双修，否则修炼
+                action = "双修" if p.get("love_state") == "已婚" else "修炼"
+                if self.store.cooldown_remaining(player, f"日常:{action}") > 0:
+                    continue
+                petmod.refresh_energy(p)
+                conf = data.DAILY_ACTIONS[action]
+                if p["energy"] < conf["energy"]:
+                    continue
+                # 执行修炼/双修
+                p["energy"] -= conf["energy"]
+                self.store.set_cooldown(
+                    player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
+                )
+                base = random.randint(50, 120) + p["level"] * 15
+                exp = base * (2 if action == "双修" else 1)
+                petmod.add_exp(p, exp)
+                if action == "双修":
+                    self._inc_stat(player, "shuangxiu")
+                # 自动升级（不发送消息，静默处理）
+                petmod.auto_level_up(p)
+                # 更新统计
+                ac["total_sessions"] = ac.get("total_sessions", 0) + 1
+                ac["total_exp"] = ac.get("total_exp", 0) + exp
+                ac["last_run_at"] = now
+                any_changed = True
         if any_changed:
             await self.store.save()
 
@@ -621,8 +639,6 @@ class PetParkPlugin(Star):
                 "你的宠物尚未获得自动修炼权限。\n"
                 "定制宠物永久享有该权限；非定制宠物请使用『修炼卡 卡密』激活。"
             )
-        if enable and self._pet_is_ascended(p):
-            return "宠物已飞升，凡间的『修炼/双修』已无法带来增益，无法开启自动修炼。"
         ac = player.setdefault("auto_cultivation", {
             "enabled": False,
             "started_at": 0,
@@ -631,11 +647,18 @@ class PetParkPlugin(Star):
             "last_run_at": 0,
             "card_until": 0,
         })
+        ascended = self._pet_is_ascended(p)
         if enable:
             if ac.get("enabled"):
                 return "你的宠物已经在自动修炼中，发送『自动修炼状态』查看进度。"
             ac["enabled"] = True
             ac["started_at"] = int(time.time())
+            if ascended:
+                return (
+                    f"✅ 已开启『{p['nickname']}』的自动幻境寻宝！\n"
+                    f"后台会自动在满足条件时探索幻境获取仙元，精力/冷却不足时自动等待。\n"
+                    f"发送『关闭自动修炼』停止，发送『自动修炼状态』查看进度。"
+                )
             return (
                 f"✅ 已开启『{p['nickname']}』的自动修炼！\n"
                 f"后台会自动在满足条件时进行修炼，已婚优先双修，精力/冷却不足时自动等待。\n"
@@ -645,7 +668,8 @@ class PetParkPlugin(Star):
             if not ac.get("enabled"):
                 return "你的宠物当前没有开启自动修炼。"
             ac["enabled"] = False
-            return f"⏹ 已关闭『{p['nickname']}』的自动修炼。累计挂机 {ac.get('total_sessions', 0)} 次，共获得 {ac.get('total_exp', 0)} 经验。"
+            unit = "仙元" if ascended else "经验"
+            return f"⏹ 已关闭『{p['nickname']}』的自动修炼。累计挂机 {ac.get('total_sessions', 0)} 次，共获得 {ac.get('total_exp', 0)} {unit}。"
 
     def _auto_cultivation_status(self, player: dict) -> str:
         """查看当前群宠物自动修炼状态。"""
@@ -660,8 +684,17 @@ class PetParkPlugin(Star):
         started_txt = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(started)) if started else "—"
         last = ac.get("last_run_at", 0)
         last_txt = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(last)) if last else "—"
-        action = "双修" if p.get("love_state") == "已婚" else "修炼"
-        remain_cd = self.store.cooldown_remaining(player, f"日常:{action}")
+        ascended = self._pet_is_ascended(p)
+        if ascended:
+            mode = "自动幻境寻宝（仙元）"
+            cd_key = "fantasy_treasure"
+            stat_label = "累计仙元"
+        else:
+            action = "双修" if p.get("love_state") == "已婚" else "修炼"
+            mode = f"优先 {action}"
+            cd_key = f"日常:{action}"
+            stat_label = "累计经验"
+        remain_cd = self.store.cooldown_remaining(player, cd_key)
         cd_txt = self._fmt_duration(remain_cd) if remain_cd > 0 else "已就绪"
         petmod.refresh_energy(p)
         if p.get("custom"):
@@ -677,11 +710,11 @@ class PetParkPlugin(Star):
             f"状态：{status}\n"
             f"宠物：{p['nickname']}\n"
             f"权限：{perm_txt}\n"
-            f"模式：优先 {action}\n"
+            f"模式：{mode}\n"
             f"精力：{p['energy']}/{p['energy_max']}\n"
-            f"下次可修炼：{cd_txt}\n"
+            f"下次可行动：{cd_txt}\n"
             f"累计挂机：{ac.get('total_sessions', 0)} 次\n"
-            f"累计经验：{ac.get('total_exp', 0)}\n"
+            f"{stat_label}：{ac.get('total_exp', 0)}\n"
             f"开启时间：{started_txt}\n"
             f"最后执行：{last_txt}"
         )
@@ -9980,6 +10013,11 @@ class PetParkPlugin(Star):
 
     async def _sect_war_match(self) -> None:
         """20:30 自动确认名单、匹配、写入双方 war 状态、定向广播对阵、处理轮空。"""
+        async with PetParkPlugin._sect_war_lock:
+            await self._sect_war_match_locked()
+
+    async def _sect_war_match_locked(self) -> None:
+        """_sect_war_match 的锁内实现。"""
         self._sect_ensure_season()
         for gid in list(self.store._data.get("groups", {}).keys()):
             self._sect_auto_confirm(gid)
@@ -9988,8 +10026,18 @@ class PetParkPlugin(Star):
         # 清理今日旧记录（重试安全）
         season["matches"] = [m for m in season.get("matches", []) if m.get("date") != today]
         matches = self._sect_match_making()
+        # 去重：避免并发导致的同配对重复追加
+        existing = set()
+        for m in season.get("matches", []):
+            if m.get("date") == today:
+                existing.add(tuple(sorted([m["group_a"], m["group_b"]])))
         matched: set = set()
         for g1, g2 in matches:
+            pair = tuple(sorted([g1, g2]))
+            if pair in existing:
+                logger.warning(f"[petpark] 跳过重复宗门战配对: {g1} vs {g2}")
+                continue
+            existing.add(pair)
             matched.add(g1)
             matched.add(g2)
             self._sect_init_war(g1, g2)
@@ -10009,6 +10057,10 @@ class PetParkPlugin(Star):
 
     async def _sect_war_start(self) -> None:
         """20:40 第1回合开始：进入 battling，清空加油值，定向广播开战。"""
+        async with PetParkPlugin._sect_war_lock:
+            await self._sect_war_start_locked()
+
+    async def _sect_war_start_locked(self) -> None:
         today = self._bj_today()
         season = self._sect_ensure_season()
         for m in season.get("matches", []):
@@ -10036,6 +10088,10 @@ class PetParkPlugin(Star):
 
     async def _sect_war_round_end(self, round_num: int, final: bool) -> None:
         """20:50/21:00/21:10 回合结束：结算本回合、扣血、清加油值、定向广播；决赛结算奖励。"""
+        async with PetParkPlugin._sect_war_lock:
+            await self._sect_war_round_end_locked(round_num, final)
+
+    async def _sect_war_round_end_locked(self, round_num: int, final: bool) -> None:
         today = self._bj_today()
         season = self._sect_ensure_season()
         for m in season.get("matches", []):

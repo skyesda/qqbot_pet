@@ -734,8 +734,9 @@ class PlayerPortal:
         if not player:
             return web.json_response({"ok": False, "msg": "未找到该宠物"})
         pet = player.get("pet")
-        if not pet or not pet.get("custom"):
-            return web.json_response({"ok": False, "msg": "自动修炼仅限定制宠物"})
+        ascended = pet and data.STAGES.index(pet.get("stage", "")) >= data.STAGES.index("飞升")
+        if not pet or (not pet.get("custom") and not ascended):
+            return web.json_response({"ok": False, "msg": "自动修炼仅限定制宠物或飞升宠物"})
         ac = player.setdefault("auto_cultivation", {
             "enabled": False,
             "started_at": 0,
