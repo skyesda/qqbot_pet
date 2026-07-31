@@ -15,8 +15,10 @@ import time
 import urllib.parse
 import uuid
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -494,7 +496,7 @@ class PetParkPlugin(Star):
         """每天 00:00 执行宗门每日重置：赛季初始化、重选宗主、计算强制出战。"""
         while True:
             await asyncio.sleep(60)
-            now = time.localtime()
+            now = self._bj_localtime()
             if now.tm_hour == 0 and now.tm_min == 0:
                 try:
                     self._sect_ensure_season()
@@ -8706,16 +8708,33 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 宗门战 / 跨群联赛
     # =====================================================================
+    _BJ_TZ = ZoneInfo("Asia/Shanghai")
+
+    def _bj_localtime(self, secs: int | None = None) -> time.struct_time:
+        """返回北京时间的 struct_time。"""
+        if secs is None:
+            return datetime.now(self._BJ_TZ).timetuple()
+        return datetime.fromtimestamp(secs, self._BJ_TZ).timetuple()
+
+    def _bj_today(self) -> str:
+        """返回北京时间今天日期 YYYY-MM-DD。"""
+        return datetime.now(self._BJ_TZ).strftime("%Y-%m-%d")
+
+    def _bj_timestamp(self, year: int, month: int, day: int,
+                      hour: int, minute: int, second: int = 0) -> int:
+        """把北京时间日期分量转成 epoch 秒。"""
+        dt = datetime(year, month, day, hour, minute, second, tzinfo=self._BJ_TZ)
+        return int(dt.timestamp())
+
     def _sect_ensure_season(self) -> dict:
         """确保宗门战赛季状态字典存在（不再做每周清零重置）。"""
         return self.store._data.setdefault(
             "sect_season", self.store._default_sect_season()
         )
 
-    @staticmethod
-    def _sect_ensure_today(sect: dict) -> None:
+    def _sect_ensure_today(self, sect: dict) -> None:
         """确保 sect['today'] 是今天的数据。"""
-        today = time.strftime("%Y-%m-%d")
+        today = self._bj_today()
         if sect.get("today", {}).get("date") != today:
             sect["today"] = {
                 "date": today,
@@ -8912,6 +8931,28 @@ class PetParkPlugin(Star):
             for e in selected:
                 confirmed.append({**e, "kind": "报名"})
             sect["today"]["confirmed"] = confirmed
+        # 自动补位：确认人数不足最少参战人数时，从本群存活宠物中按战力补足
+        if len(sect["today"]["confirmed"]) < data.SECT_MIN_BATTLE_MEMBERS:
+            confirmed_qs = {c["qq"] for c in sect["today"]["confirmed"]}
+            fillers = []
+            for pl in self.store.players_in_group(group_id).values():
+                qq = pl.get("qq")
+                if not qq or qq in confirmed_qs:
+                    continue
+                pet = pl.get("pet")
+                if not pet or petmod.is_dead(pet):
+                    continue
+                fillers.append({
+                    "qq": qq,
+                    "nickname": qq,
+                    "pet_name": pet["nickname"],
+                    "bp": petmod.battle_power(pet),
+                    "element": pet.get("element", ""),
+                    "kind": "补位",
+                })
+            fillers.sort(key=lambda x: x["bp"], reverse=True)
+            need = data.SECT_MIN_BATTLE_MEMBERS - len(sect["today"]["confirmed"])
+            sect["today"]["confirmed"].extend(fillers[:need])
         # 始终用当前宠物数据刷新出战名单战力，避免报名后战力变化导致偏差
         for c in sect["today"]["confirmed"]:
             pl = self.store.get_player(c["qq"], group_id, create=False)
@@ -8927,7 +8968,7 @@ class PetParkPlugin(Star):
         busy = self._busy_reason(p)
         if busy:
             return busy
-        now = time.localtime()
+        now = self._bj_localtime()
         if now.tm_hour > data.SECT_ENROLL_DEADLINE_HOUR or (
             now.tm_hour == data.SECT_ENROLL_DEADLINE_HOUR
             and now.tm_min >= data.SECT_ENROLL_DEADLINE_MIN
@@ -8969,7 +9010,7 @@ class PetParkPlugin(Star):
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
-        now = time.localtime()
+        now = self._bj_localtime()
         if now.tm_hour > data.SECT_ENROLL_DEADLINE_HOUR or (
             now.tm_hour == data.SECT_ENROLL_DEADLINE_HOUR
             and now.tm_min >= data.SECT_ENROLL_DEADLINE_MIN
@@ -9250,7 +9291,7 @@ class PetParkPlugin(Star):
         lines.append("| 序号 | 用户ID | 宠物 | 战力 | 报名时间 |")
         lines.append("|---|---|---|---|---|")
         for i, e in enumerate(enroll, 1):
-            t = time.strftime("%H:%M", time.localtime(e.get("enrolled_at", 0)))
+            t = time.strftime("%H:%M", self._bj_localtime(e.get("enrolled_at", 0)))
             lines.append(
                 f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname','-'))} | "
                 f"{self._fmt_power(e['bp'])} | {t} |"
@@ -9272,18 +9313,18 @@ class PetParkPlugin(Star):
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
         now_ts = int(time.time())
-        now = time.localtime()
-        match_ts = int(time.mktime((
+        now = self._bj_localtime()
+        match_ts = self._bj_timestamp(
             now.tm_year, now.tm_mon, now.tm_mday,
-            data.SECT_WAR_MATCH_HOUR, data.SECT_WAR_MATCH_MIN, 0, 0, 0, -1
-        )))
-        start_ts = int(time.mktime((
+            data.SECT_WAR_MATCH_HOUR, data.SECT_WAR_MATCH_MIN
+        )
+        start_ts = self._bj_timestamp(
             now.tm_year, now.tm_mon, now.tm_mday,
-            data.SECT_WAR_START_HOUR, data.SECT_WAR_START_MIN, 0, 0, 0, -1
-        )))
-        end_ts = int(time.mktime((
-            now.tm_year, now.tm_mon, now.tm_mday, 21, 10, 0, 0, 0, -1
-        )))
+            data.SECT_WAR_START_HOUR, data.SECT_WAR_START_MIN
+        )
+        end_ts = self._bj_timestamp(
+            now.tm_year, now.tm_mon, now.tm_mday, 21, 10
+        )
 
         if now_ts < match_ts:
             phase = "报名中"
@@ -9337,19 +9378,19 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _sect_countdown(self, group_id: str) -> str:
-        now = time.localtime()
+        now = self._bj_localtime()
         now_ts = int(time.time())
-        match_ts = int(time.mktime((
+        match_ts = self._bj_timestamp(
             now.tm_year, now.tm_mon, now.tm_mday,
-            data.SECT_WAR_MATCH_HOUR, data.SECT_WAR_MATCH_MIN, 0, 0, 0, -1
-        )))
-        start_ts = int(time.mktime((
+            data.SECT_WAR_MATCH_HOUR, data.SECT_WAR_MATCH_MIN
+        )
+        start_ts = self._bj_timestamp(
             now.tm_year, now.tm_mon, now.tm_mday,
-            data.SECT_WAR_START_HOUR, data.SECT_WAR_START_MIN, 0, 0, 0, -1
-        )))
-        end_ts = int(time.mktime((
-            now.tm_year, now.tm_mon, now.tm_mday, 21, 10, 0, 0, 0, -1
-        )))
+            data.SECT_WAR_START_HOUR, data.SECT_WAR_START_MIN
+        )
+        end_ts = self._bj_timestamp(
+            now.tm_year, now.tm_mon, now.tm_mday, 21, 10
+        )
         if now_ts < match_ts:
             remain = match_ts - now_ts
             return (
@@ -9474,7 +9515,7 @@ class PetParkPlugin(Star):
         last = history[-1]
         lines = [
             "## 📜 宗门战报",
-            f"**比赛时间**：{time.strftime('%Y-%m-%d %H:%M', time.localtime(last.get('time',0)))}",
+            f"**比赛时间**：{time.strftime('%Y-%m-%d %H:%M', self._bj_localtime(last.get('time',0)))}",
             f"**对阵**：{last.get('my_name', group_id)} vs {last.get('opponent_name', '-')}",
             f"**结果**：{last.get('result_text', '-')}（{last.get('my_wins',0)} : {last.get('opp_wins',0)}）",
             f"**获得宗门积分**：+{last.get('points',0)}",
@@ -9499,7 +9540,7 @@ class PetParkPlugin(Star):
         lines.append("| 日期 | 对手 | 结果 | 比分 | 积分 |")
         lines.append("|---|---|---|---|---|")
         for h in history[-20:]:
-            date = time.strftime("%m-%d", time.localtime(h.get("time", 0)))
+            date = time.strftime("%m-%d", self._bj_localtime(h.get("time", 0)))
             opp = h.get("opponent_name", h.get("opponent", "-"))
             result = h.get("result_text", "-")
             score = f"{h.get('my_wins',0)}:{h.get('opp_wins',0)}"
@@ -9903,7 +9944,7 @@ class PetParkPlugin(Star):
         for gid in list(self.store._data.get("groups", {}).keys()):
             self._sect_auto_confirm(gid)
         season = self._sect_ensure_season()
-        today = time.strftime("%Y-%m-%d")
+        today = self._bj_today()
         # 清理今日旧记录（重试安全）
         season["matches"] = [m for m in season.get("matches", []) if m.get("date") != today]
         matches = self._sect_match_making()
@@ -9928,7 +9969,7 @@ class PetParkPlugin(Star):
 
     async def _sect_war_start(self) -> None:
         """20:40 第1回合开始：进入 battling，清空加油值，定向广播开战。"""
-        today = time.strftime("%Y-%m-%d")
+        today = self._bj_today()
         season = self._sect_ensure_season()
         for m in season.get("matches", []):
             if m.get("date") != today:
@@ -9955,7 +9996,7 @@ class PetParkPlugin(Star):
 
     async def _sect_war_round_end(self, round_num: int, final: bool) -> None:
         """20:50/21:00/21:10 回合结束：结算本回合、扣血、清加油值、定向广播；决赛结算奖励。"""
-        today = time.strftime("%Y-%m-%d")
+        today = self._bj_today()
         season = self._sect_ensure_season()
         for m in season.get("matches", []):
             if m.get("date") != today:
@@ -10166,7 +10207,7 @@ class PetParkPlugin(Star):
                 })
 
         result = {
-            "date": time.strftime("%Y-%m-%d"),
+            "date": self._bj_today(),
             "time": int(time.time()),
             "group_a": g1,
             "group_b": g2,
@@ -10245,9 +10286,9 @@ class PetParkPlugin(Star):
         fired: dict = {}
         while True:
             await asyncio.sleep(20)
-            now = time.localtime()
+            now = self._bj_localtime()
             h, m = now.tm_hour, now.tm_min
-            today = time.strftime("%Y-%m-%d")
+            today = self._bj_today()
             try:
                 if h == data.SECT_WAR_MATCH_HOUR and m == data.SECT_WAR_MATCH_MIN:
                     if fired.get("match") != today:
