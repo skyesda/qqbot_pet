@@ -84,6 +84,9 @@ class PetStore:
         self._data.setdefault("tomb_players", {})
         self._data.setdefault("ms_players", {})
         self._data.setdefault("sect_season", self._default_sect_season())
+        self._data.setdefault("tomb_active_sessions", {})
+        self._data.setdefault("tomb_active_coops", {})
+        self._data.setdefault("tomb_active_coop_index", {})
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
 
@@ -781,6 +784,71 @@ class PetStore:
         if "pending_pet_exp" not in st:
             st["pending_pet_exp"] = 0
         return st
+
+    # ---- 摸金运行时 session 持久化（插件重载后恢复） ----
+    @staticmethod
+    def _tomb_serialize(obj):
+        """递归将 set/frozenset 转为 list，tuple 转为 list（确保 JSON 可序列化）。"""
+        if isinstance(obj, (set, frozenset)):
+            return [PetStore._tomb_serialize(v) for v in obj]
+        if isinstance(obj, tuple):
+            return [PetStore._tomb_serialize(v) for v in obj]
+        if isinstance(obj, dict):
+            return {k: PetStore._tomb_serialize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [PetStore._tomb_serialize(v) for v in obj]
+        return obj
+
+    @staticmethod
+    def _tomb_deserialize_sets(obj, set_keys=frozenset({"visited", "ready"})):
+        """递归将已知字段的 list 恢复为 set（元素为 tuple 时也恢复）。"""
+        if isinstance(obj, dict):
+            result = {}
+            for k, v in obj.items():
+                if k in set_keys and isinstance(v, list):
+                    # visited: list of [x, y] → set of (x, y)
+                    # ready: list of str → set of str
+                    inner = [PetStore._tomb_deserialize_sets(item, set_keys) for item in v]
+                    result[k] = {tuple(i) if isinstance(i, list) else i for i in inner}
+                else:
+                    result[k] = PetStore._tomb_deserialize_sets(v, set_keys)
+            return result
+        if isinstance(obj, list):
+            return [PetStore._tomb_deserialize_sets(v, set_keys) for v in obj]
+        return obj
+
+    @classmethod
+    def save_tomb_runstate(cls, sessions: dict, teams: dict, index: dict) -> None:
+        """持久化当前所有活跃摸金状态（单次 flush，插件重载后恢复）。"""
+        store = cls._active
+        if store is None:
+            return
+        store._data["tomb_active_sessions"] = cls._tomb_serialize(dict(sessions))
+        store._data["tomb_active_coops"] = cls._tomb_serialize(dict(teams))
+        store._data["tomb_active_coop_index"] = dict(index)
+        store._flush()
+
+    @classmethod
+    def load_tomb_sessions(cls) -> dict:
+        """加载上次持久化的活跃单人摸金 session，恢复 set 类型。"""
+        store = cls._active
+        if store is None:
+            return {}
+        raw = store._data.get("tomb_active_sessions", {})
+        return cls._tomb_deserialize_sets(dict(raw))
+
+    @classmethod
+    def load_tomb_coops(cls) -> tuple[dict, dict]:
+        """加载上次持久化的活跃摸金双排队伍及索引，恢复 set 类型。"""
+        store = cls._active
+        if store is None:
+            return {}, {}
+        raw_teams = store._data.get("tomb_active_coops", {})
+        raw_index = store._data.get("tomb_active_coop_index", {})
+        return (
+            cls._tomb_deserialize_sets(dict(raw_teams)),
+            dict(raw_index),
+        )
 
     @classmethod
     def refresh_tomb_daily(cls, player: dict) -> dict:

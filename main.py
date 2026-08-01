@@ -414,15 +414,14 @@ class PetParkPlugin(Star):
         self._web = None
         # 全服广播任务引用，防止被 GC
         self._broadcast_tasks: set = set()
-        # 宠物摸金当局运行时状态（内存中，不持久化）
-        self._tomb_sessions: dict[str, dict] = {}
+        # 宠物摸金当局运行时状态（持久化到 store，插件重载后自动恢复）
+        self._tomb_sessions: dict[str, dict] = self.store.load_tomb_sessions()
         # 扫雷当局运行时状态（内存中，不持久化，按 QQ 一人一局）
         self._ms_sessions: dict[str, dict] = {}
         # 群消息滚动缓存：群ID\x1f发送者 → deque[(message_id, 时间戳)]，供撤回指令用
         self._group_msg_log: dict[str, deque] = {}
-        # 摸金双排组队状态
-        self._tomb_coop_teams: dict[str, dict] = {}   # key: "{gid}\x1f{leader_qq}"
-        self._tomb_coop_index: dict[str, str] = {}     # key: "{gid}\x1f{qq}" → coop_key
+        # 摸金双排组队状态（持久化到 store，插件重载后自动恢复）
+        self._tomb_coop_teams, self._tomb_coop_index = self.store.load_tomb_coops()
         # AI 意图路由：自然语言 → 标准指令（使用 AstrBot 当前启用的 LLM Provider）
         self._ai_router = AIRouter(
             context,
@@ -5715,6 +5714,12 @@ class PetParkPlugin(Star):
     def _tomb_key(self, group_id: str, qq: str) -> str:
         return self.store.make_key(group_id, qq)
 
+    def _tomb_persist(self) -> None:
+        """持久化当前所有活跃的摸金 session 和双排队伍（插件重载后恢复）。"""
+        self.store.save_tomb_runstate(
+            self._tomb_sessions, self._tomb_coop_teams, self._tomb_coop_index
+        )
+
     def _tomb_in_raid(self, player: dict) -> bool:
         """检查玩家是否正在进行活跃的摸金探险（单人或已开局的 coop）。"""
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
@@ -5802,32 +5807,30 @@ class PetParkPlugin(Star):
         return session, False
 
     def _tomb_commit(self, player: dict, virtual: dict, is_coop: bool) -> None:
-        """将虚拟 session 中的玩家私有字段写回双排父 session。"""
-        if not is_coop:
-            return
-        coop = virtual.get("_coop_parent")
-        if not coop:
-            return
-        # 防御：若 coop 已被结算并移出索引，避免继续写回已分离的 dict
-        coop_key = self._tomb_key(coop.get("group_id", ""), coop.get("leader", ""))
-        if coop_key not in self._tomb_coop_teams or self._tomb_coop_teams[coop_key] is not coop:
-            return
-        qq = str(player.get("qq", ""))
-        if qq not in coop.get("players", {}):
-            return
-        pdata = coop["players"][qq]
-        import copy
-        for k in self._TOMB_PLAYER_KEYS:
-            if k in virtual:
-                val = virtual[k]
-                pdata[k] = copy.deepcopy(val) if isinstance(val, (dict, set, list)) else val
-        # 命运卡牌私有字段同步回玩家数据
-        for extra_k in ("_auto_revive_used",):
-            if extra_k in virtual:
-                pdata[extra_k] = virtual[extra_k]
-        # 同步可能被 _tomb_refresh_map 更新的共享字段
-        if "image" in virtual:
-            coop["image"] = virtual["image"]
+        """将虚拟 session 中的玩家私有字段写回双排父 session，并持久化。"""
+        if is_coop:
+            coop = virtual.get("_coop_parent")
+            if coop:
+                # 防御：若 coop 已被结算并移出索引，避免继续写回已分离的 dict
+                coop_key = self._tomb_key(coop.get("group_id", ""), coop.get("leader", ""))
+                if coop_key in self._tomb_coop_teams and self._tomb_coop_teams[coop_key] is coop:
+                    qq = str(player.get("qq", ""))
+                    if qq in coop.get("players", {}):
+                        pdata = coop["players"][qq]
+                        import copy
+                        for k in self._TOMB_PLAYER_KEYS:
+                            if k in virtual:
+                                val = virtual[k]
+                                pdata[k] = copy.deepcopy(val) if isinstance(val, (dict, set, list)) else val
+                        # 命运卡牌私有字段同步回玩家数据
+                        for extra_k in ("_auto_revive_used",):
+                            if extra_k in virtual:
+                                pdata[extra_k] = virtual[extra_k]
+                        # 同步可能被 _tomb_refresh_map 更新的共享字段
+                        if "image" in virtual:
+                            coop["image"] = virtual["image"]
+        # 每次提交后都持久化，确保插件重载后摸金进度不丢失
+        self._tomb_persist()
 
     def _tomb_teammate_qq(self, player: dict, coop: dict = None) -> str:
         """返回该玩家在双排队伍中的队友 QQ，不在双排返回空字符串。"""
@@ -5881,6 +5884,7 @@ class PetParkPlugin(Star):
         }
         self._tomb_coop_index[self._tomb_key(group_id, my_qq)] = coop_key
         self._tomb_coop_index[self._tomb_key(group_id, target_qq)] = coop_key
+        self._tomb_persist()
         return (
             f"## 摸金组队\n"
             f"队长 {my_qq} 邀请 {target_qq} 组队摸金！\n\n"
@@ -5917,6 +5921,7 @@ class PetParkPlugin(Star):
             self._tomb_coop_index.pop(self._tomb_key(gid, pqq), None)
         coop_key = self._tomb_key(gid, coop.get("leader", ""))
         self._tomb_coop_teams.pop(coop_key, None)
+        self._tomb_persist()
         return f"## 队伍已解散\n{player.get('qq', '')} 取消了组队。"
 
     def _tomb_team_status(self, player: dict) -> str:
@@ -6219,6 +6224,7 @@ class PetParkPlugin(Star):
             filename = self._tomb_draw_map(shared)
             shared["image"] = filename
             self._tomb_coop_teams[key] = shared
+            self._tomb_persist()
             leader_st.setdefault("stats", {})["raids"] = leader_st["stats"].get("raids", 0) + 1
             teammate_st.setdefault("stats", {})["raids"] = teammate_st["stats"].get("raids", 0) + 1
             # 用虚拟 session 生成玩家视角地图
@@ -6274,6 +6280,7 @@ class PetParkPlugin(Star):
         filename = self._tomb_draw_map(session)
         session["image"] = filename
         self._tomb_sessions[key] = session
+        self._tomb_persist()
         st.setdefault("stats", {})["raids"] = st["stats"].get("raids", 0) + 1
         image_md = self._tomb_player_map_md(session)
         ex, ey = entrance_pos["x"], entrance_pos["y"]
@@ -6733,6 +6740,9 @@ class PetParkPlugin(Star):
         st = self.store.tomb_state(player)
         stats = st.setdefault("stats", {})
         key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        # 先移除 session 并持久化，再结算（避免重载后残留）
+        self._tomb_sessions.pop(key, None)
+        self._tomb_persist()
         cfg = data.TOMB_DIFFICULTIES[session["difficulty"]]
         st["cooldown"] = int(time.time()) + data.TOMB_COOLDOWN
 
@@ -6765,7 +6775,6 @@ class PetParkPlugin(Star):
             self.store.add_tomb_mingbi(player, gained)
             stats["success"] = stats.get("success", 0) + 1
             stats["total_mingbi"] = stats.get("total_mingbi", 0) + gained
-            self._tomb_sessions.pop(key, None)
             return (
                 f"🏆 撤离成功！带出 **{gained}** 冥币，已永久到账。\n"
                 f"● {xp_text}\n"
@@ -6773,7 +6782,6 @@ class PetParkPlugin(Star):
                 f"● 累计成功 {stats['success']} 次，总带出冥币 {stats['total_mingbi']}"
             )
         if reason == "timeout":
-            self._tomb_sessions.pop(key, None)
             stats["fail"] = stats.get("fail", 0) + 1
             return (
                 f"⏰ 墓穴坍塌，撤离失败！\n"
@@ -6786,7 +6794,6 @@ class PetParkPlugin(Star):
             kept = int(session["mingbi"] * 0.2)
             self.store.add_tomb_mingbi(player, kept)
             stats["fail"] = stats.get("fail", 0) + 1
-            self._tomb_sessions.pop(key, None)
             return (
                 f"💀 摸金角色阵亡，撤离失败！\n"
                 f"● {xp_text}\n"
@@ -6798,7 +6805,6 @@ class PetParkPlugin(Star):
             kept = int(session["mingbi"] * 0.5)
             self.store.add_tomb_mingbi(player, kept)
             stats["fail"] = stats.get("fail", 0) + 1
-            self._tomb_sessions.pop(key, None)
             return (
                 f"🧧 招魂幡触发，你在濒死之际被强行送出墓穴！\n"
                 f"● {xp_text}\n"
@@ -6809,7 +6815,6 @@ class PetParkPlugin(Star):
         # forfeit
         kept = int(session["mingbi"] * 0.5)
         self.store.add_tomb_mingbi(player, kept)
-        self._tomb_sessions.pop(key, None)
         return (
             f"🏃 你已放弃本次摸金，仅保留 {kept} 冥币。\n"
             f"● {xp_text}\n"
@@ -6886,6 +6891,7 @@ class PetParkPlugin(Star):
             self._tomb_coop_index.pop(idx_key, None)
         coop_key = self._tomb_key(group_id, coop["leader"])
         self._tomb_coop_teams.pop(coop_key, None)
+        self._tomb_persist()
 
         if reason == "success":
             return f"## 组队撤离成功！\n共带出 {total_mingbi} 冥币。"
@@ -6937,6 +6943,7 @@ class PetParkPlugin(Star):
             self._tomb_coop_index.pop(self._tomb_key(gid, qq), None)
         coop_key = self._tomb_key(gid, coop.get("leader", ""))
         self._tomb_coop_teams.pop(coop_key, None)
+        self._tomb_persist()
 
     def _tomb_check_timeout(self, player: dict, p: dict, session: dict) -> str | None:
         if int(time.time()) >= session.get("deadline", 0):
