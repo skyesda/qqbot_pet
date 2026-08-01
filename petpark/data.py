@@ -1679,3 +1679,263 @@ SECT_CHEER_CD_MAX = 120        # 加油冷却最大秒数
 # 回合结束扣血（占最大血量百分比）
 SECT_WAR_HP_LOSS_MIN_PCT = 5
 SECT_WAR_HP_LOSS_MAX_PCT = 15
+
+# ============================================================================
+# 宠物家园（放置建造 · 纯金币升级 · 数据隔离 · 宠物派遣 · 偷菜护院）
+# ============================================================================
+
+HOMESTEAD_BASE_MAX_ACCUMULATE = 12 * 3600  # 基础最大累计 12 小时
+
+# 家园等级 → 建筑位数量
+_HOMESTEAD_SLOTS_TABLE = {
+    1: 2, 2: 3, 3: 4, 4: 5, 5: 6,
+    6: 7, 7: 7, 8: 8, 9: 8, 10: 9,
+}
+
+
+def homestead_slots(level: int) -> int:
+    """家园等级对应的建筑位数量（Lv10 后每 2 级 +1 位，上限 15）。"""
+    if level <= 10:
+        return _HOMESTEAD_SLOTS_TABLE.get(level, 2)
+    return min(15, 9 + (level - 10) // 2)
+
+
+def homestead_exp_to_next(level: int) -> int:
+    """家园升到下一级所需经验。"""
+    return 200 + level * 300
+
+
+def homestead_upgrade_cost(level: int, base: int = 500) -> int:
+    """建筑升级到指定等级所需金币（升级=level N→N+1，传入当前等级）。"""
+    return int(base * (level + 1) * (1.0 + (level + 1) * 0.3))
+
+
+def homestead_max_accumulate(warehouse_level: int = 0) -> int:
+    """计算实际最大累计秒数（仓库每级 +2h）。"""
+    return HOMESTEAD_BASE_MAX_ACCUMULATE + warehouse_level * 2 * 3600
+
+
+# ============================================================================
+# 建筑定义（7 种 → 建筑位有限 → 战略取舍）
+# ============================================================================
+HOMESTEAD_BUILDINGS = {
+    "金币矿": {
+        "desc": "稳定产出金币，每小时自动累积。",
+        "icon": "💰",
+        "build_cost": 500,
+        "base_coin": 100,
+        "coin_per_lv": 28,
+        "base_jifen": 0,
+        "jifen_per_lv": 0,
+        "prefer_element": "金",
+    },
+    "积分工坊": {
+        "desc": "稳定产出积分，每小时自动累积。",
+        "icon": "🏭",
+        "build_cost": 500,
+        "base_coin": 0,
+        "base_jifen": 85,
+        "coin_per_lv": 0,
+        "jifen_per_lv": 22,
+        "prefer_element": "水",
+    },
+    "聚宝盆": {
+        "desc": "同时产出金币+积分，单资源约为专精的 60%。",
+        "icon": "🏛️",
+        "build_cost": 1000,
+        "base_coin": 60,
+        "base_jifen": 50,
+        "coin_per_lv": 16,
+        "jifen_per_lv": 14,
+        "prefer_element": "土",
+    },
+    "经验泉": {
+        "desc": "产出宠物经验，可用「派遣」驻扎宠物加速。",
+        "icon": "🌿",
+        "build_cost": 2000,
+        "base_coin": 0,
+        "base_jifen": 0,
+        "base_exp": 50,
+        "exp_per_lv": 18,
+        "coin_per_lv": 0,
+        "jifen_per_lv": 0,
+        "unlock_pet_level": 60,
+        "prefer_element": "木",
+    },
+    "仓库": {
+        "desc": "提升离线累计上限，每级 +2 小时（基础 12h）。",
+        "icon": "📦",
+        "build_cost": 800,
+        "base_coin": 0,
+        "base_jifen": 0,
+        "coin_per_lv": 0,
+        "jifen_per_lv": 0,
+        "warehouse": True,
+        "prefer_element": "土",
+    },
+    "哨塔": {
+        "desc": "提升家园防御力，降低被偷菜成功率。",
+        "icon": "🏹",
+        "build_cost": 1200,
+        "base_coin": 0,
+        "base_jifen": 0,
+        "coin_per_lv": 0,
+        "jifen_per_lv": 0,
+        "defense_per_lv": 25,
+        "prefer_element": "火",
+    },
+    "祈福坛": {
+        "desc": "提升收取时触发好事件的概率，降低坏事件概率。",
+        "icon": "🕯️",
+        "build_cost": 1500,
+        "base_coin": 0,
+        "base_jifen": 0,
+        "coin_per_lv": 0,
+        "jifen_per_lv": 0,
+        "luck_per_lv": 3,  # 每级 +3% 好运权重偏移
+        "prefer_element": "光",
+    },
+}
+
+
+def homestead_production(building: str, level: int) -> dict:
+    """计算建筑当前每小时产量（返回 {coin, jifen, exp?}）。"""
+    cfg = HOMESTEAD_BUILDINGS[building]
+    result = {
+        "coin": cfg.get("base_coin", 0) + cfg.get("coin_per_lv", 0) * (level - 1),
+        "jifen": cfg.get("base_jifen", 0) + cfg.get("jifen_per_lv", 0) * (level - 1),
+    }
+    if "base_exp" in cfg:
+        result["exp"] = cfg["base_exp"] + cfg.get("exp_per_lv", 0) * (level - 1)
+    return result
+
+
+# ============================================================================
+# 宠物派遣
+# ============================================================================
+# 派遣对产量的加成系数
+HOMESTEAD_DISPATCH_LEVEL_FACTOR = 0.006   # 宠物每级 +0.6% 产量
+HOMESTEAD_DISPATCH_QUALITY_FACTOR = 0.04  # 品质每档 +4%（普通=0, 混沌=9→36%）
+HOMESTEAD_DISPATCH_ELEMENT_MATCH = 0.10   # 属性匹配额外 +10%
+HOMESTEAD_DISPATCH_ENERGY_PER_HOUR = 2    # 派遣每小时消耗宠物精力
+HOMESTEAD_DISPATCH_MIN_ENERGY = 5         # 派遣最低精力要求
+
+
+def homestead_dispatch_multiplier(pet: dict, building: str) -> float:
+    """计算派遣宠物对指定建筑的产量倍率。"""
+    if not pet:
+        return 1.0
+    level = pet.get("level", 1)
+    quality = pet.get("quality", "普通")
+    element = pet.get("element", "")
+    quality_idx = list(QUALITY_GROWTH.keys()).index(quality) if quality in QUALITY_GROWTH else 0
+    mult = 1.0 + level * HOMESTEAD_DISPATCH_LEVEL_FACTOR + quality_idx * HOMESTEAD_DISPATCH_QUALITY_FACTOR
+    cfg = HOMESTEAD_BUILDINGS.get(building, {})
+    if cfg.get("prefer_element") == element:
+        mult += HOMESTEAD_DISPATCH_ELEMENT_MATCH
+    return round(mult, 3)
+
+
+# ============================================================================
+# 偷菜系统
+# ============================================================================
+HOMESTEAD_STEAL_MAX_PER_DAY = 5          # 每日最大偷菜次数
+HOMESTEAD_STEAL_COOLDOWN_SAME = 7200     # 同一目标冷却 2 小时
+HOMESTEAD_STEAL_RATIO_MIN = 0.10         # 偷取最小比例
+HOMESTEAD_STEAL_RATIO_MAX = 0.30         # 偷取最大比例
+HOMESTEAD_STEAL_BASE_DEFENSE = 50        # 基础防御值
+HOMESTEAD_STEAL_FAIL_PENALTY = 50        # 偷取失败赔偿金币
+HOMESTEAD_MAX_BE_STOLEN_PER_DAY = 3      # 每天最多被偷 3 次
+
+
+def homestead_steal_success_rate(attacker_level: int, target_defense: int) -> float:
+    """偷菜成功率（0~1）。"""
+    return attacker_level / (attacker_level + target_defense + HOMESTEAD_STEAL_BASE_DEFENSE)
+
+
+def homestead_defense(hs: dict) -> int:
+    """计算家园防御值（哨塔 + 派遣宠物）。"""
+    defense = 0
+    buildings = hs.get("buildings", {})
+    if "哨塔" in buildings:
+        defense += buildings["哨塔"].get("level", 1) * HOMESTEAD_BUILDINGS["哨塔"].get("defense_per_lv", 25)
+    dispatch = hs.get("dispatch", {})
+    for bname, pet_data in dispatch.items():
+        if pet_data and isinstance(pet_data, dict):
+            defense += int(pet_data.get("level", 1) * 0.5)
+    return defense
+
+
+# ============================================================================
+# 流浪商人
+# ============================================================================
+HOMESTEAD_MERCHANT_CHANCE = 0.10  # 收取时 10% 触发
+
+# 商人货架（随机抽取 3 件）
+HOMESTEAD_MERCHANT_ITEMS = [
+    {"name": "进化神石", "price_type": "coin", "price": 5000, "desc": "宠物进化材料", "item": "进化神石"},
+    {"name": "万能宝石", "price_type": "coin", "price": 3000, "desc": "打造神器材料", "item": "万能宝石"},
+    {"name": "神器图纸", "price_type": "coin", "price": 20000, "desc": "打造神器图纸", "item": "神器图纸"},
+    {"name": "史诗卡", "price_type": "coin", "price": 50000, "desc": "品质提升至史诗", "item": "史诗卡"},
+    {"name": "小精力瓶", "price_type": "coin", "price": 1000, "desc": "恢复 10 点精力", "item": "小精力瓶"},
+    {"name": "普通经验书", "price_type": "jifen", "price": 3000, "desc": "宠物经验 +200", "item": "普通经验书"},
+    {"name": "聚灵丹", "price_type": "jifen", "price": 5000, "desc": "宠物经验 +10 万", "item": "聚灵丹"},
+    {"name": "进化神石×3", "price_type": "coin", "price": 12000, "desc": "3 颗进化神石", "item": "进化神石", "item_count": 3},
+    {"name": "相思豆×5", "price_type": "jifen", "price": 2000, "desc": "5 颗相思豆", "item": "相思豆", "item_count": 5},
+    {"name": "建筑加速券", "price_type": "coin", "price": 2000, "desc": "立即跳过 2 小时建筑累积", "effect": "speed_2h"},
+    {"name": "护院符", "price_type": "coin", "price": 3000, "desc": "12 小时内免疫偷菜", "effect": "shield_12h"},
+    {"name": "双倍券", "price_type": "coin", "price": 5000, "desc": "下次收取产量翻倍", "effect": "double_next"},
+]
+
+
+# ============================================================================
+# 家园收取随机事件（扩容版）
+# ============================================================================
+HOMESTEAD_EVENTS = [
+    {"name": "天降横财", "weight": 3, "mult": 3.0, "emoji": "🎉", "text": "天降横财！本次收获 ×3！", "good": True},
+    {"name": "丰收", "weight": 8, "mult": 2.0, "emoji": "🌟", "text": "大丰收！本次收获 ×2！", "good": True},
+    {"name": "流浪商人", "weight": 10, "mult": 1.0, "emoji": "🧳", "merchant": True, "text": "一位流浪商人路过你的家园…", "good": True},
+    {"name": "宠物帮忙", "weight": 10, "mult": 1.0, "emoji": "🐾", "pet_bonus": 0.08, "text": "宠物帮忙打理家园，额外产出 +{bonus}！", "good": True},
+    {"name": "幸运日", "weight": 12, "mult": 1.0, "emoji": "🍀", "extra_coin": (50, 300), "text": "幸运日！额外获得 {bonus} 金币！", "good": True},
+    {"name": "地脉涌动", "weight": 8, "mult": 1.0, "emoji": "⛰️", "extra_all": 1.3, "text": "地脉涌动！所有建筑额外产出 30%！", "good": True},
+    {"name": "正常", "weight": 35, "mult": 1.0, "emoji": "", "text": "", "good": False},
+    {"name": "小偷", "weight": 8, "mult": 0.7, "emoji": "🐀", "text": "有小偷光顾！本次收获 -30%…", "good": False},
+    {"name": "暴风雨", "weight": 6, "mult": 0.5, "emoji": "⛈️", "next_bonus": 0.5, "text": "暴风雨袭击！本次 -50%，下次 +50%！", "good": False},
+]
+
+
+def homestead_roll_event(hs: dict) -> dict:
+    """收取时随机事件抽取（祈福坛偏移好坏权重）。"""
+    import random as _random
+    luck_bonus = 0
+    if "祈福坛" in hs.get("buildings", {}):
+        luck_bonus = hs["buildings"]["祈福坛"].get("level", 1) * HOMESTEAD_BUILDINGS["祈福坛"].get("luck_per_lv", 3)
+    events = HOMESTEAD_EVENTS
+    adjusted = []
+    for e in events:
+        w = e["weight"]
+        if e.get("good") and luck_bonus > 0:
+            w = int(w * (1 + luck_bonus / 100))
+        elif not e.get("good") and luck_bonus > 0:
+            w = max(1, int(w * (1 - luck_bonus / 100)))
+        adjusted.append((w, e))
+    total = sum(w for w, _ in adjusted)
+    r = _random.randint(1, total)
+    acc = 0
+    for w, e in adjusted:
+        acc += w
+        if r <= acc:
+            return e
+    return events[-1]
+
+
+# ============================================================================
+# 家园排行
+# ============================================================================
+HOMESTEAD_RANK_SIZE = 10
+HOMESTEAD_RANK_REWARD_COIN = {1: 5000, 2: 3000, 3: 1000}
+
+# 家园拜访
+HOMESTEAD_VISIT_MAX_PER_DAY = 3
+HOMESTEAD_VISIT_REWARD_COIN = 50
+HOMESTEAD_VISITED_REWARD_COIN = 20

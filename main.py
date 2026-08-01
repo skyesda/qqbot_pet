@@ -333,6 +333,25 @@ WEB_BLOCKED_COMMANDS = {
     "我的管理额度",
     "授权",
     "授权本群",
+    # 宠物家园
+    "家园",
+    "家园介绍",
+    "家园教程",
+    "建造",
+    "升级",
+    "家园升级",
+    "家园收取",
+    "家园建筑",
+    "拜访家园",
+    "家园拜访",
+    "派遣",
+    "召回",
+    "派遣状态",
+    "顺手牵羊",
+    "偷菜",
+    "家园排行",
+    "家园总排行",
+    "商人购买",
 }
 
 
@@ -1732,6 +1751,36 @@ class PetParkPlugin(Star):
             return self._ms_rank(player)
         if cmd == "扫雷兑换":
             return self._ms_redeem_exp(player, tokens)
+
+        # ---- 宠物家园 ----
+        if cmd in ("家园",):
+            return self._homestead_menu(player, group_id)
+        if cmd in ("家园介绍", "家园教程"):
+            return self._homestead_tutorial()
+        if cmd == "建造":
+            return self._homestead_build(player, tokens)
+        if cmd in ("升级", "家园升级"):
+            return self._homestead_upgrade(player, tokens)
+        if cmd == "家园收取":
+            return self._homestead_collect(player)
+        if cmd == "家园建筑":
+            return self._homestead_buildings(player)
+        if cmd in ("拜访家园", "家园拜访"):
+            return self._homestead_visit(player, group_id, tokens)
+        if cmd == "派遣":
+            return self._homestead_dispatch(player, tokens)
+        if cmd == "召回":
+            return self._homestead_recall(player, tokens)
+        if cmd == "派遣状态":
+            return self._homestead_dispatch_status(player)
+        if cmd in ("顺手牵羊", "偷菜"):
+            return self._homestead_steal(player, group_id, tokens)
+        if cmd in ("家园排行",):
+            return self._homestead_rank(player)
+        if cmd in ("家园总排行",):
+            return self._homestead_total_rank(player)
+        if cmd == "商人购买":
+            return self._homestead_merchant_buy(player, tokens)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -3459,6 +3508,18 @@ class PetParkPlugin(Star):
                 "- 扫雷介绍 · 开始扫雷 难度(1~4)",
                 "- 扫 坐标（支持多扫，如：扫a1b2）· 插旗 坐标",
                 "- 扫雷地图 · 放弃扫雷 · 扫雷排行 · 扫雷兑换",
+                "",
+                "【宠物家园】（放置建造 · 离线产出）",
+                "> 在家园中建造建筑，随时间自动累积金币和积分，离线也产。",
+                "- 家园 · 建造 建筑名 · 升级 建筑名",
+                "- 派遣 建筑名 · 召回 建筑名 · 派遣状态",
+                "- 家园收取 · 家园建筑 · 商人购买 编号",
+                "- 拜访家园 QQ · 顺手牵羊 QQ（偷菜）",
+                "- 家园排行 · 家园总排行",
+                "> 🏗️ 7种建筑：金币矿/积分工坊/聚宝盆/经验泉/仓库/哨塔/祈福坛",
+                "> 🐾 宠物派遣：驻扎建筑提升产量，等级品质越高加成越多",
+                "> 💀 偷菜：拼成功率偷别人未收资源，建哨塔可防御",
+                "> 🧳 流浪商人：收取时概率出现，可买加速券/护院符/双倍券",
                 "",
                 "【姻缘】",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
@@ -10543,3 +10604,781 @@ class PetParkPlugin(Star):
         pet["love_state"] = "单身"
         pet["love_target"] = None
         pet["favor"] = 0
+
+    # =====================================================================
+    # 宠物家园（放置建造 · 纯金币升级 · 宠物派遣 · 偷菜护院 · 流浪商人 · 排行）
+    # =====================================================================
+    def _homestead_tutorial(self) -> str:
+        """家园介绍 / 家园教程 —— 新手指南。"""
+        return (
+            "## 🏡 宠物家园 · 玩法教程\n"
+            "\n"
+            "> 建造建筑 → 随时间自动累积金币/积分 → 收取升级 → 更多产出\n"
+            "\n"
+            "### 🚀 快速入门\n"
+            "1. 发送「**建造 金币矿**」建第一座建筑（500金）\n"
+            "2. 等待一段时间，发送「**家园收取**」收获金币\n"
+            "3. 金币够了发送「**升级 金币矿**」提升产量\n"
+            "4. 家园经验攒够自动升级，解锁更多建筑位\n"
+            "\n"
+            "### 🏗️ 7 种建筑（建筑位有限，需取舍）\n"
+            "💰 **金币矿** — 纯金币产出（500金建造）\n"
+            "🏭 **积分工坊** — 纯积分产出（500金建造）\n"
+            "🏛️ **聚宝盆** — 金币+积分双产，效率60%（1000金建造）\n"
+            "🌿 **经验泉** — 宠物经验产出，需Lv60（2000金建造）\n"
+            "📦 **仓库** — 离线累积上限+2h/级（800金建造）\n"
+            "🏹 **哨塔** — 防御偷菜，+25防御/级（1200金建造）\n"
+            "🕯️ **祈福坛** — 好事件概率↑（1500金建造）\n"
+            "\n"
+            "### 🐾 宠物派遣\n"
+            "发送「**派遣 建筑名**」让宠物驻扎建筑，产量倍率：\n"
+            "`1.0 + 等级×0.006 + 品质×0.04 + 属性匹配0.10`\n"
+            "> 例：Lv100混沌金→金币矿 = ×2.06 产量！\n"
+            "> 派遣每小时耗2精力，发送「**召回 建筑名**」取回\n"
+            "\n"
+            "### 💀 偷菜玩法\n"
+            "发送「**顺手牵羊 QQ**」偷别人未收资源\n"
+            "成功率 = 你的宠物Lv / (你的Lv + 对方防御 + 50)\n"
+            "成功偷10%~30%　失败赔50金　每日5次\n"
+            "> 建哨塔+派宠物守家提升防御，或买护院符免疫12h\n"
+            "\n"
+            "### 🧳 流浪商人\n"
+            "收取时10%概率出现（祈福坛可提升）\n"
+            "可买：加速券/护院符/双倍券/进化神石/史诗卡等\n"
+            "> 发送「**商人购买 编号**」购买，「0」跳过\n"
+            "\n"
+            "### 📊 排行\n"
+            "「**家园排行**」本周产出Top10，前三奖励金币\n"
+            "「**家园总排行**」累计产出Top10\n"
+            "\n"
+            "> 发送「**家园**」查看你的家园状态。"
+        )
+
+    def _homestead_menu(self, player: dict, group_id: str) -> str:
+        """家园 —— 查看家园总览。"""
+        hs = self.store.homestead_state(player)
+        level = hs["level"]
+        slots = data.homestead_slots(level)
+        buildings = hs.get("buildings", {})
+        dispatch = hs.get("dispatch", {})
+        wh_level = buildings.get("仓库", {}).get("level", 0) if "仓库" in buildings else 0
+        max_acc = data.homestead_max_accumulate(wh_level)
+        defense = data.homestead_defense(hs)
+        shield = "🛡️ 护院符生效中" if hs.get("shield_until", 0) > int(time.time()) else ""
+        lines = [
+            f"## 🏡 我的家园（Lv{level}）",
+            f"🔧 建筑位：{len(buildings)}/{slots}　✨ 经验：{hs['exp']}/{data.homestead_exp_to_next(level)}",
+            f"🛡️ 防御力：{defense}　📦 离线上限：{max_acc // 3600}h{'　' + shield if shield else ''}",
+            "",
+        ]
+        total_coin = 0
+        total_jifen = 0
+        total_exp = 0
+        now = int(time.time())
+        if not buildings:
+            lines.append("🏜️ 家园空空如也，发送「**建造 建筑名**」开始建设。")
+        else:
+            for name, b in buildings.items():
+                cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
+                icon = cfg.get("icon", "🏠")
+                lv = b.get("level", 1)
+                prod = data.homestead_production(name, lv)
+                acc_limit = max_acc if not cfg.get("warehouse") else max_acc
+                elapsed = min(now - b.get("last_collect", now), acc_limit)
+                hours = elapsed / 3600
+                acc_coin = int(prod.get("coin", 0) * hours)
+                acc_jifen = int(prod.get("jifen", 0) * hours)
+                acc_exp = int(prod.get("exp", 0) * hours) if "exp" in prod else 0
+                # 宠物派遣加成预览
+                disp_info = dispatch.get(name, {})
+                if disp_info:
+                    disp_mult = data.homestead_dispatch_multiplier(disp_info, name)
+                    acc_coin = int(acc_coin * disp_mult)
+                    acc_jifen = int(acc_jifen * disp_mult)
+                    acc_exp = int(acc_exp * disp_mult)
+                total_coin += acc_coin
+                total_jifen += acc_jifen
+                total_exp += acc_exp
+                parts = [f"{icon} **{name}** Lv{lv}"]
+                income_parts = []
+                if acc_coin:
+                    income_parts.append(f"💰 {acc_coin}")
+                if acc_jifen:
+                    income_parts.append(f"💎 {acc_jifen}")
+                if acc_exp:
+                    income_parts.append(f"📖 {acc_exp}exp")
+                if income_parts:
+                    parts.append("待收：" + " · ".join(income_parts))
+                # 派遣状态
+                if disp_info:
+                    disp_qq = disp_info.get("qq", "")
+                    mult_str = f"×{data.homestead_dispatch_multiplier(disp_info, name)}"
+                    parts.append(f"🐾 {disp_qq}({mult_str})")
+                else:
+                    next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
+                    parts.append(f"⬆️{next_cost}金")
+                lines.append("　".join(parts))
+        lines.append("")
+        summary_parts = []
+        if total_coin:
+            summary_parts.append(f"💰 {total_coin} 金币")
+        if total_jifen:
+            summary_parts.append(f"💎 {total_jifen} 积分")
+        if total_exp:
+            summary_parts.append(f"📖 {total_exp} 经验")
+        if summary_parts:
+            lines.append(f"📦 待收取总计：{' · '.join(summary_parts)}")
+        # 可建造提示
+        available = self._homestead_available(player)
+        if available:
+            lines.append(f"🏗️ 可建造：{' · '.join(available)}")
+        # 排行
+        weekly = hs.get("weekly_coin", 0)
+        total_life = hs.get("total_coin_earned", 0)
+        if weekly or total_life:
+            lines.append(f"📊 本周产出 {weekly} 金 · 累计产出 {total_life} 金")
+        lines.append("")
+        lines.append("> **家园收取** 收获 · **建造/升级 建筑名** · **派遣/召回 建筑名**")
+        lines.append("> **拜访家园 QQ** 串门 · **顺手牵羊 QQ** 偷菜 · **家园排行**")
+        return "\n".join(lines)
+
+    def _homestead_available(self, player: dict) -> list[str]:
+        """返回当前可建造的建筑名称列表。"""
+        hs = self.store.homestead_state(player)
+        built = set(hs.get("buildings", {}).keys())
+        p = player.get("pet") or {}
+        pet_level = p.get("level", 1)
+        available = []
+        for name, cfg in data.HOMESTEAD_BUILDINGS.items():
+            if name in built:
+                continue
+            req_lv = cfg.get("unlock_pet_level", 0)
+            if req_lv and pet_level < req_lv:
+                continue
+            available.append(f"{cfg.get('icon','')}{name}({cfg['build_cost']}金)")
+        return available
+
+    def _homestead_build(self, player: dict, tokens: list[str]) -> str:
+        """建造 建筑名 —— 在家园中建造新建筑。"""
+        hs = self.store.homestead_state(player)
+        if len(tokens) < 2:
+            available = self._homestead_available(player)
+            if available:
+                return f"用法：建造 建筑名\n可选：{' · '.join(available)}"
+            return "用法：建造 建筑名"
+        name = tokens[1]
+        cfg = data.HOMESTEAD_BUILDINGS.get(name)
+        if not cfg:
+            return f"没有『{name}』这种建筑。可选：{' · '.join(data.HOMESTEAD_BUILDINGS)}"
+        if name in hs.get("buildings", {}):
+            return f"你已经建造过{name}了，发送「升级 {name}」升级。"
+        slots = data.homestead_slots(hs["level"])
+        if len(hs.get("buildings", {})) >= slots:
+            return f"建筑位已满（{slots}个）！升级家园可解锁更多位置。"
+        p = player.get("pet") or {}
+        req_lv = cfg.get("unlock_pet_level", 0)
+        if req_lv and p.get("level", 1) < req_lv:
+            return f"🔒 建造{cfg.get('icon','')}**{name}**需要宠物 Lv{req_lv}，当前 Lv{p.get('level', 1)}。"
+        cost = cfg["build_cost"]
+        if player.get("coin", 0) < cost:
+            return f"金币不足，建造{name}需要 **{cost}** 金币，当前仅有 {player['coin']}。"
+        player["coin"] -= cost
+        now = int(time.time())
+        hs["buildings"][name] = {"level": 1, "last_collect": now}
+        hs["exp"] = hs.get("exp", 0) + 10
+        levelup = self._homestead_check_levelup(hs)
+        icon = cfg.get("icon", "")
+        lines = [
+            f"🏗️ 成功建造 {icon}**{name}** Lv1！消耗 {cost} 金币。",
+            f"● 产量：{self._homestead_prod_text(name, 1)}",
+        ]
+        if levelup:
+            lines.append(f"● {levelup}")
+        return "\n".join(lines)
+
+    def _homestead_upgrade(self, player: dict, tokens: list[str]) -> str:
+        """升级 建筑名 —— 升级家园建筑。"""
+        hs = self.store.homestead_state(player)
+        if len(tokens) < 2:
+            built = list(hs.get("buildings", {}).keys())
+            if built:
+                tips = " · ".join(f"{b}(Lv{hs['buildings'][b]['level']})" for b in built)
+                return f"用法：升级 建筑名\n当前：{tips}"
+            return "你还没有任何建筑，发送「建造 建筑名」。"
+        name = tokens[1]
+        if name not in hs.get("buildings", {}):
+            return f"还没有建造{name}，发送「**建造 {name}**」。"
+        cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
+        b = hs["buildings"][name]
+        current_lv = b["level"]
+        cost = data.homestead_upgrade_cost(current_lv, cfg.get("build_cost", 500))
+        if player.get("coin", 0) < cost:
+            return f"金币不足，升级{name}到 Lv{current_lv + 1} 需要 **{cost}** 金币，当前仅有 {player['coin']}。"
+        player["coin"] -= cost
+        b["level"] += 1
+        new_lv = b["level"]
+        hs["exp"] = hs.get("exp", 0) + new_lv
+        levelup = self._homestead_check_levelup(hs)
+        icon = cfg.get("icon", "")
+        lines = [
+            f"⬆️ {icon}**{name}** Lv{current_lv} → **Lv{new_lv}**！消耗 {cost} 金币。",
+            f"● 产量：{self._homestead_prod_text(name, new_lv)}",
+        ]
+        if levelup:
+            lines.append(f"● {levelup}")
+        return "\n".join(lines)
+
+    def _homestead_collect(self, player: dict) -> str:
+        """家园收取 —— 一键收获所有建筑产出 + 随机事件 + 流浪商人。"""
+        hs = self.store.homestead_state(player)
+        buildings = hs.get("buildings", {})
+        if not buildings:
+            return "🏜️ 家园空空如也，发送「建造 建筑名」开始建设。"
+        now = int(time.time())
+        wh_level = buildings.get("仓库", {}).get("level", 0) if "仓库" in buildings else 0
+        max_acc = data.homestead_max_accumulate(wh_level)
+        double_next = hs.get("next_collect_bonus", 0.0) > 0.99  # 双倍券处理
+        total_coin = 0
+        total_jifen = 0
+        total_exp = 0
+        lines = ["## 📦 家园收取", ""]
+        for name, b in buildings.items():
+            cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
+            icon = cfg.get("icon", "🏠")
+            lv = b.get("level", 1)
+            elapsed = min(now - b.get("last_collect", now), max_acc)
+            if elapsed < 60 and not double_next:
+                lines.append(f"{icon} {name}：刚收过，暂无产出")
+                continue
+            hours = max(elapsed, 60) / 3600  # 至少1分钟
+            prod = data.homestead_production(name, lv)
+            coin = int(prod.get("coin", 0) * hours)
+            jifen = int(prod.get("jifen", 0) * hours)
+            exp = int(prod.get("exp", 0) * hours) if "exp" in prod else 0
+            # 派遣加成
+            disp_info = hs.get("dispatch", {}).get(name, {})
+            if disp_info:
+                disp_mult = data.homestead_dispatch_multiplier(disp_info, name)
+                coin = int(coin * disp_mult)
+                jifen = int(jifen * disp_mult)
+                exp = int(exp * disp_mult)
+                # 扣除派遣精力
+                pet_obj = player.get("pet") or {}
+                energy_cost = int(data.HOMESTEAD_DISPATCH_ENERGY_PER_HOUR * hours)
+                if pet_obj and disp_info.get("qq") == str(player.get("qq", "")):
+                    pet_obj["energy"] = max(0, pet_obj.get("energy", 100) - energy_cost)
+            h, m = divmod(int(elapsed // 60), 60)
+            time_str = f"{h}时{m}分" if h > 0 else f"{m}分钟"
+            parts = []
+            if coin:
+                parts.append(f"💰 +{coin}")
+                total_coin += coin
+            if jifen:
+                parts.append(f"💎 +{jifen}")
+                total_jifen += jifen
+            if exp:
+                parts.append(f"📖 +{exp}exp")
+                total_exp += exp
+            disp_tag = f" [🐾×{data.homestead_dispatch_multiplier(disp_info, name):.1f}]" if disp_info else ""
+            if parts:
+                lines.append(f"{icon} {name} Lv{lv}{disp_tag}（{time_str}）：{' · '.join(parts)}")
+            else:
+                lines.append(f"{icon} {name} Lv{lv}（{time_str}）：无产出")
+            b["last_collect"] = now
+        if total_coin == 0 and total_jifen == 0 and total_exp == 0 and not double_next:
+            return "⏳ 建筑刚刚收过，稍等片刻再来。"
+        # 双倍券
+        if double_next:
+            total_coin *= 2
+            total_jifen *= 2
+            total_exp *= 2
+            hs["next_collect_bonus"] = 0.0
+        # 随机事件（用祈福坛加权）
+        event = data.homestead_roll_event(hs)
+        mult = event.get("mult", 1.0)
+        next_bonus = hs.get("next_collect_bonus", 0.0)
+        if next_bonus > 0:
+            mult += next_bonus
+            hs["next_collect_bonus"] = 0.0
+            lines.append(f"📈 上次暴风雨补偿：+{int(next_bonus * 100)}%！")
+        # 地脉涌动
+        extra_all = event.get("extra_all", 0)
+        if extra_all > 1:
+            mult *= extra_all
+        if mult != 1.0:
+            total_coin = int(total_coin * mult)
+            total_jifen = int(total_jifen * mult)
+            total_exp = int(total_exp * mult)
+        # 宠物帮忙事件
+        pet_bonus = event.get("pet_bonus", 0)
+        pet_bonus_text = ""
+        if pet_bonus:
+            p = player.get("pet") or {}
+            pet_lv = p.get("level", 1)
+            bonus_coin = int(total_coin * pet_bonus * pet_lv / 100)
+            bonus_jifen = int(total_jifen * pet_bonus * pet_lv / 100)
+            total_coin += bonus_coin
+            total_jifen += bonus_jifen
+            pet_bonus_text = f"金币+{bonus_coin} 积分+{bonus_jifen}"
+        # 幸运日额外金币
+        extra_coin_range = event.get("extra_coin")
+        extra_text = ""
+        if extra_coin_range:
+            extra = random.randint(*extra_coin_range)
+            total_coin += extra
+            extra_text = f"+{extra}"
+        # 下次加成
+        next_bonus_set = event.get("next_bonus", 0)
+        if next_bonus_set:
+            hs["next_collect_bonus"] = next_bonus_set
+        # 事件文本
+        event_text = event.get("text", "")
+        if event_text:
+            event_text = event_text.replace("{bonus}", pet_bonus_text or extra_text)
+            lines.append("")
+            lines.append(f"{event.get('emoji', '')} {event_text}")
+        # 流浪商人
+        merchant = event.get("merchant")
+        if merchant:
+            hs["merchant_pending"] = self._homestead_gen_merchant()
+            lines.append("")
+            lines.append("🧳 **流浪商人**带来了货物！发送「**商人购买 编号**」购买：")
+            for i, item in enumerate(hs["merchant_pending"], 1):
+                price_type = "金币" if item["price_type"] == "coin" else "积分"
+                lines.append(f"　{i}. {item['name']} — {item['price']} {price_type}（{item['desc']}）")
+            lines.append("　发送「**商人购买 0**」不买。")
+        # 发放
+        if total_coin:
+            player["coin"] = player.get("coin", 0) + total_coin
+        if total_jifen:
+            player["jifen"] = player.get("jifen", 0) + total_jifen
+        if total_exp:
+            p = player.get("pet")
+            if p:
+                p["exp"] = p.get("exp", 0) + total_exp
+                self._auto_level(player)
+        # 家园经验 + 排行统计
+        hs["exp"] = hs.get("exp", 0) + 5
+        levelup = self._homestead_check_levelup(hs)
+        self._homestead_update_weekly(hs)
+        hs["total_coin_earned"] = hs.get("total_coin_earned", 0) + total_coin
+        summary = []
+        if total_coin:
+            summary.append(f"💰 {total_coin} 金币")
+        if total_jifen:
+            summary.append(f"💎 {total_jifen} 积分")
+        if total_exp:
+            summary.append(f"📖 {total_exp} 经验")
+        lines.append("")
+        lines.append(f"✅ 收取完成！{' · '.join(summary)}")
+        if levelup:
+            lines.append(levelup)
+        return "\n".join(lines)
+
+    def _homestead_buildings(self, player: dict) -> str:
+        """家园建筑 —— 查看全部建筑图鉴和详细信息。"""
+        hs = self.store.homestead_state(player)
+        built = hs.get("buildings", {})
+        dispatch = hs.get("dispatch", {})
+        wh_level = built.get("仓库", {}).get("level", 0) if "仓库" in built else 0
+        max_acc = data.homestead_max_accumulate(wh_level)
+        defense = data.homestead_defense(hs)
+        p = player.get("pet") or {}
+        pet_level = p.get("level", 1)
+        lines = ["## 🏗️ 家园建筑图鉴", ""]
+        for name, cfg in data.HOMESTEAD_BUILDINGS.items():
+            icon = cfg.get("icon", "🏠")
+            disp_info = dispatch.get(name, {})
+            if name in built:
+                b = built[name]
+                lv = b["level"]
+                prod_text = self._homestead_prod_text(name, lv)
+                next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
+                lines.append(f"{icon} **{name}** Lv{lv}（已建造）")
+                lines.append(f"　产量：{prod_text}")
+                if disp_info:
+                    mult = data.homestead_dispatch_multiplier(disp_info, name)
+                    lines.append(f"　🐾 派遣：{disp_info.get('qq','?')} ×{mult}")
+                lines.append(f"　⬆️ 升级 Lv{lv + 1} 需 {next_cost} 金币")
+            else:
+                req_lv = cfg.get("unlock_pet_level", 0)
+                if req_lv and pet_level < req_lv:
+                    lines.append(f"{icon} **{name}**（🔒 需宠物 Lv{req_lv}）")
+                else:
+                    lines.append(f"{icon} **{name}**（可建造 · {cfg['build_cost']} 金币）")
+                lines.append(f"　{cfg['desc']}")
+                lines.append(f"　Lv1 表现：{self._homestead_prod_text(name, 1)}")
+            lines.append("")
+        lines.append(f"🏡 Lv{hs['level']} · 建筑位 {len(built)}/{data.homestead_slots(hs['level'])} · 防御 {defense} · 离线上限 {max_acc // 3600}h")
+        return "\n".join(lines)
+
+    def _homestead_visit(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """拜访家园 / 家园拜访 —— 拜访好友家园。"""
+        hs = self.store.homestead_state(player)
+        today = time.strftime("%Y-%m-%d")
+        if hs.get("visit_date") != today:
+            hs["visit_date"] = today
+            hs["visit_today"] = 0
+        if hs["visit_today"] >= data.HOMESTEAD_VISIT_MAX_PER_DAY:
+            return f"今日拜访次数已用完（{data.HOMESTEAD_VISIT_MAX_PER_DAY}/天），明天再来。"
+        if len(tokens) < 2:
+            return f"用法：拜访家园 用户ID（今日剩余 {data.HOMESTEAD_VISIT_MAX_PER_DAY - hs['visit_today']} 次）"
+        target_qq = tokens[1]
+        tp = self.store.get_player(target_qq, group_id, create=False)
+        if not tp:
+            return f"本群不存在用户 {target_qq}。"
+        ths = self.store.homestead_state(tp)
+        tbuildings = ths.get("buildings", {})
+        tdispatch = ths.get("dispatch", {})
+        hs["visit_today"] += 1
+        player["coin"] = player.get("coin", 0) + data.HOMESTEAD_VISIT_REWARD_COIN
+        tp["coin"] = tp.get("coin", 0) + data.HOMESTEAD_VISITED_REWARD_COIN
+        tdefense = data.homestead_defense(ths)
+        lines = [
+            f"## 🏡 拜访 {target_qq} 的家园",
+            f"🏡 Lv{ths['level']} · {len(tbuildings)}/{data.homestead_slots(ths['level'])} 建筑位 · 🛡️ 防御 {tdefense}",
+            "",
+        ]
+        if not tbuildings:
+            lines.append("🏜️ 一片荒芜...")
+        else:
+            for name, b in tbuildings.items():
+                cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
+                icon = cfg.get("icon", "🏠")
+                lv = b.get("level", 1)
+                prod_text = self._homestead_prod_text(name, lv)
+                disp_tag = ""
+                if name in tdispatch:
+                    disp_tag = f" [🐾{tdispatch[name].get('qq','?')}]"
+                lines.append(f"{icon} **{name}** Lv{lv}{disp_tag}　{prod_text}")
+        lines.append("")
+        lines.append(f"🤝 拜访成功！你 +{data.HOMESTEAD_VISIT_REWARD_COIN} 金，对方 +{data.HOMESTEAD_VISITED_REWARD_COIN} 金。")
+        remain = data.HOMESTEAD_VISIT_MAX_PER_DAY - hs["visit_today"]
+        lines.append(f"📅 剩余拜访 {remain} 次 · 💀 也可「顺手牵羊 {target_qq}」偷菜！")
+        return "\n".join(lines)
+
+    # =====================================================================
+    # 宠物派遣
+    # =====================================================================
+    def _homestead_dispatch(self, player: dict, tokens: list[str]) -> str:
+        """派遣 建筑名 —— 将自己的宠物派遣到建筑上，提升产量。"""
+        hs = self.store.homestead_state(player)
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，无法派遣。"
+        if len(tokens) < 2:
+            built = list(hs.get("buildings", {}).keys())
+            if built:
+                return f"用法：派遣 建筑名\n可选：{' · '.join(built)}"
+            return "你还没有建筑，先发送「建造 建筑名」。"
+        name = tokens[1]
+        if name not in hs.get("buildings", {}):
+            return f"你还没有建造{name}。"
+        if p.get("energy", 0) < data.HOMESTEAD_DISPATCH_MIN_ENERGY:
+            return f"宠物精力不足（需 ≥{data.HOMESTEAD_DISPATCH_MIN_ENERGY}，当前 {p.get('energy', 0)}）。"
+        # 检查是否已派遣到其他建筑
+        dispatch = hs.get("dispatch", {})
+        my_qq = str(player.get("qq", ""))
+        for bname, dp in dispatch.items():
+            if dp.get("qq") == my_qq:
+                return f"宠物已派遣到{bname}，先发送「**召回 {bname}**」。"
+        cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
+        mult = data.homestead_dispatch_multiplier(p, name)
+        element_tag = ""
+        if cfg.get("prefer_element") == p.get("element", ""):
+            element_tag = "（属性匹配 +10%）"
+        dispatch[name] = {
+            "qq": my_qq,
+            "level": p.get("level", 1),
+            "quality": p.get("quality", "普通"),
+            "element": p.get("element", ""),
+            "since": int(time.time()),
+        }
+        icon = cfg.get("icon", "")
+        return (
+            f"🐾 宠物已派遣到 {icon}**{name}**！\n"
+            f"● 产量倍率：×**{mult}**{element_tag}\n"
+            f"● 每小时消耗 {data.HOMESTEAD_DISPATCH_ENERGY_PER_HOUR} 点精力\n"
+            f"● 发送「**召回 {name}**」召回宠物"
+        )
+
+    def _homestead_recall(self, player: dict, tokens: list[str]) -> str:
+        """召回 建筑名 —— 从建筑上召回宠物。"""
+        hs = self.store.homestead_state(player)
+        dispatch = hs.get("dispatch", {})
+        my_qq = str(player.get("qq", ""))
+        if len(tokens) < 2:
+            my_dispatch = [b for b, dp in dispatch.items() if dp.get("qq") == my_qq]
+            if my_dispatch:
+                return f"用法：召回 建筑名\n当前派遣：{' · '.join(my_dispatch)}"
+            return "你的宠物当前没有派遣到任何建筑。"
+        name = tokens[1]
+        if name not in dispatch:
+            return f"{name}上没有派遣宠物。"
+        if dispatch[name].get("qq") != my_qq:
+            return "这不是你的宠物，你只能召回自己的宠物。"
+        dispatch.pop(name)
+        return f"🐾 已从{name}召回宠物。"
+
+    def _homestead_dispatch_status(self, player: dict) -> str:
+        """派遣状态 —— 查看当前所有建筑的派遣情况。"""
+        hs = self.store.homestead_state(player)
+        dispatch = hs.get("dispatch", {})
+        if not dispatch:
+            return "当前没有派遣任何宠物。发送「派遣 建筑名」派遣。"
+        lines = ["## 🐾 派遣状态", ""]
+        for name, dp in dispatch.items():
+            cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
+            icon = cfg.get("icon", "🏠")
+            mult = data.homestead_dispatch_multiplier(dp, name)
+            elapsed = int(time.time()) - dp.get("since", int(time.time()))
+            h, m = divmod(elapsed // 60, 60)
+            time_str = f"{h}时{m}分" if h > 0 else f"{m}分钟"
+            lines.append(f"{icon} **{name}** ← {dp.get('qq','?')}（Lv{dp.get('level',1)} {dp.get('quality','')}）")
+            lines.append(f"　倍率 ×{mult} · 已派遣 {time_str}")
+        return "\n".join(lines)
+
+    # =====================================================================
+    # 偷菜系统
+    # =====================================================================
+    def _homestead_steal(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """顺手牵羊 / 偷菜 QQ —— 尝试偷取目标家园的未收资源。"""
+        hs = self.store.homestead_state(player)
+        today = time.strftime("%Y-%m-%d")
+        if hs.get("steal_date") != today:
+            hs["steal_date"] = today
+            hs["steal_today"] = 0
+        if hs["steal_today"] >= data.HOMESTEAD_STEAL_MAX_PER_DAY:
+            return f"今日偷菜次数已用完（{data.HOMESTEAD_STEAL_MAX_PER_DAY}/天），明天再来。"
+        if len(tokens) < 2:
+            return f"用法：顺手牵羊 用户ID（今日剩余 {data.HOMESTEAD_STEAL_MAX_PER_DAY - hs['steal_today']} 次）"
+        target_qq = tokens[1]
+        if target_qq == str(player.get("qq", "")):
+            return "不能偷自己的家园！"
+        tp = self.store.get_player(target_qq, group_id, create=False)
+        if not tp:
+            return f"本群不存在用户 {target_qq}。"
+        ths = self.store.homestead_state(tp)
+        # 检查护院符
+        if ths.get("shield_until", 0) > int(time.time()):
+            remain = ths["shield_until"] - int(time.time())
+            h, m = divmod(remain // 60, 60)
+            return f"🛡️ 该家园有护院符保护（剩余 {h}时{m}分），无法偷取。"
+        # 检查冷却
+        steal_targets = hs.get("steal_targets", {})
+        last_steal = steal_targets.get(target_qq, 0)
+        if int(time.time()) - last_steal < data.HOMESTEAD_STEAL_COOLDOWN_SAME:
+            remain = data.HOMESTEAD_STEAL_COOLDOWN_SAME - (int(time.time()) - last_steal)
+            m = remain // 60
+            return f"刚偷过 {target_qq} 的家园，请 {m} 分钟后再来。"
+        # 检查目标被偷次数
+        if ths.get("be_stolen_date") != today:
+            ths["be_stolen_date"] = today
+            ths["be_stolen_today"] = 0
+        if ths.get("be_stolen_today", 0) >= data.HOMESTEAD_MAX_BE_STOLEN_PER_DAY:
+            return f"目标今日已被偷 {data.HOMESTEAD_MAX_BE_STOLEN_PER_DAY} 次，无法再偷。"
+        # 检查目标是否有未收资源
+        tbuildings = ths.get("buildings", {})
+        if not tbuildings:
+            return f"目标家园一片荒芜，没什么可偷的。"
+        now = int(time.time())
+        t_coin = 0
+        t_jifen = 0
+        wh_level = tbuildings.get("仓库", {}).get("level", 0) if "仓库" in tbuildings else 0
+        t_max_acc = data.homestead_max_accumulate(wh_level)
+        for name, b in tbuildings.items():
+            elapsed = min(now - b.get("last_collect", now), t_max_acc)
+            if elapsed < 300:
+                continue
+            prod = data.homestead_production(name, b.get("level", 1))
+            t_coin += int(prod.get("coin", 0) * elapsed / 3600)
+            t_jifen += int(prod.get("jifen", 0) * elapsed / 3600)
+        if t_coin == 0 and t_jifen == 0:
+            return "目标家园暂时没什么可偷的（资源刚被收走）。"
+        # 计算成功率
+        attacker_pet = player.get("pet") or {}
+        attacker_lv = attacker_pet.get("level", 1)
+        target_defense = data.homestead_defense(ths)
+        success_rate = data.homestead_steal_success_rate(attacker_lv, target_defense)
+        hs["steal_today"] += 1
+        steal_targets[target_qq] = int(time.time())
+        hs["steal_targets"] = steal_targets
+        if random.random() < success_rate:
+            ratio = random.uniform(data.HOMESTEAD_STEAL_RATIO_MIN, data.HOMESTEAD_STEAL_RATIO_MAX)
+            stolen_coin = int(t_coin * ratio)
+            stolen_jifen = int(t_jifen * ratio)
+            player["coin"] = player.get("coin", 0) + stolen_coin
+            player["jifen"] = player.get("jifen", 0) + stolen_jifen
+            tp["coin"] = max(0, tp.get("coin", 0) - stolen_coin // 2)  # 目标损失一半
+            tp["jifen"] = max(0, tp.get("jifen", 0) - stolen_jifen // 2)
+            ths["be_stolen_today"] = ths.get("be_stolen_today", 0) + 1
+            return (
+                f"💀 **偷菜成功！**（成功率 {success_rate:.0%}）\n"
+                f"● 偷得 {target_qq} 的 💰{stolen_coin} 金币 + 💎{stolen_jifen} 积分\n"
+                f"● 目标防御力：{target_defense}　今日剩余偷取：{data.HOMESTEAD_STEAL_MAX_PER_DAY - hs['steal_today']} 次"
+            )
+        else:
+            player["coin"] = max(0, player.get("coin", 0) - data.HOMESTEAD_STEAL_FAIL_PENALTY)
+            tp["coin"] = tp.get("coin", 0) + data.HOMESTEAD_STEAL_FAIL_PENALTY
+            return (
+                f"🚨 **偷菜被抓！**（成功率 {success_rate:.0%}）\n"
+                f"● 被 {target_qq} 的哨塔发现了！赔偿 {data.HOMESTEAD_STEAL_FAIL_PENALTY} 金币\n"
+                f"● 目标防御力：{target_defense}"
+            )
+
+    # =====================================================================
+    # 流浪商人
+    # =====================================================================
+    def _homestead_gen_merchant(self) -> list[dict]:
+        """生成流浪商人货架（随机 3 件）。"""
+        items = random.sample(data.HOMESTEAD_MERCHANT_ITEMS, min(3, len(data.HOMESTEAD_MERCHANT_ITEMS)))
+        return items
+
+    def _homestead_merchant_buy(self, player: dict, tokens: list[str]) -> str:
+        """商人购买 编号 —— 从流浪商人处购买物品（0=不买）。"""
+        hs = self.store.homestead_state(player)
+        merchant = hs.get("merchant_pending")
+        if not merchant:
+            return "当前没有商人来访。收取时有一定概率遇到流浪商人。"
+        if len(tokens) < 2:
+            lines = ["## 🧳 流浪商人", ""]
+            for i, item in enumerate(merchant, 1):
+                price_type = "金币" if item["price_type"] == "coin" else "积分"
+                lines.append(f"{i}. {item['name']} — {item['price']} {price_type}（{item['desc']}）")
+            lines.append("")
+            lines.append("发送「**商人购买 编号**」购买，「**商人购买 0**」不买。")
+            return "\n".join(lines)
+        try:
+            idx = int(tokens[1])
+        except ValueError:
+            return "编号请输入数字。"
+        if idx == 0:
+            hs["merchant_pending"] = None
+            return "🧳 商人离开了。下次再来吧！"
+        if idx < 1 or idx > len(merchant):
+            return f"编号 1~{len(merchant)}，或 0 不买。"
+        item = merchant[idx - 1]
+        price_type = item["price_type"]
+        price = item["price"]
+        currency = "金币" if price_type == "coin" else "积分"
+        wallet = player.get("coin" if price_type == "coin" else "jifen", 0)
+        if wallet < price:
+            return f"{currency}不足（需 {price}，当前 {wallet}）。"
+        if price_type == "coin":
+            player["coin"] -= price
+        else:
+            player["jifen"] -= price
+        hs["merchant_pending"] = None
+        # 处理效果类物品
+        effect = item.get("effect")
+        if effect == "speed_2h":
+            # 建筑加速：所有建筑 last_collect 往前推 2 小时
+            for b in hs.get("buildings", {}).values():
+                b["last_collect"] = max(b.get("last_collect", 0), int(time.time())) - 7200
+            return f"⚡ 使用**建筑加速券**！所有建筑累积时间 +2 小时，快去收取！"
+        if effect == "shield_12h":
+            hs["shield_until"] = int(time.time()) + 43200
+            return "🛡️ 使用**护院符**！12 小时内免疫偷菜。"
+        if effect == "double_next":
+            hs["next_collect_bonus"] = 1.0
+            return "✨ 使用**双倍券**！下次收取产量翻倍。"
+        # 普通物品
+        item_name = item.get("item", "")
+        item_count = item.get("item_count", 1)
+        if item_name:
+            bag = player.setdefault("bag", {})
+            bag[item_name] = bag.get(item_name, 0) + item_count
+        return f"🧳 购买成功！获得 **{item['name']}**，花费 {price} {currency}。发送「查看背包」查看。"
+
+    # =====================================================================
+    # 家园排行
+    # =====================================================================
+    def _homestead_rank(self, player: dict) -> str:
+        """家园排行 —— 本周金币产出排行。"""
+        all_players = self.store._data.get("homestead_players", {})
+        entries = []
+        for qq, hs in all_players.items():
+            self._homestead_update_weekly(hs)
+            weekly = hs.get("weekly_coin", 0)
+            level = hs.get("level", 1)
+            if weekly > 0:
+                entries.append({"qq": qq, "weekly": weekly, "level": level, "total": hs.get("total_coin_earned", 0)})
+        entries.sort(key=lambda x: x["weekly"], reverse=True)
+        top = entries[:data.HOMESTEAD_RANK_SIZE]
+        lines = ["## 🏆 家园排行（本周金币产出）", ""]
+        my_qq = str(player.get("qq", ""))
+        for i, e in enumerate(top):
+            medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
+            lines.append(f"{medal} {e['qq']} — 💰 {e['weekly']} 金（Lv{e['level']}）")
+        # 我的排名
+        my_weekly = hs.get("weekly_coin", 0)
+        my_rank = next((i + 1 for i, e in enumerate(entries) if e["qq"] == my_qq), None)
+        lines.append("")
+        if my_rank:
+            lines.append(f"📊 你的排名：第 {my_rank} 名（💰 {my_weekly} 金）")
+        else:
+            lines.append(f"📊 你本周暂无产出。快去建造家园！")
+        # 奖励预告
+        lines.append(f"🏅 周榜前 3 奖励：🥇{data.HOMESTEAD_RANK_REWARD_COIN[1]} 🥈{data.HOMESTEAD_RANK_REWARD_COIN[2]} 🥉{data.HOMESTEAD_RANK_REWARD_COIN[3]} 金币")
+        return "\n".join(lines)
+
+    def _homestead_total_rank(self, player: dict) -> str:
+        """家园总排行 —— 累计金币产出排行。"""
+        all_players = self.store._data.get("homestead_players", {})
+        entries = []
+        for qq, hs in all_players.items():
+            total = hs.get("total_coin_earned", 0)
+            level = hs.get("level", 1)
+            if total > 0:
+                entries.append({"qq": qq, "total": total, "level": level})
+        entries.sort(key=lambda x: x["total"], reverse=True)
+        top = entries[:data.HOMESTEAD_RANK_SIZE]
+        lines = ["## 🏆 家园总排行（累计金币产出）", ""]
+        for i, e in enumerate(top):
+            medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
+            lines.append(f"{medal} {e['qq']} — 💰 {e['total']} 金（Lv{e['level']}）")
+        my_qq = str(player.get("qq", ""))
+        my_total = hs.get("total_coin_earned", 0)
+        my_rank = next((i + 1 for i, e in enumerate(entries) if e["qq"] == my_qq), None)
+        lines.append("")
+        if my_rank:
+            lines.append(f"📊 你的排名：第 {my_rank} 名（💰 {my_total} 金）")
+        return "\n".join(lines)
+
+    # ---- 家园辅助 ----
+    def _homestead_prod_text(self, name: str, level: int) -> str:
+        """格式化建筑产量文本。"""
+        prod = data.homestead_production(name, level)
+        parts = []
+        if prod.get("coin"):
+            parts.append(f"💰 {prod['coin']}/时")
+        if prod.get("jifen"):
+            parts.append(f"💎 {prod['jifen']}/时")
+        if prod.get("exp"):
+            parts.append(f"📖 {prod['exp']}/时")
+        return " · ".join(parts) if parts else "—"
+
+    def _homestead_update_weekly(self, hs: dict) -> None:
+        """更新本周统计（周一重置）。"""
+        today = time.strftime("%Y-%m-%d")
+        import datetime as _dt
+        weekday = _dt.datetime.now().weekday()
+        week_key = f"{today}_{weekday}"
+        if hs.get("weekly_date") != today and weekday == 0:
+            # 周一重置
+            if hs.get("weekly_date", "")[:10] != today[:10]:
+                hs["weekly_coin"] = 0
+        hs["weekly_date"] = today
+
+    def _homestead_check_levelup(self, hs: dict) -> str:
+        """检查并处理家园升级。"""
+        level = hs["level"]
+        exp = hs["exp"]
+        need = data.homestead_exp_to_next(level)
+        if exp >= need:
+            hs["level"] += 1
+            hs["exp"] = exp - need
+            new_level = hs["level"]
+            new_slots = data.homestead_slots(new_level)
+            return f"🎉 **家园升级！** Lv{level} → Lv{new_level}（建筑位 {new_slots} 个）"
+        return ""

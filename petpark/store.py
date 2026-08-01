@@ -87,6 +87,7 @@ class PetStore:
         self._data.setdefault("tomb_active_sessions", {})
         self._data.setdefault("tomb_active_coops", {})
         self._data.setdefault("tomb_active_coop_index", {})
+        self._data.setdefault("homestead_players", {})
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
 
@@ -1658,3 +1659,40 @@ class PetStore:
             if str(entry.get("qq", "")) == str(invitee_qq):
                 return True
         return False
+
+    # ----------------------------- 宠物家园（放置建造 · 数据隔离） -----------------------------
+    @staticmethod
+    def _default_homestead_state() -> dict:
+        return {
+            "level": 1,
+            "exp": 0,
+            "buildings": {},          # {建筑名: {level, last_collect}}
+            "dispatch": {},           # {建筑名: {qq, level, quality, element, since}}  派遣记录
+            "visit_today": 0,
+            "visit_date": "",
+            "next_collect_bonus": 0.0,
+            "steal_today": 0,         # 今日已偷次数
+            "steal_date": "",
+            "steal_targets": {},      # {目标QQ: 最后偷取时间戳}
+            "be_stolen_today": 0,     # 今日被偷次数
+            "be_stolen_date": "",
+            "shield_until": 0,        # 护院符到期时间戳
+            "weekly_coin": 0,         # 本周金币产出（排行用）
+            "weekly_date": "",
+            "total_coin_earned": 0,   # 累计金币产出
+            "merchant_pending": None,  # 待处理的商人货架
+        }
+
+    @classmethod
+    def homestead_state(cls, player: dict) -> dict:
+        """返回玩家家园状态（全局按 QQ 共享，与宠物数据隔离）。"""
+        store = cls._active
+        qq = str(player.get("qq", ""))
+        if store is not None and qq:
+            g = store._data["homestead_players"].setdefault(qq, cls._default_homestead_state())
+            # 兼容旧字段
+            for field, default in cls._default_homestead_state().items():
+                if field not in g:
+                    g[field] = default
+            return g
+        return player.setdefault("_homestead_fallback", cls._default_homestead_state())
