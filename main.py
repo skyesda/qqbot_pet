@@ -1347,6 +1347,8 @@ class PetParkPlugin(Star):
         """处理一条指令。返回 None / 文本字符串 / (文本, 图片路径) 二元组。"""
         tokens = text.split()
         cmd = tokens[0]
+        if cmd.startswith("家园"):
+            logger.info(f"[petpark-DEBUG] dispatch cmd={cmd!r} tokens={tokens!r} text={text!r}")
         # 扫雷紧凑指令归一化：扫a1b2 → 扫 a1b2；插旗a1 → 插旗 a1；开始扫雷2 → 开始扫雷 2
         m = _MS_COMPACT_RE.match(cmd)
         if m:
