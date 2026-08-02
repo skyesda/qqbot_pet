@@ -1144,42 +1144,78 @@ class PetParkPlugin(Star):
         return tp, None
 
     @staticmethod
-    def _check_daily_transfer_limit(
+    def _check_transfer_limit(
         sender: dict, target: dict, group_id: str, count: int,
-        check_count_limit: bool = True,
-    ) -> str | None:
-        """检查每日转让限制：同群两人之间每天合计最多10次，道具单次最多10个。返回错误提示或 None。"""
-        if check_count_limit and count > 10:
-            return "每次转让数量不能超过 10 个。"
+        transfer_type: str = "item",
+    ) -> tuple[str | None, float]:
+        """检查转让/赠送限制，返回 (错误提示, 税率)。
+
+        transfer_type: "coin" / "jifen" / "diamond" / "item" / "pet"
+        规则：
+        1. 每日所有转让合计 ≤ TRANSFER_DAILY_MAX_OPS 次
+        2. 货币类单次 ≤ TRANSFER_PER_TX_MAX
+        3. 道具类单次 ≤ 10 个
+        4. 货币税 20%，道具税 10%
+        5. 7天内向同一人转让 ≥ TRANSFER_WEEKLY_SAME_LIMIT 次 → 双倍税
+        """
         qq1 = str(sender.get("qq", ""))
         qq2 = str(target.get("qq", ""))
         if qq1 == qq2:
-            return "不能转让给自己。"
+            return "不能转让/赠送给自己。", 0.0
+
+        # ---- 每日总次数检查 ----
         today = time.strftime("%Y-%m-%d")
-        # 规范化 pair key：按用户ID排序，确保双向共享同一计数
-        a, b = (qq1, qq2) if qq1 < qq2 else (qq2, qq1)
-        pair_key = f"{group_id}:{a}:{b}:{today}"
-        sender.setdefault("_daily_transfers", {})
-        # 清理过期条目（非今天的 key）
-        stale = [k for k in sender["_daily_transfers"] if not k.endswith(f":{today}")]
-        for k in stale:
-            del sender["_daily_transfers"][k]
-        current = sender["_daily_transfers"].get(pair_key, 0)
-        if current >= 10:
+        sender.setdefault("_tx_daily", {})
+        if sender["_tx_daily"].get("date") != today:
+            sender["_tx_daily"] = {"date": today, "count": 0}
+        if sender["_tx_daily"]["count"] >= data.TRANSFER_DAILY_MAX_OPS:
             return (
-                f"今日你与 `{qq2}` 之间的转让次数已达上限（10次/天），"
-                "明天再来吧。"
+                f"今日转让/赠送次数已达上限（{data.TRANSFER_DAILY_MAX_OPS}次/天），明天再来。",
+                0.0,
             )
-        # 增量计数（双方同步）
-        sender["_daily_transfers"][pair_key] = current + 1
-        target.setdefault("_daily_transfers", {})
-        stale_t = [k for k in target["_daily_transfers"] if not k.endswith(f":{today}")]
-        for k in stale_t:
-            del target["_daily_transfers"][k]
-        target["_daily_transfers"][pair_key] = (
-            target["_daily_transfers"].get(pair_key, 0) + 1
-        )
-        return None
+
+        # ---- 单次数量检查 ----
+        if transfer_type in ("coin", "jifen", "diamond"):
+            if count > data.TRANSFER_PER_TX_MAX:
+                return (
+                    f"单次{transfer_type}转让不能超过 {data.TRANSFER_PER_TX_MAX}。",
+                    0.0,
+                )
+        elif transfer_type == "item" and count > 10:
+            return "每次道具转让不能超过 10 个。", 0.0
+
+        # ---- 税率计算：基础税率 + 高频双倍税 ----
+        tax_map = {
+            "coin": data.TRANSFER_TAX_COIN,
+            "jifen": data.TRANSFER_TAX_JIFEN,
+            "diamond": data.TRANSFER_TAX_DIAMOND,
+            "item": data.TRANSFER_TAX_ITEM,
+            "pet": 0.0,
+        }
+        base_tax = tax_map.get(transfer_type, data.TRANSFER_TAX_ITEM)
+
+        # 检查 7 天内向同一人的转让次数
+        now = int(time.time())
+        week_ago = now - 7 * 86400
+        sender.setdefault("_tx_history", {})
+        target_key = f"{group_id}:{qq2}"
+        history = sender["_tx_history"].setdefault(target_key, [])
+        # 清理过期
+        history[:] = [ts for ts in history if ts > week_ago]
+        same_user_count = len(history)
+
+        if same_user_count >= data.TRANSFER_WEEKLY_SAME_LIMIT:
+            tax_rate = round(base_tax * data.TRANSFER_DOUBLE_TAX_MULT, 4)
+            double_tag = True
+        else:
+            tax_rate = base_tax
+            double_tag = False
+
+        # ---- 更新计数 ----
+        sender["_tx_daily"]["count"] += 1
+        history.append(now)
+
+        return None, tax_rate
 
     @staticmethod
     def _inc_stat(player: dict, key: str, n: int = 1) -> None:
@@ -3780,9 +3816,26 @@ class PetParkPlugin(Star):
             return "🔒 宠物已锁定，无法赠送。如需赠送请先发送『解锁宠物』。"
         if tp.get("pet"):
             return "对方已经有宠物了，无法接收。"
+        # 转让限制检查
+        limit_err, _ = self._check_transfer_limit(player, tp, group_id, 1, "pet")
+        if limit_err:
+            return limit_err
+        # 赠送宠物品质降 1 档
+        old_quality = p.get("quality", "普通")
+        qualities = list(data.QUALITY_GROWTH.keys())
+        old_idx = qualities.index(old_quality) if old_quality in qualities else 0
+        if old_idx > 0:
+            new_idx = old_idx - 1
+            p["quality"] = qualities[new_idx]
+            quality_penalty = f"（品质 {old_quality} → {qualities[new_idx]}）"
+        else:
+            quality_penalty = ""
         tp["pet"] = p
         player["pet"] = None
-        return f"🎁 已将『{p['nickname']}』赠送给 `{target}`。"
+        msg = f"🎁 已将『{p['nickname']}』赠送给 `{target}`。"
+        if quality_penalty:
+            msg += f"\n⚠️ 跨号赠送品质降档：{quality_penalty}"
+        return msg
 
     def _release(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -4058,42 +4111,52 @@ class PetParkPlugin(Star):
             return err
         name = tokens[2]
         count = self._parse_count(tokens, 3)
-        limit_err = self._check_daily_transfer_limit(player, tp, group_id, count)
+        limit_err, tax_rate = self._check_transfer_limit(player, tp, group_id, count, "item")
         if limit_err:
             return limit_err
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
+        tax_count = max(1, int(count * tax_rate))  # 道具税至少扣 1 个
+        receive_count = count - tax_count
         self.store.remove_item(player, name, count)
-        self.store.add_item(tp, name, count)
-        return f"📦 已转让 {name} ×{count} 给 `{target}`。"
+        self.store.add_item(tp, name, receive_count)
+        tax_info = f"（税 {tax_count} 个，{tax_rate:.0%}）" if tax_count > 0 else ""
+        if tax_rate > data.TRANSFER_TAX_ITEM:
+            tax_info += " ⚠️ 本周转让频繁，税率已翻倍"
+        return f"📦 已转让 {name} ×{receive_count} 给 `{target}`{tax_info}。"
 
     def _gift_currency(
         self, player: dict, group_id: str, cmd: str, tokens: list[str]
     ) -> str:
-        # 赠送金币 用户ID 数量
+        # 赠送金币/积分/钻石 用户ID 数量
         currency = cmd.replace("赠送", "")
+        tx_type = {"金币": "coin", "积分": "jifen", "钻石": "diamond"}.get(currency, "coin")
         if len(tokens) < 3:
-            return f"用法：{cmd} 用户ID 数量"
+            return f"用法：{cmd} 用户ID 数量（单次上限 {data.TRANSFER_PER_TX_MAX}）"
         target = self._arg(tokens, 1)
         if not target:
             return f"用法：{cmd} 用户ID 数量"
         if not tokens[2].isdigit():
             return "数量必须为正整数。"
         count = max(1, int(tokens[2]))
-        if str(target) == str(player.get("qq", "")):
-            return "不能赠送给自己。"
         tp, err = self._find_target(group_id, target)
         if err:
             return err
-        limit_err = self._check_daily_transfer_limit(player, tp, group_id, count, check_count_limit=False)
+        limit_err, tax_rate = self._check_transfer_limit(player, tp, group_id, count, tx_type)
         if limit_err:
             return limit_err
         have = self.store.get_currency(player, currency)
         if have < count:
             return f"你的{currency}不足（需要 {count}，当前 {have}）。"
+        tax_amount = int(count * tax_rate)
+        receive_amount = count - tax_amount
         self.store.add_currency(player, currency, -count)
-        self.store.add_currency(tp, currency, count)
-        return f"💰 已向 `{target}` 赠送 {currency} ×{count}。"
+        if receive_amount > 0:
+            self.store.add_currency(tp, currency, receive_amount)
+        tax_info = f"（税 {tax_amount}，{tax_rate:.0%}）" if tax_amount > 0 else ""
+        if tax_rate > data.TRANSFER_TAX_COIN:
+            tax_info += " ⚠️ 本周转让频繁，税率已翻倍"
+        return f"💰 已向 `{target}` 赠送 {currency} ×{receive_amount}{tax_info}。"
 
     def _bag_text(self, player: dict) -> str:
         bag = player.get("bag", {})

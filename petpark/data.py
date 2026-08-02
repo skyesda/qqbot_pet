@@ -1939,3 +1939,15 @@ HOMESTEAD_RANK_REWARD_COIN = {1: 5000, 2: 3000, 3: 1000}
 HOMESTEAD_VISIT_MAX_PER_DAY = 3
 HOMESTEAD_VISIT_REWARD_COIN = 50
 HOMESTEAD_VISITED_REWARD_COIN = 20
+
+# ============================================================================
+# 转让/赠送限制（防小号滥用）
+# ============================================================================
+TRANSFER_DAILY_MAX_OPS = 10         # 每天所有转让+赠送合计次数上限
+TRANSFER_PER_TX_MAX = 5000          # 单次金币/积分/钻石转让数量上限
+TRANSFER_TAX_COIN = 0.20            # 金币转让税率
+TRANSFER_TAX_JIFEN = 0.20           # 积分转让税率
+TRANSFER_TAX_DIAMOND = 0.20         # 钻石转让税率
+TRANSFER_TAX_ITEM = 0.10            # 道具转让税率
+TRANSFER_WEEKLY_SAME_LIMIT = 5      # 7天内向同一人转让超过此次数，触发双倍税
+TRANSFER_DOUBLE_TAX_MULT = 2.0      # 双倍税倍率
