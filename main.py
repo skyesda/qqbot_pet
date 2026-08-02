@@ -3820,22 +3820,9 @@ class PetParkPlugin(Star):
         limit_err, _ = self._check_transfer_limit(player, tp, group_id, 1, "pet")
         if limit_err:
             return limit_err
-        # 赠送宠物品质降 1 档
-        old_quality = p.get("quality", "普通")
-        qualities = list(data.QUALITY_GROWTH.keys())
-        old_idx = qualities.index(old_quality) if old_quality in qualities else 0
-        if old_idx > 0:
-            new_idx = old_idx - 1
-            p["quality"] = qualities[new_idx]
-            quality_penalty = f"（品质 {old_quality} → {qualities[new_idx]}）"
-        else:
-            quality_penalty = ""
         tp["pet"] = p
         player["pet"] = None
-        msg = f"🎁 已将『{p['nickname']}』赠送给 `{target}`。"
-        if quality_penalty:
-            msg += f"\n⚠️ 跨号赠送品质降档：{quality_penalty}"
-        return msg
+        return f"🎁 已将『{p['nickname']}』赠送给 `{target}`。"
 
     def _release(self, player: dict) -> str:
         p = self._need_pet(player)
