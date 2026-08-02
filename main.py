@@ -352,6 +352,7 @@ WEB_BLOCKED_COMMANDS = {
     "家园排行",
     "家园总排行",
     "商人购买",
+    "拆除",
 }
 
 
@@ -1347,8 +1348,6 @@ class PetParkPlugin(Star):
         """处理一条指令。返回 None / 文本字符串 / (文本, 图片路径) 二元组。"""
         tokens = text.split()
         cmd = tokens[0]
-        if cmd.startswith("家园"):
-            logger.info(f"[petpark-DEBUG] dispatch cmd={cmd!r} tokens={tokens!r} text={text!r}")
         # 扫雷紧凑指令归一化：扫a1b2 → 扫 a1b2；插旗a1 → 插旗 a1；开始扫雷2 → 开始扫雷 2
         m = _MS_COMPACT_RE.match(cmd)
         if m:
@@ -1361,8 +1360,13 @@ class PetParkPlugin(Star):
                 cmd = "开始扫雷"
         # 非本插件指令直接放行，避免为每条普通聊天创建玩家/群档案
         event_cmds = self._active_event_commands()
+        # 家园指令白名单直通（绕过可能的模块缓存问题）
+        _HS_CMDS = {"家园", "家园介绍", "家园教程", "建造", "升级", "家园升级", "家园收取",
+                     "家园建筑", "拜访家园", "家园拜访", "派遣", "召回", "派遣状态",
+                     "顺手牵羊", "偷菜", "家园排行", "家园总排行", "商人购买", "拆除"}
         if (
             cmd not in KNOWN_COMMANDS
+            and cmd not in _HS_CMDS
             and text not in data.DAILY_ACTIONS
             and cmd not in event_cmds
             and text not in event_cmds
@@ -1783,6 +1787,8 @@ class PetParkPlugin(Star):
             return self._homestead_total_rank(player)
         if cmd == "商人购买":
             return self._homestead_merchant_buy(player, tokens)
+        if cmd == "拆除":
+            return self._homestead_demolish(player, tokens)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -3516,6 +3522,7 @@ class PetParkPlugin(Star):
                 "- 家园 · 建造 建筑名 · 升级 建筑名",
                 "- 派遣 建筑名 · 召回 建筑名 · 派遣状态",
                 "- 家园收取 · 家园建筑 · 商人购买 编号",
+                "- 拆除 建筑名（返还20%费用）",
                 "- 拜访家园 QQ · 顺手牵羊 QQ（偷菜）",
                 "- 家园排行 · 家园总排行",
                 "> 🏗️ 7种建筑：金币矿/积分工坊/聚宝盆/经验泉/仓库/哨塔/祈福坛",
@@ -10976,6 +10983,41 @@ class PetParkPlugin(Star):
         if levelup:
             lines.append(levelup)
         return "\n".join(lines)
+
+    def _homestead_demolish(self, player: dict, tokens: list[str]) -> str:
+        """拆除 建筑名 —— 拆除家园建筑，返还 20% 建造+升级费用。"""
+        hs = self.store.homestead_state(player)
+        buildings = hs.get("buildings", {})
+        if len(tokens) < 2:
+            built = list(buildings.keys())
+            if built:
+                tips = " · ".join(f"{b}(Lv{buildings[b]['level']})" for b in built)
+                return f"用法：拆除 建筑名\n当前建筑：{tips}\n⚠️ 拆除仅返还 **20%** 费用！"
+            return "你还没有任何建筑。"
+        name = tokens[1]
+        if name not in buildings:
+            return f"没有找到建筑『{name}』。当前建筑：{' · '.join(buildings)}"
+        cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
+        b = buildings[name]
+        current_lv = b["level"]
+        # 计算累计投入：建造费 + 每级升级费
+        total_cost = cfg.get("build_cost", 500)
+        for lv in range(1, current_lv):
+            total_cost += data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
+        refund = int(total_cost * 0.2)
+        player["coin"] = player.get("coin", 0) + refund
+        # 清理派遣
+        dispatch = hs.get("dispatch", {})
+        if name in dispatch:
+            dispatch.pop(name)
+        # 拆除建筑
+        buildings.pop(name)
+        icon = cfg.get("icon", "")
+        return (
+            f"🔨 已拆除 {icon}**{name}** Lv{current_lv}。\n"
+            f"● 累计投入 {total_cost} 金币，返还 **{refund}** 金币（20%）\n"
+            f"● 建筑位已释放（{len(buildings)}/{data.homestead_slots(hs['level'])}）"
+        )
 
     def _homestead_buildings(self, player: dict) -> str:
         """家园建筑 —— 查看全部建筑图鉴和详细信息。"""
