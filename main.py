@@ -1184,7 +1184,7 @@ class PetParkPlugin(Star):
         elif transfer_type == "item" and count > 10:
             return "每次道具转让不能超过 10 个。", 0.0
 
-        # ---- 税率计算：基础税率 + 高频双倍税 ----
+        # ---- 税率计算 ----
         tax_map = {
             "coin": data.TRANSFER_TAX_COIN,
             "jifen": data.TRANSFER_TAX_JIFEN,
@@ -1194,22 +1194,31 @@ class PetParkPlugin(Star):
         }
         base_tax = tax_map.get(transfer_type, data.TRANSFER_TAX_ITEM)
 
+        # 活跃用户判定：连续签到 ≥ 7 天
+        is_active = sender.get("sign_streak", 0) >= 7
+
         # 检查 7 天内向同一人的转让次数
         now = int(time.time())
         week_ago = now - 7 * 86400
         sender.setdefault("_tx_history", {})
         target_key = f"{group_id}:{qq2}"
         history = sender["_tx_history"].setdefault(target_key, [])
-        # 清理过期
         history[:] = [ts for ts in history if ts > week_ago]
         same_user_count = len(history)
+        frequent_same = same_user_count >= data.TRANSFER_WEEKLY_SAME_LIMIT
 
-        if same_user_count >= data.TRANSFER_WEEKLY_SAME_LIMIT:
-            tax_rate = round(base_tax * data.TRANSFER_DOUBLE_TAX_MULT, 4)
-            double_tag = True
+        if is_active:
+            # 活跃用户免税，但高频同用户转让仍收基础税
+            if frequent_same:
+                tax_rate = base_tax
+            else:
+                tax_rate = 0.0
         else:
-            tax_rate = base_tax
-            double_tag = False
+            # 非活跃用户：基础税，高频同用户双倍税
+            if frequent_same:
+                tax_rate = round(base_tax * data.TRANSFER_DOUBLE_TAX_MULT, 4)
+            else:
+                tax_rate = base_tax
 
         # ---- 更新计数 ----
         sender["_tx_daily"]["count"] += 1
@@ -4103,13 +4112,16 @@ class PetParkPlugin(Star):
             return limit_err
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
-        tax_count = max(1, int(count * tax_rate))  # 道具税至少扣 1 个
+        tax_count = max(1, int(count * tax_rate)) if tax_rate > 0 else 0
         receive_count = count - tax_count
         self.store.remove_item(player, name, count)
         self.store.add_item(tp, name, receive_count)
-        tax_info = f"（税 {tax_count} 个，{tax_rate:.0%}）" if tax_count > 0 else ""
-        if tax_rate > data.TRANSFER_TAX_ITEM:
-            tax_info += " ⚠️ 本周转让频繁，税率已翻倍"
+        if tax_rate == 0:
+            tax_info = "（🟢 活跃免税）"
+        elif tax_rate > data.TRANSFER_TAX_ITEM:
+            tax_info = f"（税 {tax_count} 个，{tax_rate:.0%} ⚠️ 高频同用户）"
+        else:
+            tax_info = f"（税 {tax_count} 个，{tax_rate:.0%}）"
         return f"📦 已转让 {name} ×{receive_count} 给 `{target}`{tax_info}。"
 
     def _gift_currency(
@@ -4135,14 +4147,17 @@ class PetParkPlugin(Star):
         have = self.store.get_currency(player, currency)
         if have < count:
             return f"你的{currency}不足（需要 {count}，当前 {have}）。"
-        tax_amount = int(count * tax_rate)
+        tax_amount = int(count * tax_rate) if tax_rate > 0 else 0
         receive_amount = count - tax_amount
         self.store.add_currency(player, currency, -count)
         if receive_amount > 0:
             self.store.add_currency(tp, currency, receive_amount)
-        tax_info = f"（税 {tax_amount}，{tax_rate:.0%}）" if tax_amount > 0 else ""
-        if tax_rate > data.TRANSFER_TAX_COIN:
-            tax_info += " ⚠️ 本周转让频繁，税率已翻倍"
+        if tax_rate == 0:
+            tax_info = "（🟢 活跃免税）"
+        elif tax_rate > data.TRANSFER_TAX_COIN:
+            tax_info = f"（税 {tax_amount}，{tax_rate:.0%} ⚠️ 高频同用户）"
+        else:
+            tax_info = f"（税 {tax_amount}，{tax_rate:.0%}）"
         return f"💰 已向 `{target}` 赠送 {currency} ×{receive_amount}{tax_info}。"
 
     def _bag_text(self, player: dict) -> str:
