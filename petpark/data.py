@@ -1765,7 +1765,7 @@ HOMESTEAD_BUILDINGS = {
     "仓库": {
         "desc": "提升离线累计上限，每级 +2 小时（基础 12h）。",
         "icon": "📦",
-        "build_cost": 800,
+        "build_cost": 10000,
         "base_coin": 0,
         "base_jifen": 0,
         "coin_per_lv": 0,
