@@ -1144,6 +1144,22 @@ class PetParkPlugin(Star):
         return tp, None
 
     @staticmethod
+    def _track_activity(player: dict) -> None:
+        """记录玩家每日活跃度，用于转让免税判定。连续 7 天活跃即享免税。"""
+        today = time.strftime("%Y-%m-%d")
+        last = player.get("last_active_date", "")
+        if last == today:
+            return  # 今天已记录
+        yesterday = time.strftime("%Y-%m-%d", time.localtime(int(time.time()) - 86400))
+        streak = player.get("active_streak", 0)
+        if last == yesterday:
+            streak += 1
+        else:
+            streak = 1  # 断签，重置
+        player["active_streak"] = streak
+        player["last_active_date"] = today
+
+    @staticmethod
     def _check_transfer_limit(
         sender: dict, target: dict, group_id: str, count: int,
         transfer_type: str = "item",
@@ -1194,8 +1210,8 @@ class PetParkPlugin(Star):
         }
         base_tax = tax_map.get(transfer_type, data.TRANSFER_TAX_ITEM)
 
-        # 活跃用户判定：连续签到 ≥ 7 天
-        is_active = sender.get("sign_streak", 0) >= 7
+        # 活跃用户判定：最近 7 天每天都有游玩（使用任意指令）
+        is_active = sender.get("active_streak", 0) >= 7
 
         # 检查 7 天内向同一人的转让次数
         now = int(time.time())
@@ -1476,6 +1492,7 @@ class PetParkPlugin(Star):
 
         player = self.store.get_player(qq, group_id)
         player["group"] = group_id
+        self._track_activity(player)
 
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
@@ -3052,6 +3069,9 @@ class PetParkPlugin(Star):
             f"💠 **钻石**　{player.get('diamond', 0)}",
             f"🌀 **深渊结晶**　{self.store.get_abyss_crystal(player)}",
         ]
+        streak = player.get("active_streak", 0)
+        tax_status = "🟢 转让免税" if streak >= 7 else f"🏷️ 活跃 {streak}/7 天"
+        lines.append(f"📅 **活跃**　{tax_status}")
         active = self.store.active_events()
         if active:
             lines.append("━━━━━━━━━━━━━━")
