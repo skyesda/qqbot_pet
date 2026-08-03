@@ -92,6 +92,7 @@ class PetStore:
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()
+        self._migrate_bank_to_per_group()
 
     @staticmethod
     def make_key(group_id: str, qq: str) -> str:
@@ -251,6 +252,28 @@ class PetStore:
                 pl["pet"] = pets[idx]
             else:
                 pl["pet"] = None
+
+    def _migrate_bank_to_per_group(self) -> None:
+        """将旧的全局银行数据（QQ key）迁移为按群隔离（group_id\x1fQQ key）。"""
+        bank = self._data.get("bank_players", {})
+        if not bank:
+            return
+        players = self._data.get("players", {})
+        migrated = {}
+        for key, bk in list(bank.items()):
+            if "\x1f" in key:
+                migrated[key] = bk  # 已迁移
+                continue
+            # 旧 QQ-only key → 找到该QQ所在群
+            qq = key
+            for pkey, pl in players.items():
+                if pl.get("qq") == qq:
+                    new_key = self.make_key(pl.get("group", ""), qq)
+                    if new_key not in migrated:
+                        migrated[new_key] = bk
+                    break
+            # 找不到归属群的孤立数据：跳过
+        self._data["bank_players"] = migrated
 
     def _flush(self) -> None:
         # 序列化前剥离运行时 pet 引用（避免重复序列化）
@@ -1784,11 +1807,13 @@ class PetStore:
 
     @classmethod
     def bank_state(cls, player: dict) -> dict:
-        """返回玩家银行状态（全局按 QQ 共享，与宠物数据隔离）。"""
+        """返回玩家银行状态（按群隔离，与玩家数据一致）。"""
         store = cls._active
         qq = str(player.get("qq", ""))
-        if store is not None and qq:
-            g = store._data["bank_players"].setdefault(qq, cls._default_bank_state())
+        group_id = str(player.get("group", ""))
+        if store is not None and qq and group_id:
+            key = cls.make_key(group_id, qq)
+            g = store._data["bank_players"].setdefault(key, cls._default_bank_state())
             for field, default in cls._default_bank_state().items():
                 if field not in g:
                     g[field] = default
