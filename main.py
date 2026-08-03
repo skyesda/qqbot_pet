@@ -557,7 +557,7 @@ class PetParkPlugin(Star):
         """后台循环：每周一 00:00（北京时间）自动计算所有银行账户的周利息。"""
         while True:
             try:
-                await self._bank_interest_tick()
+                self._bank_interest_tick()
             except asyncio.CancelledError:
                 break
             except Exception:

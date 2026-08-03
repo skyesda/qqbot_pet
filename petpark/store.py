@@ -256,13 +256,27 @@ class PetStore:
         # 序列化前剥离运行时 pet 引用（避免重复序列化）
         for pl in self._data["players"].values():
             pl.pop("pet", None)
+        try:
+            payload = json.dumps(self._data, ensure_ascii=False, indent=2)
+        finally:
+            # 无论如何都要恢复运行时引用
+            self._restore_pet_refs()
+        # 原子写入：先写 .tmp 再替换，写入前备份旧文件
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        tmp.write_text(payload, encoding="utf-8")
+        # 验证写入内容可解析
+        try:
+            json.loads(tmp.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return  # 写入损坏，放弃本次保存，保留旧数据
+        # 保留一份备份
+        bak = self.path.with_suffix(".bak")
+        try:
+            if self.path.exists():
+                bak.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
         tmp.replace(self.path)
-        # 恢复运行时引用
-        self._restore_pet_refs()
 
     async def save(self) -> None:
         async with self._lock:
