@@ -320,7 +320,6 @@ KNOWN_COMMANDS = {
 WEB_BLOCKED_COMMANDS = {
     # 不可逆 / 资产转移
     "放生宠物",
-    "切换宠物",
     "赠送宠物",
     "宠物变性",
     "清空背包",
@@ -2642,7 +2641,7 @@ class PetParkPlugin(Star):
         if cmd == "宠物信息":
             return self._pet_info(player, tokens)
         if cmd == "放生宠物":
-            return self._pet_release(player, tokens)
+            return self._release(player)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -4317,7 +4316,7 @@ class PetParkPlugin(Star):
                 "",
                 "【入门】",
                 "- 砸蛋 · 购买宠物 · 我的宠物 · 宠物状态",
-                "- 宠物改名 · 宠物变性 · 赠送宠物 · 放生宠物 序号",
+                "- 宠物改名 · 宠物变性 · 赠送宠物 QQ · 放生宠物",
                 "- 锁定宠物 · 解锁宠物（锁定后无法放生/赠送，防误操作）",
                 "- 宠物侦查 用户ID",
                 "",
@@ -4325,7 +4324,8 @@ class PetParkPlugin(Star):
                 "- 宠物列表 · 查看所有宠物（查看所有宠物概要）",
                 "- 切换宠物 序号（切换到指定宠物）",
                 "- 宠物信息 序号（查看指定宠物详情）",
-                "- 放生宠物 序号（放生指定宠物，最后一只不可放生）",
+                "- 放生宠物（放生当前宠物，最后一只不可放生）",
+                "- 赠送宠物 QQ（赠送当前宠物）",
                 "",
                 "【商城 / 背包】",
                 "- 宠物商城 · 道具商城 · 宠物市场",
