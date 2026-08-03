@@ -1349,11 +1349,46 @@ class PetParkPlugin(Star):
     # 宠物银行
     # =====================================================================
     def _bank_block_check(self, player: dict, action: str = "") -> str | None:
-        """检查玩家是否被银行冻结或有未还贷款限制。返回 None 表示放行。"""
+        """检查玩家是否被银行冻结或有未还贷款限制。返回 None 表示放行。
+        逾期7天以上自动强制还款（从账户余额抵扣）。"""
         bk = self.store.bank_state(player)
         if not bk:
             return None
-        today = time.strftime("%Y-%m-%d")
+        # 逾期强制还款：从账户余额自动抵扣
+        force_repaid = False
+        for cur, key_due, key_loan in [
+            ("金币", "loan_coin_due", "loan_coin"),
+            ("积分", "loan_jifen_due", "loan_jifen"),
+        ]:
+            loan = bk.get(key_loan, 0)
+            due_str = bk.get(key_due, "")
+            if loan > 0 and due_str:
+                try:
+                    due_dt = time.strptime(due_str, "%Y-%m-%d")
+                    due_ts = int(time.mktime(due_dt))
+                    days_overdue = max(0, (int(time.time()) - due_ts) // 86400)
+                except ValueError:
+                    days_overdue = 0
+                if days_overdue >= data.BANK_OVERDUE_FREEZE_DAYS:
+                    # 强制还款：能扣多少扣多少
+                    balance = self.store.get_currency(player, cur)
+                    if balance > 0:
+                        deduct = min(balance, loan)
+                        self.store.add_currency(player, cur, -deduct)
+                        bk[key_loan] -= deduct
+                        bk["total_repaid"] = bk.get("total_repaid", 0) + deduct
+                        force_repaid = True
+                        # 如果还清了
+                        if bk[key_loan] <= 0:
+                            bk[key_loan] = 0
+                            bk.pop(key_due, None)
+                            key_cd = "loan_coin_repaid_at" if cur == "金币" else "loan_jifen_repaid_at"
+                            bk[key_cd] = int(time.time())
+                            # 逾期罚分
+                            old_credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
+                            penalty = random.randint(*data.BANK_CREDIT_OVERDUE)
+                            bk["credit_score"] = max(0, old_credit + penalty)
+        # 重新检查是否还被冻结
         frozen_msgs = []
         for cur, key_due in [("金币", "loan_coin_due"), ("积分", "loan_jifen_due")]:
             key_loan = "loan_coin" if cur == "金币" else "loan_jifen"
@@ -1371,13 +1406,17 @@ class PetParkPlugin(Star):
                 except ValueError:
                     pass
         if frozen_msgs:
-            return (
-                "🚫 **银行账户已被冻结！**\n"
-                + "\n".join(frozen_msgs)
-                + "\n\n请立即还款以解冻账户：\n"
-                + "`银行还款 金币 数量` 或 `银行还款 积分 数量`\n"
-                + "还清所有贷款后自动解冻。"
+            msg = "🚫 **银行账户已被冻结！**\n" + "\n".join(frozen_msgs)
+            if force_repaid:
+                msg += "\n\n⚠️ 已自动从余额强制抵扣部分欠款，仍不足还清。"
+            msg += (
+                "\n\n请立即还款以解冻账户：\n"
+                "`银行还款 金币 数量` 或 `银行还款 积分 数量`\n"
+                "还清所有贷款后自动解冻。"
             )
+            return msg
+        if force_repaid:
+            return None  # 强制还款后已解冻
         # 有未还贷款时，阻止转让/赠送操作
         if action in ("transfer", "gift"):
             debts = []
