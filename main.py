@@ -304,6 +304,11 @@ KNOWN_COMMANDS = {
     "银行取款",
     "银行贷款",
     "银行还款",
+    # 重生
+    "重生",
+    "购买重生宝石",
+    "确认重生",
+    "祭奠",
 }
 
 # 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
@@ -366,6 +371,11 @@ WEB_BLOCKED_COMMANDS = {
     "银行取款",
     "银行贷款",
     "银行还款",
+    # 重生（不可逆操作）
+    "重生",
+    "购买重生宝石",
+    "确认重生",
+    "祭奠",
 }
 
 
@@ -1626,6 +1636,273 @@ class PetParkPlugin(Star):
         else:
             return f"🏦 已偿还{currency}贷款 ×{count:,}，剩余贷款 {bk[key_loan]:,}。"
 
+    # =====================================================================
+    # 宠物重生
+    # =====================================================================
+    def _rebirth_prep_reminder(self, p: dict, before_level: int) -> str:
+        """如果本次升级跨过 800 级，返回重生准备期提示。"""
+        after = p.get("level", 1)
+        stage = p.get("stage", "")
+        if stage != "渡劫":
+            return ""
+        if before_level < data.REBIRTH_PREP_LEVEL and after >= data.REBIRTH_PREP_LEVEL:
+            return (
+                "\n\n🔔 **重生准备期！**\n"
+                "宠物已达 Lv800，进入重生准备阶段：\n"
+                "⛔ 背包物品已被锁定，无法出售/转让/丢弃\n"
+                "💡 继续升级到 Lv999 即可进行重生！\n"
+                "> 发送 `重生` 查看完整说明。"
+            )
+        if before_level < data.REBIRTH_MAX_LEVEL and after >= data.REBIRTH_MAX_LEVEL:
+            return (
+                "\n\n🎉 **已达 Lv999！可以重生！**\n"
+                "> 发送 `购买重生宝石` 购买重生宝石\n"
+                "> 发送 `祭奠 积分/钻石 数量` 提升倍率\n"
+                "> 发送 `确认重生` 执行重生"
+            )
+        return ""
+
+    def _rebirth_prep_block(self, player: dict) -> str | None:
+        """Lv800+ 重生准备期：禁止出售/转让/丢弃。返回 None 表示放行。"""
+        p = player.get("pet")
+        if not p:
+            return None
+        level = p.get("level", 1)
+        stage = p.get("stage", "")
+        # 仅渡劫阶段 800+ 触发
+        if stage != "渡劫" or level < data.REBIRTH_PREP_LEVEL:
+            return None
+        return (
+            "⛔ **重生准备期（Lv800+）**\n"
+            "宠物已进入重生准备阶段，背包物品已被锁定，\n"
+            "无法出售、转让或丢弃物品，直到完成重生。\n"
+            f"> 当前 Lv{level}/999，达到 Lv999 即可重生。\n"
+            "> 发送 `重生` 查看重生详情。"
+        )
+
+    def _rebirth_info(self, player: dict) -> str:
+        """查看重生状态和说明。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        level = p.get("level", 1)
+        stage = p.get("stage", "")
+        cap = petmod.level_cap(p)
+        if stage != "渡劫":
+            return (
+                "## 🔄 宠物重生\n\n"
+                "宠物需达到 **渡劫 Lv999** 才能进行重生。\n\n"
+                f"当前：{stage} Lv{level}/{cap}\n\n"
+                "**重生效果：**\n"
+                "- 宠物阶段回到 **幼年期 Lv1**\n"
+                "- 攻击/防御/智力/血量 **随机 2~10 倍**暴击\n"
+                "- 精力上限重置为 100\n"
+                "- 背包全部清空（品质卡和定制卡保留）\n\n"
+                "**重生宝石：** 1 万钻石 + 10 万积分\n"
+                "**祭奠：** 消耗积分/钻石提升高倍率概率\n"
+                "> 发送 `购买重生宝石` 提前准备宝石。"
+            )
+        sacrifice_pts = p.get("rebirth_sacrifice", 0)
+        has_gem = p.get("rebirth_gem", False)
+        if level >= data.REBIRTH_MAX_LEVEL:
+            status = "✅ **已达 Lv999，可以重生！**"
+        elif level >= data.REBIRTH_PREP_LEVEL:
+            remain = data.REBIRTH_MAX_LEVEL - level
+            status = f"⏳ **重生准备期** — 还需 {remain} 级到达 Lv999"
+        else:
+            remain = data.REBIRTH_PREP_LEVEL - level
+            status = f"还需 {remain} 级进入准备期（Lv800）"
+        # 倍率概率展示
+        lines = [
+            "## 🔄 宠物重生",
+            f"> {status}",
+            f"> 当前：{stage} Lv{level}/{cap}",
+            "",
+            "**重生倍率概率：**",
+        ]
+        for mult, w in data.REBIRTH_MULTIPLIER_TABLE:
+            pct = w / data.REBIRTH_MULTIPLIER_TOTAL_WEIGHT * 100
+            bar = "█" * int(pct / 2)
+            lines.append(f"　{mult:.1f}×：{pct:.1f}% {bar}")
+        if sacrifice_pts > 0:
+            lines.append(f"> 🔥 祭奠点数：{sacrifice_pts}（高倍率权重已提升）")
+        lines.append("")
+        lines.append("**消耗：**")
+        gem_status = "✅ 已拥有" if has_gem else "❌ 未购买"
+        lines.append(f"- 重生宝石：{gem_status}")
+        lines.append(f"- 购买宝石：`购买重生宝石`（1万钻石 + 10万积分）")
+        lines.append("")
+        lines.append("**祭奠（提升高倍率概率）：**")
+        lines.append(f"- `祭奠 积分 数量`（最低 {data.REBIRTH_SACRIFICE_MIN_JIFEN:,}）")
+        lines.append(f"- `祭奠 钻石 数量`（最低 {data.REBIRTH_SACRIFICE_MIN_DIAMOND:,}）")
+        lines.append(f"- 每 {data.REBIRTH_SACRIFICE_PER_POINT_JIFEN:,} 积分 / {data.REBIRTH_SACRIFICE_PER_POINT_DIAMOND:,} 钻石 = 1 祭奠点")
+        lines.append(f"- 最多 {data.REBIRTH_SACRIFICE_MAX_POINTS} 点")
+        lines.append("")
+        lines.append("**重生后：**")
+        lines.append("- 阶段 → 幼年期 Lv1，精力 → 100")
+        lines.append("- 属性 × 随机倍率（2~10×）")
+        lines.append("- 背包清空（品质卡/定制卡保留）")
+        lines.append("- 神器/秘技脱落回背包（需重新达标）")
+        if level >= data.REBIRTH_MAX_LEVEL and has_gem:
+            lines.append("")
+            lines.append("> ⚠️ 发送 `确认重生` 执行重生（不可逆！）")
+        return "\n".join(lines)
+
+    def _rebirth_buy_gem(self, player: dict) -> str:
+        """购买重生宝石：1万钻石 + 10万积分。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        if p.get("rebirth_gem"):
+            return "你已经拥有重生宝石了，可直接 `确认重生`。"
+        diamond = self.store.get_currency(player, "钻石")
+        jifen = self.store.get_currency(player, "积分")
+        need_d = data.REBIRTH_GEM_COST_DIAMOND
+        need_j = data.REBIRTH_GEM_COST_JIFEN
+        if diamond < need_d:
+            return f"钻石不足（需要 {need_d:,}，当前 {diamond:,}）。"
+        if jifen < need_j:
+            return f"积分不足（需要 {need_j:,}，当前 {jifen:,}）。"
+        self.store.add_currency(player, "钻石", -need_d)
+        self.store.add_currency(player, "积分", -need_j)
+        p["rebirth_gem"] = True
+        return (
+            "💎 **重生宝石** 购买成功！\n"
+            f"> 消耗：钻石 {need_d:,} + 积分 {need_j:,}\n"
+            "> 宠物达到渡劫 Lv999 后发送 `确认重生` 即可。\n"
+            "> 💡 发送 `祭奠 积分/钻石 数量` 可提升高倍率概率。"
+        )
+
+    def _rebirth_sacrifice(self, player: dict, tokens: list[str]) -> str:
+        """祭奠：消耗积分或钻石提升重生倍率权重。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        if p.get("stage", "") != "渡劫":
+            return "只有渡劫阶段（Lv800+）的宠物才能祭奠。"
+        currency = self._arg(tokens, 1)
+        if currency not in ("积分", "钻石"):
+            return (
+                "用法：祭奠 积分/钻石 数量\n"
+                f"例如：祭奠 积分 {data.REBIRTH_SACRIFICE_MIN_JIFEN:,}\n"
+                f"　　　祭奠 钻石 {data.REBIRTH_SACRIFICE_MIN_DIAMOND:,}"
+            )
+        count_str = self._arg(tokens, 2)
+        if not count_str or not count_str.isdigit():
+            return "请输入有效的数量。"
+        count = int(count_str)
+        min_required = data.REBIRTH_SACRIFICE_MIN_JIFEN if currency == "积分" else data.REBIRTH_SACRIFICE_MIN_DIAMOND
+        if count < min_required:
+            return f"祭奠{currency}最低 {min_required:,}。"
+        have = self.store.get_currency(player, currency)
+        if have < count:
+            return f"{currency}不足（需要 {count:,}，当前 {have:,}）。"
+        per_point = data.REBIRTH_SACRIFICE_PER_POINT_JIFEN if currency == "积分" else data.REBIRTH_SACRIFICE_PER_POINT_DIAMOND
+        pts = count // per_point
+        if pts <= 0:
+            return f"数量不足，每 {per_point:,} {currency} = 1 祭奠点。"
+        current_pts = p.get("rebirth_sacrifice", 0)
+        max_pts = data.REBIRTH_SACRIFICE_MAX_POINTS
+        if current_pts >= max_pts:
+            return f"祭奠点数已达上限（{max_pts}点），无需继续祭奠。"
+        actual_pts = min(pts, max_pts - current_pts)
+        actual_cost = actual_pts * per_point
+        self.store.add_currency(player, currency, -actual_cost)
+        p["rebirth_sacrifice"] = current_pts + actual_pts
+        new_total = p["rebirth_sacrifice"]
+        return (
+            f"🔥 **祭奠完成！**\n"
+            f"> 消耗：{currency} {actual_cost:,}\n"
+            f"> 获得：{actual_pts} 祭奠点\n"
+            f"> 累计祭奠：{new_total}/{max_pts} 点\n"
+            f"> 高倍率（8×/9×/10×）权重已提升！\n"
+            "> 💡 发送 `重生` 查看更新后的概率分布。"
+        )
+
+    def _rebirth_confirm(self, player: dict) -> str:
+        """确认重生：二次确认后执行。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物。"
+        if p.get("stage", "") != "渡劫":
+            return "只有渡劫阶段的宠物才能重生。"
+        if p["level"] < data.REBIRTH_MAX_LEVEL:
+            return (
+                f"宠物等级不足，需达到渡劫 Lv999 才能重生。\n"
+                f"当前：Lv{p['level']}/999"
+            )
+        if not p.get("rebirth_gem"):
+            return "你还没有重生宝石，请先 `购买重生宝石`（1万钻石 + 10万积分）。"
+        # 计算最终倍率
+        sacrifice_pts = p.get("rebirth_sacrifice", 0)
+        multiplier = data.rebirth_roll_multiplier(sacrifice_pts)
+        # 执行重生
+        old_atk = p.get("atk", 0)
+        old_def = p.get("def", 0)
+        old_intel = p.get("intel", 0)
+        old_hp = p.get("hp_max", 0)
+        # 属性暴击
+        p["atk"] = max(1, int(old_atk * multiplier))
+        p["def"] = max(1, int(old_def * multiplier))
+        p["intel"] = max(1, int(old_intel * multiplier))
+        p["hp_max"] = max(1, int(old_hp * multiplier))
+        p["hp"] = p["hp_max"]
+        # 重置阶段/等级/精力
+        p["stage"] = data.STAGES[0]  # 幼年期
+        p["level"] = 1
+        p["exp"] = 0
+        p["xianyuan"] = 0
+        p["ascended"] = False
+        p["energy"] = 100
+        p["energy_max"] = 100
+        # 神器/秘技脱落回背包
+        dropped = []
+        if p.get("artifact"):
+            dropped.append(p["artifact"])
+            self.store.add_item(player, p["artifact"], 1)
+            p["artifact"] = None
+        for sk in list(p.get("skills", [])):
+            dropped.append(sk)
+            self.store.add_item(player, sk, 1)
+        p["skills"] = []
+        # 清空背包，只保留品质卡和定制卡
+        bag = player.get("bag", {})
+        kept = {}
+        cleared_count = 0
+        for item_name, count in list(bag.items()):
+            if item_name in data.REBIRTH_KEEP_ITEMS or "卡" in item_name and any(
+                q in item_name for q in ["史诗", "圣灵", "洪荒", "创世", "混沌", "定制"]
+            ):
+                kept[item_name] = count
+            else:
+                cleared_count += count
+        player["bag"] = kept
+        # 清除重生相关标记
+        p.pop("rebirth_gem", None)
+        p.pop("rebirth_sacrifice", None)
+        # 伤害统计
+        def _summarize(old, new, label):
+            return f"　{label}：{old:,} → {new:,}（×{multiplier:.1f}）"
+        lines = [
+            "## 🔄 重生完成！",
+            f"🎉 宠物成功重生，获得 **×{multiplier:.1f}** 属性暴击！",
+            "",
+            "**属性变化：**",
+            _summarize(old_atk, p["atk"], "攻击"),
+            _summarize(old_def, p["def"], "防御"),
+            _summarize(old_intel, p["intel"], "智力"),
+            _summarize(old_hp, p["hp_max"], "生命"),
+            "",
+            f"**重置：** 阶段→幼年期 Lv1 | 精力→100",
+        ]
+        if dropped:
+            lines.append(f"**脱落：** {'、'.join(dropped)}（已入背包）")
+        if cleared_count > 0:
+            lines.append(f"**清空：** 背包物品 ×{cleared_count}（品质卡/定制卡已保留）")
+        lines.append("")
+        lines.append("> 🐣 宠物获得新生，重新踏上成长之路！")
+        return "\n".join(lines)
+
     @staticmethod
     def _inc_stat(player: dict, key: str, n: int = 1) -> None:
         """增加玩家统计计数（如剧情任务进度）。"""
@@ -1811,10 +2088,12 @@ class PetParkPlugin(Star):
                      "顺手牵羊", "偷菜", "家园排行", "家园总排行", "商人购买", "拆除"}
         # 银行指令白名单直通
         _BANK_CMDS = {"宠物银行", "银行信息", "银行存款", "银行取款", "银行贷款", "银行还款"}
+        _REBIRTH_CMDS = {"重生", "购买重生宝石", "确认重生", "祭奠"}
         if (
             cmd not in KNOWN_COMMANDS
             and cmd not in _HS_CMDS
             and cmd not in _BANK_CMDS
+            and cmd not in _REBIRTH_CMDS
             and text not in data.DAILY_ACTIONS
             and cmd not in event_cmds
             and text not in event_cmds
@@ -1884,11 +2163,19 @@ class PetParkPlugin(Star):
         # 银行逾期冻结检查（放行查看/还款类指令）
         _bank_allow = {"银行信息", "银行还款", "宠物菜单", "宠物指令", "宠物帮助",
                         "管理菜单", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
-                        "授权状态", "授权", "查看说明", "银行信息"}
+                        "授权状态", "授权", "查看说明", "银行信息",
+                        "重生", "购买重生宝石", "确认重生", "祭奠"}
         if cmd not in _bank_allow:
             bank_block = self._bank_block_check(player)
             if bank_block:
                 return bank_block
+
+        # 重生准备期（Lv800+）：禁止出售/转让/丢弃背包物品
+        _rebirth_block_cmds = {"出售", "转让", "丢弃"}
+        if cmd in _rebirth_block_cmds:
+            rb_block = self._rebirth_prep_block(player)
+            if rb_block:
+                return rb_block
 
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
@@ -2259,6 +2546,16 @@ class PetParkPlugin(Star):
             return self._bank_loan(player, tokens)
         if cmd == "银行还款":
             return self._bank_repay(player, tokens)
+
+        # ---- 宠物重生 ----
+        if cmd in ("重生",):
+            return self._rebirth_info(player)
+        if cmd == "购买重生宝石":
+            return self._rebirth_buy_gem(player)
+        if cmd == "祭奠":
+            return self._rebirth_sacrifice(player, tokens)
+        if cmd == "确认重生":
+            return self._rebirth_confirm(player)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -4016,6 +4313,16 @@ class PetParkPlugin(Star):
                 "> 🚫 逾期超 7 天：冻结所有游戏功能，还清自动解冻",
                 "> ⚠️ 有贷款期间：无法赠送宠物、转让物品和货币",
                 "",
+                "【宠物重生】（涅槃新生 · 属性暴击）",
+                "> 渡劫 Lv800 进入准备期，Lv999 可重生。",
+                "- 重生 · 购买重生宝石 · 祭奠 积分/钻石 数量",
+                "- 确认重生（需重生宝石 + Lv999）",
+                "> 💎 重生宝石：1万钻石 + 10万积分",
+                "> 🔥 祭奠：消耗积分/钻石提升高倍率概率",
+                "> 🎲 属性暴击：2~10×随机（2×最高概率）",
+                "> ⛔ 准备期（Lv800+）：禁止出售/转让/丢弃物品",
+                "> 📦 重生后保留：品质卡、定制卡（其余清空）",
+                "",
                 "【姻缘】",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
                 "- 宠物求婚 用户ID · 同意求婚 用户ID",
@@ -4783,9 +5090,10 @@ class PetParkPlugin(Star):
         if n == 0:
             return f"未能升级（经验或精力不足）。当前 Lv{p['level']}/{petmod.level_cap(p)}。"
         reward = self._grant_level60_reward(player, p, before)
+        prep_msg = self._rebirth_prep_reminder(p, before)
         return (
             f"⬆ 一键升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}，剩余精力 {p['energy']}。"
-            + reward
+            + reward + prep_msg
         )
 
     def _manual_level(self, player: dict, tokens: list[str]) -> str:
@@ -4803,9 +5111,10 @@ class PetParkPlugin(Star):
             return f"升级失败：{note}"
         suffix = f"（{note}）" if note else ""
         reward = self._grant_level60_reward(player, p, before)
+        prep_msg = self._rebirth_prep_reminder(p, before)
         return (
-            f"⬆ 升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}{suffix}。"
-            + reward
+            f"⬆ 升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}。{suffix}"
+            + reward + prep_msg
         )
 
     def _evolve(self, player: dict) -> str:
@@ -5597,10 +5906,11 @@ class PetParkPlugin(Star):
         gained = petmod.auto_level_up(p)
         if gained <= 0:
             return ""
+        prep_msg = self._rebirth_prep_reminder(p, before)
         return (
             f"\n⬆ **自动升级 +{gained} 级！** 当前 "
             f"Lv{p['level']}/{petmod.level_cap(p)}（剩余精力 {p['energy']}）"
-        ) + self._grant_level60_reward(player, p, before)
+        ) + self._grant_level60_reward(player, p, before) + prep_msg
 
     def _grant_level60_reward(self, player: dict, p: dict, before_level: int) -> str:
         """宠物本次升级若跨过 60 级倍数，赠送 1 张『史诗卡』放入背包。返回提示文本。"""

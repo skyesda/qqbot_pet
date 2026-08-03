@@ -1986,3 +1986,60 @@ def bank_loan_limit(credit_score: int) -> int:
     elif credit_score < 300:
         base = BANK_LOAN_MIN
     return min(BANK_LOAN_MAX, max(BANK_LOAN_MIN, base))
+
+# ============================================================================
+# 宠物重生（Lv800准备期 → Lv999重生 → 属性暴击 2~10×）
+# ============================================================================
+REBIRTH_PREP_LEVEL = 800            # 进入重生准备期的等级
+REBIRTH_MAX_LEVEL = 999             # 可执行重生的等级（渡劫满级）
+REBIRTH_GEM_COST_DIAMOND = 10000    # 重生宝石钻石价格
+REBIRTH_GEM_COST_JIFEN = 100000     # 重生宝石积分价格
+REBIRTH_SACRIFICE_MIN_JIFEN = 10000 # 祭奠积分最低
+REBIRTH_SACRIFICE_MIN_DIAMOND = 1000# 祭奠钻石最低
+REBIRTH_KEEP_ITEMS = {              # 重生后保留的物品（品质卡+定制卡）
+    "史诗卡", "圣灵卡", "洪荒卡", "创世卡", "混沌卡",
+}
+
+# 重生属性倍率表：(倍率, 基础权重)，权重越大越容易出
+REBIRTH_MULTIPLIER_TABLE = [
+    (2.0, 350),
+    (2.5, 220),
+    (3.0, 150),
+    (3.5, 100),
+    (4.0, 60),
+    (5.0, 40),
+    (6.0, 30),
+    (7.0, 20),
+    (8.0, 15),
+    (9.0, 10),
+    (10.0, 5),
+]
+REBIRTH_MULTIPLIER_TOTAL_WEIGHT = sum(w for _, w in REBIRTH_MULTIPLIER_TABLE)
+
+# 祭奠提升高倍率权重：每 10000 积分或 1000 钻石 = 1 个祭奠点
+# 每个祭奠点将最高 3 档倍率权重各 +5
+REBIRTH_SACRIFICE_PER_POINT_JIFEN = 10000
+REBIRTH_SACRIFICE_PER_POINT_DIAMOND = 1000
+REBIRTH_SACRIFICE_WEIGHT_PER_POINT = 5
+REBIRTH_SACRIFICE_MAX_POINTS = 50     # 最多 50 点祭奠
+
+
+def rebirth_roll_multiplier(sacrifice_points: int = 0) -> float:
+    """根据祭奠点数随机重生倍率。返回最终倍率值。"""
+    import random as _random
+    pts = min(sacrifice_points, REBIRTH_SACRIFICE_MAX_POINTS)
+    adjusted = []
+    n = len(REBIRTH_MULTIPLIER_TABLE)
+    for i, (mult, w) in enumerate(REBIRTH_MULTIPLIER_TABLE):
+        # 前 3 档（最高倍率）享受祭奠加成
+        if i <= 2 and pts > 0:
+            w += REBIRTH_SACRIFICE_WEIGHT_PER_POINT * pts
+        adjusted.append((mult, w))
+    total = sum(w for _, w in adjusted)
+    r = _random.randint(1, total)
+    acc = 0
+    for mult, w in adjusted:
+        acc += w
+        if r <= acc:
+            return mult
+    return 2.0
