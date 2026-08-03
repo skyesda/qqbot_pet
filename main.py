@@ -4770,7 +4770,7 @@ class PetParkPlugin(Star):
     # 多宠物系统：指令处理器
     # ------------------------------------------------------------------
     def _pet_list(self, player: dict) -> str:
-        """查看所有宠物概要。"""
+        """查看所有宠物概要（MD 表格）。"""
         pets = player.get("pets", [])
         if not pets:
             return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
@@ -4779,15 +4779,22 @@ class PetParkPlugin(Star):
         lines = [
             f"## 🐾 宠物列表（{len(pets)}/{slots} 席位）",
             "",
+            "| # | 昵称 | 种类 | 品质 | 阶段 | 等级 | 战力 | 备注 |",
+            "|:--:|:--:|:--:|:--:|:--:|:--:|--:|:--|",
         ]
         for i, pet in enumerate(pets):
-            marker = " 👈 当前" if i == active_idx else ""
             petmod.refresh_energy(pet)
             bp = petmod.battle_power(pet)
+            notes = []
+            if i == active_idx:
+                notes.append("👈当前")
+            if pet.get("locked"):
+                notes.append("🔒")
+            note_str = " ".join(notes) if notes else "—"
             lines.append(
-                f"**{i+1}.** {pet.get('nickname','?')} | {pet.get('species','?')} | "
-                f"{pet.get('quality','?')} | {pet.get('stage','?')} Lv{pet.get('level',1)} | "
-                f"战力 {bp:,}{marker}"
+                f"| {i+1} | {pet.get('nickname','?')} | {pet.get('species','?')} | "
+                f"{pet.get('quality','?')} | {pet.get('stage','?')} | "
+                f"Lv{pet.get('level',1)} | {bp:,} | {note_str} |"
             )
         lines.append("")
         lines.append("> 发送 `切换宠物 序号` 切换活跃宠物")
