@@ -1223,7 +1223,10 @@ class PetParkPlugin(Star):
         same_user_count = len(history)
         frequent_same = same_user_count >= data.TRANSFER_WEEKLY_SAME_LIMIT
 
-        if is_active:
+        # 道具 ≤3 个免税（但高频同用户仍收税）
+        if transfer_type == "item" and count <= 3 and not frequent_same:
+            tax_rate = 0.0
+        elif is_active:
             # 活跃用户免税，但高频同用户转让仍收基础税
             if frequent_same:
                 tax_rate = base_tax
@@ -4137,7 +4140,10 @@ class PetParkPlugin(Star):
         self.store.remove_item(player, name, count)
         self.store.add_item(tp, name, receive_count)
         if tax_rate == 0:
-            tax_info = "（🟢 活跃免税）"
+            if count <= 3:
+                tax_info = "（🆓 少量免税）"
+            else:
+                tax_info = "（🟢 活跃免税）"
         elif tax_rate > data.TRANSFER_TAX_ITEM:
             tax_info = f"（税 {tax_count} 个，{tax_rate:.0%} ⚠️ 高频同用户）"
         else:
