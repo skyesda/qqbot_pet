@@ -606,7 +606,7 @@ ITEMS = {
         "effect": {"upgrade_quality": "混沌"},
     },
     # ---- 多宠物系统 ----
-    PET_SLOT_CARD_NAME: {
+    "宠物席位卡": {
         "price": 0,
         "currency": CURRENCY_JIFEN,
         "category": "道具",
