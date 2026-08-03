@@ -1899,6 +1899,8 @@ class PetParkPlugin(Star):
             )
         if not p.get("rebirth_gem"):
             return "你还没有重生宝石，请先 `购买重生宝石`（1万钻石 + 10万积分）。"
+        # 收集一生回顾（在修改宠物数据之前）
+        review_text = self._rebirth_review(player, p)
         # 计算最终倍率
         sacrifice_pts = p.get("rebirth_sacrifice", 0)
         multiplier = data.rebirth_roll_multiplier(sacrifice_pts)
@@ -1960,15 +1962,16 @@ class PetParkPlugin(Star):
         lines = [
             "## 🔄 重生完成！",
             f"🎉 宠物成功重生，获得 **×{multiplier:.1f}** 属性暴击！",
-            "",
-            "**属性变化：**",
-            _summarize(old_atk, p["atk"], "攻击"),
-            _summarize(old_def, p["def"], "防御"),
-            _summarize(old_intel, p["intel"], "智力"),
-            _summarize(old_hp, p["hp_max"], "生命"),
-            "",
-            f"**重置：** 阶段→幼年期 Lv1 | 精力→100",
         ]
+        # 插入一生回顾与领悟仪式
+        lines.append(review_text)
+        lines.append("**属性变化：**")
+        lines.append(_summarize(old_atk, p["atk"], "攻击"))
+        lines.append(_summarize(old_def, p["def"], "防御"))
+        lines.append(_summarize(old_intel, p["intel"], "智力"))
+        lines.append(_summarize(old_hp, p["hp_max"], "生命"))
+        lines.append("")
+        lines.append(f"**重置：** 阶段→幼年期 Lv1 | 精力→100")
         if dropped:
             lines.append(f"**脱落：** {'、'.join(dropped)}（已入背包）")
         if cleared_count > 0:
@@ -1976,6 +1979,127 @@ class PetParkPlugin(Star):
         lines.append("")
         lines.append(slot_msg)
         lines.append("> 🐣 宠物获得新生，重新踏上成长之路！")
+        return "\n".join(lines)
+
+    def _rebirth_review(self, player: dict, pet: dict) -> str:
+        """收集宠物一生数据，生成临终回顾与领悟仪式。"""
+        stats = player.get("stats", {})
+        nickname = pet.get("nickname", "?")
+        species = pet.get("species", "?")
+        level = pet.get("level", 1)
+        stage = pet.get("stage", "?")
+
+        # ---- 一生数据 ----
+        battles = stats.get("battle_win", 0) + stats.get("ascended_battle_win", 0)
+        dungeons = stats.get("ascended_dungeon_clear", 0)
+        explores = stats.get("explore", 0)
+        abyss_runs = stats.get("ascended_abyss", 0)
+        forge = stats.get("forge_artifact", 0) or 0
+        shuangxiu = stats.get("shuangxiu", 0) or 0
+        treasure = stats.get("ascended_fantasy_treasure", 0) or 0
+        calamity = stats.get("ascended_immortal_calamity", 0) or 0
+
+        skills_count = len(pet.get("skills", []))
+        artifact = pet.get("artifact")
+        talent = pet.get("talent") or "未觉醒"
+        favor = pet.get("favor", 0)
+        love_target = pet.get("love_target")
+        love_state = pet.get("love_state", "单身")
+        created_at = pet.get("created_at", 0)
+        pet_age_days = max(1, (int(__import__("time").time()) - created_at) // 86400) if created_at else "?"
+
+        # ---- 数据卡片 ----
+        lines = ["", "━━━━━━━━━━━━━━━━", "📜 **回望「{0}」的一生**".format(nickname), ""]
+        life_parts = []
+        if battles > 0:
+            life_parts.append("⚔ 征战 **{0}** 场胜利".format(battles))
+        if dungeons > 0:
+            life_parts.append("🏔 通关 **{0}** 次神仙副本".format(dungeons))
+        if abyss_runs > 0:
+            life_parts.append("🌀 深入深渊 **{0}** 次".format(abyss_runs))
+        if explores > 0:
+            life_parts.append("🧭 探险 **{0}** 次".format(explores))
+        if shuangxiu > 0:
+            life_parts.append("💕 双修 **{0}** 次".format(shuangxiu))
+        if treasure > 0:
+            life_parts.append("✨ 幻境寻宝 **{0}** 次".format(treasure))
+        if calamity > 0:
+            life_parts.append("⚡ 渡过神仙劫 **{0}** 次".format(calamity))
+        if forge > 0:
+            life_parts.append("🔨 打造神器 **{0}** 把".format(forge))
+        if skills_count > 0:
+            life_parts.append("📜 参悟 **{0}** 门秘技".format(skills_count))
+        if artifact:
+            life_parts.append("🗡 佩戴过神器「{0}」".format(artifact))
+        if talent and talent != "未觉醒":
+            life_parts.append("🎯 天赋「{0}」".format(talent))
+
+        if not life_parts:
+            life_parts.append("🌱 平凡而安静的一生")
+
+        lines.append("　" + "  ·  ".join(life_parts))
+
+        if love_state != "单身" and favor > 0:
+            heart = "💑" if love_state == "已婚" else "💕"
+            lines.append("{0} 与伴侣相伴，好感 **{1:,}**".format(heart, favor))
+        if isinstance(pet_age_days, int):
+            lines.append("📅 陪伴了你 **{0}** 天".format(pet_age_days))
+        lines.append("　品质 **{0}** · **{1}** Lv{2}".format(pet.get("quality", "?"), stage, level))
+
+        # ---- 领悟方向判定 ----
+        scores = {}
+        scores["⚔ 战神之道"] = battles
+        scores["🏔 探索之道"] = dungeons + explores + abyss_runs
+        scores["💑 情缘之道"] = favor // 100 + shuangxiu * 10
+        scores["💪 精进之道"] = treasure + calamity + forge + skills_count * 5
+        # 取最高的
+        best = max(scores, key=lambda k: scores[k]) if any(scores.values()) else "🌟 平凡之道"
+        best_val = scores.get(best, 0)
+
+        # ---- 领悟文案 ----
+        wisdom = {
+            "⚔ 战神之道": (
+                "真正的强大，不是从未倒下，\n"
+                "　而是每一次倒下后，依然选择站起来。\n"
+                "　胜败皆过往，唯有勇气长存。"
+            ),
+            "🏔 探索之道": (
+                "世界之大，穷尽一生也走不完。\n"
+                "　但路上的风景、遇见的对手、发现的秘境，\n"
+                "　已经把你变成了不一样的自己。"
+            ),
+            "💑 情缘之道": (
+                "爱不是占有，而是彼此照亮。\n"
+                "　即使轮回转世、记忆消散，\n"
+                "　那份温暖的羁绊已在灵魂中留下印记。"
+            ),
+            "💪 精进之道": (
+                "日复一日的修炼、锻造、参悟……\n"
+                "　外人看来枯燥乏味，\n"
+                "　但你知道——每一步都算数。"
+            ),
+            "🌟 平凡之道": (
+                "不是每一段生命都要轰轰烈烈。\n"
+                "　安静地来，安静地走，\n"
+                "　存在本身，就已经是意义。"
+            ),
+        }
+        wisdom_text = wisdom.get(best, wisdom["🌟 平凡之道"])
+
+        lines.append("")
+        lines.append(
+            "💡 在生命最后一刻，**{0}** 领悟了——".format(nickname)
+        )
+        lines.append("")
+        lines.append("　**「{0}」**".format(best))
+        lines.append("")
+        for wline in wisdom_text.split("\n"):
+            lines.append("　> {0}".format(wline.strip()))
+        lines.append("")
+        lines.append("🌅 {0} 闭上了眼睛...".format(nickname))
+        lines.append("　「谢谢你陪我走过这一段路。」")
+        lines.append("")
+
         return "\n".join(lines)
 
     @staticmethod
