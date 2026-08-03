@@ -297,6 +297,13 @@ KNOWN_COMMANDS = {
     "放弃扫雷",
     "扫雷排行",
     "扫雷兑换",
+    # 银行
+    "宠物银行",
+    "银行信息",
+    "银行存款",
+    "银行取款",
+    "银行贷款",
+    "银行还款",
 }
 
 # 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
@@ -353,6 +360,12 @@ WEB_BLOCKED_COMMANDS = {
     "家园总排行",
     "商人购买",
     "拆除",
+    # 银行
+    "银行信息",
+    "银行存款",
+    "银行取款",
+    "银行贷款",
+    "银行还款",
 }
 
 
@@ -386,6 +399,7 @@ class PetParkPlugin(Star):
     _auto_cultivation_task_ref: Any = None
     _sect_war_task_ref: Any = None
     _sect_daily_reset_task_ref: Any = None
+    _bank_interest_task_ref: Any = None
     _sect_war_lock = asyncio.Lock()  # 宗门战操作用锁，防止并发重入
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -498,11 +512,87 @@ class PetParkPlugin(Star):
         PetParkPlugin._sect_forced_refresh_task_ref = asyncio.create_task(
             self._background_sect_forced_refresh()
         )
+        # 银行周利息后台任务
+        try:
+            if (
+                PetParkPlugin._bank_interest_task_ref
+                and not PetParkPlugin._bank_interest_task_ref.done()
+            ):
+                PetParkPlugin._bank_interest_task_ref.cancel()
+        except Exception:
+            pass
+        PetParkPlugin._bank_interest_task_ref = asyncio.create_task(
+            self._bank_interest_loop()
+        )
 
     # 类级别后台任务引用，避免重载后并发
     _sect_war_task_ref = None
     _sect_daily_reset_task_ref = None
     _sect_forced_refresh_task_ref = None
+    _bank_interest_task_ref = None
+    _sect_forced_refresh_task_ref = None
+
+    # =====================================================================
+    # 银行周利息后台循环
+    # =====================================================================
+    BANK_INTEREST_CHECK_SEC = 120  # 每 2 分钟检查一次
+
+    async def _bank_interest_loop(self) -> None:
+        """后台循环：每周一 00:00（北京时间）自动计算所有银行账户的周利息。"""
+        while True:
+            try:
+                await self._bank_interest_tick()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("[petpark] 银行利息循环异常")
+            try:
+                await asyncio.sleep(self.BANK_INTEREST_CHECK_SEC)
+            except asyncio.CancelledError:
+                break
+
+    def _bank_interest_tick(self) -> None:
+        """单次利息检查：如果是周一且本周尚未计息，则为所有账户计息并保存。"""
+        now = self._bj_localtime()
+        weekday = now.tm_wday  # 0=周一
+        if weekday != 0:
+            return
+        week_key = time.strftime("%Y-W%W")
+        bank_players = self.store._data.get("bank_players", {})
+        any_changed = False
+        for qq, bk in list(bank_players.items()):
+            if not isinstance(bk, dict):
+                continue
+            if bk.get("last_interest_week") == week_key:
+                continue
+            # 存款利息
+            dep_coin = bk.get("deposit_coin", 0)
+            dep_jifen = bk.get("deposit_jifen", 0)
+            if dep_coin > 0:
+                interest = max(1, int(dep_coin * data.BANK_INTEREST_WEEKLY))
+                bk["deposit_coin"] += interest
+                bk["total_interest_earned"] = bk.get("total_interest_earned", 0) + interest
+            if dep_jifen > 0:
+                interest = max(1, int(dep_jifen * data.BANK_INTEREST_WEEKLY))
+                bk["deposit_jifen"] += interest
+                bk["total_interest_earned"] = bk.get("total_interest_earned", 0) + interest
+            # 贷款利息（复利）
+            loan_coin = bk.get("loan_coin", 0)
+            loan_jifen = bk.get("loan_jifen", 0)
+            if loan_coin > 0:
+                interest = max(1, int(loan_coin * data.BANK_INTEREST_WEEKLY))
+                bk["loan_coin"] += interest
+                bk["total_interest_paid"] = bk.get("total_interest_paid", 0) + interest
+            if loan_jifen > 0:
+                interest = max(1, int(loan_jifen * data.BANK_INTEREST_WEEKLY))
+                bk["loan_jifen"] += interest
+                bk["total_interest_paid"] = bk.get("total_interest_paid", 0) + interest
+            bk["last_interest_week"] = week_key
+            any_changed = True
+        if any_changed:
+            async def _save():
+                await self.store.save()
+            asyncio.ensure_future(_save())
 
     async def _background_sect_forced_refresh(self) -> None:
         """每分钟刷新一次所有群的强制出战名单。"""
@@ -1245,6 +1335,297 @@ class PetParkPlugin(Star):
 
         return None, tax_rate
 
+    # =====================================================================
+    # 宠物银行
+    # =====================================================================
+    def _bank_block_check(self, player: dict, action: str = "") -> str | None:
+        """检查玩家是否被银行冻结或有未还贷款限制。返回 None 表示放行。"""
+        bk = self.store.bank_state(player)
+        if not bk:
+            return None
+        today = time.strftime("%Y-%m-%d")
+        frozen_msgs = []
+        for cur, key_due in [("金币", "loan_coin_due"), ("积分", "loan_jifen_due")]:
+            key_loan = "loan_coin" if cur == "金币" else "loan_jifen"
+            loan = bk.get(key_loan, 0)
+            due_str = bk.get(key_due, "")
+            if loan > 0 and due_str:
+                try:
+                    due_dt = time.strptime(due_str, "%Y-%m-%d")
+                    due_ts = int(time.mktime(due_dt))
+                    days_overdue = max(0, (int(time.time()) - due_ts) // 86400)
+                    if days_overdue >= data.BANK_OVERDUE_FREEZE_DAYS:
+                        frozen_msgs.append(
+                            f"• {cur}贷款 {loan:,}（逾期 {days_overdue} 天）"
+                        )
+                except ValueError:
+                    pass
+        if frozen_msgs:
+            return (
+                "🚫 **银行账户已被冻结！**\n"
+                + "\n".join(frozen_msgs)
+                + "\n\n请立即还款以解冻账户：\n"
+                + "`银行还款 金币 数量` 或 `银行还款 积分 数量`\n"
+                + "还清所有贷款后自动解冻。"
+            )
+        # 有未还贷款时，阻止转让/赠送操作
+        if action in ("transfer", "gift"):
+            debts = []
+            if bk.get("loan_coin", 0) > 0:
+                debts.append(f"金币贷款 {bk['loan_coin']:,}")
+            if bk.get("loan_jifen", 0) > 0:
+                debts.append(f"积分贷款 {bk['loan_jifen']:,}")
+            if debts:
+                return (
+                    "🚫 **有未还贷款，无法进行转让/赠送操作！**\n"
+                    + "、".join(debts)
+                    + "\n请先还清贷款：`银行还款 金币/积分 数量`"
+                )
+        return None
+
+    def _bank_info(self, player: dict) -> str:
+        """查看银行账户信息。"""
+        bk = self.store.bank_state(player)
+        if not bk:
+            return "银行系统暂不可用。"
+        credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
+        limit = data.bank_loan_limit(credit)
+        now_ts = int(time.time())
+        # 计算逾期/剩余天数
+        def _loan_status(key_loan, key_due, key_dur):
+            loan = bk.get(key_loan, 0)
+            due_str = bk.get(key_due, "")
+            dur = bk.get(key_dur, data.BANK_LOAN_DEFAULT_DAYS)
+            if loan > 0 and due_str:
+                try:
+                    due_dt = time.strptime(due_str, "%Y-%m-%d")
+                    due_ts = int(time.mktime(due_dt))
+                    days = (now_ts - due_ts) // 86400
+                    return loan, due_str, dur, days
+                except ValueError:
+                    pass
+            return loan, "", dur, 0
+        lc, lc_due, lc_dur, lc_days = _loan_status("loan_coin", "loan_coin_due", "loan_coin_dur")
+        lj, lj_due, lj_dur, lj_days = _loan_status("loan_jifen", "loan_jifen_due", "loan_jifen_dur")
+        # 信用评级
+        if credit >= 800:
+            grade = "🌟 极好"
+        elif credit >= 650:
+            grade = "👍 良好"
+        elif credit >= 500:
+            grade = "👤 普通"
+        elif credit >= 300:
+            grade = "⚠️ 较差"
+        else:
+            grade = "💀 极差"
+        lines = [
+            "## 🏦 宠物银行",
+            "━━━━━━━━━━━━━━",
+        ]
+        # 存款
+        dep_coin = bk.get("deposit_coin", 0)
+        dep_jifen = bk.get("deposit_jifen", 0)
+        lines.append(f"💰 **存款**")
+        if dep_coin > 0:
+            lines.append(f"　金币：{dep_coin:,}")
+        if dep_jifen > 0:
+            lines.append(f"　积分：{dep_jifen:,}")
+        if dep_coin == 0 and dep_jifen == 0:
+            lines.append("　（无存款）")
+        # 贷款
+        lines.append(f"📋 **贷款**（额度：{limit:,}）")
+        if lc > 0:
+            if lc_days >= 0:
+                od_str = f" ⚠️ 已逾期{lc_days}天"
+            else:
+                od_str = f" ⏳ 还剩{-lc_days}天"
+            lines.append(f"　金币：{lc:,} | {lc_dur}天期 | 到期 {lc_due}{od_str}")
+        else:
+            lines.append(f"　金币：无贷款")
+        if lj > 0:
+            if lj_days >= 0:
+                od_str = f" ⚠️ 已逾期{lj_days}天"
+            else:
+                od_str = f" ⏳ 还剩{-lj_days}天"
+            lines.append(f"　积分：{lj:,} | {lj_dur}天期 | 到期 {lj_due}{od_str}")
+        else:
+            lines.append(f"　积分：无贷款")
+        # 信用
+        lines.append(f"⭐ **信用分**：{credit}（{grade}）")
+        # 利息统计
+        earned = bk.get("total_interest_earned", 0)
+        paid = bk.get("total_interest_paid", 0)
+        if earned > 0 or paid > 0:
+            lines.append(f"📊 **累计利息**：收入 {earned:,} | 支出 {paid:,}")
+        lines.append(f"📅 **周利率**：1%（每周一自动计息）")
+        # 逾期警告
+        max_od = max(lc_days, lj_days)
+        if max_od >= data.BANK_OVERDUE_FREEZE_DAYS:
+            lines.append("> 🚫 **账户已冻结！请立即还款！**")
+        elif max_od > 0:
+            remain = data.BANK_OVERDUE_FREEZE_DAYS - max_od
+            lines.append(f"> ⚠️ 贷款已逾期{max_od}天，{remain}天后将冻结账户！")
+        lines.append("━━━━━━━━━━━━━━")
+        lines.append("`银行存款 金币/积分 数量` | `银行取款 金币/积分 数量`")
+        lines.append("`银行贷款 金币/积分 数量` | `银行还款 金币/积分 数量`")
+        return "\n".join(lines)
+
+    def _bank_deposit(self, player: dict, tokens: list[str]) -> str:
+        """存款：银行存款 金币/积分 数量"""
+        currency = self._arg(tokens, 1)
+        if currency not in ("金币", "积分"):
+            return "用法：银行存款 金币/积分 数量\n例如：银行存款 金币 10000"
+        count_str = self._arg(tokens, 2)
+        if not count_str or not count_str.isdigit():
+            return "请输入有效的存款数量（正整数）。"
+        count = int(count_str)
+        if count <= 0:
+            return "存款数量必须大于 0。"
+        have = self.store.get_currency(player, currency)
+        if have < count:
+            return f"你的{currency}不足（需要 {count:,}，当前 {have:,}）。"
+        bk = self.store.bank_state(player)
+        key = "deposit_coin" if currency == "金币" else "deposit_jifen"
+        self.store.add_currency(player, currency, -count)
+        bk[key] = bk.get(key, 0) + count
+        return f"🏦 已存入 {currency} ×{count:,}。当前存款 {currency} {bk[key]:,}。\n> 周利率 1%，每周一自动计息。"
+
+    def _bank_withdraw(self, player: dict, tokens: list[str]) -> str:
+        """取款：银行取款 金币/积分 数量"""
+        currency = self._arg(tokens, 1)
+        if currency not in ("金币", "积分"):
+            return "用法：银行取款 金币/积分 数量\n例如：银行取款 金币 5000"
+        count_str = self._arg(tokens, 2)
+        if not count_str or not count_str.isdigit():
+            return "请输入有效的取款数量（正整数）。"
+        count = int(count_str)
+        if count <= 0:
+            return "取款数量必须大于 0。"
+        bk = self.store.bank_state(player)
+        key = "deposit_coin" if currency == "金币" else "deposit_jifen"
+        have = bk.get(key, 0)
+        if have < count:
+            return f"银行存款不足（需要 {count:,}，存款余额 {have:,}）。"
+        bk[key] -= count
+        self.store.add_currency(player, currency, count)
+        return f"🏦 已取出 {currency} ×{count:,}。当前存款 {currency} {bk[key]:,}。"
+
+    def _bank_loan(self, player: dict, tokens: list[str]) -> str:
+        """贷款：银行贷款 金币/积分 数量 [7/14/30天]"""
+        currency = self._arg(tokens, 1)
+        if currency not in ("金币", "积分"):
+            return (
+                "用法：银行贷款 金币/积分 数量 [天数]\n"
+                "例如：银行贷款 金币 50000 7\n"
+                "可选期限：7天 / 14天 / 30天（默认7天）"
+            )
+        count_str = self._arg(tokens, 2)
+        if not count_str or not count_str.isdigit():
+            return "请输入有效的贷款数量（正整数）。"
+        count = int(count_str)
+        if count <= 0:
+            return "贷款数量必须大于 0。"
+        # 贷款期限
+        dur_str = self._arg(tokens, 3)
+        if dur_str and dur_str.isdigit():
+            dur = int(dur_str)
+        else:
+            dur = data.BANK_LOAN_DEFAULT_DAYS
+        if dur not in data.BANK_LOAN_DURATIONS:
+            return f"贷款期限仅支持：{' / '.join(data.BANK_LOAN_DURATIONS.values())}"
+        bk = self.store.bank_state(player)
+        key_loan = "loan_coin" if currency == "金币" else "loan_jifen"
+        key_due = "loan_coin_due" if currency == "金币" else "loan_jifen_due"
+        key_dur = "loan_coin_dur" if currency == "金币" else "loan_jifen_dur"
+        # 不能重复贷款
+        if bk.get(key_loan, 0) > 0:
+            return f"你已有未还清的{currency}贷款（余额 {bk[key_loan]:,}），请先还清再贷。"
+        # 检查额度
+        credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
+        limit = data.bank_loan_limit(credit)
+        if count > limit:
+            return f"贷款金额超过你的额度上限（{limit:,}），当前信用分 {credit}。"
+        # 放款
+        today = time.strftime("%Y-%m-%d")
+        due_ts = int(time.time()) + dur * 86400
+        due_date = time.strftime("%Y-%m-%d", time.localtime(due_ts))
+        bk[key_loan] = count
+        bk[key_due] = due_date
+        bk[key_dur] = dur
+        bk["total_borrowed"] = bk.get("total_borrowed", 0) + count
+        self.store.add_currency(player, currency, count)
+        weeks = dur // 7
+        est_interest = int(count * data.BANK_INTEREST_WEEKLY * weeks)
+        return (
+            f"🏦 已发放{currency}贷款 ×{count:,}。\n"
+            f"> 📅 期限 {dur} 天（到期日 {due_date}）\n"
+            f"> 📊 预估利息 ~{est_interest:,}（周利率 1%，每周一计息，复利）\n"
+            f"> ⚠️ 到期后有 7 天宽限期，逾期更久将冻结账户。\n"
+            f"> ⚠️ 有未还贷款期间，无法赠送宠物、转让物品和货币。"
+        )
+
+    def _bank_repay(self, player: dict, tokens: list[str]) -> str:
+        """还款：银行还款 金币/积分 数量"""
+        currency = self._arg(tokens, 1)
+        if currency not in ("金币", "积分"):
+            return "用法：银行还款 金币/积分 数量（或 全部）\n例如：银行还款 金币 5000"
+        count_str = self._arg(tokens, 2)
+        bk = self.store.bank_state(player)
+        key_loan = "loan_coin" if currency == "金币" else "loan_jifen"
+        key_due = "loan_coin_due" if currency == "金币" else "loan_jifen_due"
+        loan = bk.get(key_loan, 0)
+        if loan <= 0:
+            return f"你没有{currency}贷款需要还。"
+        if count_str == "全部":
+            count = loan
+        elif count_str and count_str.isdigit():
+            count = min(int(count_str), loan)
+        else:
+            return "请输入有效的还款数量（正整数）或『全部』。"
+        if count <= 0:
+            return "还款数量必须大于 0。"
+        have = self.store.get_currency(player, currency)
+        if have < count:
+            return f"你的{currency}不足（需要 {count:,}，当前 {have:,}）。"
+        # 执行还款
+        self.store.add_currency(player, currency, -count)
+        bk[key_loan] -= count
+        bk["total_repaid"] = bk.get("total_repaid", 0) + count
+        # 判断是否还清
+        if bk[key_loan] <= 0:
+            bk[key_loan] = 0
+            # 信用分调整
+            due_str = bk.pop(key_due, "")
+            old_credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
+            if due_str:
+                try:
+                    due_dt = time.strptime(due_str, "%Y-%m-%d")
+                    due_ts = int(time.mktime(due_dt))
+                    days_overdue = max(0, (int(time.time()) - due_ts) // 86400)
+                except ValueError:
+                    days_overdue = 0
+                if days_overdue >= data.BANK_OVERDUE_FREEZE_DAYS:
+                    # 逾期冻结后还清
+                    change = random.randint(*data.BANK_CREDIT_OVERDUE)
+                elif days_overdue > 0:
+                    # 逾期但未冻结
+                    change = data.BANK_CREDIT_REPAY_LATE
+                else:
+                    # 按时还款
+                    change = random.randint(*data.BANK_CREDIT_REPAY_ON_TIME)
+            else:
+                change = random.randint(*data.BANK_CREDIT_REPAY_ON_TIME)
+            bk["credit_score"] = max(0, old_credit + change)
+            if change > 0:
+                credit_msg = f"\n> ⭐ 按时还款！信用分 +{change}（当前 {bk['credit_score']}）"
+            elif change < 0:
+                credit_msg = f"\n> ⚠️ 逾期还款，信用分 {change}（当前 {bk['credit_score']}）"
+            else:
+                credit_msg = f"\n> 信用分不变（当前 {bk['credit_score']}）"
+            return f"✅ 已还清{currency}贷款 ×{count:,}！账户已恢复正常。" + credit_msg
+        else:
+            return f"🏦 已偿还{currency}贷款 ×{count:,}，剩余贷款 {bk[key_loan]:,}。"
+
     @staticmethod
     def _inc_stat(player: dict, key: str, n: int = 1) -> None:
         """增加玩家统计计数（如剧情任务进度）。"""
@@ -1428,9 +1809,12 @@ class PetParkPlugin(Star):
         _HS_CMDS = {"家园", "家园介绍", "家园教程", "建造", "升级", "家园升级", "家园收取",
                      "家园建筑", "拜访家园", "家园拜访", "派遣", "召回", "派遣状态",
                      "顺手牵羊", "偷菜", "家园排行", "家园总排行", "商人购买", "拆除"}
+        # 银行指令白名单直通
+        _BANK_CMDS = {"宠物银行", "银行信息", "银行存款", "银行取款", "银行贷款", "银行还款"}
         if (
             cmd not in KNOWN_COMMANDS
             and cmd not in _HS_CMDS
+            and cmd not in _BANK_CMDS
             and text not in data.DAILY_ACTIONS
             and cmd not in event_cmds
             and text not in event_cmds
@@ -1496,6 +1880,15 @@ class PetParkPlugin(Star):
         player = self.store.get_player(qq, group_id)
         player["group"] = group_id
         self._track_activity(player)
+
+        # 银行逾期冻结检查（放行查看/还款类指令）
+        _bank_allow = {"银行信息", "银行还款", "宠物菜单", "宠物指令", "宠物帮助",
+                        "管理菜单", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
+                        "授权状态", "授权", "查看说明", "银行信息"}
+        if cmd not in _bank_allow:
+            bank_block = self._bank_block_check(player)
+            if bank_block:
+                return bank_block
 
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
@@ -1854,6 +2247,18 @@ class PetParkPlugin(Star):
             return self._homestead_merchant_buy(player, tokens)
         if cmd == "拆除":
             return self._homestead_demolish(player, tokens)
+
+        # ---- 宠物银行 ----
+        if cmd in ("银行信息", "宠物银行"):
+            return self._bank_info(player)
+        if cmd == "银行存款":
+            return self._bank_deposit(player, tokens)
+        if cmd == "银行取款":
+            return self._bank_withdraw(player, tokens)
+        if cmd == "银行贷款":
+            return self._bank_loan(player, tokens)
+        if cmd == "银行还款":
+            return self._bank_repay(player, tokens)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -3598,6 +4003,19 @@ class PetParkPlugin(Star):
                 "> 💀 偷菜：拼成功率偷别人未收资源，建哨塔可防御",
                 "> 🧳 流浪商人：收取时概率出现，可买加速券/护院符/双倍券",
                 "",
+                "【宠物银行】（存款生息 · 信用贷款）",
+                "> 在银行存钱赚利息，信用好可低息贷款，逾期将冻结账户！",
+                "- 宠物银行 · 银行信息",
+                "- 银行存款 金币/积分 数量",
+                "- 银行取款 金币/积分 数量",
+                "- 银行贷款 金币/积分 数量 [7/14/30天]",
+                "- 银行还款 金币/积分 数量（或 全部）",
+                "> 💰 活期存款：周利率 1%，随时存取，每周一自动计息",
+                "> 📋 信用贷款：初始额度 10 万，信用分越高额度越大",
+                "> ⭐ 信用分：初始 500，按时还款 +10~30，逾期扣分",
+                "> 🚫 逾期超 7 天：冻结所有游戏功能，还清自动解冻",
+                "> ⚠️ 有贷款期间：无法赠送宠物、转让物品和货币",
+                "",
                 "【姻缘】",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
                 "- 宠物求婚 用户ID · 同意求婚 用户ID",
@@ -3848,6 +4266,10 @@ class PetParkPlugin(Star):
             return "🔒 宠物已锁定，无法赠送。如需赠送请先发送『解锁宠物』。"
         if tp.get("pet"):
             return "对方已经有宠物了，无法接收。"
+        # 银行：有未还贷款无法赠送
+        bank_block = self._bank_block_check(player, "gift")
+        if bank_block:
+            return bank_block
         # 转让限制检查
         limit_err, _ = self._check_transfer_limit(player, tp, group_id, 1, "pet")
         if limit_err:
@@ -4130,6 +4552,10 @@ class PetParkPlugin(Star):
             return err
         name = tokens[2]
         count = self._parse_count(tokens, 3)
+        # 银行：有未还贷款无法转让
+        bank_block = self._bank_block_check(player, "transfer")
+        if bank_block:
+            return bank_block
         limit_err, tax_rate = self._check_transfer_limit(player, tp, group_id, count, "item")
         if limit_err:
             return limit_err
@@ -4167,6 +4593,10 @@ class PetParkPlugin(Star):
         tp, err = self._find_target(group_id, target)
         if err:
             return err
+        # 银行：有未还贷款无法赠送货币
+        bank_block = self._bank_block_check(player, "gift")
+        if bank_block:
+            return bank_block
         limit_err, tax_rate = self._check_transfer_limit(player, tp, group_id, count, tx_type)
         if limit_err:
             return limit_err

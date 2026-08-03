@@ -88,6 +88,7 @@ class PetStore:
         self._data.setdefault("tomb_active_coops", {})
         self._data.setdefault("tomb_active_coop_index", {})
         self._data.setdefault("homestead_players", {})
+        self._data.setdefault("bank_players", {})
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
 
@@ -1696,3 +1697,36 @@ class PetStore:
                     g[field] = default
             return g
         return player.setdefault("_homestead_fallback", cls._default_homestead_state())
+
+    @staticmethod
+    def _default_bank_state() -> dict:
+        """银行系统默认状态（存款/贷款/信用分/计息记录）。"""
+        return {
+            "deposit_coin": 0,           # 金币存款
+            "deposit_jifen": 0,          # 积分存款
+            "loan_coin": 0,              # 金币贷款余额
+            "loan_jifen": 0,             # 积分贷款余额
+            "loan_coin_due": "",         # 金币贷款日期 YYYY-MM-DD
+            "loan_jifen_due": "",        # 积分贷款日期
+            "overdue_reminded_coin": False,   # 金币逾期是否已提醒
+            "overdue_reminded_jifen": False,  # 积分逾期是否已提醒
+            "credit_score": 500,         # 信用分
+            "total_repaid": 0,           # 累计还款
+            "total_borrowed": 0,         # 累计借款
+            "total_interest_earned": 0,  # 累计利息收入
+            "total_interest_paid": 0,    # 累计利息支出
+            "last_interest_week": "",    # 上次计息周 YYYY-WW
+        }
+
+    @classmethod
+    def bank_state(cls, player: dict) -> dict:
+        """返回玩家银行状态（全局按 QQ 共享，与宠物数据隔离）。"""
+        store = cls._active
+        qq = str(player.get("qq", ""))
+        if store is not None and qq:
+            g = store._data["bank_players"].setdefault(qq, cls._default_bank_state())
+            for field, default in cls._default_bank_state().items():
+                if field not in g:
+                    g[field] = default
+            return g
+        return {}

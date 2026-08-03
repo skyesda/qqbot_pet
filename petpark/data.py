@@ -1951,3 +1951,38 @@ TRANSFER_TAX_DIAMOND = 0.20         # 钻石转让税率
 TRANSFER_TAX_ITEM = 0.10            # 道具转让税率
 TRANSFER_WEEKLY_SAME_LIMIT = 5      # 7天内向同一人转让超过此次数，触发双倍税
 TRANSFER_DOUBLE_TAX_MULT = 2.0      # 双倍税倍率
+
+# ============================================================================
+# 宠物银行（存款/贷款/利息/信用/逾期冻结）
+# ============================================================================
+# 利率
+BANK_INTEREST_WEEKLY = 0.01          # 周利率 1%
+BANK_INTEREST_DAY = 0.01 / 7         # 日利率（仅用于显示，实际按周计息）
+
+# 贷款额度（每种货币独立额度）
+BANK_LOAN_BASE = 100_000             # 基础贷款额度
+BANK_LOAN_PER_CREDIT = 100           # 信用分每超过500，每100分增加1万额度
+BANK_LOAN_MAX = 500_000              # 贷款上限
+BANK_LOAN_MIN = 10_000               # 贷款下限（信用低于300时）
+
+# 信用分
+BANK_CREDIT_INITIAL = 500            # 初始信用分
+BANK_CREDIT_REPAY_ON_TIME = (10, 30) # 按时还款加分（随机范围）
+BANK_CREDIT_REPAY_LATE = -20         # 逾期7天内还款扣分
+BANK_CREDIT_OVERDUE = (-100, -50)    # 逾期超7天冻结后还清扣分（随机范围）
+
+# 逾期时间
+BANK_LOAN_DURATIONS = {7: "7天", 14: "14天", 30: "30天"}  # 可选贷款期限
+BANK_LOAN_DEFAULT_DAYS = 7           # 默认贷款期限
+BANK_OVERDUE_FREEZE_DAYS = 7         # 逾期后再宽限7天，之后冻结
+
+
+def bank_loan_limit(credit_score: int) -> int:
+    """根据信用分计算贷款额度上限（每种货币独立）。"""
+    base = BANK_LOAN_BASE
+    if credit_score >= 500:
+        bonus_tiers = max(0, (credit_score - 500) // 100)
+        base += bonus_tiers * 10000
+    elif credit_score < 300:
+        base = BANK_LOAN_MIN
+    return min(BANK_LOAN_MAX, max(BANK_LOAN_MIN, base))
