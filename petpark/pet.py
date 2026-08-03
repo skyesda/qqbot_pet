@@ -22,7 +22,9 @@ def new_pet(species: str, quality: str, gender: str | None = None) -> dict:
     growth = data.QUALITY_GROWTH.get(quality, 1.0)
     element = data.SPECIES.get(species, random.choice(data.ELEMENTS))
     base_hp = int(800 * growth)
+    import secrets as _secrets
     pet = {
+        "pet_id": str(int(time.time())) + "_" + _secrets.token_hex(4),
         "species": species,
         "nickname": species,
         "element": element,

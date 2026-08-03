@@ -91,6 +91,7 @@ class PetStore:
         self._data.setdefault("bank_players", {})
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
+        self._migrate_multi_pet()
 
     @staticmethod
     def make_key(group_id: str, qq: str) -> str:
@@ -221,12 +222,47 @@ class PetStore:
         """获取/创建某个 QQ 的全局摸金状态。"""
         return self._data["tomb_players"].setdefault(qq, self._default_tomb_state())
 
+    # ----------------------------- 多宠物迁移 -----------------------------
+    def _migrate_multi_pet(self) -> None:
+        """将旧的单宠物 player["pet"] 迁移为 player["pets"] 列表。"""
+        for pl in self._data["players"].values():
+            if "pets" in pl:
+                continue  # 已迁移
+            old_pet = pl.pop("pet", None)
+            if isinstance(old_pet, dict):
+                # 迁移旧 cooldowns 到宠物身上
+                if "cooldowns" in pl:
+                    old_pet.setdefault("cooldowns", {}).update(pl.pop("cooldowns"))
+                old_pet.setdefault("pet_id", str(int(time.time())) + "_" + secrets.token_hex(4))
+                pl["pets"] = [old_pet]
+                pl["active_pet"] = 0
+            else:
+                pl["pets"] = []
+                pl["active_pet"] = -1
+            pl.setdefault("pet_slots", 2)
+        self._restore_pet_refs()
+
+    def _restore_pet_refs(self) -> None:
+        """重建 player["pet"] 运行时引用，指向 player["pets"][active_pet]。"""
+        for pl in self._data["players"].values():
+            idx = pl.get("active_pet", -1)
+            pets = pl.get("pets", [])
+            if 0 <= idx < len(pets):
+                pl["pet"] = pets[idx]
+            else:
+                pl["pet"] = None
+
     def _flush(self) -> None:
+        # 序列化前剥离运行时 pet 引用（避免重复序列化）
+        for pl in self._data["players"].values():
+            pl.pop("pet", None)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(
             json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         tmp.replace(self.path)
+        # 恢复运行时引用
+        self._restore_pet_refs()
 
     async def save(self) -> None:
         async with self._lock:
@@ -249,7 +285,9 @@ class PetStore:
                 "jifen": self.start_jifen,
                 "diamond": self.start_diamond,
                 "bag": {},
-                "pet": None,
+                "pets": [],
+                "active_pet": -1,
+                "pet_slots": 2,
                 "last_actions": {},
                 "stats": {"battle_win": 0, "explore": 0},
                 "quests": {},
@@ -544,11 +582,21 @@ class PetStore:
 
     @staticmethod
     def set_cooldown(player: dict, key: str, seconds: int) -> None:
-        player.setdefault("cooldowns", {})[key] = int(time.time()) + int(seconds)
+        """设置冷却（优先存储在活跃宠物上，实现按宠物隔离）。"""
+        p = player.get("pet")
+        if p is not None and isinstance(p, dict):
+            p.setdefault("cooldowns", {})[key] = int(time.time()) + int(seconds)
+        else:
+            player.setdefault("cooldowns", {})[key] = int(time.time()) + int(seconds)
 
     @staticmethod
     def cooldown_remaining(player: dict, key: str) -> int:
-        end = player.get("cooldowns", {}).get(key, 0)
+        """查询冷却剩余（优先从活跃宠物读取）。"""
+        p = player.get("pet")
+        if p is not None and isinstance(p, dict) and "cooldowns" in p:
+            end = p["cooldowns"].get(key, 0)
+        else:
+            end = player.get("cooldowns", {}).get(key, 0)
         return max(0, int(end) - int(time.time()))
 
     # ----------------------------- 活动 -----------------------------

@@ -309,12 +309,18 @@ KNOWN_COMMANDS = {
     "购买重生宝石",
     "确认重生",
     "祭奠",
+    # 多宠物
+    "切换宠物",
+    "宠物列表",
+    "查看所有宠物",
+    "宠物信息",
 }
 
 # 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
 WEB_BLOCKED_COMMANDS = {
     # 不可逆 / 资产转移
     "放生宠物",
+    "切换宠物",
     "赠送宠物",
     "宠物变性",
     "清空背包",
@@ -1941,6 +1947,14 @@ class PetParkPlugin(Star):
         # 清除重生相关标记
         p.pop("rebirth_gem", None)
         p.pop("rebirth_sacrifice", None)
+        # 重生奖励：永久 +1 宠物席位
+        old_slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+        slot_msg = ""
+        if old_slots < data.PET_SLOTS_MAX:
+            player["pet_slots"] = old_slots + 1
+            slot_msg = f"🎁 **重生福利**：宠物席位 +1（{old_slots}→{old_slots+1}）"
+        else:
+            slot_msg = f"宠物席位已达上限 {data.PET_SLOTS_MAX}，本次未增加。"
         # 伤害统计
         def _summarize(old, new, label):
             return f"　{label}：{old:,} → {new:,}（×{multiplier:.1f}）"
@@ -1961,6 +1975,7 @@ class PetParkPlugin(Star):
         if cleared_count > 0:
             lines.append(f"**清空：** 背包物品 ×{cleared_count}（品质卡/定制卡已保留）")
         lines.append("")
+        lines.append(slot_msg)
         lines.append("> 🐣 宠物获得新生，重新踏上成长之路！")
         return "\n".join(lines)
 
@@ -2150,11 +2165,13 @@ class PetParkPlugin(Star):
         # 银行指令白名单直通
         _BANK_CMDS = {"宠物银行", "银行信息", "银行存款", "银行取款", "银行贷款", "银行还款"}
         _REBIRTH_CMDS = {"重生", "购买重生宝石", "确认重生", "祭奠"}
+        _PET_CMDS = {"切换宠物", "宠物列表", "查看所有宠物", "宠物信息"}
         if (
             cmd not in KNOWN_COMMANDS
             and cmd not in _HS_CMDS
             and cmd not in _BANK_CMDS
             and cmd not in _REBIRTH_CMDS
+            and cmd not in _PET_CMDS
             and text not in data.DAILY_ACTIONS
             and cmd not in event_cmds
             and text not in event_cmds
@@ -2225,7 +2242,8 @@ class PetParkPlugin(Star):
         _bank_allow = {"银行信息", "银行还款", "宠物菜单", "宠物指令", "宠物帮助",
                         "管理菜单", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
                         "授权状态", "授权", "查看说明", "银行信息",
-                        "重生", "购买重生宝石", "确认重生", "祭奠"}
+                        "重生", "购买重生宝石", "确认重生", "祭奠",
+                        "宠物列表", "查看所有宠物", "宠物信息", "切换宠物"}
         if cmd not in _bank_allow:
             bank_block = self._bank_block_check(player)
             if bank_block:
@@ -2348,8 +2366,6 @@ class PetParkPlugin(Star):
             return self._inspect(group_id, tokens)
         if cmd == "赠送宠物":
             return self._gift_pet(player, group_id, tokens)
-        if cmd == "放生宠物":
-            return self._release(player)
         if cmd in ("锁定宠物", "宠物锁定"):
             return self._lock_pet(player, True)
         if cmd in ("解锁宠物", "宠物解锁"):
@@ -2617,6 +2633,16 @@ class PetParkPlugin(Star):
             return self._rebirth_sacrifice(player, tokens)
         if cmd == "确认重生":
             return self._rebirth_confirm(player)
+
+        # ---- 多宠物 ----
+        if cmd in ("宠物列表", "查看所有宠物"):
+            return self._pet_list(player)
+        if cmd == "切换宠物":
+            return self._pet_switch(player, tokens)
+        if cmd == "宠物信息":
+            return self._pet_info(player, tokens)
+        if cmd == "放生宠物":
+            return self._pet_release(player, tokens)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -4291,9 +4317,15 @@ class PetParkPlugin(Star):
                 "",
                 "【入门】",
                 "- 砸蛋 · 购买宠物 · 我的宠物 · 宠物状态",
-                "- 宠物改名 · 宠物变性 · 赠送宠物 · 放生宠物",
+                "- 宠物改名 · 宠物变性 · 赠送宠物 · 放生宠物 序号",
                 "- 锁定宠物 · 解锁宠物（锁定后无法放生/赠送，防误操作）",
                 "- 宠物侦查 用户ID",
+                "",
+                "【多宠物】💡 默认2席位 | 最多10 | 重生+1席位 | 宠物席位卡+1",
+                "- 宠物列表 · 查看所有宠物（查看所有宠物概要）",
+                "- 切换宠物 序号（切换到指定宠物）",
+                "- 宠物信息 序号（查看指定宠物详情）",
+                "- 放生宠物 序号（放生指定宠物，最后一只不可放生）",
                 "",
                 "【商城 / 背包】",
                 "- 宠物商城 · 道具商城 · 宠物市场",
@@ -4507,14 +4539,20 @@ class PetParkPlugin(Star):
         return random.choices(names, weights=weights, k=1)[0]
 
     def _smash_egg(self, player: dict) -> str:
-        if player.get("pet"):
-            return "你已经有宠物啦！如需更换请先『放生宠物』。"
+        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+        if len(player.get("pets", [])) >= slots:
+            return (
+                f"宠物席位已满（{len(player['pets'])}/{slots}），无法获取新宠物。\n"
+                "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
+            )
         cd = self._cooldown_block(player, "砸蛋", "砸蛋")
         if cd:
             return cd
         species = random.choice(data.SPECIES_NAMES)
         quality = self._roll_quality()
-        player["pet"] = petmod.new_pet(species, quality)
+        new_p = petmod.new_pet(species, quality)
+        if not self._add_pet(player, new_p):
+            return "添加宠物失败，席位异常。"
         self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
         return (
             f"💥 **砸蛋成功！**\n获得 【{quality}】品质的 **{species}**！\n"
@@ -4522,8 +4560,12 @@ class PetParkPlugin(Star):
         )
 
     def _buy_pet(self, player: dict, tokens: list[str]) -> str:
-        if player.get("pet"):
-            return "你已经有宠物啦！如需更换请先『放生宠物』。"
+        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+        if len(player.get("pets", [])) >= slots:
+            return (
+                f"宠物席位已满（{len(player['pets'])}/{slots}），无法获取新宠物。\n"
+                "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
+            )
         if len(tokens) < 2:
             return "用法：购买宠物 宠物名 [品质]"
         species = tokens[1]
@@ -4541,7 +4583,10 @@ class PetParkPlugin(Star):
         if self.store.get_currency(player, "积分") < cost:
             return f"购买『{species}』（{quality}）需 {cost} 积分，积分不足。"
         self.store.add_currency(player, "积分", -cost)
-        player["pet"] = petmod.new_pet(species, quality)
+        new_p = petmod.new_pet(species, quality)
+        if not self._add_pet(player, new_p):
+            self.store.add_currency(player, "积分", cost)  # 退款
+            return "添加宠物失败，席位异常，已退款。"
         return f"✅ **购买成功！** 花费 {cost} 积分获得 【{quality}】品质的 **{species}**。"
 
     def _compose_quality_card(self, player: dict, tokens: list[str]) -> str:
@@ -4586,6 +4631,45 @@ class PetParkPlugin(Star):
             return "宠物心情低落（1颗星），无法参加活动，请先恢复心情（玩耍 / 喂食 / 使用道具）。"
         return None
 
+    # ------------------------------------------------------------------
+    # 多宠物系统：辅助方法
+    # ------------------------------------------------------------------
+    def _add_pet(self, player: dict, new_pet: dict) -> bool:
+        """添加宠物到玩家宠物列表，自动切换。成功返回 True。"""
+        player.setdefault("pets", [])
+        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+        if len(player["pets"]) >= slots:
+            return False
+        new_pet.setdefault("pet_id", str(int(time.time())) + "_" + __import__("secrets").token_hex(4))
+        player["pets"].append(new_pet)
+        player["active_pet"] = len(player["pets"]) - 1
+        player["pet"] = new_pet  # 实时引用
+        return True
+
+    def _remove_pet(self, player: dict, index: int) -> dict | None:
+        """移除指定索引的宠物，返回被移除的宠物或 None。"""
+        pets = player.get("pets", [])
+        if index < 0 or index >= len(pets):
+            return None
+        removed = pets.pop(index)
+        if not pets:
+            player["active_pet"] = -1
+            player["pet"] = None
+        else:
+            if player["active_pet"] >= len(pets):
+                player["active_pet"] = len(pets) - 1
+            player["pet"] = pets[player["active_pet"]]
+        return removed
+
+    def _switch_pet(self, player: dict, index: int) -> bool:
+        """切换活跃宠物到指定索引。"""
+        pets = player.get("pets", [])
+        if index < 0 or index >= len(pets):
+            return False
+        player["active_pet"] = index
+        player["pet"] = pets[index]
+        return True
+
     def _custom_image_md(self, pet: dict) -> str | None:
         """如果宠物有已审核通过的定制图，返回可在 QQ Markdown 里使用的图片语法串。"""
         filename = pet.get("custom_image")
@@ -4612,9 +4696,11 @@ class PetParkPlugin(Star):
         tp, err = self._find_target(group_id, target)
         if err:
             return err
-        if not tp.get("pet"):
+        if not tp.get("pet") and not tp.get("pets"):
             return "对方还没有宠物。"
-        pet = tp["pet"]
+        pet = tp.get("pet") or (tp.get("pets", [{}])[0] if tp.get("pets") else None)
+        if not pet:
+            return "对方还没有宠物。"
         image_md = self._custom_image_md(pet) or images.pet_image_md(pet.get("species"))
         return petmod.render_pet(pet), image_md
 
@@ -4632,8 +4718,10 @@ class PetParkPlugin(Star):
             return err
         if p.get("locked"):
             return "🔒 宠物已锁定，无法赠送。如需赠送请先发送『解锁宠物』。"
-        if tp.get("pet"):
-            return "对方已经有宠物了，无法接收。"
+        # 检查对方宠物席位
+        tp_slots = tp.get("pet_slots", data.PET_SLOTS_DEFAULT)
+        if len(tp.get("pets", [])) >= tp_slots:
+            return f"对方宠物席位已满（{len(tp['pets'])}/{tp_slots}），无法接收。"
         # 银行：有未还贷款无法赠送
         bank_block = self._bank_block_check(player, "gift")
         if bank_block:
@@ -4642,9 +4730,13 @@ class PetParkPlugin(Star):
         limit_err, _ = self._check_transfer_limit(player, tp, group_id, 1, "pet")
         if limit_err:
             return limit_err
-        tp["pet"] = p
-        player["pet"] = None
-        return f"🎁 已将『{p['nickname']}』赠送给 `{target}`。"
+        removed = self._remove_pet(player, player.get("active_pet", 0))
+        if not removed:
+            return "移除宠物失败。"
+        if not self._add_pet(tp, removed):
+            self._add_pet(player, removed)  # 回滚
+            return "对方接收失败（席位异常），已退还。"
+        return f"🎁 已将『{removed['nickname']}』赠送给 `{target}`。"
 
     def _release(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -4652,8 +4744,13 @@ class PetParkPlugin(Star):
             return "你没有宠物。"
         if p.get("locked"):
             return f"🔒 『{p['nickname']}』已锁定，无法放生。如需放生请先发送『解锁宠物』。"
-        player["pet"] = None
-        return f"已放生『{p['nickname']}』，江湖再见。"
+        if len(player.get("pets", [])) <= 1:
+            return "⚠️ 这是你最后一只宠物，不能放生。请先获取新宠物再放生。"
+        idx = player.get("active_pet", 0)
+        removed = self._remove_pet(player, idx)
+        if not removed:
+            return "放生失败。"
+        return f"已放生『{removed['nickname']}』，江湖再见。"
 
     def _lock_pet(self, player: dict, lock: bool) -> str:
         p = self._need_pet(player)
@@ -4668,6 +4765,103 @@ class PetParkPlugin(Star):
             return f"『{p['nickname']}』当前未锁定。"
         p["locked"] = False
         return f"🔓 已解锁『{p['nickname']}』，现在可以放生或赠送了。"
+
+    # ------------------------------------------------------------------
+    # 多宠物系统：指令处理器
+    # ------------------------------------------------------------------
+    def _pet_list(self, player: dict) -> str:
+        """查看所有宠物概要。"""
+        pets = player.get("pets", [])
+        if not pets:
+            return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
+        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+        active_idx = player.get("active_pet", 0)
+        lines = [
+            f"## 🐾 宠物列表（{len(pets)}/{slots} 席位）",
+            "",
+        ]
+        for i, pet in enumerate(pets):
+            marker = " 👈 当前" if i == active_idx else ""
+            petmod.refresh_energy(pet)
+            bp = petmod.battle_power(pet)
+            lines.append(
+                f"**{i+1}.** {pet.get('nickname','?')} | {pet.get('species','?')} | "
+                f"{pet.get('quality','?')} | {pet.get('stage','?')} Lv{pet.get('level',1)} | "
+                f"战力 {bp:,}{marker}"
+            )
+        lines.append("")
+        lines.append("> 发送 `切换宠物 序号` 切换活跃宠物")
+        lines.append("> 发送 `宠物信息 序号` 查看详细信息")
+        return "\n".join(lines)
+
+    def _pet_switch(self, player: dict, tokens: list[str]) -> str:
+        """切换活跃宠物。"""
+        pets = player.get("pets", [])
+        if not pets:
+            return "你还没有宠物。"
+        if len(tokens) < 2:
+            # 无参数：展示列表让用户选择
+            return self._pet_list(player)
+        try:
+            num = int(tokens[1])
+        except ValueError:
+            return "用法：切换宠物 序号（例如：切换宠物 1）"
+        idx = num - 1  # 用户输入 1-based，内部 0-based
+        if idx < 0 or idx >= len(pets):
+            return f"无效序号，请输入 1~{len(pets)}。"
+        old = pets[player.get("active_pet", 0)] if player.get("active_pet", 0) < len(pets) else None
+        old_name = old.get("nickname", "?") if old else "?"
+        if not self._switch_pet(player, idx):
+            return "切换失败。"
+        new_pet = pets[idx]
+        return f"✅ 已切换宠物：**{old_name}** → **{new_pet.get('nickname', '?')}**（{new_pet.get('species','?')} Lv{new_pet.get('level',1)}）"
+
+    def _pet_info(self, player: dict, tokens: list[str]) -> str:
+        """查看指定宠物的完整信息。"""
+        pets = player.get("pets", [])
+        if not pets:
+            return "你还没有宠物。"
+        if len(tokens) < 2:
+            # 默认显示当前活跃宠物
+            p = self._need_pet(player)
+            if not p:
+                return "你还没有宠物。"
+        else:
+            try:
+                num = int(tokens[1])
+            except ValueError:
+                return "用法：宠物信息 序号（例如：宠物信息 1）"
+            idx = num - 1
+            if idx < 0 or idx >= len(pets):
+                return f"无效序号，请输入 1~{len(pets)}。"
+            p = pets[idx]
+        image_md = self._custom_image_md(p) or images.pet_image_md(p.get("species"))
+        return petmod.render_pet(p), image_md
+
+    def _pet_release(self, player: dict, tokens: list[str]) -> str:
+        """放生指定序号的宠物。"""
+        pets = player.get("pets", [])
+        if not pets:
+            return "你还没有宠物。"
+        if len(tokens) < 2:
+            return "用法：放生宠物 序号（例如：放生宠物 2）\n> 发送 `宠物列表` 查看所有宠物及序号。"
+        try:
+            num = int(tokens[1])
+        except ValueError:
+            return "用法：放生宠物 序号（例如：放生宠物 2）"
+        idx = num - 1
+        if idx < 0 or idx >= len(pets):
+            return f"无效序号，请输入 1~{len(pets)}。"
+        if len(pets) <= 1:
+            return "⚠️ 这是你最后一只宠物，不能放生。请先获取新宠物再放生。"
+        pet = pets[idx]
+        if pet.get("locked"):
+            return f"🔒 『{pet.get('nickname', '?')}』已锁定，无法放生。请先发送『解锁宠物』。"
+        name = pet.get("nickname", "?")
+        removed = self._remove_pet(player, idx)
+        if not removed:
+            return "放生失败。"
+        return f"已放生『{name}』，江湖再见。"
 
     def _rename(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -4780,12 +4974,29 @@ class PetParkPlugin(Star):
         return f"购买成功：{name} x{count}，花费 {cost} {it['currency']}。"
 
     def _use_item(self, player: dict, tokens: list[str]) -> str:
-        p = self._need_pet(player)
-        if not p:
-            return "你没有宠物，无法使用物品。"
         if len(tokens) < 2:
             return "用法：使用 物品 数量"
         name = tokens[1]
+        # 宠物席位卡：玩家级别效果，无需有宠物即可使用
+        it_check = data.ITEMS.get(name)
+        if it_check and it_check.get("effect", {}).get("add_pet_slot"):
+            if not self.store.has_item(player, name):
+                return f"背包里没有『{name}』。"
+            count = self._parse_count(tokens, 2)
+            if not self.store.has_item(player, name, count):
+                return f"背包里『{name}』数量不足。"
+            slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+            total_add = count * it_check["effect"]["add_pet_slot"]
+            if slots >= data.PET_SLOTS_MAX:
+                return f"宠物席位已达上限 {data.PET_SLOTS_MAX}，无法继续使用。"
+            new_slots = min(data.PET_SLOTS_MAX, slots + total_add)
+            actual_add = new_slots - slots
+            player["pet_slots"] = new_slots
+            self.store.remove_item(player, name, count)
+            return f"✅ 使用『{name}』x{count}：宠物席位 +{actual_add}！当前席位上限：{player['pet_slots']}。"
+        p = self._need_pet(player)
+        if not p:
+            return "你没有宠物，无法使用物品。"
         if not self.store.has_item(player, name):
             return f"背包里没有『{name}』。"
         it = data.ITEMS.get(name)

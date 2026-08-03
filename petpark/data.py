@@ -605,6 +605,15 @@ ITEMS = {
         "desc": "将宠物品质提升为【混沌】，属性随品质同步飞跃。已是混沌品质无法使用。",
         "effect": {"upgrade_quality": "混沌"},
     },
+    # ---- 多宠物系统 ----
+    PET_SLOT_CARD_NAME: {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "使用后永久增加1个宠物席位（上限10个），仅可通过管理员卡密获得。",
+        "effect": {"add_pet_slot": 1},
+    },
 }
 
 # 品质卡合成链（10 张低一级卡合成 1 张高一级卡）。
@@ -2045,3 +2054,11 @@ def rebirth_roll_multiplier(sacrifice_points: int = 0) -> float:
         if r <= acc:
             return mult
     return 2.0
+
+
+# ============================================================================
+# 多宠物系统
+# ============================================================================
+PET_SLOTS_DEFAULT = 2          # 默认宠物席位
+PET_SLOTS_MAX = 10             # 最大宠物席位
+PET_SLOT_CARD_NAME = "宠物席位卡"  # 席位卡道具名
