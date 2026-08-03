@@ -1547,9 +1547,22 @@ class PetParkPlugin(Star):
         key_loan = "loan_coin" if currency == "金币" else "loan_jifen"
         key_due = "loan_coin_due" if currency == "金币" else "loan_jifen_due"
         key_dur = "loan_coin_dur" if currency == "金币" else "loan_jifen_dur"
+        # 最低贷款金额
+        if count < data.BANK_LOAN_MIN_AMOUNT:
+            return f"单次贷款最低 {data.BANK_LOAN_MIN_AMOUNT:,} {currency}。"
         # 不能重复贷款
         if bk.get(key_loan, 0) > 0:
             return f"你已有未还清的{currency}贷款（余额 {bk[key_loan]:,}），请先还清再贷。"
+        # 还清后冷却检查
+        key_cd = "loan_coin_repaid_at" if currency == "金币" else "loan_jifen_repaid_at"
+        last_repaid = bk.get(key_cd, 0)
+        if last_repaid:
+            elapsed = int(time.time()) - last_repaid
+            if elapsed < data.BANK_LOAN_COOLDOWN_AFTER_REPAY:
+                remain = data.BANK_LOAN_COOLDOWN_AFTER_REPAY - elapsed
+                hours = remain // 3600
+                mins = (remain % 3600) // 60
+                return f"你刚还清{currency}贷款，需等待 {hours}时{mins}分后才能再次贷款。"
         # 检查额度
         credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
         limit = data.bank_loan_limit(credit)
@@ -1604,9 +1617,14 @@ class PetParkPlugin(Star):
         # 判断是否还清
         if bk[key_loan] <= 0:
             bk[key_loan] = 0
-            # 信用分调整
+            # 记录还清时间（冷却用）
+            key_cd = "loan_coin_repaid_at" if currency == "金币" else "loan_jifen_repaid_at"
+            bk[key_cd] = int(time.time())
+            # 信用分调整（按贷款金额比例缩放，防刷小额贷款涨分）
             due_str = bk.pop(key_due, "")
             old_credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
+            # 贷款额相对于基础额度的比例，至少 1/100（小额贷款信用收益极低）
+            loan_ratio = max(0.01, min(1.0, count / data.BANK_LOAN_MIN_AMOUNT))
             if due_str:
                 try:
                     due_dt = time.strptime(due_str, "%Y-%m-%d")
@@ -1621,10 +1639,12 @@ class PetParkPlugin(Star):
                     # 逾期但未冻结
                     change = data.BANK_CREDIT_REPAY_LATE
                 else:
-                    # 按时还款
-                    change = random.randint(*data.BANK_CREDIT_REPAY_ON_TIME)
+                    # 按时还款：按贷款比例缩放
+                    base_change = random.randint(*data.BANK_CREDIT_REPAY_ON_TIME)
+                    change = max(1, int(base_change * loan_ratio))
             else:
-                change = random.randint(*data.BANK_CREDIT_REPAY_ON_TIME)
+                base_change = random.randint(*data.BANK_CREDIT_REPAY_ON_TIME)
+                change = max(1, int(base_change * loan_ratio))
             bk["credit_score"] = max(0, old_credit + change)
             if change > 0:
                 credit_msg = f"\n> ⭐ 按时还款！信用分 +{change}（当前 {bk['credit_score']}）"
@@ -1632,6 +1652,8 @@ class PetParkPlugin(Star):
                 credit_msg = f"\n> ⚠️ 逾期还款，信用分 {change}（当前 {bk['credit_score']}）"
             else:
                 credit_msg = f"\n> 信用分不变（当前 {bk['credit_score']}）"
+            cd_hours = data.BANK_LOAN_COOLDOWN_AFTER_REPAY // 3600
+            credit_msg += f"\n> ⏳ 该币种 {cd_hours} 小时内无法再次贷款。"
             return f"✅ 已还清{currency}贷款 ×{count:,}！账户已恢复正常。" + credit_msg
         else:
             return f"🏦 已偿还{currency}贷款 ×{count:,}，剩余贷款 {bk[key_loan]:,}。"

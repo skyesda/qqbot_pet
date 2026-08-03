@@ -1708,6 +1708,8 @@ class PetStore:
             "loan_jifen": 0,             # 积分贷款余额
             "loan_coin_due": "",         # 金币贷款日期 YYYY-MM-DD
             "loan_jifen_due": "",        # 积分贷款日期
+            "loan_coin_repaid_at": 0,    # 金币贷款还清时间戳（冷却用）
+            "loan_jifen_repaid_at": 0,   # 积分贷款还清时间戳
             "overdue_reminded_coin": False,   # 金币逾期是否已提醒
             "overdue_reminded_jifen": False,  # 积分逾期是否已提醒
             "credit_score": 500,         # 信用分

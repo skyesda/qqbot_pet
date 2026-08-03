@@ -1960,6 +1960,8 @@ BANK_INTEREST_WEEKLY = 0.01          # 周利率 1%
 BANK_INTEREST_DAY = 0.01 / 7         # 日利率（仅用于显示，实际按周计息）
 
 # 贷款额度（每种货币独立额度）
+BANK_LOAN_MIN_AMOUNT = 1_000         # 最低单次贷款金额（防刷信用分）
+BANK_LOAN_COOLDOWN_AFTER_REPAY = 86400  # 还清后24小时内不能重新贷款同币种
 BANK_LOAN_BASE = 100_000             # 基础贷款额度
 BANK_LOAN_PER_CREDIT = 100           # 信用分每超过500，每100分增加1万额度
 BANK_LOAN_MAX = 500_000              # 贷款上限
