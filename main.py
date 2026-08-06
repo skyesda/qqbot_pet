@@ -5238,10 +5238,13 @@ class PetParkPlugin(Star):
         if not self.store.has_item(player, name, count):
             return f"背包里『{name}』数量不足。"
         it = data.ITEMS.get(name, {"price": 100, "currency": "积分"})
-        gain = int(it["price"] * 0.5) * count
+        # 丹药类（药品/仙丹）禁止售卖
+        if it.get("category") in ("药品", "仙丹"):
+            return f"『{name}』属于丹药类物品，无法出售。"
+        gain = int(it["price"] * 0.2) * count
         self.store.remove_item(player, name, count)
         self.store.add_currency(player, it["currency"], gain)
-        return f"出售 {name} x{count}，获得 {gain} {it['currency']}。"
+        return f"出售 {name} x{count}，获得 {gain} {it['currency']}（20% 回收价）。"
 
     def _drop_item(self, player: dict, tokens: list[str]) -> str:
         if len(tokens) < 2:
