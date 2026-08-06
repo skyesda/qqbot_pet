@@ -11423,6 +11423,13 @@ class PetParkPlugin(Star):
             return
         base1, _ = self._sect_group_base_power(g1)
         base2, _ = self._sect_group_base_power(g2)
+        # 战力差距上限：防止一方碾压，差距超过上限时拉平强者战力
+        diff = abs(base1 - base2)
+        if diff > data.SECT_WAR_POWER_GAP_CAP:
+            if base1 > base2:
+                base1 = base2 + data.SECT_WAR_POWER_GAP_CAP
+            else:
+                base2 = base1 + data.SECT_WAR_POWER_GAP_CAP
         cheer1 = war1.get("cheer_bonus", 0)
         cheer2 = war2.get("cheer_bonus", 0)
         power1 = base1 + cheer1
@@ -11533,6 +11540,21 @@ class PetParkPlugin(Star):
             )
             await self._send_to_group(gid, text)
 
+    def _sect_war_kill_all_pets(self, group_id: str) -> None:
+        """宗门战失败：将该群所有玩家的出战宠物血量归0（宠物死亡）。"""
+        for pkey, pl in self.store._data.get("players", {}).items():
+            if pl.get("group") != group_id:
+                continue
+            # 处理多宠物：所有宠物血量归0
+            pets = pl.get("pets", [])
+            for pet in pets:
+                if pet and not petmod.is_dead(pet):
+                    pet["hp"] = 0
+            # 兼容：如果只有单宠物引用
+            p = pl.get("pet")
+            if p and isinstance(p, dict):
+                p["hp"] = 0
+
     def _sect_war_settle(self, g1: str, g2: str, war1: dict, war2: dict) -> None:
         """决赛结算：宗门积分、胜负记录、个人奖励/贡献、写入历史。"""
         w1 = war1.get("my_wins", 0)
@@ -11559,6 +11581,8 @@ class PetParkPlugin(Star):
             self._sect_give_points(loser, data.SECT_LOSE_POINTS)
             points_a = data.SECT_WIN_POINTS if winner == g1 else data.SECT_LOSE_POINTS
             points_b = data.SECT_WIN_POINTS if winner == g2 else data.SECT_LOSE_POINTS
+            # 失败方全群宠物血量归0（死亡）
+            self._sect_war_kill_all_pets(loser)
 
         # 宗门胜负记录
         for gid, is_a in ((g1, True), (g2, False)):
@@ -12077,6 +12101,10 @@ class PetParkPlugin(Star):
         buildings = hs.get("buildings", {})
         if not buildings:
             return "🏜️ 家园空空如也，发送「建造 建筑名」开始建设。"
+        cd = self.store.cooldown_remaining(player, "homestead:collect")
+        if cd > 0:
+            m, s = divmod(cd, 60)
+            return f"⏳ 家园收取冷却中，请 {m} 分 {s} 秒后再来。"
         now = int(time.time())
         wh_level = buildings.get("仓库", {}).get("level", 0) if "仓库" in buildings else 0
         max_acc = data.homestead_max_accumulate(wh_level)
@@ -12105,11 +12133,13 @@ class PetParkPlugin(Star):
                 coin = int(coin * disp_mult)
                 jifen = int(jifen * disp_mult)
                 exp = int(exp * disp_mult)
-                # 扣除派遣精力
-                pet_obj = player.get("pet") or {}
+                # 扣除派遣精力（定位具体派遣的宠物）
                 energy_cost = int(data.HOMESTEAD_DISPATCH_ENERGY_PER_HOUR * hours)
-                if pet_obj and disp_info.get("qq") == str(player.get("qq", "")):
-                    pet_obj["energy"] = max(0, pet_obj.get("energy", 100) - energy_cost)
+                if disp_info.get("qq") == str(player.get("qq", "")):
+                    pet_idx = disp_info.get("pet_index", player.get("active_pet", -1))
+                    pets = player.get("pets", [])
+                    if 0 <= pet_idx < len(pets):
+                        pets[pet_idx]["energy"] = max(0, pets[pet_idx].get("energy", 100) - energy_cost)
             h, m = divmod(int(elapsed // 60), 60)
             time_str = f"{h}时{m}分" if h > 0 else f"{m}分钟"
             parts = []
@@ -12216,6 +12246,7 @@ class PetParkPlugin(Star):
         lines.append(f"✅ 收取完成！{' · '.join(summary)}")
         if levelup:
             lines.append(levelup)
+        self.store.set_cooldown(player, "homestead:collect", 300)
         return "\n".join(lines)
 
     def _homestead_demolish(self, player: dict, tokens: list[str]) -> str:
@@ -12339,27 +12370,41 @@ class PetParkPlugin(Star):
     # 宠物派遣
     # =====================================================================
     def _homestead_dispatch(self, player: dict, tokens: list[str]) -> str:
-        """派遣 建筑名 —— 将自己的宠物派遣到建筑上，提升产量。"""
+        """派遣 建筑名 [宠物序号] —— 将宠物派遣到建筑上，提升产量。不指定序号默认当前出战宠物。"""
         hs = self.store.homestead_state(player)
-        p = self._need_pet(player)
-        if not p:
+        pets = player.get("pets", [])
+        if not pets:
             return "你还没有宠物，无法派遣。"
+        # 解析参数：派遣 建筑名 [宠物序号]
         if len(tokens) < 2:
             built = list(hs.get("buildings", {}).keys())
             if built:
-                return f"用法：派遣 建筑名\n可选：{' · '.join(built)}"
+                return f"用法：派遣 建筑名 [宠物序号]\n可选建筑：{' · '.join(built)}\n不指定序号默认派遣当前出战宠物"
             return "你还没有建筑，先发送「建造 建筑名」。"
         name = tokens[1]
         if name not in hs.get("buildings", {}):
             return f"你还没有建造{name}。"
+        # 确定要派遣的宠物
+        pet_index = player.get("active_pet", -1)
+        if len(tokens) >= 3:
+            try:
+                idx = int(tokens[2]) - 1  # 用户输入从1开始
+                if idx < 0 or idx >= len(pets):
+                    return f"宠物序号无效，你共有 {len(pets)} 只宠物（输入 1~{len(pets)}）。"
+                pet_index = idx
+            except ValueError:
+                return f"宠物序号无效，请输入数字（1~{len(pets)}）。"
+        if pet_index < 0 or pet_index >= len(pets):
+            return "当前没有出战宠物，请先切换宠物。"
+        p = pets[pet_index]
         if p.get("energy", 0) < data.HOMESTEAD_DISPATCH_MIN_ENERGY:
-            return f"宠物精力不足（需 ≥{data.HOMESTEAD_DISPATCH_MIN_ENERGY}，当前 {p.get('energy', 0)}）。"
-        # 检查是否已派遣到其他建筑
+            return f"『{p.get('nickname', '?')}』精力不足（需 ≥{data.HOMESTEAD_DISPATCH_MIN_ENERGY}，当前 {p.get('energy', 0)}）。"
+        # 检查该宠物是否已派遣到其他建筑
         dispatch = hs.get("dispatch", {})
         my_qq = str(player.get("qq", ""))
         for bname, dp in dispatch.items():
-            if dp.get("qq") == my_qq:
-                return f"宠物已派遣到{bname}，先发送「**召回 {bname}**」。"
+            if dp.get("qq") == my_qq and dp.get("pet_index") == pet_index:
+                return f"『{p.get('nickname', '?')}』已派遣到{bname}，先发送「**召回 {bname}**」。"
         cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
         mult = data.homestead_dispatch_multiplier(p, name)
         element_tag = ""
@@ -12367,6 +12412,7 @@ class PetParkPlugin(Star):
             element_tag = "（属性匹配 +10%）"
         dispatch[name] = {
             "qq": my_qq,
+            "pet_index": pet_index,
             "level": p.get("level", 1),
             "quality": p.get("quality", "普通"),
             "element": p.get("element", ""),
@@ -12374,7 +12420,7 @@ class PetParkPlugin(Star):
         }
         icon = cfg.get("icon", "")
         return (
-            f"🐾 宠物已派遣到 {icon}**{name}**！\n"
+            f"🐾 『{p.get('nickname', '?')}』已派遣到 {icon}**{name}**！\n"
             f"● 产量倍率：×**{mult}**{element_tag}\n"
             f"● 每小时消耗 {data.HOMESTEAD_DISPATCH_ENERGY_PER_HOUR} 点精力\n"
             f"● 发送「**召回 {name}**」召回宠物"
@@ -12412,7 +12458,19 @@ class PetParkPlugin(Star):
             elapsed = int(time.time()) - dp.get("since", int(time.time()))
             h, m = divmod(elapsed // 60, 60)
             time_str = f"{h}时{m}分" if h > 0 else f"{m}分钟"
-            lines.append(f"{icon} **{name}** ← {dp.get('qq','?')}（Lv{dp.get('level',1)} {dp.get('quality','')}）")
+            # 尝试获取派遣宠物的昵称
+            pet_name = f"Lv{dp.get('level',1)} {dp.get('quality','')}"
+            owner_qq = dp.get("qq", "?")
+            if owner_qq != "?":
+                owner_pl = self.store.get_player(owner_qq, player.get("group", ""), create=False)
+                if owner_pl:
+                    pet_idx = dp.get("pet_index", -1)
+                    pets = owner_pl.get("pets", [])
+                    if 0 <= pet_idx < len(pets):
+                        pn = pets[pet_idx].get("nickname", "")
+                        if pn:
+                            pet_name = f"『{pn}』{pet_name}"
+            lines.append(f"{icon} **{name}** ← {owner_qq} {pet_name}")
             lines.append(f"　倍率 ×{mult} · 已派遣 {time_str}")
         return "\n".join(lines)
 

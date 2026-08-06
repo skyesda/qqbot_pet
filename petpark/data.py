@@ -385,7 +385,7 @@ ITEMS = {
         "effect": {"heal_energy": 10},
     },
     "普通经验书": {
-        "price": 9600,
+        "price": 1000,
         "currency": CURRENCY_JIFEN,
         "category": "药品",
         "usable": True,
@@ -401,7 +401,7 @@ ITEMS = {
         "effect": {"add_hp_max": 300},
     },
     "聚灵丹": {
-        "price": 8000,
+        "price": 50000,
         "currency": CURRENCY_JIFEN,
         "category": "仙丹",
         "usable": True,
@@ -1689,6 +1689,9 @@ SECT_CHEER_CD_MAX = 120        # 加油冷却最大秒数
 SECT_WAR_HP_LOSS_MIN_PCT = 5
 SECT_WAR_HP_LOSS_MAX_PCT = 15
 
+# 宗门战基础战力差距上限（防止一方碾压）
+SECT_WAR_POWER_GAP_CAP = 100000
+
 # ============================================================================
 # 宠物家园（放置建造 · 纯金币升级 · 数据隔离 · 宠物派遣 · 偷菜护院）
 # ============================================================================
@@ -1888,7 +1891,7 @@ HOMESTEAD_MERCHANT_ITEMS = [
     {"name": "史诗卡", "price_type": "coin", "price": 50000, "desc": "品质提升至史诗", "item": "史诗卡"},
     {"name": "小精力瓶", "price_type": "coin", "price": 1000, "desc": "恢复 10 点精力", "item": "小精力瓶"},
     {"name": "普通经验书", "price_type": "jifen", "price": 3000, "desc": "宠物经验 +200", "item": "普通经验书"},
-    {"name": "聚灵丹", "price_type": "jifen", "price": 5000, "desc": "宠物经验 +10 万", "item": "聚灵丹"},
+    {"name": "聚灵丹", "price_type": "jifen", "price": 10000, "desc": "宠物经验 +10 万", "item": "聚灵丹"},
     {"name": "进化神石×3", "price_type": "coin", "price": 12000, "desc": "3 颗进化神石", "item": "进化神石", "item_count": 3},
     {"name": "相思豆×5", "price_type": "jifen", "price": 2000, "desc": "5 颗相思豆", "item": "相思豆", "item_count": 5},
     {"name": "建筑加速券", "price_type": "coin", "price": 2000, "desc": "立即跳过 2 小时建筑累积", "effect": "speed_2h"},
