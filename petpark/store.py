@@ -89,6 +89,8 @@ class PetStore:
         self._data.setdefault("tomb_active_coop_index", {})
         self._data.setdefault("homestead_players", {})
         self._data.setdefault("bank_players", {})
+        self._data.setdefault("qq_bindings", {})      # 平台用户ID -> QQ号（全局）
+        self._data.setdefault("email_config", {})      # 邮箱服务配置（SMTP）
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()
@@ -1819,3 +1821,45 @@ class PetStore:
                     g[field] = default
             return g
         return {}
+
+    # ----------------------------- QQ 绑定 -----------------------------
+    def qq_bindings(self) -> dict:
+        """返回 QQ 绑定表（平台用户ID -> QQ号）。"""
+        return self._data.setdefault("qq_bindings", {})
+
+    def get_bound_qq(self, platform_id: str) -> str:
+        """返回某平台用户ID绑定的QQ号，未绑定返回空串。"""
+        return str(self.qq_bindings().get(str(platform_id), ""))
+
+    def set_qq_binding(self, platform_id: str, qq_num: str) -> None:
+        """绑定平台用户ID与QQ号。若该QQ号已被其他ID绑定，先解除旧的。"""
+        pid = str(platform_id)
+        qq_num = str(qq_num)
+        bindings = self.qq_bindings()
+        # 防止一个QQ号绑多个ID：移除旧绑定
+        for k, v in list(bindings.items()):
+            if str(v) == qq_num and k != pid:
+                del bindings[k]
+        bindings[pid] = qq_num
+
+    def unbind_qq(self, platform_id: str) -> bool:
+        """解除绑定，返回是否曾绑定。"""
+        pid = str(platform_id)
+        bindings = self.qq_bindings()
+        if pid in bindings:
+            del bindings[pid]
+            return True
+        return False
+
+    def find_platform_id_by_qq(self, qq_num: str) -> str:
+        """按QQ号反查平台用户ID，未找到返回空串。"""
+        qq_num = str(qq_num)
+        for pid, q in self.qq_bindings().items():
+            if str(q) == qq_num:
+                return pid
+        return ""
+
+    def email_config(self) -> dict:
+        """返回邮箱服务配置（SMTP）。"""
+        return self._data.setdefault("email_config", {})
+

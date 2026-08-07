@@ -70,6 +70,10 @@ KNOWN_COMMANDS = {
     "管理菜单",
     "我的信息",
     "个人信息",
+    "绑定QQ",
+    "验证码",
+    "换绑QQ",
+    "解绑QQ",
     "签到",
     "宗门签到",
     "宗门介绍",
@@ -471,6 +475,8 @@ class PetParkPlugin(Star):
         self._group_msg_log: dict[str, deque] = {}
         # 摸金双排组队状态（持久化到 store，插件重载后自动恢复）
         self._tomb_coop_teams, self._tomb_coop_index = self.store.load_tomb_coops()
+        # QQ 绑定待验证码（内存中，platform_id -> {code, qq, expires_at, sent_at}）
+        self._pending_qq_bind: dict[str, dict] = {}
         # AI 意图路由：自然语言 → 标准指令（使用 AstrBot 当前启用的 LLM Provider）
         self._ai_router = AIRouter(
             context,
@@ -1240,13 +1246,22 @@ class PetParkPlugin(Star):
     def _find_target(
         self, group_id: str, qq: str | None
     ) -> tuple[dict | None, str | None]:
-        """按用户ID查本群玩家（数据按群隔离）。返回 (player, 错误提示)。"""
+        """按用户ID查本群玩家（数据按群隔离）。返回 (player, 错误提示)。
+        qq 可为平台用户ID或已绑定的QQ号（自动解析）。"""
         if not qq:
             return None, None
+        qq = self._resolve_user_token(qq)
         tp = self.store.get_player(qq, group_id, create=False)
         if not tp:
             return None, f"❌ 用户 `{qq}` 在本群不存在（对方需先在本群参与宠物乐园）。"
         return tp, None
+
+    def _resolve_user_token(self, token: str) -> str:
+        """把用户输入的标识解析为平台用户ID：若为已绑定的QQ号则返回对应平台ID，否则原样返回。"""
+        if not token:
+            return token
+        pid = self.store.find_platform_id_by_qq(token)
+        return pid if pid else token
 
     @staticmethod
     def _track_activity(player: dict) -> None:
@@ -2366,7 +2381,8 @@ class PetParkPlugin(Star):
                         "管理菜单", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
                         "授权状态", "授权", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
-                        "宠物列表", "查看所有宠物", "宠物信息", "切换宠物"}
+                        "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
+                        "绑定QQ", "验证码", "换绑QQ", "解绑QQ"}
         if cmd not in _bank_allow:
             bank_block = self._bank_block_check(player)
             if bank_block:
@@ -2382,6 +2398,16 @@ class PetParkPlugin(Star):
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
             return self._my_info(player, group_id)
+
+        # ---- QQ 绑定（邮箱验证码）----
+        if cmd == "绑定QQ":
+            return self._bind_qq(player, tokens)
+        if cmd == "验证码":
+            return self._verify_qq_code(player, tokens)
+        if cmd == "换绑QQ":
+            return self._bind_qq(player, tokens, rebind=True)
+        if cmd == "解绑QQ":
+            return self._unbind_qq(player)
 
         # ---- 邀请 ----
         if cmd == "受邀":
@@ -3978,6 +4004,7 @@ class PetParkPlugin(Star):
             "## 📇 我的信息",
             "━━━━━━━━━━━━━━",
             f"🆔 **用户ID**　`{player['qq']}`",
+            f"📱 **绑定QQ**　{self._bound_qq_text(player)}",
             f"👥 **群号**　`{gid}`",
             f"🪙 **金币**　{player.get('coin', 0)}",
             f"💎 **积分**　{player.get('jifen', 0)}",
@@ -3997,11 +4024,142 @@ class PetParkPlugin(Star):
                 lines.append(f"• {cfg.get('name', eid)} {token}：{bal}")
         return "\n".join(lines)
 
+    # =====================================================================
+    # QQ 绑定（邮箱验证码 · 跨群通用 · 可用QQ号代替用户ID指定他人）
+    # =====================================================================
+    def _bound_qq_text(self, player: dict) -> str:
+        qq = self.store.get_bound_qq(player.get("qq", ""))
+        if qq:
+            return f"`{qq}`（✅已绑定）"
+        return "未绑定（发送「绑定QQ QQ号」绑定）"
+
+    def _bind_qq(self, player: dict, tokens: list[str], rebind: bool = False) -> str:
+        pid = str(player.get("qq", ""))
+        cmd_name = "换绑QQ" if rebind else "绑定QQ"
+        if len(tokens) < 2:
+            return (
+                f"用法：{cmd_name} QQ号\n"
+                f"● 绑定后向该QQ邮箱发送验证码验证\n"
+                f"● 跨群通用，其他群无需重复绑定\n"
+                f"● 绑定后可用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）"
+            )
+        qq_num = str(tokens[1]).strip()
+        if not (qq_num.isdigit() and 5 <= len(qq_num) <= 11):
+            return "❌ QQ号格式不正确（应为5~11位纯数字）。"
+        current = self.store.get_bound_qq(pid)
+        if current and not rebind:
+            return f"你已绑定QQ `{current}`，如需更换请发送「换绑QQ 新QQ号」。"
+        if current == qq_num and rebind:
+            return f"你已绑定该QQ号 `{qq_num}`，无需换绑。"
+        other = self.store.find_platform_id_by_qq(qq_num)
+        if other and other != pid:
+            return f"❌ QQ号 `{qq_num}` 已被其他用户绑定。"
+        cfg = self.store.email_config()
+        if not cfg.get("smtp_host") or not cfg.get("auth_code"):
+            return "❌ 邮箱服务未配置，请联系管理员。"
+        # 冷却防刷
+        now = int(time.time())
+        pend = self._pending_qq_bind.get(pid)
+        if pend and now - pend.get("sent_at", 0) < 60:
+            remain = 60 - (now - pend.get("sent_at", 0))
+            return f"请求过于频繁，请 {remain} 秒后再试。"
+        code = "".join(random.choices("0123456789", k=6))
+        self._pending_qq_bind[pid] = {
+            "code": code,
+            "qq": qq_num,
+            "expires_at": now + 300,
+            "sent_at": now,
+        }
+        asyncio.create_task(self._send_bind_email_async(qq_num, code))
+        return (
+            f"📧 验证码已发送至 `{qq_num}@qq.com`\n"
+            f"● 请在 **5分钟** 内发送「验证码 123456」完成{cmd_name}\n"
+            f"● 验证码仅对本账号有效，请勿泄露给他人"
+        )
+
+    async def _send_bind_email_async(self, qq_num: str, code: str) -> None:
+        try:
+            await asyncio.to_thread(self._smtp_send, f"{qq_num}@qq.com", code)
+        except Exception:
+            logger.exception("[petpark] 绑定验证码邮件发送失败")
+
+    def _smtp_send(self, to_email: str, code: str) -> bool:
+        """同步发送QQ绑定验证码邮件。"""
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.header import Header
+        from email.utils import formataddr
+        cfg = self.store.email_config()
+        host = cfg.get("smtp_host", "smtp.qq.com")
+        port = int(cfg.get("smtp_port", 465))
+        use_ssl = cfg.get("use_ssl", True)
+        username = cfg.get("username", "")
+        auth_code = cfg.get("auth_code", "")
+        from_email = cfg.get("from_email", username) or username
+        sender_name = cfg.get("sender_name", "宠物乐园")
+        subject = cfg.get("subject", "[宠物乐园] QQ绑定验证码")
+        body_tpl = cfg.get(
+            "body_template",
+            "您正在绑定QQ号，验证码为：{code}\n有效期 {minutes} 分钟，请勿泄露给他人。",
+        )
+        body = body_tpl.replace("{code}", code).replace("{minutes}", "5")
+        try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["From"] = formataddr((sender_name, from_email))
+            msg["To"] = to_email
+            msg["Subject"] = Header(subject, "utf-8")
+            if use_ssl:
+                server = smtplib.SMTP_SSL(host, port, timeout=15)
+            else:
+                server = smtplib.SMTP(host, port, timeout=15)
+            try:
+                if username and auth_code:
+                    server.login(username, auth_code)
+                server.sendmail(from_email, [to_email], msg.as_string())
+            finally:
+                server.quit()
+            logger.info(f"[petpark] 绑定验证码邮件发送成功: {to_email}")
+            return True
+        except Exception as e:
+            logger.error(f"[petpark] 绑定验证码邮件发送失败: {e}")
+            return False
+
+    def _verify_qq_code(self, player: dict, tokens: list[str]) -> str:
+        pid = str(player.get("qq", ""))
+        if len(tokens) < 2:
+            return "用法：验证码 123456"
+        code = str(tokens[1]).strip()
+        pend = self._pending_qq_bind.get(pid)
+        if not pend:
+            return "❌ 你还没有请求验证码，请先发送「绑定QQ QQ号」。"
+        if int(time.time()) > pend.get("expires_at", 0):
+            self._pending_qq_bind.pop(pid, None)
+            return "❌ 验证码已过期，请重新发送「绑定QQ QQ号」。"
+        if pend.get("code", "") != code:
+            return "❌ 验证码错误。"
+        qq_num = pend.get("qq", "")
+        self.store.set_qq_binding(pid, qq_num)
+        self._pending_qq_bind.pop(pid, None)
+        return (
+            f"✅ 绑定成功！\n"
+            f"● 用户ID `{pid}` ↔ QQ号 `{qq_num}`\n"
+            f"● 跨群通用，其他群无需重复绑定\n"
+            f"● 现在可以用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）"
+        )
+
+    def _unbind_qq(self, player: dict) -> str:
+        pid = str(player.get("qq", ""))
+        if not self.store.get_bound_qq(pid):
+            return "你还没有绑定QQ号。"
+        self.store.unbind_qq(pid)
+        return "✅ 已解除QQ绑定。"
+
     def _accept_invite(self, player: dict, group_id: str, tokens: list[str]) -> str:
         """被邀请用户发送『受邀 用户ID』，双方均在本群时发放邀请奖励。"""
         if len(tokens) < 2:
             return "⚠️ 用法：`受邀 用户ID`（例如：受邀 7FC131A00B...）"
         inviter_qq = str(tokens[1]).strip()
+        inviter_qq = self._resolve_user_token(inviter_qq)
         invitee_qq = str(player.get("qq", ""))
         if not inviter_qq:
             return "❌ 邀请人ID不能为空。"
@@ -4549,6 +4707,8 @@ class PetParkPlugin(Star):
                 "- 我的信息 · 签到 · 我要氪金",
                 "- 兑换 卡密 · 赠送金币/积分/钻石 用户ID 数量",
                 "- 我的邀请情况 · 受邀 用户ID",
+                "- 绑定QQ QQ号 · 验证码 123456 · 换绑QQ · 解绑QQ",
+                "> 绑定QQ后可用QQ号代替用户ID指定他人，跨群通用",
                 "",
                 "【图鉴】",
                 "- 宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋",
@@ -10413,6 +10573,7 @@ class PetParkPlugin(Star):
         target = self._arg(tokens, 1)
         if not target:
             return "用法：宗门踢出 用户ID"
+        target = self._resolve_user_token(target)
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
@@ -10467,6 +10628,7 @@ class PetParkPlugin(Star):
         target = self._arg(tokens, 1)
         if not target:
             return "用法：宗门任命副宗主 用户ID"
+        target = self._resolve_user_token(target)
         if target == player["qq"]:
             return "不能任命自己。"
         tp = self.store.get_player(target, group_id, create=False)
@@ -10488,6 +10650,7 @@ class PetParkPlugin(Star):
         target = self._arg(tokens, 1)
         if not target:
             return "用法：宗门撤销副宗主 用户ID"
+        target = self._resolve_user_token(target)
         deputies = sect.setdefault("deputy_qqs", [])
         if target not in deputies:
             return "该用户不是副宗主。"
