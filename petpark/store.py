@@ -95,6 +95,21 @@ class PetStore:
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()
         self._migrate_bank_to_per_group()
+        self._migrate_clear_cooldowns_once()
+
+    def _migrate_clear_cooldowns_once(self) -> None:
+        """一次性清空所有玩家冷却（修复时区后重置）。仅在未标记时执行一次。"""
+        if self._data.get("cooldowns_cleared_v1"):
+            return
+        for pl in self._data.get("players", {}).values():
+            # 玩家级冷却
+            if "cooldowns" in pl:
+                pl["cooldowns"] = {}
+            # 每只宠物的冷却
+            for pet in pl.get("pets", []):
+                if isinstance(pet, dict) and "cooldowns" in pet:
+                    pet["cooldowns"] = {}
+        self._data["cooldowns_cleared_v1"] = True
 
     @staticmethod
     def make_key(group_id: str, qq: str) -> str:

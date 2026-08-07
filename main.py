@@ -41,6 +41,15 @@ except Exception:  # pragma: no cover - 兼容旧版本
 
 PLUGIN_NAME = "astrbot_plugin_petpark"
 
+# 统一进程时区为北京时间（Asia/Shanghai），使所有 time.localtime() 显示正确。
+# 仅 Unix 支持 tzset；服务器为 Linux，本地开发（Windows）忽略即可。
+import os as _os
+_os.environ.setdefault("TZ", "Asia/Shanghai")
+try:
+    time.tzset()
+except AttributeError:
+    pass  # Windows 无 tzset，开发环境不强制
+
 # 扫雷紧凑指令：扫a1b2 / 插旗a1 / 旗a1 / 开始扫雷2
 _MS_COMPACT_RE = re.compile(r"^(扫|插旗|旗)((?:[a-zA-Z]\d{1,2})+)$")
 _MS_START_RE = re.compile(r"^开始扫雷([1-4])$")
