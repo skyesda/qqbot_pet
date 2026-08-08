@@ -220,6 +220,22 @@ class WebAdmin:
             elif isinstance(b, dict) and isinstance(v, dict) \
                     and isinstance(existing[k], dict):
                 result[k] = WebAdmin._merge_edits(b, v, existing[k])
+            elif isinstance(b, list) and isinstance(v, list) \
+                    and isinstance(existing[k], list) and len(v) == len(b):
+                # 长度相同的列表（如多宠物 pets）：逐元素合并，
+                # 未改动的元素保留实时值，避免编辑单个宠物时覆盖其他宠物进度
+                e_list = existing[k]
+                merged_list = []
+                for i, vi in enumerate(v):
+                    bi = b[i]
+                    if vi == bi:
+                        merged_list.append(e_list[i] if i < len(e_list) else vi)
+                    elif isinstance(bi, dict) and isinstance(vi, dict) \
+                            and i < len(e_list) and isinstance(e_list[i], dict):
+                        merged_list.append(WebAdmin._merge_edits(bi, vi, e_list[i]))
+                    else:
+                        merged_list.append(vi)
+                result[k] = merged_list
             else:
                 result[k] = v  # 显式修改 → 管理员意图优先
         return result
@@ -1241,11 +1257,20 @@ function shell(head,rows,cols){
    ? `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无数据</div>`;
 }
+function petEditInfo(v){
+ // 多宠物系统：宠物统一存储在 v.pets 列表，返回要编辑的 (列表, active_pet 索引)；无宠物返回 (-1, null)
+ const pets=Array.isArray(v.pets)?v.pets:null;
+ if(!pets||!pets.length)return {idx:-1,pets:null};
+ let idx=v.active_pet;
+ if(!Number.isInteger(idx)||idx<0||idx>=pets.length)idx=0;
+ return {idx:idx,pets:pets};
+}
 function renderPlayers(){
  let rows='';
  for(const k of Object.keys(cache)){const v=cache[k];if(!match(k,v))continue;
-  const pet=v.pet?`${esc(v.pet.name||v.pet.species||'宠物')}`:'—';
-  const lv=v.pet?('Lv'+(v.pet.level||1)):'—';
+  const pi=petEditInfo(v);
+  const pet=(pi.idx>=0&&pi.pets[pi.idx])?`${esc(pi.pets[pi.idx].name||pi.pets[pi.idx].species||'宠物')}`:'—';
+  const lv=(pi.idx>=0&&pi.pets[pi.idx])?('Lv'+(pi.pets[pi.idx].level||1)):'—';
   rows+=`<tr>
    <td>${esc(v.group||'')}</td><td class="num">${esc(v.qq||'')}</td>
    <td>${pet}</td><td class="num">${lv}</td>
@@ -1496,7 +1521,8 @@ function fillFields(v){
   g('f_coin').value=v.coin||0;g('f_jifen').value=v.jifen||0;g('f_diamond').value=v.diamond||0;
   const st=v.stats||{};g('f_st_win').value=st.battle_win||0;g('f_st_exp').value=st.explore||0;
   g('itemlist').innerHTML=(META.items||[]).map(i=>`<option value="${escA(i)}">`).join('');
-  g('petbox').innerHTML=buildPetForm(v.pet);
+  const pi=petEditInfo(v);
+  g('petbox').innerHTML=buildPetForm(pi.idx>=0?pi.pets[pi.idx]:null);
   g('bagbox').innerHTML=buildBag(v.bag);
  }
  else if(cur==='groups'){
@@ -1565,8 +1591,12 @@ function applyFields(v){
  if(cur==='players'){
   v.coin=+g('f_coin').value||0;v.jifen=+g('f_jifen').value||0;v.diamond=+g('f_diamond').value||0;
   v.stats=v.stats||{};v.stats.battle_win=+g('f_st_win').value||0;v.stats.explore=+g('f_st_exp').value||0;
-  if(g('f_haspet')&&g('f_haspet').checked){
-   const pet=(v.pet&&typeof v.pet==='object')?v.pet:{};
+  const pi=petEditInfo(v);
+  const haspet=g('f_haspet')&&g('f_haspet').checked;
+  if(haspet){
+   // 多宠物系统：宠物统一存于 v.pets[active_pet]，不写顶层 pet（运行时引用不落盘）
+   const pets=pi.pets||(Array.isArray(v.pets)?v.pets:[]);
+   let pet=(pi.idx>=0&&pets[pi.idx]&&typeof pets[pi.idx]==='object')?pets[pi.idx]:{};
    for(const f of PET_FIELDS){const k=f[0],t=f[2];const el=g('fp_'+k);if(!el)continue;
     if(t==='num'){if(el.value!=='')pet[k]=+el.value;}else{pet[k]=el.value;}}
    pet.custom=g('fp_custom').checked;
@@ -1577,8 +1607,15 @@ function applyFields(v){
    for(const k of Object.keys(PET_DEF))if(pet[k]===undefined)pet[k]=PET_DEF[k];
    if(!pet.created_at)pet.created_at=Math.floor(Date.now()/1000);
    if(!pet.last_energy_ts)pet.last_energy_ts=Math.floor(Date.now()/1000);
-   v.pet=pet;
-  }else{v.pet=null;}
+   if(pi.idx>=0){pets[pi.idx]=pet;}else{pets.push(pet);v.active_pet=pets.length-1;}
+   v.pets=pets;
+  }else if(pi.idx>=0){
+   // 取消勾选＝删除当前活跃宠物
+   pi.pets.splice(pi.idx,1);
+   v.pets=pi.pets;
+   v.active_pet=v.pets.length?Math.min(v.active_pet,v.pets.length-1):-1;
+  }
+  delete v.pet;  // 清理可能存在的幻影顶层 pet 字段
   const bag={};document.querySelectorAll('#bagbox .bagrow').forEach(r=>{const n=r.querySelector('.bagname').value.trim();const c=+r.querySelector('.bagcnt').value||0;if(n&&c>0)bag[n]=c;});
   v.bag=bag;
  }
