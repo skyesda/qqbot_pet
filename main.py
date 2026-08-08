@@ -5374,6 +5374,30 @@ class PetParkPlugin(Star):
                 return msg
             self.store.remove_item(player, name, 1)
             return f"使用『{name}』x1：{msg}"
+        # 神秘宝箱：随机开出金币/积分/道具
+        if "mystery_box" in eff:
+            self.store.remove_item(player, name, count)
+            results = []
+            for _ in range(count):
+                roll = random.random()
+                if roll < 0.30:
+                    amt = random.randint(500, 2000)
+                    self.store.add_currency(player, "金币", amt)
+                    results.append(f"金币 +{amt}")
+                elif roll < 0.60:
+                    amt = random.randint(100, 500)
+                    self.store.add_currency(player, "积分", amt)
+                    results.append(f"积分 +{amt}")
+                elif roll < 0.80:
+                    self.store.add_item(player, "普通经验书", 1)
+                    results.append("普通经验书 ×1")
+                elif roll < 0.95:
+                    self.store.add_item(player, "进化神石", 1)
+                    results.append("进化神石 ×1")
+                else:
+                    self.store.add_item(player, "史诗卡", 1)
+                    results.append("史诗卡 ×1")
+            return f"使用『{name}』x{count}：\n" + "\n".join(f"  {r}" for r in results)
         msgs = []
         scaled: dict[str, Any] = {}
         for k, v in eff.items():
@@ -11741,16 +11765,20 @@ class PetParkPlugin(Star):
             else:
                 sect["lose"] = sect.get("lose", 0) + 1
 
-        # 新版：全群成员获得奖励（不再仅限确认名单）
+        # 新版：参与者获得完整奖励，未参与者获得保底（宗门贡献+统计）
         contributors: dict[str, list[dict]] = {g1: [], g2: []}
         for gid in (g1, g2):
             is_guild_winner = (winner == gid) if winner != "draw" else False
             is_draw = winner == "draw"
+            # 获取本方的 war 对象来读取 cheer_players
+            g_war = war1 if gid == g1 else war2
+            cheer_players = g_war.get("cheer_players", {}) if g_war else {}
             for pkey, pl in self.store._data.get("players", {}).items():
                 if pl.get("group") != gid:
                     continue
-                qq = pl.get("qq", "")
+                qq = str(pl.get("qq", ""))
                 pet = pl.get("pet")
+                participated = qq in cheer_players
                 contrib = data.SECT_CONTRIBUTION_BATTLE_LOSE
                 if is_guild_winner:
                     contrib += data.SECT_CONTRIBUTION_BATTLE
@@ -11763,21 +11791,28 @@ class PetParkPlugin(Star):
                     psect["wins"] = psect.get("wins", 0) + 1
                 psect["last_battle"] = int(time.time())
                 self._sect_inc_active(pl, 5 if is_guild_winner else 2)
-                if is_guild_winner:
-                    self.store.add_currency(pl, "积分", data.SECT_WIN_JIFEN)
-                    self.store.add_currency(pl, "金币", data.SECT_WIN_COIN)
-                elif is_draw:
-                    self.store.add_currency(pl, "积分", data.SECT_DRAW_JIFEN)
-                    self.store.add_currency(pl, "金币", data.SECT_DRAW_COIN)
-                else:
-                    self.store.add_currency(pl, "积分", data.SECT_LOSE_JIFEN)
-                    self.store.add_currency(pl, "金币", data.SECT_LOSE_COIN)
+                # 参与者：完整奖励（积分+金币）；未参与者：仅保底（宗门贡献+统计）
+                if participated:
+                    if is_guild_winner:
+                        self.store.add_currency(pl, "积分", data.SECT_WIN_JIFEN)
+                        self.store.add_currency(pl, "金币", data.SECT_WIN_COIN)
+                    elif is_draw:
+                        self.store.add_currency(pl, "积分", data.SECT_DRAW_JIFEN)
+                        self.store.add_currency(pl, "金币", data.SECT_DRAW_COIN)
+                    else:
+                        self.store.add_currency(pl, "积分", data.SECT_LOSE_JIFEN)
+                        self.store.add_currency(pl, "金币", data.SECT_LOSE_COIN)
                 contributors[gid].append({
                     "qq": qq,
                     "pet_name": pet.get("nickname", "-") if pet else "-",
                     "bp": 0,
                     "contrib": contrib,
                 })
+
+        # 失败方全群宠物死亡
+        if winner != "draw":
+            loser = g2 if winner == g1 else g1
+            self._sect_war_kill_all_pets(loser)
 
         result = {
             "date": self._bj_today(),
@@ -11840,6 +11875,9 @@ class PetParkPlugin(Star):
         bonus = random.randint(data.SECT_CHEER_MIN, data.SECT_CHEER_MAX)
         war["cheer_bonus"] = war.get("cheer_bonus", 0) + bonus
         war["cheer_count"] = war.get("cheer_count", 0) + 1
+        # 记录参与加油的玩家（用于结算时区分参与/未参与奖励）
+        qq = str(player.get("qq", ""))
+        war.setdefault("cheer_players", {})[qq] = True
         cd_sec = random.randint(data.SECT_CHEER_CD_MIN, data.SECT_CHEER_CD_MAX)
         self.store.set_cooldown(player, "sect:cheer", cd_sec)
         opp = war.get("opponent_name", "")
