@@ -826,7 +826,7 @@ class PlayerPortal:
                 logger.warning(f"[petpark] 定制解锁：未找到玩家 {key}")
                 return web.json_response({"ok": False, "msg": "未找到该宠物"})
             logger.info(f"[petpark] 定制解锁：找到玩家，准备兑换卡密")
-            pet, err = self.store.redeem_custom_card(code, player, sess.get("aid"))
+            pet, err = self.store.redeem_custom_card(code, player, sess.get("aid"), pet_index)
             if err:
                 logger.warning(f"[petpark] 定制解锁：卡密兑换失败 {err}")
                 return web.json_response({"ok": False, "msg": err})

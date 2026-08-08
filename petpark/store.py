@@ -1393,7 +1393,7 @@ class PetStore:
         return created
 
     def redeem_custom_card(
-        self, code: str, player: dict, used_by: str
+        self, code: str, player: dict, used_by: str, pet_index: int = 0
     ) -> tuple[Optional[dict], Optional[str]]:
         """兑换宠物定制卡：成功返回 (宠物数据, None)，失败返回 (None, 原因)。"""
         code = str(code).strip().upper()
@@ -1405,7 +1405,10 @@ class PetStore:
             return None, "这不是宠物定制卡"
         if card.get("used"):
             return None, "该卡密已被使用"
-        pet = player.get("pet")
+        # 多宠物支持：通过 pet_index 定位目标宠物
+        pets = player.get("pets", [])
+        idx = max(0, min(pet_index, len(pets) - 1)) if pets else 0
+        pet = pets[idx] if 0 <= idx < len(pets) else player.get("pet")
         if not pet:
             return None, "你没有宠物，无法使用定制卡"
         if pet.get("custom"):
