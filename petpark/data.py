@@ -2015,18 +2015,17 @@ REBIRTH_KEEP_ITEMS = {              # 重生后保留的物品（品质卡+定�
 }
 
 # 重生属性倍率表：(倍率, 基础权重)，权重越大越容易出
+# 倍率均为整数（无小数点），2/2.5→2、3/3.5→3 合并，总权重保持 1000
 REBIRTH_MULTIPLIER_TABLE = [
-    (2.0, 350),
-    (2.5, 220),
-    (3.0, 150),
-    (3.5, 100),
-    (4.0, 60),
-    (5.0, 40),
-    (6.0, 30),
-    (7.0, 20),
-    (8.0, 15),
-    (9.0, 10),
-    (10.0, 5),
+    (2, 570),
+    (3, 250),
+    (4, 60),
+    (5, 40),
+    (6, 30),
+    (7, 20),
+    (8, 15),
+    (9, 10),
+    (10, 5),
 ]
 REBIRTH_MULTIPLIER_TOTAL_WEIGHT = sum(w for _, w in REBIRTH_MULTIPLIER_TABLE)
 
@@ -2038,8 +2037,8 @@ REBIRTH_SACRIFICE_WEIGHT_PER_POINT = 5
 REBIRTH_SACRIFICE_MAX_POINTS = 50     # 最多 50 点祭奠
 
 
-def rebirth_roll_multiplier(sacrifice_points: int = 0) -> float:
-    """根据祭奠点数随机重生倍率。返回最终倍率值。"""
+def rebirth_roll_multiplier(sacrifice_points: int = 0) -> int:
+    """根据祭奠点数随机重生倍率。返回最终整数倍率值。"""
     import random as _random
     pts = min(sacrifice_points, REBIRTH_SACRIFICE_MAX_POINTS)
     adjusted = []
@@ -2056,7 +2055,7 @@ def rebirth_roll_multiplier(sacrifice_points: int = 0) -> float:
         acc += w
         if r <= acc:
             return mult
-    return 2.0
+    return 2
 
 
 # ============================================================================

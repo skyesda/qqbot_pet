@@ -1813,7 +1813,7 @@ class PetParkPlugin(Star):
         for mult, w in data.REBIRTH_MULTIPLIER_TABLE:
             pct = w / data.REBIRTH_MULTIPLIER_TOTAL_WEIGHT * 100
             bar = "█" * int(pct / 2)
-            lines.append(f"　{mult:.1f}×：{pct:.1f}% {bar}")
+            lines.append(f"　{mult}×：{pct:.1f}% {bar}")
         if sacrifice_pts > 0:
             lines.append(f"> 🔥 祭奠点数：{sacrifice_pts}（高倍率权重已提升）")
         lines.append("")
@@ -1982,10 +1982,10 @@ class PetParkPlugin(Star):
             slot_msg = f"宠物席位已达上限 {data.PET_SLOTS_MAX}，本次未增加。"
         # 伤害统计
         def _summarize(old, new, label):
-            return f"　{label}：{old:,} → {new:,}（×{multiplier:.1f}）"
+            return f"　{label}：{old:,} → {new:,}（×{multiplier}）"
         lines = [
             "## 🔄 重生完成！",
-            f"🎉 宠物成功重生，获得 **×{multiplier:.1f}** 属性暴击！",
+            f"🎉 宠物成功重生，获得 **×{multiplier}** 属性暴击！",
         ]
         # 插入一生回顾与领悟仪式
         lines.append(review_text)
