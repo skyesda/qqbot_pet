@@ -1833,6 +1833,7 @@ class PetParkPlugin(Star):
         lines.append("- 属性 × 随机倍率（2~10×）")
         lines.append("- 背包清空（品质卡/定制卡保留）")
         lines.append("- 神器/秘技脱落回背包（需重新达标）")
+        lines.append("- 天赋消失，需重新天赋觉醒")
         if level >= data.REBIRTH_MAX_LEVEL and has_gem:
             lines.append("")
             lines.append("> ⚠️ 发送 `确认重生` 执行重生（不可逆！）")
@@ -1957,6 +1958,8 @@ class PetParkPlugin(Star):
             dropped.append(sk)
             self.store.add_item(player, sk, 1)
         p["skills"] = []
+        # 天赋消失：重生后回到未觉醒状态，需重新天赋觉醒
+        p["talent"] = None
         # 清空背包，只保留品质卡和定制卡
         bag = player.get("bag", {})
         kept = {}
