@@ -10925,8 +10925,6 @@ class PetParkPlugin(Star):
             phase = "已结束"
 
         war = sect["today"].get("war")
-        confirmed = sect["today"]["confirmed"]
-        my_bp = sum(x["bp"] for x in confirmed)
 
         lines = ["## 🏯 宗门战况"]
         lines.append("| 项目 | 状态 |")
@@ -10934,10 +10932,9 @@ class PetParkPlugin(Star):
         lines.append(f"| 当前阶段 | {phase} |")
         lines.append(f"| 匹配时间 | {data.SECT_WAR_MATCH_HOUR:02d}:{data.SECT_WAR_MATCH_MIN:02d} |")
         lines.append(f"| 开战时间 | {data.SECT_WAR_START_HOUR:02d}:{data.SECT_WAR_START_MIN:02d} |")
-        lines.append(f"| 本群报名 | {len(sect['today']['enroll'])} / {data.SECT_ENROLL_COUNT} |")
-        lines.append(f"| 强制出战 | {len(sect['today']['forced'])} / {data.SECT_FORCED_COUNT} |")
-        lines.append(f"| 已确认出战 | {len(confirmed)} / {data.SECT_TEAM_SIZE} |")
-        lines.append(f"| 队伍战力 | 约 {self._fmt_power(my_bp)} |")
+        lines.append(f"| 参战模式 | 全群参与 |")
+        if war and war.get("base_power"):
+            lines.append(f"| 初始战力 | {self._fmt_power(war['base_power'])}（随机分配） |")
         lines.append(f"| 当前宗主 | `{sect.get('master_qq','未选举')}` |")
 
         if war:
@@ -10947,10 +10944,11 @@ class PetParkPlugin(Star):
             else:
                 lines.append(f"| 对手 | {opp} |")
                 if war.get("phase") == "battling":
+                    my_total = war.get("base_power", 0) + war.get("cheer_bonus", 0)
                     lines.append(f"| 当前回合 | 第 {war.get('round', 1)} / {data.SECT_WAR_ROUNDS} 回合 |")
-                    lines.append(f"| 本回合加油战力 | +{self._fmt_power(war.get('cheer_bonus', 0))}（{war.get('cheer_count', 0)} 次） |")
+                    lines.append(f"| 当前总战力 | {self._fmt_power(my_total)}（初始 {self._fmt_power(war.get('base_power', 0))} + 加油 {self._fmt_power(war.get('cheer_bonus', 0))}，{war.get('cheer_count', 0)} 次） |")
                     lines.append(f"| 当前比分 | 本宗 {war.get('my_wins', 0)} : {war.get('opp_wins', 0)} 敌方 |")
-                    lines.append("| 提示 | 群内发送『加油』为本宗加战力 |")
+                    lines.append("| 提示 | 群内所有人发送『加油』为本宗加战力 |")
                 elif war.get("phase") == "ended":
                     w = war.get("winner", "")
                     if w == "draw":
@@ -10997,7 +10995,7 @@ class PetParkPlugin(Star):
         return "## ⏳ 宗门战倒计时\n今日宗门战已结束，下一场将于明日 20:30 匹配。"
 
     def _sect_matchup(self, group_id: str) -> str:
-        """对阵表：匹配后显示双方阵容与基础战力；战斗中/结束后显示每回合结果。"""
+        """对阵表：新版全群参与模式。"""
         group = self.store.get_group(group_id)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
@@ -11010,58 +11008,26 @@ class PetParkPlugin(Star):
         my_name = sect.get("name", group_id)
         opp_gid = war.get("opponent", "")
         opp_name = war.get("opponent_name", opp_gid)
-        opp_sect = self.store.get_group(opp_gid).get("sect", {})
-        opp_confirmed = opp_sect.get("today", {}).get("confirmed", [])
-        my_confirmed = sect["today"]["confirmed"]
-        my_base, _ = self._sect_group_base_power(group_id)
-        opp_base, _ = self._sect_group_base_power(opp_gid) if opp_gid else (0, [])
+        my_base = war.get("base_power", 0)
 
         lines = ["## 🏯 今日宗门对阵", f"**{my_name}** vs **{opp_name}**\n"]
-        lines.append(f"本宗基础战力：{self._fmt_power(my_base)}　|　敌方基础战力：{self._fmt_power(opp_base)}\n")
-        lines.append(f"### 本宗出战（{len(my_confirmed)}）")
-        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 类型 |")
-        lines.append("|---|---|---|---|---|")
-        for i, e in enumerate(my_confirmed, 1):
-            lines.append(
-                f"| {i} | `{e['qq']}` | {e.get('pet_name','-')} | "
-                f"{self._fmt_power(e.get('bp',0))} | {e.get('kind','-')} |"
-            )
-        lines.append(f"\n### 敌方出战（{len(opp_confirmed)}）")
-        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 类型 |")
-        lines.append("|---|---|---|---|---|")
-        for i, e in enumerate(opp_confirmed, 1):
-            lines.append(
-                f"| {i} | `{e['qq']}` | {e.get('pet_name','-')} | "
-                f"{self._fmt_power(e.get('bp',0))} | {e.get('kind','-')} |"
-            )
+        lines.append(f"本宗初始战力：{self._fmt_power(my_base)}（全群参与，加油决定胜负）\n")
 
         rounds = war.get("rounds", [])
         if rounds:
-            lines.append("\n### 回合结果")
-            lines.append("| 回合 | 本宗战力（基础+加油） | 敌方战力（基础+加油） | 结果 |")
+            lines.append("### 回合结果")
+            lines.append("| 回合 | 本宗战力（初始+加油） | 敌方战力（初始+加油） | 结果 |")
             lines.append("|---|---|---|---|")
             for r in rounds:
                 res = "✅ 胜" if r["winner"] == "me" else "❌ 败"
                 lines.append(
-                    f"| {r['round']} | {self._fmt_power(r['my_power'])}"
-                    f"（{self._fmt_power(r['my_base'])}+{r['my_cheer']}） | "
+                    f"| 第{r['round']}回合 | {self._fmt_power(r['my_power'])}"
+                    f"（{self._fmt_power(r['my_base'])}+{self._fmt_power(r['my_cheer'])}） | "
                     f"{self._fmt_power(r['opp_power'])}"
-                    f"（{self._fmt_power(r['opp_base'])}+{r['opp_cheer']}） | {res} |"
+                    f"（{self._fmt_power(r['opp_base'])}+{self._fmt_power(r['opp_cheer'])}） | {res} |"
                 )
-            lines.append(
-                f"\n**当前比分**：本宗 {war.get('my_wins',0)} : {war.get('opp_wins',0)} 敌方"
-            )
-            if war.get("phase") == "ended":
-                w = war.get("winner", "")
-                if w == "draw":
-                    rtxt = "🤝 平局"
-                elif w == group_id:
-                    rtxt = "🏆 胜利"
-                else:
-                    rtxt = "❌ 失败"
-                lines.append(f"**最终结果**：{rtxt}")
         else:
-            lines.append("\n> 战斗尚未开始，20:40 开战后可查看回合结果。")
+            lines.append("> 尚未开战，20:40 开战后可查看回合结果。")
         return "\n".join(lines)
 
     def _sect_live(self, group_id: str) -> str:
@@ -11343,7 +11309,7 @@ class PetParkPlugin(Star):
     # 宗门战：匹配、战斗、结算、广播
     # ---------------------------------------------------------------------
     def _sect_match_making(self) -> list[tuple[str, str]]:
-        """按已确认队伍战力降序排列，相邻配对。奇数时最弱宗门落单轮空。"""
+        """新版宗门战：所有开启宗门且启用跨群的群随机配对（全群参与，无需确认名单）。"""
         groups = self.store._data.get("groups", {})
         candidates = []
         for gid, g in groups.items():
@@ -11352,17 +11318,13 @@ class PetParkPlugin(Star):
             sect = g.get("sect", {})
             if not sect.get("enabled", True):
                 continue
-            confirmed = sect.get("today", {}).get("confirmed", [])
-            if len(confirmed) < data.SECT_MIN_BATTLE_MEMBERS:
-                continue
-            total_bp = sum(x["bp"] for x in confirmed)
-            candidates.append((gid, total_bp))
-        # 降序：最强在前、最弱在后。相邻配对仍保证实力接近的两两对战；
-        # 奇数时落单的是最弱宗门（轮空拿积分），避免最强宗门白拿分。
-        candidates.sort(key=lambda x: x[1], reverse=True)
+            candidates.append(gid)
+        # 随机打乱后相邻配对；奇数时最弱的宗门轮空
+        import random as _random
+        _random.shuffle(candidates)
         matches = []
         for i in range(0, len(candidates) - 1, 2):
-            matches.append((candidates[i][0], candidates[i + 1][0]))
+            matches.append((candidates[i], candidates[i + 1]))
         return matches
 
     def _sect_pet_effective_power(self, pet: dict) -> int:
@@ -11375,31 +11337,13 @@ class PetParkPlugin(Star):
         return int(bp * ratio)
 
     def _sect_group_base_power(self, group_id: str) -> tuple[int, list[dict]]:
-        """本群确认出战队伍当前基础战力（已按血量折算）及明细。"""
+        """新版宗门战：返回随机初始战力（≤5万），不再依赖宠物属性。"""
         group = self.store.get_group(group_id)
-        sect = group.get("sect", {})
-        confirmed = sect.get("today", {}).get("confirmed", [])
-        total = 0
-        details = []
-        for e in confirmed:
-            qq = e["qq"]
-            pl = self.store.get_player(qq, group_id, create=False)
-            if not pl:
-                continue
-            pet = pl.get("pet")
-            if not pet or petmod.is_dead(pet):
-                continue
-            eff = self._sect_pet_effective_power(pet)
-            total += eff
-            details.append({
-                "qq": qq,
-                "pet_name": pet.get("nickname", "-"),
-                "bp": petmod.battle_power(pet),
-                "eff": eff,
-                "hp": pet.get("hp", 0),
-                "hp_max": pet.get("hp_max", 1),
-            })
-        return total, details
+        war = group.get("sect", {}).get("today", {}).get("war")
+        if war and war.get("base_power"):
+            return war["base_power"], []
+        # 未分配时返回 0（实际由 _sect_war_start 分配）
+        return 0, []
 
     def _sect_war_deduct_hp(self, group_id: str) -> list[tuple]:
         """回合结束：对本群所有参战宠物随机扣血（不致死，floor=1）。返回扣血明细。"""
@@ -11423,7 +11367,7 @@ class PetParkPlugin(Star):
         return losses
 
     def _sect_init_war(self, gid: str, opp_gid: str) -> None:
-        """为本群初始化今日宗门战状态（匹配阶段）。"""
+        """为本群初始化今日宗门战状态（匹配阶段，新版全群参与）。"""
         group = self.store.get_group(gid)
         sect = group.setdefault("sect", self.store._default_group_sect())
         self._sect_ensure_today(sect)
@@ -11433,6 +11377,7 @@ class PetParkPlugin(Star):
             "opponent_name": opp_name,
             "phase": "matched",
             "round": 0,
+            "base_power": 0,         # 开战时随机分配
             "cheer_bonus": 0,
             "cheer_count": 0,
             "rounds": [],
@@ -11475,21 +11420,17 @@ class PetParkPlugin(Star):
     async def _sect_broadcast_matchup(self, g1: str, g2: str) -> None:
         n1 = self.store.get_group(g1).get("sect", {}).get("name", g1)
         n2 = self.store.get_group(g2).get("sect", {}).get("name", g2)
-        base1, _ = self._sect_group_base_power(g1)
-        base2, _ = self._sect_group_base_power(g2)
-        for gid, my_name, opp_name, my_base, opp_base in (
-            (g1, n1, n2, base1, base2),
-            (g2, n2, n1, base2, base1),
+        for gid, my_name, opp_name in (
+            (g1, n1, n2),
+            (g2, n2, n1),
         ):
             text = (
                 f"## ⚔️ 宗门战匹配结果\n"
                 f"本宗 **{my_name}** 今日对手：**{opp_name}**\n"
-                f"● 本宗基础战力：{self._fmt_power(my_base)}\n"
-                f"● 敌方基础战力：{self._fmt_power(opp_base)}\n"
-                f"> {data.SECT_WAR_START_HOUR:02d}:{data.SECT_WAR_START_MIN:02d} 正式开战，届时群内发送『加油』"
+                f"> {data.SECT_WAR_START_HOUR:02d}:{data.SECT_WAR_START_MIN:02d} 正式开战，全群成员发送『加油』"
                 f"可为本宗加战力（+{data.SECT_CHEER_MIN}~{data.SECT_CHEER_MAX}，冷却"
                 f"{data.SECT_CHEER_CD_MIN}~{data.SECT_CHEER_CD_MAX}s）。\n"
-                f"> 发送『宗门对阵』查看双方阵容。"
+                f"> 初始战力随机分配，谁加油多谁获胜！"
             )
             await self._send_to_group(gid, text)
 
@@ -11503,14 +11444,11 @@ class PetParkPlugin(Star):
                 continue
             if gid in matched:
                 continue
-            confirmed = sect.get("today", {}).get("confirmed", [])
-            if len(confirmed) < data.SECT_MIN_BATTLE_MEMBERS:
-                continue
             self._sect_give_points(gid, data.SECT_BYE_POINTS)
             self._sect_ensure_today(sect)
             sect["today"]["war"] = {
                 "opponent": "", "opponent_name": "",
-                "phase": "bye", "round": 0, "cheer_bonus": 0, "cheer_count": 0,
+                "phase": "bye", "round": 0, "base_power": 0, "cheer_bonus": 0, "cheer_count": 0,
                 "rounds": [], "my_wins": 0, "opp_wins": 0, "winner": "bye",
             }
             sect.setdefault("history", []).append({
@@ -11533,10 +11471,8 @@ class PetParkPlugin(Star):
             await self._sect_war_match_locked()
 
     async def _sect_war_match_locked(self) -> None:
-        """_sect_war_match 的锁内实现。"""
+        """_sect_war_match 的锁内实现（新版：全群参与，无需确认名单）。"""
         self._sect_ensure_season()
-        for gid in list(self.store._data.get("groups", {}).keys()):
-            self._sect_auto_confirm(gid)
         season = self._sect_ensure_season()
         today = self._bj_today()
         # 清理今日旧记录（重试安全）
@@ -11547,13 +11483,20 @@ class PetParkPlugin(Star):
         for m in season.get("matches", []):
             if m.get("date") == today:
                 existing.add(tuple(sorted([m["group_a"], m["group_b"]])))
+        # 二次去重：用全局 seen 防止同群出现在多个配对中
+        seen_gids: set = set()
         matched: set = set()
         for g1, g2 in matches:
+            if g1 in seen_gids or g2 in seen_gids:
+                logger.warning(f"[petpark] 跳过宗门战配对（群已参战）: {g1} vs {g2}")
+                continue
             pair = tuple(sorted([g1, g2]))
             if pair in existing:
                 logger.warning(f"[petpark] 跳过重复宗门战配对: {g1} vs {g2}")
                 continue
             existing.add(pair)
+            seen_gids.add(g1)
+            seen_gids.add(g2)
             matched.add(g1)
             matched.add(g2)
             self._sect_init_war(g1, g2)
@@ -11579,24 +11522,41 @@ class PetParkPlugin(Star):
     async def _sect_war_start_locked(self) -> None:
         today = self._bj_today()
         season = self._sect_ensure_season()
+        broadcasted: set = set()  # 去重：避免同群重复推送开战消息
         for m in season.get("matches", []):
             if m.get("date") != today:
                 continue
             for gid in (m["group_a"], m["group_b"]):
+                if gid in broadcasted:
+                    continue
                 group = self.store.get_group(gid)
                 war = group.get("sect", {}).get("today", {}).get("war")
                 if not war or war.get("phase") != "matched":
                     continue
+                # 幂等：如果已经进入 battling 阶段则跳过（重复触发防护）
+                broadcasted.add(gid)
+                # 为新版宗门战分配随机初始战力
+                if war.get("base_power") is None:
+                    import random as _random
+                    war["base_power"] = _random.randint(10000, data.SECT_WAR_BASE_POWER_MAX)
+                    opp_gid = war.get("opponent", "")
+                    if opp_gid:
+                        opp_group = self.store.get_group(opp_gid)
+                        opp_war = opp_group.get("sect", {}).get("today", {}).get("war")
+                        if opp_war and opp_war.get("base_power") is None:
+                            opp_war["base_power"] = _random.randint(10000, data.SECT_WAR_BASE_POWER_MAX)
                 war["phase"] = "battling"
                 war["round"] = 1
                 war["cheer_bonus"] = 0
                 war["cheer_count"] = 0
                 opp = war.get("opponent_name", "")
+                my_base = war.get("base_power", 0)
                 await self._send_to_group(
                     gid,
                     f"## ⚔️ 宗门战正式开战！\n"
                     f"本宗 vs **{opp}**\n"
-                    f"> 第 1 回合开始！群内发送『加油』为本宗加战力。"
+                    f"● 本宗初始战力：{self._fmt_power(my_base)}\n"
+                    f"> 第 1 回合开始！群内所有人发送『加油』为本宗加战力。"
                     f"每 {data.SECT_WAR_ROUND_MINUTES} 分钟一个回合，共 {data.SECT_WAR_ROUNDS} 回合，"
                     f"21:10 结束。",
                 )
@@ -11626,15 +11586,8 @@ class PetParkPlugin(Star):
         # 幂等：本回合已结算过则跳过（防止重启后在同一分钟内重复触发）
         if any(r.get("round") == round_num for r in war1.get("rounds", [])):
             return
-        base1, _ = self._sect_group_base_power(g1)
-        base2, _ = self._sect_group_base_power(g2)
-        # 战力差距上限：防止一方碾压，差距超过上限时拉平强者战力
-        diff = abs(base1 - base2)
-        if diff > data.SECT_WAR_POWER_GAP_CAP:
-            if base1 > base2:
-                base1 = base2 + data.SECT_WAR_POWER_GAP_CAP
-            else:
-                base2 = base1 + data.SECT_WAR_POWER_GAP_CAP
+        base1 = war1.get("base_power", 0)
+        base2 = war2.get("base_power", 0)
         cheer1 = war1.get("cheer_bonus", 0)
         cheer2 = war2.get("cheer_bonus", 0)
         power1 = base1 + cheer1
@@ -11670,10 +11623,6 @@ class PetParkPlugin(Star):
         m["a_wins"] = war1.get("my_wins", 0)
         m["b_wins"] = war1.get("opp_wins", 0)
 
-        # 回合结束扣血
-        losses1 = self._sect_war_deduct_hp(g1)
-        losses2 = self._sect_war_deduct_hp(g2)
-
         if final:
             self._sect_war_settle(g1, g2, war1, war2)
             m["winner"] = war1.get("winner", "")
@@ -11681,34 +11630,29 @@ class PetParkPlugin(Star):
         else:
             war1["round"] = round_num + 1
             war2["round"] = round_num + 1
-            await self._sect_broadcast_round(g1, g2, war1, war2, round_num, losses1, losses2)
+            await self._sect_broadcast_round(g1, g2, war1, war2, round_num)
 
     async def _sect_broadcast_round(
-        self, g1: str, g2: str, war1: dict, war2: dict,
-        round_num: int, losses1: list, losses2: list,
+        self, g1: str, g2: str, war1: dict, war2: dict, round_num: int
     ) -> None:
         n1 = self.store.get_group(g1).get("sect", {}).get("name", g1)
         n2 = self.store.get_group(g2).get("sect", {}).get("name", g2)
-        for gid, war, my_name, opp_name, losses in (
-            (g1, war1, n1, n2, losses1),
-            (g2, war2, n2, n1, losses2),
+        for gid, war, my_name, opp_name in (
+            (g1, war1, n1, n2),
+            (g2, war2, n2, n1),
         ):
             last = war["rounds"][-1]
             rtxt = "✅ 本回合胜" if last["winner"] == "me" else "❌ 本回合败"
-            loss_txt = "、".join(
-                f"{n} -{l}({hp}/{m})" for n, l, hp, m in losses[:5]
-            ) or "无"
             text = (
                 f"## ⚔️ 宗门战 · 第{round_num}回合结束\n"
                 f"**{my_name}** vs **{opp_name}**\n"
-                f"● 本回合战力：本宗 {self._fmt_power(last['my_power'])}"
-                f"（基础 {self._fmt_power(last['my_base'])} + 加油 {last['my_cheer']}）\n"
+                f"● 本宗战力：{self._fmt_power(last['my_power'])}"
+                f"（初始 {self._fmt_power(last['my_base'])} + 加油 {self._fmt_power(last['my_cheer'])}）\n"
                 f"● 敌方战力：{self._fmt_power(last['opp_power'])}"
-                f"（基础 {self._fmt_power(last['opp_base'])} + 加油 {last['opp_cheer']}）\n"
+                f"（初始 {self._fmt_power(last['opp_base'])} + 加油 {self._fmt_power(last['opp_cheer'])}）\n"
                 f"● 本回合结果：{rtxt}\n"
                 f"● 当前比分：本宗 {war['my_wins']} : {war['opp_wins']} 敌方\n"
-                f"> 参战宠物扣血：{loss_txt}\n"
-                f"> ⚠️ 血量降低会影响后续战力，请及时补充宠物血量！下回合继续加油！"
+                f"> 下回合继续加油！"
             )
             await self._send_to_group(gid, text)
 
@@ -11740,8 +11684,7 @@ class PetParkPlugin(Star):
                 f"● 三回合比分：本宗 {war['my_wins']} : {war['opp_wins']} 敌方\n"
                 f"● 最终结果：**{rtxt}**\n\n"
                 f"{round_lines}\n\n"
-                f"> 奖励已发放，发送『宗门战报』查看详情。\n"
-                f"> ⚠️ 参战宠物已扣除血量，请及时补充！"
+                f"> 奖励已发放，发送『宗门战报』查看详情。"
             )
             await self._send_to_group(gid, text)
 
@@ -11786,9 +11729,6 @@ class PetParkPlugin(Star):
             self._sect_give_points(loser, data.SECT_LOSE_POINTS)
             points_a = data.SECT_WIN_POINTS if winner == g1 else data.SECT_LOSE_POINTS
             points_b = data.SECT_WIN_POINTS if winner == g2 else data.SECT_LOSE_POINTS
-            # 失败方全群宠物血量归0（死亡）
-            self._sect_war_kill_all_pets(loser)
-
         # 宗门胜负记录
         for gid, is_a in ((g1, True), (g2, False)):
             group = self.store.get_group(gid)
@@ -11801,18 +11741,15 @@ class PetParkPlugin(Star):
             else:
                 sect["lose"] = sect.get("lose", 0) + 1
 
-        # 个人奖励、贡献、活跃
+        # 新版：全群成员获得奖励（不再仅限确认名单）
         contributors: dict[str, list[dict]] = {g1: [], g2: []}
-        for gid, is_a in ((g1, True), (g2, False)):
-            group = self.store.get_group(gid)
-            confirmed = group.get("sect", {}).get("today", {}).get("confirmed", [])
+        for gid in (g1, g2):
             is_guild_winner = (winner == gid) if winner != "draw" else False
             is_draw = winner == "draw"
-            for e in confirmed:
-                qq = e["qq"]
-                pl = self.store.get_player(qq, gid, create=False)
-                if not pl:
+            for pkey, pl in self.store._data.get("players", {}).items():
+                if pl.get("group") != gid:
                     continue
+                qq = pl.get("qq", "")
                 pet = pl.get("pet")
                 contrib = data.SECT_CONTRIBUTION_BATTLE_LOSE
                 if is_guild_winner:
@@ -11838,7 +11775,7 @@ class PetParkPlugin(Star):
                 contributors[gid].append({
                     "qq": qq,
                     "pet_name": pet.get("nickname", "-") if pet else "-",
-                    "bp": e.get("bp", 0),
+                    "bp": 0,
                     "contrib": contrib,
                 })
 
@@ -11891,15 +11828,12 @@ class PetParkPlugin(Star):
             sect.setdefault("history", []).append(hist)
 
     def _sect_cheer(self, player: dict, group_id: str) -> str | None:
-        """加油：仅战斗中、出战名单内成员可为本宗当前回合增加战力。"""
+        """加油：全群任何人可为本宗增加战力，并通知敌方我方当前战力。"""
         group = self.store.get_group(group_id)
         sect = group.get("sect", {})
         war = sect.get("today", {}).get("war")
         if not war or war.get("phase") != "battling":
             return None  # 非战斗中，当作普通聊天不回复
-        confirmed_qqs = {e["qq"] for e in sect.get("today", {}).get("confirmed", [])}
-        if player["qq"] not in confirmed_qqs:
-            return "⚔️ 只有今日出战名单内的成员可以为宗门加油。"
         cd = self.store.cooldown_remaining(player, "sect:cheer")
         if cd > 0:
             return f"加油冷却中，还需 {cd} 秒。"
@@ -11909,9 +11843,25 @@ class PetParkPlugin(Star):
         cd_sec = random.randint(data.SECT_CHEER_CD_MIN, data.SECT_CHEER_CD_MAX)
         self.store.set_cooldown(player, "sect:cheer", cd_sec)
         opp = war.get("opponent_name", "")
+        my_base = war.get("base_power", 0)
+        my_total = my_base + war["cheer_bonus"]
+        my_name = sect.get("name", group_id)
+        # 通知敌方：我方当前总战力（后台异步发送，不阻塞回复）
+        opp_gid = war.get("opponent", "")
+        if opp_gid:
+            try:
+                asyncio.ensure_future(self._send_to_group(
+                    opp_gid,
+                    f"## 📣 敌情通报\n"
+                    f"**{my_name}** 刚刚加油！当前总战力：**{self._fmt_power(my_total)}**\n"
+                    f"> 快发送『加油』迎头赶上！",
+                ))
+            except Exception:
+                pass
         return (
             f"📣 加油成功！为本宗增加战力 **+{self._fmt_power(bonus)}**\n"
-            f"● 当前回合累计加油战力：{self._fmt_power(war['cheer_bonus'])}（{war['cheer_count']} 次）\n"
+            f"● 本宗当前总战力：{self._fmt_power(my_total)}"
+            f"（初始 {self._fmt_power(my_base)} + 加油 {self._fmt_power(war['cheer_bonus'])}，{war['cheer_count']} 次）\n"
             f"● 对手：{opp}　● 冷却 {cd_sec} 秒\n"
             f"> 第{war.get('round', 1)}回合进行中，继续加油！"
         )
