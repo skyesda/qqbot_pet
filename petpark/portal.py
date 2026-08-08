@@ -280,8 +280,19 @@ class PlayerPortal:
         })
 
     # --------------------------- 工具：数据格式化 ---------------------------
-    def _format_pet(self, player: dict, group_id: str, qq: str) -> dict:
-        pet = (player.get("pet") or {}).copy()
+    @staticmethod
+    def _resolve_player_pet(player: dict | None, pet_index: int = 0) -> dict:
+        """多宠物系统：从 pets[pet_index] 解析指定宠物，兼容旧单宠物。"""
+        if not player:
+            return {}
+        pets = player.get("pets", [])
+        if pets and 0 <= pet_index < len(pets):
+            return pets[pet_index]
+        # Fallback: 运行时引用 / 旧单宠物数据
+        return player.get("pet") or {}
+
+    def _format_pet(self, player: dict, group_id: str, qq: str, pet_index: int = 0) -> dict:
+        pet = (self._resolve_player_pet(player, pet_index) or {}).copy()
         if not pet:
             return {"exists": False}
         species = pet.get("species")
@@ -311,7 +322,7 @@ class PlayerPortal:
         pet.pop("rune", None)
         return {"exists": True, **pet}
 
-    def _player_summary(self, group_id: str, qq: str) -> dict:
+    def _player_summary(self, group_id: str, qq: str, pet_index: int = 0) -> dict:
         key = self.store.make_key(group_id, qq)
         player = self.store._data["players"].get(key)
         if not player:
@@ -320,19 +331,21 @@ class PlayerPortal:
         rejected = self.store.get_pet_custom_reviews(group_id, qq, status="rejected")
         # 只返回最近一条拒绝原因
         last_rejected = sorted(rejected, key=lambda x: x.get("created_at", 0), reverse=True)[:1]
+        rp = self._resolve_player_pet(player, pet_index)
         return {
             "group_id": group_id,
             "qq": qq,
+            "pet_index": pet_index,
             "coin": player.get("coin", 0),
             "jifen": player.get("jifen", 0),
             "diamond": player.get("diamond", 0),
             "bag": dict(player.get("bag", {})),
             "abyss": dict(self.store.abyss_state(player)),
             "stats": dict(player.get("stats", {})),
-            "pet": self._format_pet(player, group_id, qq),
-            "cooldowns": self._cooldown_list(player),
-            "skills": list((player.get("pet") or {}).get("skills", [])),
-            "artifact": (player.get("pet") or {}).get("artifact"),
+            "pet": self._format_pet(player, group_id, qq, pet_index),
+            "cooldowns": self._cooldown_list(player, pet_index),
+            "skills": list(rp.get("skills", [])),
+            "artifact": rp.get("artifact"),
             "artifact_names": list(data.ARTIFACTS.keys()),
             "skill_names": list(data.SKILLS.keys()),
             "custom_pending": pending,
@@ -344,11 +357,11 @@ class PlayerPortal:
             "auto_cultivation": dict(player.get("auto_cultivation", {})),
         }
 
-    def _cooldown_list(self, player: dict) -> list:
+    def _cooldown_list(self, player: dict, pet_index: int = 0) -> list:
         """汇总玩家所有活动冷却：日常活动 + 固定玩法 + 限时活动。"""
         now = int(time.time())
         entries = []
-        married = (player.get("pet") or {}).get("love_state") == "已婚"
+        married = (self._resolve_player_pet(player, pet_index) or {}).get("love_state") == "已婚"
         for action in data.DAILY_ACTIONS:
             if action == "双修" and not married:
                 continue
@@ -405,6 +418,7 @@ class PlayerPortal:
         app.router.add_post("/api/portal/bind_email", self._api_bind_email)
         app.router.add_post("/api/portal/logout", self._api_logout)
         app.router.add_get("/api/portal/me", self._api_me)
+        app.router.add_post("/api/portal/bind/query", self._api_bind_query)
         app.router.add_post("/api/portal/bind", self._api_bind)
         app.router.add_get("/api/portal/pet", self._api_pet)
         app.router.add_post("/api/portal/auto_cultivation", self._api_auto_cultivation)
@@ -665,10 +679,11 @@ class PlayerPortal:
         for bp in account.get("bound_pets", []):
             key = self.store.make_key(bp.get("group", ""), bp.get("qq", ""))
             player = self.store._data["players"].get(key)
-            pet = player.get("pet") if player else None
+            pet = self._resolve_player_pet(player, bp.get("pet_index", 0)) if player else None
             bound.append({
                 "group_id": bp.get("group"),
                 "qq": bp.get("qq"),
+                "pet_index": bp.get("pet_index", 0),
                 "nickname": pet.get("nickname") if pet else bp.get("nickname", "未命名"),
                 "species": pet.get("species") if pet else bp.get("species", "未知"),
                 "level": pet.get("level", 1) if pet else 1,
@@ -685,28 +700,58 @@ class PlayerPortal:
             "bound_pets": bound,
         })
 
+    async def _api_bind_query(self, request: web.Request) -> web.Response:
+        """查询指定群+用户ID 下的宠物列表，供绑定前选择。"""
+        self._check_csrf(request)
+        self._require_session(request)
+        body = await request.json()
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        if not group_id or not qq:
+            return web.json_response({"ok": False, "msg": "群号和用户 ID 不能为空"})
+        key = self.store.make_key(group_id, qq)
+        player = self.store._data["players"].get(key)
+        if not player:
+            return web.json_response({"ok": False, "msg": "该群聊与用户 ID 下不存在宠物"})
+        existing = self.store.account_for_pet(group_id, qq)
+        if existing:
+            # 已绑定则直接返回当前绑定信息
+            return web.json_response({"ok": False, "already_bound": True, "msg": "该宠物已被绑定"})
+        pets = player.get("pets", [])
+        if not pets:
+            return web.json_response({"ok": False, "msg": "该用户还没有宠物"})
+        pet_list = []
+        for i, pt in enumerate(pets):
+            pet_list.append({
+                "index": i,
+                "nickname": pt.get("nickname", "未命名"),
+                "species": pt.get("species", "未知"),
+                "quality": pt.get("quality", "普通"),
+                "level": pt.get("level", 1),
+                "stage": pt.get("stage", "幼年期"),
+                "element": pt.get("element", "未知"),
+            })
+        return web.json_response({"ok": True, "pets": pet_list})
+
     async def _api_bind(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
         sess = self._require_session(request)
         body = await request.json()
         group_id = str(body.get("group_id", "")).strip()
         qq = str(body.get("qq", "")).strip()
+        pet_index = int(body.get("pet_index", 0))
         if not group_id or not qq:
             return web.json_response({"ok": False, "msg": "群号和用户 ID 不能为空"})
-        ip = request.remote or "unknown"
-        ok, msg = self._check_rate(f"{ip}:bind:{qq}")
-        if not ok:
-            return web.json_response({"ok": False, "msg": msg})
-        success, msg2 = self.store.bind_pet_to_account(sess["aid"], group_id, qq)
+        success, msg2 = self.store.bind_pet_to_account(sess["aid"], group_id, qq, pet_index)
         if success:
             await self.store.save()
-        self._reset_rate(f"{ip}:bind:{qq}") if success else None
         return web.json_response({"ok": success, "msg": msg2})
 
     async def _api_pet(self, request: web.Request) -> web.Response:
         self._require_session(request)
         group_id = request.query.get("group_id", "").strip()
         qq = request.query.get("qq", "").strip()
+        pet_index = int(request.query.get("pet_index", "0"))
         if not group_id or not qq:
             raise web.HTTPBadRequest(text="缺少群号或用户 ID")
         # 验证当前账号确实绑定了该宠物
@@ -714,7 +759,7 @@ class PlayerPortal:
         sess = self._current_session(request)
         if owner != sess.get("aid"):
             raise web.HTTPForbidden(text="你没有绑定该宠物")
-        return web.json_response({"ok": True, **self._player_summary(group_id, qq)})
+        return web.json_response({"ok": True, **self._player_summary(group_id, qq, pet_index)})
 
     async def _api_auto_cultivation(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
@@ -733,7 +778,8 @@ class PlayerPortal:
         player = self.store._data["players"].get(key)
         if not player:
             return web.json_response({"ok": False, "msg": "未找到该宠物"})
-        pet = player.get("pet")
+        pet_index = int(body.get("pet_index", 0))
+        pet = self._resolve_player_pet(player, pet_index)
         ascended = pet and data.STAGES.index(pet.get("stage", "")) >= data.STAGES.index("飞升")
         if not pet or (not pet.get("custom") and not ascended):
             return web.json_response({"ok": False, "msg": "自动修炼仅限定制宠物或飞升宠物"})
@@ -762,6 +808,7 @@ class PlayerPortal:
             body = await request.json()
             group_id = str(body.get("group_id", "")).strip()
             qq = str(body.get("qq", "")).strip()
+            pet_index = int(body.get("pet_index", 0))
             code = str(body.get("code", "")).strip()
             nickname = str(body.get("nickname", "")).strip() or "神秘训练家"
             show_qq = str(body.get("show_qq", "")).strip() or (account.get("qq") if account else sess.get("aid", ""))
@@ -824,7 +871,7 @@ class PlayerPortal:
             resp = {
                 "ok": True,
                 "msg": "定制权限已解锁" + ("，全服祝贺已发送" if broadcast_submitted else ""),
-                "pet": self._format_pet(player, group_id, qq),
+                "pet": self._format_pet(player, group_id, qq, pet_index),
                 "broadcast_submitted": broadcast_submitted,
             }
             logger.info(f"[petpark] 定制解锁：返回响应 {resp.get('msg')}")
@@ -858,7 +905,8 @@ class PlayerPortal:
         player = self.store._data["players"].get(key)
         if not player:
             return web.json_response({"ok": False, "msg": "未找到该宠物"})
-        pet = player.get("pet")
+        pet_index = int(fields.get("pet_index", 0))
+        pet = self._resolve_player_pet(player, pet_index)
         if not pet or not pet.get("custom"):
             return web.json_response({"ok": False, "msg": "该宠物未解锁定制权限"})
         changes: dict[str, str] = {}
@@ -1046,6 +1094,7 @@ class PlayerPortal:
         body = await request.json()
         group_id = str(body.get("group_id", "")).strip()
         qq = str(body.get("qq", "")).strip()
+        pet_index = int(body.get("pet_index", 0))
         name = str(body.get("name", "")).strip()
         try:
             count = max(1, min(9999, int(body.get("count", 1))))
@@ -1075,7 +1124,7 @@ class PlayerPortal:
         return web.json_response({
             "ok": success,
             "msg": text,
-            "summary": self._player_summary(group_id, qq),
+            "summary": self._player_summary(group_id, qq, pet_index),
         })
 
     async def _api_item_info(self, request: web.Request) -> web.Response:
@@ -1103,6 +1152,7 @@ class PlayerPortal:
         body = await request.json()
         group_id = str(body.get("group_id", "")).strip()
         qq = str(body.get("qq", "")).strip()
+        pet_index = int(body.get("pet_index", 0))
         action = str(body.get("action", "")).strip()
         try:
             times = max(1, min(9999, int(body.get("times", 1))))
@@ -1132,7 +1182,7 @@ class PlayerPortal:
         return web.json_response({
             "ok": success,
             "msg": text,
-            "summary": self._player_summary(group_id, qq),
+            "summary": self._player_summary(group_id, qq, pet_index),
         })
 
     async def _api_redeem(self, request: web.Request) -> web.Response:
@@ -1143,6 +1193,7 @@ class PlayerPortal:
         body = await request.json()
         group_id = str(body.get("group_id", "")).strip()
         qq = str(body.get("qq", "")).strip()
+        pet_index = int(body.get("pet_index", 0))
         code = str(body.get("code", "")).strip()
         if not code:
             return web.json_response({"ok": False, "msg": "请输入卡密"})
@@ -1163,7 +1214,7 @@ class PlayerPortal:
         return web.json_response({
             "ok": success,
             "msg": str(text),
-            "summary": self._player_summary(group_id, qq),
+            "summary": self._player_summary(group_id, qq, pet_index),
         })
 
     async def _api_change_password(self, request: web.Request) -> web.Response:
@@ -1547,10 +1598,18 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
       <el-input v-model="bind.qq" placeholder="你在该群使用宠物乐园的用户 ID" clearable @keyup.enter="doBind"></el-input>
     </el-form-item>
   </el-form>
-  <p class="muted">输入你在群内使用宠物乐园的群号和用户 ID，即可查看该群宠物。</p>
+  <p class="muted">输入群号和用户 ID 后先查询宠物列表，再选择要绑定的宠物。</p>
+  <el-form v-if="bind.pets && bind.pets.length && !bind.querying" label-position="top">
+    <el-form-item label="选择要绑定的宠物">
+      <el-select v-model="bind.petIndex" style="width:100%">
+        <el-option v-for="pt in bind.pets" :key="pt.index" :label="pt.nickname + '  ' + pt.species + '  ' + pt.quality + ' Lv' + pt.level + '  ' + pt.stage" :value="pt.index"></el-option>
+      </el-select>
+    </el-form-item>
+  </el-form>
   <template #footer>
     <el-button round @click="bind.show=false">取消</el-button>
-    <el-button type="primary" round :loading="bind.loading" @click="doBind">绑定</el-button>
+    <el-button v-if="bind.pets && bind.pets.length" type="primary" round :loading="bind.loading" @click="doBind">绑定</el-button>
+    <el-button v-else type="primary" round :loading="bind.querying" @click="doBindQuery">查询宠物</el-button>
   </template>
 </el-dialog>
 
@@ -1669,7 +1728,7 @@ createApp({
     const cooldowns = ref([]);
     const autoCultivating = ref(false);
 
-    const bind = reactive({show:false, group:'', qq:'', loading:false});
+    const bind = reactive({show:false, group:'', qq:'', loading:false, querying:false, pets:null, petIndex:0});
     const pwd = reactive({show:false, code:'', n1:'', n2:'', loading:false, sending:false, countdown:0});
     let pwdCdTimer = null;
     const custom = reactive({code:'', nickname:'', showQQ:'', redeeming:false,
@@ -1704,7 +1763,7 @@ createApp({
       current.value = p;
       petLoading.value = true;
       try{
-        const d = await api(`/api/portal/pet?group_id=${encodeURIComponent(p.group_id)}&qq=${encodeURIComponent(p.qq)}`);
+        const d = await api(`/api/portal/pet?group_id=${encodeURIComponent(p.group_id)}&qq=${encodeURIComponent(p.qq)}&pet_index=${p.pet_index||0}`);
         if(!d || !d.ok){ ElMessage.error((d && d.msg) || '宠物数据加载失败'); data.value = null; return; }
         data.value = d;
         redeemResult.value = '';
@@ -1734,6 +1793,7 @@ createApp({
         const r = await api('/api/portal/auto_cultivation','POST',{
           group_id: p.group_id,
           qq: p.qq,
+          pet_index: p.pet_index || 0,
           enabled: Boolean(enabled),
         });
         if(r && r.ok){
@@ -1754,13 +1814,26 @@ createApp({
     }
 
     // ---- 绑定 ----
+    async function doBindQuery(){
+      const g = bind.group.trim(), q = bind.qq.trim();
+      if(!g || !q){ ElMessage.warning('群号和用户 ID 不能为空'); return; }
+      bind.querying = true; bind.pets = null; bind.petIndex = 0;
+      try{
+        const r = await api('/api/portal/bind/query','POST',{group_id:g, qq:q});
+        if(r && r.ok){
+          bind.pets = r.pets || [];
+          if(bind.pets.length) bind.petIndex = bind.pets[0].index;
+          else ElMessage.warning('该玩家暂无宠物');
+        } else { ElMessage.error((r && r.msg) || '查询失败'); }
+      } finally { bind.querying = false; }
+    }
     async function doBind(){
       const g = bind.group.trim(), q = bind.qq.trim();
       if(!g || !q){ ElMessage.warning('群号和用户 ID 不能为空'); return; }
       bind.loading = true;
       try{
-        const r = await api('/api/portal/bind','POST',{group_id:g, qq:q});
-        if(r && r.ok){ ElMessage.success(r.msg || '绑定成功'); bind.show=false; bind.group=''; bind.qq=''; await init(); }
+        const r = await api('/api/portal/bind','POST',{group_id:g, qq:q, pet_index:bind.petIndex});
+        if(r && r.ok){ ElMessage.success(r.msg || '绑定成功'); bind.show=false; bind.group=''; bind.qq=''; bind.pets=null; bind.petIndex=0; await init(); }
         else { ElMessage.error((r && r.msg) || '绑定失败'); }
       } finally { bind.loading = false; }
     }
@@ -1807,7 +1880,7 @@ createApp({
       }catch(e){ return; }
       acting.value = action;
       try{
-        const r = await api('/api/portal/pet_action','POST',{group_id:data.value.group_id, qq:data.value.qq, action, times:Math.max(1, levelTimes.value||1)});
+        const r = await api('/api/portal/pet_action','POST',{group_id:data.value.group_id, qq:data.value.qq, pet_index:data.value.pet_index||0, action, times:Math.max(1, levelTimes.value||1)});
         showResult(r, '操作失败');
         if(r && r.ok) await refreshAll();
       } finally { acting.value = ''; }
@@ -1833,7 +1906,7 @@ createApp({
       }catch(e){ return; }
       usingItem.value = it.name;
       try{
-        const r = await api('/api/portal/use_item','POST',{group_id:data.value.group_id, qq:data.value.qq, name:it.name, count: it.kind==='item' ? Math.max(1, it.qty||1) : 1});
+        const r = await api('/api/portal/use_item','POST',{group_id:data.value.group_id, qq:data.value.qq, pet_index:data.value.pet_index||0, name:it.name, count: it.kind==='item' ? Math.max(1, it.qty||1) : 1});
         showResult(r, '使用失败');
         if(r && r.ok) await refreshAll();
       } finally { usingItem.value = ''; }
@@ -1844,7 +1917,7 @@ createApp({
       if(!code){ ElMessage.warning('请输入卡密'); return; }
       redeeming.value = true;
       try{
-        const r = await api('/api/portal/redeem','POST',{group_id:data.value.group_id, qq:data.value.qq, code});
+        const r = await api('/api/portal/redeem','POST',{group_id:data.value.group_id, qq:data.value.qq, pet_index:data.value.pet_index||0, code});
         if(r && r.msg) redeemResult.value = stripMd(r.msg);
         if(r && r.ok){ ElMessage.success('兑换成功'); redeemCode.value=''; await refreshAll(); }
         else { ElMessage.error(stripMd((r && r.msg) || '兑换失败')); }
@@ -1862,7 +1935,7 @@ createApp({
       if(!custom.nickname.trim() || !custom.showQQ.trim()){ ElMessage.warning('请填写昵称和 QQ 号，用于全群祝贺'); return; }
       custom.redeeming = true;
       try{
-        const r = await api('/api/portal/custom_redeem','POST',{group_id:data.value.group_id, qq:data.value.qq, code, nickname:custom.nickname.trim(), show_qq:custom.showQQ.trim()});
+        const r = await api('/api/portal/custom_redeem','POST',{group_id:data.value.group_id, qq:data.value.qq, pet_index:data.value.pet_index||0, code, nickname:custom.nickname.trim(), show_qq:custom.showQQ.trim()});
         if(r && r.ok){ ElMessage.success(r.msg || '解锁成功'); custom.code=''; await loadPet(current.value); }
         else { ElMessage.error((r && r.msg) || '解锁失败'); }
       } finally { custom.redeeming = false; }
@@ -1881,6 +1954,7 @@ createApp({
         const fd = new FormData();
         fd.append('group_id', current.value.group_id);
         fd.append('qq', current.value.qq);
+        fd.append('pet_index', current.value.pet_index || 0);
         if(species) fd.append('species_name', species);
         if(custom.blob) fd.append('image', custom.blob, 'custom.jpg');
         const r = await fetch('/api/portal/custom_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
@@ -1958,7 +2032,7 @@ createApp({
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       bind, pwd, custom, crop,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
-      loadPet, logout, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
+      loadPet, logout, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       goFeedback, goChat,
       redeemCustom, openCustomEdit, submitCustom, toggleAutoCultivation,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};

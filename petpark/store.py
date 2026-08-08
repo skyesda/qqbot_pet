@@ -1337,7 +1337,7 @@ class PetStore:
         return None
 
     def bind_pet_to_account(
-        self, account_id: str, group_id: str, qq: str
+        self, account_id: str, group_id: str, qq: str, pet_index: int = 0
     ) -> tuple[bool, str]:
         """绑定宠物到账号。返回 (是否成功, 提示)。"""
         account = self.get_account(account_id)
@@ -1355,10 +1355,13 @@ class PetStore:
             if bp.get("group") == group_id and bp.get("qq") == qq:
                 return True, "已经绑定过该宠物"
         player = self._data["players"][key]
-        pet = player.get("pet") or {}
+        pets = player.get("pets", [])
+        idx = max(0, min(pet_index, len(pets) - 1)) if pets else 0
+        pet = pets[idx] if 0 <= idx < len(pets) else {}
         bound.append({
             "group": group_id,
             "qq": qq,
+            "pet_index": idx,
             "nickname": pet.get("nickname", "未命名"),
             "species": pet.get("species", "未知"),
         })
