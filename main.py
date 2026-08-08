@@ -1802,7 +1802,18 @@ class PetParkPlugin(Star):
         else:
             remain = data.REBIRTH_PREP_LEVEL - level
             status = f"还需 {remain} 级进入准备期（Lv800）"
-        # 倍率概率展示
+        # 倍率概率展示（含祭奠加成）
+        pts = min(sacrifice_pts, data.REBIRTH_SACRIFICE_MAX_POINTS)
+        n = len(data.REBIRTH_MULTIPLIER_TABLE)
+        adjusted = []
+        for i, (mult, w) in enumerate(data.REBIRTH_MULTIPLIER_TABLE):
+            # 最高 3 档倍率享受祭奠加成（与 rebirth_roll_multiplier 一致）
+            if i >= n - 3 and pts > 0:
+                w_adj = w + data.REBIRTH_SACRIFICE_WEIGHT_PER_POINT * pts
+            else:
+                w_adj = w
+            adjusted.append((mult, w_adj))
+        total_adj = sum(w_adj for _, w_adj in adjusted)
         lines = [
             "## 🔄 宠物重生",
             f"> {status}",
@@ -1810,8 +1821,8 @@ class PetParkPlugin(Star):
             "",
             "**重生倍率概率：**",
         ]
-        for mult, w in data.REBIRTH_MULTIPLIER_TABLE:
-            pct = w / data.REBIRTH_MULTIPLIER_TOTAL_WEIGHT * 100
+        for mult, w_adj in adjusted:
+            pct = w_adj / total_adj * 100
             bar = "█" * int(pct / 2)
             lines.append(f"　{mult}×：{pct:.1f}% {bar}")
         if sacrifice_pts > 0:

@@ -2044,8 +2044,8 @@ def rebirth_roll_multiplier(sacrifice_points: int = 0) -> int:
     adjusted = []
     n = len(REBIRTH_MULTIPLIER_TABLE)
     for i, (mult, w) in enumerate(REBIRTH_MULTIPLIER_TABLE):
-        # 前 3 档（最高倍率）享受祭奠加成
-        if i <= 2 and pts > 0:
+        # 最高 3 档倍率（8×/9×/10×）享受祭奠加成
+        if i >= n - 3 and pts > 0:
             w += REBIRTH_SACRIFICE_WEIGHT_PER_POINT * pts
         adjusted.append((mult, w))
     total = sum(w for _, w in adjusted)
