@@ -354,7 +354,7 @@ class PlayerPortal:
                 "image": self.store.remaining_custom_changes(player, "image"),
                 "species_name": self.store.remaining_custom_changes(player, "species_name"),
             },
-            "auto_cultivation": dict(player.get("auto_cultivation", {})),
+            "auto_cultivation": dict(rp.get("auto_cultivation", {})),
         }
 
     def _cooldown_list(self, player: dict, pet_index: int = 0) -> list:
@@ -783,7 +783,7 @@ class PlayerPortal:
         ascended = pet and data.STAGES.index(pet.get("stage", "")) >= data.STAGES.index("飞升")
         if not pet or (not pet.get("custom") and not ascended):
             return web.json_response({"ok": False, "msg": "自动修炼仅限定制宠物或飞升宠物"})
-        ac = player.setdefault("auto_cultivation", {
+        ac = pet.setdefault("auto_cultivation", {
             "enabled": False,
             "started_at": 0,
             "total_sessions": 0,

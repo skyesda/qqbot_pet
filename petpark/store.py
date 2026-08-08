@@ -346,11 +346,6 @@ class PetStore:
                 "stats": {"battle_win": 0, "explore": 0},
                 "quests": {},
                 "auto_cultivation": {
-                    "enabled": False,
-                    "started_at": 0,
-                    "total_sessions": 0,
-                    "total_exp": 0,
-                    "last_run_at": 0,
                     "card_until": 0,
                 },
                 "abyss_corruption": 0,
@@ -1426,15 +1421,16 @@ class PetStore:
         return pet, None
 
     @staticmethod
-    def auto_cultivation_active(player: dict) -> bool:
-        """判断玩家当前宠物是否享有自动修炼权限。
+    def auto_cultivation_active(player: dict, pet: dict = None) -> bool:
+        """判断指定宠物是否享有自动修炼权限。
 
         定制宠物永久有效；非定制宠物需自动修炼卡在有效期内。
         """
-        pet = player.get("pet")
+        if pet is None:
+            pet = player.get("pet") if player else None
         if pet and pet.get("custom"):
             return True
-        ac = player.get("auto_cultivation", {})
+        ac = player.get("auto_cultivation", {}) if player else {}
         until = int(ac.get("card_until", 0) or 0)
         return until > int(time.time())
 
@@ -1479,11 +1475,6 @@ class PetStore:
             return None, "你的宠物已是定制宠物，已永久享有自动修炼权限，无需此卡"
         now = int(time.time())
         ac = player.setdefault("auto_cultivation", {
-            "enabled": False,
-            "started_at": 0,
-            "total_sessions": 0,
-            "total_exp": 0,
-            "last_run_at": 0,
             "card_until": 0,
         })
         cur = int(ac.get("card_until", 0) or 0)
