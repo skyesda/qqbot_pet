@@ -196,8 +196,33 @@ class WebAdmin:
         )
 
     @staticmethod
-    def _record_fingerprint(record: Any) -> str:
-        return json.dumps(record, ensure_ascii=False, sort_keys=True)
+    def _merge_edits(base: dict, value: dict, existing: dict) -> dict:
+        """3 路合并：把 base→value 的管理员编辑应用到最新 existing 上。
+
+        宠物/玩家数据会随玩家实时变化（精力、经验、冷却、血量等），
+        若整条指纹比对或直接替换，后台一保存就判定"数据已更新"而失败，
+        且旧快照整条覆盖还会把玩家最新进度冲掉（回溯）。
+        因此改为：管理员未改动的字段保留 existing 的实时值，
+        管理员显式修改的字段以 value 为准，嵌套对象递归合并。
+        """
+        result: dict = {}
+        for k in set(base) | set(value) | set(existing):
+            if k in base and k not in value:
+                continue  # 管理员删除了该字段
+            if k not in base:
+                result[k] = value[k] if k in value else existing[k]  # 新增字段/防御保留
+                continue
+            b, v = base[k], value[k]
+            if k not in existing:
+                result[k] = v
+            elif v == b:
+                result[k] = existing[k]  # 未修改 → 保留实时数据
+            elif isinstance(b, dict) and isinstance(v, dict) \
+                    and isinstance(existing[k], dict):
+                result[k] = WebAdmin._merge_edits(b, v, existing[k])
+            else:
+                result[k] = v  # 显式修改 → 管理员意图优先
+        return result
 
     async def _api_upsert(self, request):
         self._require(request)
@@ -210,22 +235,12 @@ class WebAdmin:
         if not isinstance(value, dict):
             return self._json({"ok": False, "msg": "记录内容必须是 JSON 对象"})
         existing = self.store._data.get(table, {}).get(key)
-        # 乐观锁：编辑已有记录时必须携带打开编辑框时的原始快照（base），
-        # 若与当前数据不一致，说明期间数据已被游戏进程更新，拒绝写入，
-        # 防止旧页面快照整条覆盖玩家最新进度。
+        # 3 路合并：编辑已有记录时，把管理员改动合并到最新实时数据上，
+        # 既保证后台修改能保存，又避免旧快照整条覆盖玩家最新进度（回溯）。
         if existing is not None:
             base = body.get("base")
-            if not isinstance(base, dict):
-                return self._json({
-                    "ok": False,
-                    "msg": "缺少原始数据快照，请刷新页面后重新编辑（防止旧数据覆盖）",
-                })
-            if self._record_fingerprint(base) != self._record_fingerprint(existing):
-                return self._json({
-                    "ok": False,
-                    "msg": "该记录在你打开编辑后已被更新，为防止旧数据覆盖已拒绝保存；"
-                           "请刷新列表后重新编辑",
-                })
+            if isinstance(base, dict):
+                value = self._merge_edits(base, value, existing)
         # 保存活动时保留运行时 Boss 状态，避免后台编辑把当前血量/伤害排行清空
         if table == "events":
             if isinstance(existing, dict) and "_boss_state" in existing \
