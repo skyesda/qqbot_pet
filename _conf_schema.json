@@ -166,5 +166,41 @@
     "hint": "登录管理后台的密码，建议定期修改。",
     "type": "string",
     "default": "2468080asd"
+  },
+  "mute_enabled": {
+    "description": "启用禁言指令",
+    "hint": "开启后，已授权群的群主/管理员可发送『禁言 @成员 时长』『解除禁言 @成员』『全体禁言』（查询全员禁言状态）。关闭则这些指令不响应。",
+    "type": "bool",
+    "default": true
+  },
+  "auto_approve": {
+    "description": "自动审批进群",
+    "hint": "开启后，机器人每 30 秒拉取已接入群的入群申请并自动通过（机器人需为群管理员）。",
+    "type": "bool",
+    "default": true
+  },
+  "welcome_push": {
+    "description": "新人进群主动推送",
+    "hint": "开启后，新成员加入已接入群时，机器人按欢迎语模板主动推送（@群昵称）。",
+    "type": "bool",
+    "default": true
+  },
+  "leave_push": {
+    "description": "成员退群主动推送",
+    "hint": "开启后，成员退出已接入群时，机器人按退群语模板主动推送。",
+    "type": "bool",
+    "default": true
+  },
+  "welcome_template": {
+    "description": "新人进群欢迎语模板",
+    "hint": "{{member}} 会被替换为成员的群昵称。支持 Markdown。",
+    "type": "string",
+    "default": "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
+  },
+  "leave_template": {
+    "description": "成员退群语模板",
+    "hint": "{{member}} 会被替换为成员的群昵称。支持 Markdown。",
+    "type": "string",
+    "default": "## 👋 成员退群\n成员 @{{member}} 已离开本群。"
   }
 }

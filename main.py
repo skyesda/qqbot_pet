@@ -117,6 +117,10 @@ KNOWN_COMMANDS = {
     "授权",
     "授权状态",
     "授权本群",
+    # 群管理（禁言 / 全体禁言，仅群主/管理员或插件管理员可用）
+    "禁言",
+    "解除禁言",
+    "全体禁言",
     # 管理员：增减货币
     "加金币",
     "减金币",
@@ -428,6 +432,7 @@ class PetParkPlugin(Star):
     _sect_war_task_ref: Any = None
     _sect_daily_reset_task_ref: Any = None
     _bank_interest_task_ref: Any = None
+    _group_auto_approve_task_ref: Any = None
     _sect_war_lock = asyncio.Lock()  # 宗门战操作用锁，防止并发重入
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -472,6 +477,19 @@ class PetParkPlugin(Star):
         self.invite_diamond = max(0, int(self.config.get("invite_diamond", 50)))
         # 精力恢复速度为全局常量，按配置覆盖
         data.ENERGY_REGEN_PER_MIN = max(1, int(self.config.get("energy_regen_per_min", data.ENERGY_REGEN_PER_MIN)))
+        # 群管理（禁言/自动审批进群/新人推送/退群推送）——全部由插件实现
+        self.mute_enabled = bool(self.config.get("mute_enabled", True))
+        self.auto_approve = bool(self.config.get("auto_approve", True))
+        self.welcome_push = bool(self.config.get("welcome_push", True))
+        self.leave_push = bool(self.config.get("leave_push", True))
+        self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
+            "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
+        )
+        self.leave_template = str(self.config.get("leave_template", "") or "") or (
+            "## 👋 成员退群\n成员 @{{member}} 已离开本群。"
+        )
+        # 群昵称缓存：{group_id: {member_openid: 群昵称}}
+        self._nick_cache: dict[str, dict[str, str]] = {}
         # 专属管理网站（卡密生成 + 数据增删改查）
         self._web = None
         # 全服广播任务引用，防止被 GC
@@ -553,6 +571,18 @@ class PetParkPlugin(Star):
             pass
         PetParkPlugin._bank_interest_task_ref = asyncio.create_task(
             self._bank_interest_loop()
+        )
+        # 群自动审批后台任务（每 30 秒拉取并审批入群申请）
+        try:
+            if (
+                PetParkPlugin._group_auto_approve_task_ref
+                and not PetParkPlugin._group_auto_approve_task_ref.done()
+            ):
+                PetParkPlugin._group_auto_approve_task_ref.cancel()
+        except Exception:
+            pass
+        PetParkPlugin._group_auto_approve_task_ref = asyncio.create_task(
+            self._group_auto_approve_loop()
         )
 
     # 类级别后台任务引用，避免重载后并发
@@ -1099,6 +1129,8 @@ class PetParkPlugin(Star):
         try:
             if re.match(r"^(撤回消息|撤回)(\s|<@|$)", text):
                 reply = await self._cmd_recall_member(event, qq, group_id, text)
+            elif re.match(r"^(禁言|解除禁言|全体禁言)(\s|<@|$)", text):
+                reply = await self._cmd_mute(event, qq, group_id, text)
             else:
                 reply = self.dispatch(event, qq, group_id, text)
         except Exception as e:  # 保证插件不因单条消息崩溃
@@ -1146,6 +1178,10 @@ class PetParkPlugin(Star):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
             # 形式前置 @昵称，确保任何平台都能看出这条消息@的是谁。
             name = self._sender_name(event) or qq
+            # 优先显示群昵称（QQ 官方接口可查 username 群昵称），失败则回退到 openid/昵称
+            nick = await self._member_nick(group_id, qq)
+            if nick:
+                name = nick
             head = Comp.Plain(f"@{name}\n")
             at = self._safe_at(qq)
             chain = ([at] if at else []) + [head, Comp.Plain(reply)]
@@ -2288,6 +2324,321 @@ class PetParkPlugin(Star):
             f"成功{ok}条/失败{fail}条"
         )
         return result
+
+    # =====================================================================
+    # 群管理：禁言 / 全体禁言查询 / 自动审批进群 / 新人进群推送 / 退群推送
+    # （QQ 官方 v2 API，全部由插件直接实现，框架只提供原始 bot 客户端）
+    # =====================================================================
+    def _get_bot(self):
+        """返回当前机器人的 bot 客户端（含 .api 直连 QQ 群 API）；无框架能力返回 None。"""
+        get_bot = getattr(self.context, "get_bot", None)
+        if callable(get_bot):
+            try:
+                return get_bot()
+            except Exception:
+                return None
+        return None
+
+    async def _member_nick(self, group_id: str, member: str) -> str:
+        """查询成员群昵称（带缓存）；失败返回空串。"""
+        member = str(member or "")
+        if not member or not group_id:
+            return ""
+        cache = self._nick_cache.setdefault(str(group_id), {})
+        if member in cache:
+            return cache[member]
+        bot = self._get_bot()
+        api = getattr(bot, "api", None) if bot else None
+        if api is None:
+            return ""
+        try:
+            from botpy.http import Route
+        except Exception:
+            return ""
+        try:
+            info = await api._http.request(
+                Route(
+                    "GET",
+                    "/v2/groups/{group_openid}/members/{member_openid}",
+                    group_openid=str(group_id),
+                    member_openid=member,
+                )
+            )
+            nick = str((info or {}).get("username", "") or "")
+        except Exception:
+            nick = ""
+        cache[member] = nick
+        return nick
+
+    async def _send_group_text(self, group_id: str, text: str) -> None:
+        """主动向群推送纯文本（Markdown 优先，失败回退纯文本）。"""
+        if not group_id or not text:
+            return
+        bot = self._get_bot()
+        if bot is None:
+            return
+        try:
+            await bot.send_group(str(group_id), text, markdown=True)
+        except Exception:
+            try:
+                await bot.send_group(str(group_id), text, markdown=False)
+            except Exception:
+                logger.warning(f"[petpark] 群 {group_id} 主动推送失败")
+
+    async def _cmd_mute(self, event, qq: str, group_id: str, text: str) -> str | None:
+        """「禁言 @成员 [时长]」「解除禁言 @成员」「全体禁言」。
+
+        仅群主/管理员（含插件管理员白名单）可用；禁言指令作用于已授权群。
+        """
+        if not self.mute_enabled:
+            return "❌ 群管理指令（禁言/全体禁言）已在插件配置中关闭。"
+        if not self._is_group(group_id):
+            return "🚫 该指令仅支持在群聊内使用。"
+        api = getattr(getattr(event, "bot", None), "api", None)
+        if api is None:
+            api = getattr(self._get_bot(), "api", None)
+        if api is None:
+            return "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
+        try:
+            from botpy.http import Route
+        except Exception:
+            return "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
+        # 授权范围：仅「已授权宠物乐园」的群可用（关闭宠物乐园后群管理指令一并禁用）
+        try:
+            if not self.store.get_group(group_id).get("enabled", False):
+                return "❌ 本群未开启宠物乐园，无法使用群管理指令。"
+        except Exception:
+            pass
+        # 权限：插件管理员白名单直接放行，否则查询群成员角色
+        if qq not in self.admins:
+            try:
+                info = await api._http.request(
+                    Route(
+                        "GET",
+                        "/v2/groups/{group_openid}/members/{member_openid}",
+                        group_openid=group_id,
+                        member_openid=qq,
+                    )
+                )
+                role = str((info or {}).get("member_role", "member"))
+            except Exception as e:
+                logger.warning(f"[petpark] 查询群成员角色失败：{e}")
+                return "❌ 无法校验你的群身份（查询群成员接口失败）。"
+            if role not in ("owner", "admin"):
+                return "❌ 仅群主或管理员可以使用群管理指令。"
+
+        # 解析被 @ 的目标成员
+        body = re.sub(r"^(禁言|解除禁言|全体禁言)", "", text, count=1).strip()
+        targets: list[str] = []
+        raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        for m in getattr(raw, "mentions", None) or []:
+            mid = str(getattr(m, "id", "") or "")
+            if mid and not getattr(m, "is_you", False) and mid not in targets:
+                targets.append(mid)
+        for mid in _MENTION_RE.findall(body):
+            if mid not in targets:
+                targets.append(mid)
+
+        if text.startswith("全体禁言"):
+            return await self._cmd_mute_all(api, group_id)
+        if text.startswith("解除禁言"):
+            if not targets:
+                return "## 🔇 解除禁言\n用法：`解除禁言 @成员`（仅群主/管理员可用）。"
+            return await self._set_member_mute(api, group_id, targets[0], None)
+        # 禁言
+        if not targets:
+            return (
+                "## 🔇 禁言成员\n"
+                "用法：`禁言 @成员 [时长]`（时长如 `10分钟` / `1小时` / `1天`，默认 10 分钟）\n"
+                "仅群主/管理员可用；机器人需为群管理员。"
+            )
+        seconds = self._parse_mute_seconds(_MENTION_RE.sub(" ", body).split())
+        return await self._set_member_mute(api, group_id, targets[0], seconds)
+
+    @staticmethod
+    def _parse_mute_seconds(tokens: list[str]) -> int:
+        """解析时长 token（如 10分钟 / 1小时 / 2天 / 30 / 300），返回秒；默认 600（10 分钟）。"""
+        seconds = 0
+        for tok in tokens:
+            m = re.match(r"^(\d+)\s*(秒|分钟|小时|天)?$", tok)
+            if not m:
+                continue
+            n = int(m.group(1))
+            unit = m.group(2) or "分钟"
+            seconds = n if unit == "秒" else n * 60 if unit == "分钟" else n * 3600 if unit == "小时" else n * 86400
+            if seconds > 0:
+                break
+        seconds = seconds or 600
+        return max(1, min(30 * 86400, seconds))  # 最长 30 天
+
+    async def _set_member_mute(self, api, group_id: str, target: str, seconds: int | None) -> str:
+        """禁言（seconds>0）或解除禁言（seconds=None）指定成员。"""
+        try:
+            from botpy.http import Route
+        except Exception:
+            return "❌ 当前平台不支持群管理操作。"
+        route = Route(
+            "POST",
+            "/v2/groups/{group_openid}/restrict_chat_setting",
+            group_openid=group_id,
+        )
+        if seconds:
+            expire = int(time.time()) + seconds
+            # 优先 op=add；若目标已在禁言名单中则回退 op=update
+            for op in ("add", "update"):
+                try:
+                    await api._http.request(
+                        route,
+                        json={
+                            "members": [
+                                {
+                                    "op": op,
+                                    "member_openid": target,
+                                    "mute_expire_at": expire,
+                                }
+                            ]
+                        },
+                    )
+                    break
+                except Exception as e:
+                    if op == "add":
+                        continue
+                    logger.warning(f"[petpark] 禁言成员 {target} 失败：{e}")
+                    return "❌ 禁言操作失败（机器人需为群管理员，且不能禁言群主/管理员/机器人）。"
+            return f"## 🔇 群管理\n已禁言成员 **{target}** {seconds // 60} 分钟。"
+        try:
+            await api._http.request(
+                route,
+                json={
+                    "members": [
+                        {"op": "del", "member_openid": target, "mute_expire_at": 0}
+                    ]
+                },
+            )
+            return f"## 🔇 群管理\n已解除对成员 **{target}** 的禁言。"
+        except Exception as e:
+            logger.warning(f"[petpark] 解除禁言 {target} 失败：{e}")
+            return "❌ 解除禁言失败（机器人需为群管理员）。"
+
+    async def _cmd_mute_all(self, api, group_id: str) -> str:
+        """查询并汇报全员禁言状态（QQ 官方仅提供查询接口，无法由机器人代开/关）。"""
+        try:
+            from botpy.http import Route
+        except Exception:
+            return "❌ 当前平台不支持查询全员禁言。"
+        try:
+            info = await api._http.request(
+                Route(
+                    "GET",
+                    "/v2/groups/{group_openid}/restrict_chat_setting",
+                    group_openid=group_id,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"[petpark] 查询全员禁言状态失败：{e}")
+            return "❌ 查询全员禁言状态失败（机器人需为群管理员）。"
+        mode = str(((info or {}).get("global_rule") or {}).get("mode", "none"))
+        label = {"none": "未开启", "always": "全体禁言中（始终禁言）", "schedule": "定时禁言中"}.get(
+            mode, mode or "未知"
+        )
+        return (
+            "## 🔇 全体禁言状态\n"
+            f"当前状态：**{label}**\n"
+            "QQ 官方机器人接口仅支持查询，需群主在 QQ 客户端手动开启/关闭全体禁言。"
+        )
+
+    async def on_group_member_add(self, data: dict) -> None:
+        """群成员加入事件：按配置推送欢迎语（@群昵称）。"""
+        if not self.welcome_push:
+            return
+        gid = str(data.get("group_openid", "") or "")
+        member = str(data.get("member_openid", "") or "")
+        if not gid or not member:
+            return
+        nick = (await self._member_nick(gid, member)) or member
+        text = (self.welcome_template or "").replace("{{member}}", nick)
+        if text:
+            await self._send_group_text(gid, text)
+
+    async def on_group_member_remove(self, data: dict) -> None:
+        """群成员退出事件：按配置推送退群语（@群昵称）。"""
+        if not self.leave_push:
+            return
+        gid = str(data.get("group_openid", "") or "")
+        member = str(data.get("member_openid", "") or "")
+        if not gid or not member:
+            return
+        nick = (await self._member_nick(gid, member)) or member
+        text = (self.leave_template or "").replace("{{member}}", nick)
+        if text:
+            await self._send_group_text(gid, text)
+
+    GROUP_AUTO_APPROVE_SEC = 30  # 每 30 秒拉取一次入群申请
+
+    async def _group_auto_approve_loop(self) -> None:
+        """后台循环：定期自动审批已接入群的入群申请（可配置关闭）。"""
+        while True:
+            try:
+                if self.auto_approve:
+                    await self._auto_approve_tick()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("[petpark] 自动审批进群循环异常")
+            try:
+                await asyncio.sleep(self.GROUP_AUTO_APPROVE_SEC)
+            except asyncio.CancelledError:
+                break
+
+    async def _auto_approve_tick(self) -> None:
+        """单次自动审批：遍历已接入群，拉取并逐个通过入群申请。"""
+        bot = self._get_bot()
+        api = getattr(bot, "api", None) if bot else None
+        if api is None or not getattr(bot, "is_ready", lambda: False)():
+            return
+        get_groups = getattr(self.context, "get_known_groups", None)
+        groups: list[str] = []
+        if callable(get_groups):
+            try:
+                groups = [str(g) for g in (get_groups() or [])]
+            except Exception:
+                groups = []
+        if not groups:
+            return
+        try:
+            from botpy.http import Route
+        except Exception:
+            return
+        for gid in groups:
+            try:
+                info = await api._http.request(
+                    Route(
+                        "GET",
+                        "/v2/groups/{group_openid}/join_request_list",
+                        group_openid=gid,
+                    ),
+                    params={"cursor": "", "limit": 10},
+                )
+            except Exception:
+                continue
+            for req in ((info or {}).get("list") or []):
+                member = str(req.get("member_openid", "") or "")
+                rid = str(req.get("join_request_id", "") or "")
+                if not member:
+                    continue
+                try:
+                    await api._http.request(
+                        Route(
+                            "POST",
+                            "/v2/groups/{group_openid}/approval_join_request/{member_openid}",
+                            group_openid=gid,
+                            member_openid=member,
+                        ),
+                        json={"op": "approve", "join_request_id": rid},
+                    )
+                    logger.info(f"[petpark] 已自动审批通过群 {gid} 的入群申请 {member}")
+                except Exception as e:
+                    logger.warning(f"[petpark] 自动审批群 {gid} 成员 {member} 失败：{e}")
 
     # =====================================================================
     # 路由
