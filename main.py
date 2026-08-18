@@ -1177,11 +1177,12 @@ class PetParkPlugin(Star):
         if self._is_group(group_id):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
             # 形式前置 @昵称，确保任何平台都能看出这条消息@的是谁。
-            name = self._sender_name(event) or qq
-            # 优先显示群昵称（QQ 官方接口的 username）；接口无权限/查不到时，
-            # 回退到该玩家绑定的 QQ 号，最后才是 openid。
-            nick = await self._member_nick(group_id, qq)
-            name = nick or self.store.get_bound_qq(qq) or name
+            # 群昵称优先级：消息事件自带的 author.username（QQ 群消息 payload 直接给）
+            # -> 成员详情接口 -> 绑定的QQ号 -> openid
+            name = self._sender_name(event)
+            if not name or name == qq:
+                nick = await self._member_nick(group_id, qq)
+                name = nick or self.store.get_bound_qq(qq) or qq
             head = Comp.Plain(f"@{name}\n")
             at = self._safe_at(qq)
             chain = ([at] if at else []) + [head, Comp.Plain(reply)]
