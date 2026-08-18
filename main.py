@@ -2584,6 +2584,45 @@ class PetParkPlugin(Star):
             await self._send_group_text(gid, text)
 
     GROUP_AUTO_APPROVE_SEC = 30  # 每 30 秒拉取一次入群申请
+    _BOT_ADMIN_CHECK_SEC = 600  # 每 10 分钟复核一次机器人群身份
+
+    async def _admin_groups(self, api) -> list[str]:
+        """返回机器人是群主/管理员的群（带缓存）。
+
+        通过 bot_state 接口确认；非管理员的群调用入群接口必报 11703，
+        提前排除可避免每 30 秒刷一次错误日志。
+        """
+        now = time.time()
+        cached = getattr(self, "_admin_groups_cache", None)
+        if cached and now - cached[0] < self._BOT_ADMIN_CHECK_SEC:
+            return cached[1]
+        get_groups = getattr(self.context, "get_known_groups", None)
+        groups: list[str] = []
+        if callable(get_groups):
+            try:
+                groups = [str(g) for g in (get_groups() or [])]
+            except Exception:
+                groups = []
+        admin_groups: list[str] = []
+        try:
+            from botpy.http import Route
+        except Exception:
+            return []
+        for gid in groups:
+            try:
+                st = await api._http.request(
+                    Route(
+                        "GET",
+                        "/v2/groups/{group_openid}/bot_state",
+                        group_openid=gid,
+                    )
+                )
+                if str((st or {}).get("member_role", "")) in ("owner", "admin"):
+                    admin_groups.append(gid)
+            except Exception:
+                continue
+        self._admin_groups_cache = (now, admin_groups)
+        return admin_groups
 
     async def _group_auto_approve_loop(self) -> None:
         """后台循环：定期自动审批已接入群的入群申请（可配置关闭）。"""
@@ -2601,18 +2640,12 @@ class PetParkPlugin(Star):
                 break
 
     async def _auto_approve_tick(self) -> None:
-        """单次自动审批：遍历已接入群，拉取并逐个通过入群申请。"""
+        """单次自动审批：仅在机器人是管理员的群拉取并逐个通过入群申请。"""
         bot = self._get_bot()
         api = getattr(bot, "api", None) if bot else None
         if api is None or not getattr(bot, "is_ready", lambda: False)():
             return
-        get_groups = getattr(self.context, "get_known_groups", None)
-        groups: list[str] = []
-        if callable(get_groups):
-            try:
-                groups = [str(g) for g in (get_groups() or [])]
-            except Exception:
-                groups = []
+        groups = await self._admin_groups(api)
         if not groups:
             return
         try:
