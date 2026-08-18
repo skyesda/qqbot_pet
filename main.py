@@ -2482,7 +2482,11 @@ class PetParkPlugin(Star):
         return max(1, min(30 * 86400, seconds))  # 最长 30 天
 
     async def _set_member_mute(self, api, group_id: str, target: str, seconds: int | None) -> str:
-        """禁言（seconds>0）或解除禁言（seconds=None）指定成员。"""
+        """禁言（seconds>0）或解除禁言（seconds=None）指定成员。
+
+        官方接口要求 mute_expire_at 为 RFC3339 字符串（北京时间），
+        op=del 时传空字符串表示立即解除。
+        """
         try:
             from botpy.http import Route
         except Exception:
@@ -2493,8 +2497,11 @@ class PetParkPlugin(Star):
             group_openid=group_id,
         )
         if seconds:
-            expire = int(time.time()) + seconds
+            expire = datetime.fromtimestamp(
+                int(time.time()) + seconds, tz=ZoneInfo("Asia/Shanghai")
+            ).isoformat()
             # 优先 op=add；若目标已在禁言名单中则回退 op=update
+            last_err = ""
             for op in ("add", "update"):
                 try:
                     await api._http.request(
@@ -2511,24 +2518,28 @@ class PetParkPlugin(Star):
                     )
                     break
                 except Exception as e:
+                    last_err = str(e)
                     if op == "add":
                         continue
                     logger.warning(f"[petpark] 禁言成员 {target} 失败：{e}")
-                    return "❌ 禁言操作失败（机器人需为群管理员，且不能禁言群主/管理员/机器人）。"
+                    return (
+                        "❌ 禁言操作失败（机器人需为群管理员，且只能禁言普通成员，"
+                        f"不能禁言群主/管理员/机器人）。\n> 接口返回：{last_err}"
+                    )
             return f"## 🔇 群管理\n已禁言成员 **{target}** {seconds // 60} 分钟。"
         try:
             await api._http.request(
                 route,
                 json={
                     "members": [
-                        {"op": "del", "member_openid": target, "mute_expire_at": 0}
+                        {"op": "del", "member_openid": target, "mute_expire_at": ""}
                     ]
                 },
             )
             return f"## 🔇 群管理\n已解除对成员 **{target}** 的禁言。"
         except Exception as e:
             logger.warning(f"[petpark] 解除禁言 {target} 失败：{e}")
-            return "❌ 解除禁言失败（机器人需为群管理员）。"
+            return f"❌ 解除禁言失败（机器人需为群管理员）。\n> 接口返回：{e}"
 
     async def _cmd_mute_all(self, api, group_id: str) -> str:
         """查询并汇报全员禁言状态（QQ 官方仅提供查询接口，无法由机器人代开/关）。"""
