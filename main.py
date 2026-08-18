@@ -2481,11 +2481,14 @@ class PetParkPlugin(Star):
         seconds = seconds or 600
         return max(1, min(30 * 86400, seconds))  # 最长 30 天
 
+    MUTE_COMPENSATE_SEC = 60  # QQ 客户端把剩余禁言时长向下取整（会“少显示1分钟”），实际多设 1 分钟补偿
+
     async def _set_member_mute(self, api, group_id: str, target: str, seconds: int | None) -> str:
         """禁言（seconds>0）或解除禁言（seconds=None）指定成员。
 
         官方接口要求 mute_expire_at 为 RFC3339 字符串（北京时间），
         op=del 时传空字符串表示立即解除。
+        实际设置的时长 = seconds + 1 分钟补偿（封顶 30 天），回复仍按申请时长显示。
         """
         try:
             from botpy.http import Route
@@ -2497,9 +2500,11 @@ class PetParkPlugin(Star):
             group_openid=group_id,
         )
         if seconds:
-            expire = datetime.fromtimestamp(
-                int(time.time()) + seconds, tz=ZoneInfo("Asia/Shanghai")
-            ).isoformat()
+            total = min(seconds + self.MUTE_COMPENSATE_SEC, 30 * 86400)
+            expire_dt = datetime.fromtimestamp(
+                int(time.time()) + total, tz=ZoneInfo("Asia/Shanghai")
+            )
+            expire = expire_dt.isoformat()
             # 优先 op=add；若目标已在禁言名单中则回退 op=update
             last_err = ""
             for op in ("add", "update"):
@@ -2526,7 +2531,10 @@ class PetParkPlugin(Star):
                         "❌ 禁言操作失败（机器人需为群管理员，且只能禁言普通成员，"
                         f"不能禁言群主/管理员/机器人）。\n> 接口返回：{last_err}"
                     )
-            return f"## 🔇 群管理\n已禁言成员 **{target}** {seconds // 60} 分钟。"
+            return (
+                f"## 🔇 群管理\n已禁言成员 **{target}** {seconds // 60} 分钟，"
+                f"至 {expire_dt.strftime('%H:%M:%S')} 自动解除。"
+            )
         try:
             await api._http.request(
                 route,
