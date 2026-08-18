@@ -1178,10 +1178,10 @@ class PetParkPlugin(Star):
             # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
             # 形式前置 @昵称，确保任何平台都能看出这条消息@的是谁。
             name = self._sender_name(event) or qq
-            # 优先显示群昵称（QQ 官方接口可查 username 群昵称），失败则回退到 openid/昵称
+            # 优先显示群昵称（QQ 官方接口的 username）；接口无权限/查不到时，
+            # 回退到该玩家绑定的 QQ 号，最后才是 openid。
             nick = await self._member_nick(group_id, qq)
-            if nick:
-                name = nick
+            name = nick or self.store.get_bound_qq(qq) or name
             head = Comp.Plain(f"@{name}\n")
             at = self._safe_at(qq)
             chain = ([at] if at else []) + [head, Comp.Plain(reply)]
@@ -2340,13 +2340,20 @@ class PetParkPlugin(Star):
         return None
 
     async def _member_nick(self, group_id: str, member: str) -> str:
-        """查询成员群昵称（带缓存）；失败返回空串。"""
+        """查询成员群昵称（带缓存）；失败返回空串。
+
+        缓存值为 (昵称, 时间戳)：昵称非空则长期有效；为空（接口无权限/失败）
+        则 10 分钟内不重试，避免每条消息都打一次无效 API。
+        """
         member = str(member or "")
         if not member or not group_id:
             return ""
         cache = self._nick_cache.setdefault(str(group_id), {})
-        if member in cache:
-            return cache[member]
+        hit = cache.get(member)
+        if isinstance(hit, tuple):
+            nick, ts = hit
+            if nick or (time.time() - ts) < 600:
+                return nick
         bot = self._get_bot()
         api = getattr(bot, "api", None) if bot else None
         if api is None:
@@ -2367,7 +2374,7 @@ class PetParkPlugin(Star):
             nick = str((info or {}).get("username", "") or "")
         except Exception:
             nick = ""
-        cache[member] = nick
+        cache[member] = (nick, time.time())
         return nick
 
     async def _send_group_text(self, group_id: str, text: str) -> None:
@@ -2423,7 +2430,10 @@ class PetParkPlugin(Star):
                 role = str((info or {}).get("member_role", "member"))
             except Exception as e:
                 logger.warning(f"[petpark] 查询群成员角色失败：{e}")
-                return "❌ 无法校验你的群身份（查询群成员接口失败）。"
+                return (
+                    "❌ 无法校验你的群身份：查询群成员接口失败。\n"
+                    "> 可能原因：机器人未在 QQ 开放平台开通「查询群成员信息」接口权限。"
+                )
             if role not in ("owner", "admin"):
                 return "❌ 仅群主或管理员可以使用群管理指令。"
 
@@ -2626,6 +2636,13 @@ class PetParkPlugin(Star):
                 rid = str(req.get("join_request_id", "") or "")
                 if not member:
                     continue
+                # 入群申请里带 username（群昵称），顺手缓存供 @昵称 使用
+                uname = str(req.get("username", "") or "")
+                if uname:
+                    self._nick_cache.setdefault(gid, {})[member] = (
+                        uname,
+                        time.time(),
+                    )
                 try:
                     await api._http.request(
                         Route(
@@ -5133,6 +5150,12 @@ class PetParkPlugin(Star):
                 "- 授权状态（查看本群授权状态）",
                 "- 授权 卡密（用授权卡激活/续期本群）",
                 "- 授权本群 天数（大管理员直接续期）",
+                "",
+                "【群管理】（群主/群管理员）",
+                "- 禁言 @成员 时长（如 10分钟 / 1小时 / 1天，默认 10 分钟）",
+                "- 解除禁言 @成员",
+                "- 全体禁言（查询当前全员禁言状态）",
+                "> 需机器人被设为群管理员；新成员入群/退群会自动推送通知",
             ]
         )
 
