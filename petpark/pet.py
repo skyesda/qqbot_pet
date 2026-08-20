@@ -349,39 +349,35 @@ def render_pet(pet: dict) -> str:
     ascended = _is_ascended(pet)
     if ascended:
         need = data.ascend_xianyuan_to_next(pet["level"])
-        resource_line = f"● **仙元**：{pet.get('xianyuan', 0)}/{need}（余 {pet.get('exp', 0)} 经验）"
+        resource_line = f"- 📈 **仙元**　{pet.get('xianyuan', 0)}/{need}（余 {pet.get('exp', 0)} 经验）"
     else:
         need = _exp_to_next(pet["level"])
-        resource_line = f"● **经验**：{pet['exp']}/{need}"
+        resource_line = f"- 📈 **经验**　{pet['exp']}/{need}"
     species_display = pet.get("custom_species_name") or pet.get("species")
     lines = [
-        "┏━─★─ 宠 ☆ 物 ─★─┓",
-        f"● **等级**：Lv{pet['level']}/{level_cap(pet)}",
-        f"● **昵称**：{pet['nickname']}",
-        f"● **种类**：{species_display}",
-        f"● **属性**：{pet['element']}",
-        f"● **阶段**：{pet['stage']}",
-        f"● **级别**：{pet['quality']}",
-        f"● **战力**：{battle_power(pet)}",
-        f"● **智力**：{pet['intel']}",
-        f"● **攻击**：{pet['atk']}",
-        f"● **防御**：{pet['def']}",
-        f"● **秘技**：{skills}",
-        f"● **神器**：{artifact}",
-        f"● **性别**：{gender}（{love}）",
-        f"● **状态**：{pet['status']}",
-        f"● **天赋**：{talent}",
-        f"● **心情**：{stars}",
-        f"● **精力**：{pet['energy']}/{pet['energy_max']}",
-        f"● **血量**：{pet['hp']}/{pet['hp_max']}",
+        f"## 🐾 {pet['nickname']}",
+        f"> {species_display} · {pet['element']}属性 · {pet['stage']} · **{pet['quality']}**",
+        f"> {gender} · {love} · Lv{pet['level']}/{level_cap(pet)} · ⚔️ 战力 {battle_power(pet)}",
+        "",
+        f"- ❤️ **血量**　{pet['hp']}/{pet['hp_max']}",
+        f"- ⚡ **精力**　{pet['energy']}/{pet['energy_max']}",
+        f"- 😊 **心情**　{stars}",
+        f"- 🩹 **状态**　{pet['status']}",
+        f"- 💪 **攻击** {pet['atk']} · 🛡️ **防御** {pet['def']} · 🧠 **智力** {pet['intel']}",
+        f"- 🎓 **天赋**　{talent}",
+        f"- ✨ **秘技**　{skills}",
+        f"- 🗡️ **神器**　{artifact}",
         resource_line,
     ]
     if pet.get("love_target"):
-        lines.append(f"● **伴侣**：`{pet['love_target']}`　好感度 {pet.get('favor', 0)}")
+        lines.append(
+            f"- 💍 **伴侣**　`{pet['love_target']}`　好感度 {pet.get('favor', 0)}"
+        )
     tags = pet.get("tags", [])
     if tags:
-        lines.append(f"● **标签**：{' '.join(f'[{t}]' for t in tags)}")
-    lines.append("┗━─★─ 信 ☆ 息 ─★─┛")
+        lines.append(f"- 🏷️ **标签**　{' '.join(f'[{t}]' for t in tags)}")
     if is_frozen(pet):
-        lines.append(f"> ⚠️ 假死/惊魂中，剩余约 **{frozen_remain_min(pet)}** 分钟无法操作")
+        lines.append(
+            f"\n> ⚠️ 假死/惊魂中，剩余约 **{frozen_remain_min(pet)}** 分钟无法操作"
+        )
     return "\n".join(lines)

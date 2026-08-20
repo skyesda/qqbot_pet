@@ -3551,23 +3551,17 @@ class PetParkPlugin(Star):
                     for line in extra.split("\n"):
                         if line:
                             reward_lines.append(line)
-            drop = "\n● " + "\n● ".join(reward_lines) if reward_lines else ""
+            drop = "\n> " + "\n> ".join(reward_lines) if reward_lines else ""
             desc = f"您的{nick}在{name}遇见{monster}，激战之后**大胜**！"
             body = (
-                "┏-★---副☆本---★-┓\n"
-                f"●怪物战力：{power}\n"
-                f"●本次战力：{roll}\n"
-                f"●通关奖励：{drop}\n"
-                "┗-★---信☆息---★-┛"
+                f"> 👹 怪物战力 **{power}** · 我方发挥 **{roll}**\n"
+                f"> 🎁 通关奖励：{drop}"
             )
             return f"{head}\n{desc}\n{body}{self._auto_level_note(player, p)}"
         desc = f"您的{nick}在{name}遇见{monster}，力战之后**惨败**！"
         body = (
-            "┏-★---副☆本---★-┓\n"
-            f"●怪物战力：{power}\n"
-            f"●本次战力：{roll}\n"
-            "●战败没有奖励！\n"
-            "┗-★---信☆息---★-┛"
+            f"> 👹 怪物战力 **{power}** · 我方发挥 **{roll}**\n"
+            "> 💔 战败没有奖励！"
         )
         return f"{head}\n{desc}\n{body}"
 
@@ -3741,8 +3735,8 @@ class PetParkPlugin(Star):
             p["status"] = "死亡"
             return (
                 f"## 👹 {nick} 挑战 {bname}\n"
-                f"● {bname} 发起攻击，造成 **{boss_damage}** 伤害！\n"
-                f"● 『{nick}』不幸阵亡，挑战失败。\n"
+                f"- {bname} 发起攻击，造成 **{boss_damage}** 伤害！\n"
+                f"- 『{nick}』不幸阵亡，挑战失败。\n"
                 f"> 发送『宠物复活』或使用『九转还魂丹』复活后再来挑战。"
             )
         store_key = self.store.make_key(group_id, player.get("qq", ""))
@@ -3758,9 +3752,9 @@ class PetParkPlugin(Star):
             hit_reward = f"，{token} +{token_per_hit}"
         lines = [
             f"## 👹 {nick} 挑战 {bname}",
-            f"● {bname} 造成 **{boss_damage}** 伤害，『{nick}』剩余 HP {p['hp']}/{p['hp_max']}",
-            f"● 『{nick}』反击造成 **{player_damage}** 伤害",
-            f"● Boss 剩余血量：**{state['hp']}/{state['max_hp']}**{hit_reward}",
+            f"- {bname} 造成 **{boss_damage}** 伤害，『{nick}』剩余 HP {p['hp']}/{p['hp_max']}",
+            f"- 『{nick}』反击造成 **{player_damage}** 伤害",
+            f"- Boss 剩余血量：**{state['hp']}/{state['max_hp']}**{hit_reward}",
         ]
         if state["hp"] <= 0 < old_hp:
             lines.append("\n🏆 **Boss 被击杀！** 奖励已按伤害比例分配给所有参与者。")
@@ -4297,8 +4291,8 @@ class PetParkPlugin(Star):
                 element = data.SPECIES[name]
                 text = (
                     f"## 📖 {name}\n"
-                    f"● **默认属性**：{element}\n"
-                    f"● 可通过『砸蛋』抽取，部分种类可在『宠物市场』购买"
+                    f"- **默认属性**：{element}\n"
+                    f"- 可通过『砸蛋』抽取，部分种类可在『宠物市场』购买"
                 )
                 return text, images.pet_image_md(name)
             names = " · ".join(data.SPECIES_NAMES)
@@ -4509,10 +4503,10 @@ class PetParkPlugin(Star):
         if len(tokens) < 2:
             return (
                 f"用法：{cmd_name} QQ号\n"
-                f"● 绑定后向该QQ邮箱发送验证码验证\n"
-                f"● 跨群通用，其他群无需重复绑定\n"
-                f"● 绑定后可用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）\n"
-                f"● 也可直接 @ 对方代替输入用户ID"
+                f"- 绑定后向该QQ邮箱发送验证码验证\n"
+                f"- 跨群通用，其他群无需重复绑定\n"
+                f"- 绑定后可用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）\n"
+                f"- 也可直接 @ 对方代替输入用户ID"
             )
         qq_num = str(tokens[1]).strip()
         if not (qq_num.isdigit() and 5 <= len(qq_num) <= 11):
@@ -4544,8 +4538,8 @@ class PetParkPlugin(Star):
         asyncio.create_task(self._send_bind_email_async(qq_num, code))
         return (
             f"📧 验证码已发送至 `{qq_num}@qq.com`\n"
-            f"● 请在 **5分钟** 内发送「验证码 123456」完成{cmd_name}\n"
-            f"● 验证码仅对本账号有效，请勿泄露给他人"
+            f"- 请在 **5分钟** 内发送「验证码 123456」完成{cmd_name}\n"
+            f"- 验证码仅对本账号有效，请勿泄露给他人"
         )
 
     async def _send_bind_email_async(self, qq_num: str, code: str) -> None:
@@ -4613,9 +4607,9 @@ class PetParkPlugin(Star):
         self._pending_qq_bind.pop(pid, None)
         return (
             f"✅ 绑定成功！\n"
-            f"● 用户ID `{pid}` ↔ QQ号 `{qq_num}`\n"
-            f"● 跨群通用，其他群无需重复绑定\n"
-            f"● 现在可以用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）"
+            f"- 用户ID `{pid}` ↔ QQ号 `{qq_num}`\n"
+            f"- 跨群通用，其他群无需重复绑定\n"
+            f"- 现在可以用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）"
         )
 
     def _unbind_qq(self, player: dict) -> str:
@@ -4716,22 +4710,20 @@ class PetParkPlugin(Star):
         self.store.add_currency(player, "金币", coin + extra)
 
         title, need, nxt = data.sign_title(total)
-        now = time.strftime("%Y/%m/%d %H:%M:%S")
+        now = time.strftime("%Y/%m/%d %H:%M")
         lines = [
-            "签到成功！",
-            "==================",
-            f"●今日是第：{order}位签到的！",
-            f"●获得积分：{jifen}",
-            f"●获得金币：{coin}",
-            f"●累计签到：{total}天",
-            f"●额外金币：{extra}",
-            f"●当前称号：{title}",
+            "## ✅ 签到成功",
+            f"> 🎖️ 今日第 **{order}** 位签到 · {now}",
+            "",
+            f"- 🪙 金币 **+{coin}**（连续签到额外 +{extra}）",
+            f"- 🎯 积分 **+{jifen}**",
+            f"- 📅 累计签到 **{total}** 天 · 连续 **{streak}** 天",
+            f"- 🏅 当前称号：**{title}**",
         ]
         if need and nxt:
-            lines.append(f"Tips：再签到{need}天即可成为{nxt}了哦！")
+            lines.append(f"> 💡 再签到 {need} 天即可成为「{nxt}」哦！")
         else:
-            lines.append("Tips：你已是最高称号，恭喜成为宠园传说！")
-        lines.append(now)
+            lines.append("> 🏆 你已是最高称号，恭喜成为宠园传说！")
         return "\n".join(lines)
 
     def _redeem(self, player: dict, group_id: str, qq: str, tokens: list[str]) -> str:
@@ -5065,60 +5057,64 @@ class PetParkPlugin(Star):
             event_lines.append("")
         return "\n".join(
             [
-                "## 宠物乐园 · 指令菜单",
+                "## 🐾 宠物乐园 · 指令菜单",
+                "> 指令**无需前缀**，直接发送即可；需指定对方时填 **用户ID** 或直接 **@对方**",
                 "",
-                "【入门】",
+                "**【入门】**",
                 "- 砸蛋 · 购买宠物 · 我的宠物 · 宠物状态",
                 "- 宠物改名 · 宠物变性 · 赠送宠物 QQ · 放生宠物",
                 "- 锁定宠物 · 解锁宠物（锁定后无法放生/赠送，防误操作）",
                 "- 宠物侦查 用户ID",
                 "",
-                "【多宠物】💡 默认2席位 | 最多10 | 重生+1席位 | 宠物席位卡+1",
+                "**【多宠物】**",
+                "> 💡 默认 2 席位 ｜ 最多 10 ｜ 重生 +1 ｜ 宠物席位卡 +1",
                 "- 宠物列表 · 查看所有宠物（查看所有宠物概要）",
                 "- 切换宠物 序号（切换到指定宠物）",
                 "- 宠物信息 序号（查看指定宠物详情）",
                 "- 放生宠物（放生当前宠物，最后一只不可放生）",
                 "- 赠送宠物 QQ（赠送当前宠物）",
                 "",
-                "【商城 / 背包】",
+                "**【商城 / 背包】**",
                 "- 宠物商城 · 道具商城 · 宠物市场",
                 "- 查看背包 · 购买 物品 数量 · 使用 物品",
                 "- 出售 物品 数量 · 丢弃 物品 数量",
                 "- 转让 用户ID 物品 数量 · 清空背包",
                 "- 查看说明 物品名",
                 "",
-                "【喂养 / 日常】（各 10~20 分钟冷却）",
+                "**【喂养 / 日常】**",
+                "> ⏳ 各 10~20 分钟冷却",
                 "- 喂食 物品 · " + " · ".join(data.DAILY_ACTIONS),
                 "",
             ]
             + event_lines
             + [
-                "【成长】",
+                "**【成长】**",
                 "- 一键升级宠物 · 宠物升级 次数 · 宠物进化",
                 "- 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
                 "- 合成卡 目标卡名",
                 "> 每突破 60 级赠史诗卡；10 张低品质卡可合成为高一级卡",
                 "",
-                "【神器 / 秘技】",
+                "**【神器 / 秘技】**",
                 "- 打造神器 名称 · 佩戴神器 名称 · 卸下神器",
                 "- 参悟秘技 名称 · 遗忘秘技",
                 "",
-                "【天赋 / 炼丹】",
+                "**【天赋 / 炼丹】**",
                 "- 宠物觉醒 · 制作天赋符 · 使用天赋符 天赋",
                 "- 炼丹 · 使用仙丹 名称 用户ID 数量",
                 "- 治愈 用户ID · 复活 用户ID · 精力转移 用户ID 值",
                 "",
-                "【对战 / 排行】",
+                "**【对战 / 排行】**",
                 "- 宠物攻击 用户ID · 跨群挑战宠物 群号 用户ID",
                 "- 宠物排行（本群）· 宠物神榜（全服）· 领取神榜奖励",
                 "",
-                "【副本 / 任务】（副本 15 分钟冷却）",
+                "**【副本 / 任务】**",
+                "> ⏳ 副本 15 分钟冷却",
                 "- 宠物副本 · 进入副本 名称",
                 "- 深渊秘境 · 深渊介绍 · 深渊商店 · 深渊祝福",
                 "- 宠物剧情任务 · 领取任务 名称 · 提交任务 名称",
                 "- 我的剧情任务 · 取消剧情任务",
                 "",
-                "【宠物摸金】（独立财富系统）",
+                "**【宠物摸金】**（独立财富系统）",
                 "- 摸金 · 摸金商店 · 购买摸金道具 名称",
                 "- 我的摸金 · 进入摸金 难度(1~4)",
                 "- 摸金移动 方向 · 摸金探索 · 摸金开箱",
@@ -5128,12 +5124,12 @@ class PetParkPlugin(Star):
                 "- 摸金组队 用户ID · 摸金准备 · 摸金队伍 · 摸金取消组队（双排）",
                 "- 摸金救援 · 摸金捡取 · 摸金传送（双排互动）",
                 "",
-                "【宠物扫雷】（全服积分排行）",
+                "**【宠物扫雷】**（全服积分排行）",
                 "- 扫雷介绍 · 开始扫雷 难度(1~4)",
                 "- 扫 坐标（支持多扫，如：扫a1b2）· 插旗 坐标",
                 "- 扫雷地图 · 放弃扫雷 · 扫雷排行 · 扫雷兑换",
                 "",
-                "【宠物家园】（放置建造 · 离线产出）",
+                "**【宠物家园】**（放置建造 · 离线产出）",
                 "> 在家园中建造建筑，随时间自动累积金币和积分，离线也产。",
                 "- 家园 · 建造 建筑名 · 升级 建筑名",
                 "- 派遣 建筑名 · 召回 建筑名 · 派遣状态",
@@ -5146,7 +5142,7 @@ class PetParkPlugin(Star):
                 "> 💀 偷菜：拼成功率偷别人未收资源，建哨塔可防御",
                 "> 🧳 流浪商人：收取时概率出现，可买加速券/护院符/双倍券",
                 "",
-                "【宠物银行】（存款生息 · 信用贷款）",
+                "**【宠物银行】**（存款生息 · 信用贷款）",
                 "> 在银行存钱赚利息，信用好可低息贷款，逾期将冻结账户！",
                 "- 宠物银行 · 银行信息",
                 "- 银行存款 金币/积分 数量",
@@ -5159,7 +5155,7 @@ class PetParkPlugin(Star):
                 "> 🚫 逾期超 7 天：冻结所有游戏功能，还清自动解冻",
                 "> ⚠️ 有贷款期间：无法赠送宠物、转让物品和货币",
                 "",
-                "【宠物重生】（涅槃新生 · 属性暴击）",
+                "**【宠物重生】**（涅槃新生 · 属性暴击）",
                 "> 渡劫 Lv800 进入准备期，Lv999 可重生。",
                 "- 重生 · 购买重生宝石 · 祭奠 积分/钻石 数量",
                 "- 确认重生（需重生宝石 + Lv999）",
@@ -5169,12 +5165,12 @@ class PetParkPlugin(Star):
                 "> ⛔ 准备期（Lv800+）：禁止出售/转让/丢弃物品",
                 "> 📦 重生后保留：品质卡、定制卡（其余清空）",
                 "",
-                "【姻缘】",
+                "**【姻缘】**",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
                 "- 宠物求婚 用户ID · 同意求婚 用户ID",
                 "- 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
-                "【个人】",
+                "**【个人】**",
                 "- 我的信息 · 签到 · 我要氪金",
                 "- 兑换 卡密 · 赠送金币/积分/钻石 用户ID 数量",
                 "- 我的邀请情况 · 受邀 用户ID",
@@ -5182,11 +5178,10 @@ class PetParkPlugin(Star):
                 "> 绑定QQ后可用QQ号代替用户ID指定他人，跨群通用",
                 "> 也可直接 @ 对方代替输入 用户ID（赠送/转让/PK/拜访等均支持）",
                 "",
-                "【图鉴】",
+                "**【图鉴】**",
                 "- 宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋",
                 "- 查看说明 名称",
                 "",
-                "> 指令均无需前缀，直接发送即可。需指定对方时直接填 用户ID 或 @ 对方。",
                 "> 管理员指令请发送 `管理菜单` 查看。",
             ]
         )
@@ -5194,36 +5189,35 @@ class PetParkPlugin(Star):
     def _admin_menu_text(self) -> str:
         return "\n".join(
             [
-                "## 宠物乐园 · 管理菜单",
+                "## 🛡️ 宠物乐园 · 管理菜单",
+                "> 所有「用户ID」参数位均支持直接 **@对方**（如 `加金币 @某人 100`）",
                 "",
-                "【群开关】",
+                "**【群开关】**",
                 "- 开启宠物乐园 · 关闭宠物乐园",
                 "- 开启宠物跨群 · 关闭宠物跨群",
                 "",
-                "【货币管理】（大/小管理员）",
+                "**【货币管理】**（大/小管理员）",
                 "- 加金币 用户ID 数量 · 减金币 用户ID 数量",
                 "- 加积分 用户ID 数量 · 减积分 用户ID 数量",
                 "- 加钻石 用户ID 数量 · 减钻石 用户ID 数量",
-                "> 小管理员仅可增减金币/积分，加币有每日额度上限",
+                "> 💡 小管理员仅可增减金币/积分，加币有每日额度上限",
                 "",
-                "【小管理员】",
+                "**【小管理员】**",
                 "- 任命小管理 用户ID · 撤销小管理 用户ID",
                 "- 小管理列表（大管理员查看全服）",
                 "- 我的管理额度（小管理员查看今日额度）",
                 "",
-                "【群授权】",
+                "**【群授权】**",
                 "- 授权状态（查看本群授权状态）",
                 "- 授权 卡密（用授权卡激活/续期本群）",
                 "- 授权本群 天数（大管理员直接续期）",
                 "",
-                "【群管理】（群主/群管理员）",
+                "**【群管理】**（群主/群管理员）",
                 "- 禁言 @成员 时长（如 10分钟 / 1小时 / 1天，默认 10 分钟）",
                 "- 解除禁言 @成员",
                 "- 全体禁言（查询当前全员禁言状态）",
                 "- 撤回 @成员 [数量]（撤回其最近发送的消息，默认 1 条，最多 10 条）",
-                "> 需机器人被设为群管理员；新成员入群/退群会自动推送通知",
-                "",
-                "> 所有「用户ID」参数位均支持直接 @ 对方（如 `加金币 @某人 100`）",
+                "> ⚠️ 需机器人被设为群管理员；新成员入群/退群会自动推送通知",
             ]
         )
 
@@ -7144,26 +7138,19 @@ class PetParkPlugin(Star):
             drop = ""
             if random.random() < 0.2:
                 self.store.add_item(player, "万能宝石", 1)
-                drop = "\n●掉落道具：万能宝石 ×1"
+                drop = "\n> 💎 掉落道具：**万能宝石** ×1"
             desc = f"您的{nick}在{name}遇见{monster}，激战{monster}结果**大胜**！"
             body = (
-                "┏-★---副☆本---★-┓\n"
-                f"●本次耗时：{minutes}分钟\n"
-                f"●怪物战力：{power}\n"
-                f"●获得经验：{exp_gain}\n"
-                f"●获得积分：{jifen_gain}{drop}\n"
-                f"●下次时间：{next_time}\n"
-                "┗-★---信☆息---★-┛"
+                f"> ⏱️ 耗时 {minutes} 分钟 · 👹 怪物战力 **{power}**\n"
+                f"> 🎁 经验 **+{exp_gain}** · 积分 **+{jifen_gain}**{drop}\n"
+                f"> 🔁 下次可挑战：{next_time}"
             )
             return f"{head}\n{desc}\n{body}{self._auto_level_note(player, p)}"
         desc = f"您的{nick}在{name}遇见{monster}，力战{monster}结果**惨败**！"
         body = (
-            "┏-★---副☆本---★-┓\n"
-            f"●本次耗时：{minutes}分钟\n"
-            f"●怪物战力：{power}\n"
-            "●战败没有经验奖励！\n"
-            f"●下次时间：{next_time}\n"
-            "┗-★---信☆息---★-┛"
+            f"> ⏱️ 耗时 {minutes} 分钟 · 👹 怪物战力 **{power}**\n"
+            "> 💔 战败没有经验奖励！\n"
+            f"> 🔁 下次可挑战：{next_time}"
         )
         return f"{head}\n{desc}\n{body}"
 
@@ -7240,27 +7227,20 @@ class PetParkPlugin(Star):
             drop = d.get("drop")
             if drop and random.random() < drop["chance"]:
                 self.store.add_item(player, drop["item"], drop.get("count", 1))
-                drop_text = f"\n●掉落道具：{drop['item']} ×{drop.get('count', 1)}"
+                drop_text = f"\n> 💎 掉落道具：**{drop['item']}** ×{drop.get('count', 1)}"
             body = (
-                "┏-★---飞☆升---★-┓\n"
-                f"●神仙战力：{power}\n"
-                f"●你的战力：{roll}\n"
-                f"●获得仙元：{xianyuan_gain}\n"
-                f"●获得积分：{jifen_gain}{drop_text}\n"
-                f"●下次时间：{next_time}\n"
-                "┗-★---信☆息---★-┛"
+                f"> 👹 神仙战力 **{power}** · 我方发挥 **{roll}**\n"
+                f"> 🎁 仙元 **+{xianyuan_gain}** · 积分 **+{jifen_gain}**{drop_text}\n"
+                f"> 🔁 下次可挑战：{next_time}"
             )
             return f"{head}\n✨ 你的『{nick}』击败『{monster}』，获得仙缘！\n{body}{self._auto_level_note(player, p)}"
         # 失败惩罚：损失一半血量
         p["hp"] = max(1, p["hp"] // 2)
         body = (
-            "┏-★---飞☆升---★-┓\n"
-            f"●神仙战力：{power}\n"
-            f"●你的战力：{roll}\n"
-            "●战败，宠物身受重伤，无仙元奖励。\n"
-            f"●宠物血量：{p['hp']}/{p['hp_max']}\n"
-            f"●下次时间：{next_time}\n"
-            "┗-★---信☆息---★-┛"
+            f"> 👹 神仙战力 **{power}** · 我方发挥 **{roll}**\n"
+            "> 💔 战败，宠物身受重伤，无仙元奖励。\n"
+            f"> ❤️ 宠物血量：{p['hp']}/{p['hp_max']}\n"
+            f"> 🔁 下次可挑战：{next_time}"
         )
         return f"{head}\n💥 你的『{nick}』不敌『{monster}』，请恢复后再战。\n{body}"
 
@@ -7384,7 +7364,7 @@ class PetParkPlugin(Star):
         if event["id"] == "guard":
             monster_power = int(base_power * event.get("power_mult", 0.5) * (1 + corruption * 0.06))
             lines.append(f"🗡️ 你遭遇了 **{event['name']}**！")
-            lines.append(f"● 你的战力：{roll}　VS　守卫战力：{monster_power}")
+            lines.append(f"- 你的战力：{roll}　VS　守卫战力：{monster_power}")
             if roll >= monster_power:
                 exp = _add_exp(event["exp_mult"])
                 jifen = 50 + p["level"] * 2
@@ -7411,7 +7391,7 @@ class PetParkPlugin(Star):
             if random.random() < event.get("mimic_chance", 0.2):
                 monster_power = int(base_power * event.get("power_mult", 0.35) * (1 + corruption * 0.06))
                 lines.append(f"⚠️ 宝箱突然张开血盆大口，原来是宝箱怪！")
-                lines.append(f"● 你的战力：{roll}　VS　宝箱怪战力：{monster_power}")
+                lines.append(f"- 你的战力：{roll}　VS　宝箱怪战力：{monster_power}")
                 if roll >= monster_power:
                     exp = _add_exp(event["mimic_exp_mult"])
                     crystal = random.randint(2, 4)
@@ -7485,7 +7465,7 @@ class PetParkPlugin(Star):
         elif event["id"] == "lord":
             monster_power = int(base_power * event.get("power_mult", 1.2) * (1 + corruption * 0.06))
             lines.append(f"👹 **{event['name']}** 降临！恐怖的威压笼罩四周。")
-            lines.append(f"● 你的战力：{roll}　VS　领主战力：{monster_power}")
+            lines.append(f"- 你的战力：{roll}　VS　领主战力：{monster_power}")
             if roll >= monster_power:
                 exp = _add_exp(event["exp_mult"])
                 crystal = random.randint(*event.get("crystal", (3, 5)))
@@ -8739,12 +8719,12 @@ class PetParkPlugin(Star):
         remain = self._tomb_time_left(session)
         card_line = ""
         if session.get("destiny_card"):
-            card_line = f"● 命运卡牌：【{session['destiny_card']}】\n"
+            card_line = f"- 命运卡牌：【{session['destiny_card']}】\n"
         pending = session.get("pending")
         pending_text = ""
         if pending:
             pmap = {"C": "宝箱待开（开箱/跳过）", "M": "怪物待战（战斗/逃跑）", "S": "祭坛待祭拜（祭拜/跳过）"}
-            pending_text = f"\n● 当前：{pmap.get(pending['type'], '')}"
+            pending_text = f"\n- 当前：{pmap.get(pending['type'], '')}"
 
         if is_coop:
             coop = session.get("_coop_parent")
@@ -8763,14 +8743,14 @@ class PetParkPlugin(Star):
                 power = data.tomb_player_attack(level, pd.get("weapon_attack", 0))
                 label = "我" if qq == my_qq else "队友"
                 lines.append(
-                    f"● {label} `{qq}`：HP {pd.get('hp', 0)}/{pd.get('hp_max', 0)}　"
+                    f"- {label} `{qq}`：HP {pd.get('hp', 0)}/{pd.get('hp_max', 0)}　"
                     f"战力 {power}（{wep_text}）\n"
                     f"　位置：({pos.get('x', 0)},{pos.get('y', 0)})　"
                     f"逃跑 {pd.get('escapes', 0)}/{data.TOMB_ESCAPES_PER_RAID}　"
                     f"眩晕 {pd.get('stunned', 0)}\n"
                     f"　冥币 {pd.get('mingbi', 0)}　背包 {inv_text}"
                 )
-            lines.append(f"● 合计冥币：{total_mingbi} / {session['required']}　剩余时间：{remain}{pending_text}")
+            lines.append(f"- 合计冥币：{total_mingbi} / {session['required']}　剩余时间：{remain}{pending_text}")
             return "\n".join(lines), image_md
 
         pos = session["player_pos"]
@@ -8783,13 +8763,13 @@ class PetParkPlugin(Star):
         text = (
             f"## 🏺 摸态 · {cfg['name']}\n"
             f"{card_line}"
-            f"● 位置：({pos['x']},{pos['y']})\n"
-            f"● 摸金HP：{session['hp']}/{session['hp_max']}\n"
-            f"● 战力：{power}　武器：{wep_text}\n"
-            f"● 逃跑次数：{session.get('escapes', 0)}/{data.TOMB_ESCAPES_PER_RAID}\n"
-            f"● 背负冥币：{session['mingbi']} / {session['required']}\n"
-            f"● 摸金背包：{inv_text}\n"
-            f"● 剩余时间：{remain}　眩晕：{session.get('stunned', 0)}"
+            f"- 位置：({pos['x']},{pos['y']})\n"
+            f"- 摸金HP：{session['hp']}/{session['hp_max']}\n"
+            f"- 战力：{power}　武器：{wep_text}\n"
+            f"- 逃跑次数：{session.get('escapes', 0)}/{data.TOMB_ESCAPES_PER_RAID}\n"
+            f"- 背负冥币：{session['mingbi']} / {session['required']}\n"
+            f"- 摸金背包：{inv_text}\n"
+            f"- 剩余时间：{remain}　眩晕：{session.get('stunned', 0)}"
             f"{pending_text}"
         )
         return text, image_md
@@ -8852,18 +8832,18 @@ class PetParkPlugin(Star):
             stats["total_mingbi"] = stats.get("total_mingbi", 0) + gained
             return (
                 f"🏆 撤离成功！带出 **{gained}** 冥币，已永久到账。\n"
-                f"● {xp_text}\n"
-                f"● {pet_exp_text}\n"
-                f"● 累计成功 {stats['success']} 次，总带出冥币 {stats['total_mingbi']}"
+                f"- {xp_text}\n"
+                f"- {pet_exp_text}\n"
+                f"- 累计成功 {stats['success']} 次，总带出冥币 {stats['total_mingbi']}"
             )
         if reason == "timeout":
             stats["fail"] = stats.get("fail", 0) + 1
             return (
                 f"⏰ 墓穴坍塌，撤离失败！\n"
-                f"● {xp_text}\n"
-                f"● {pet_exp_text}\n"
-                f"● 本局冥币全部损失\n"
-                f"● 装备背包全部掉落！储物柜不受影响"
+                f"- {xp_text}\n"
+                f"- {pet_exp_text}\n"
+                f"- 本局冥币全部损失\n"
+                f"- 装备背包全部掉落！储物柜不受影响"
             )
         if reason == "death":
             kept = int(session["mingbi"] * 0.2)
@@ -8871,10 +8851,10 @@ class PetParkPlugin(Star):
             stats["fail"] = stats.get("fail", 0) + 1
             return (
                 f"💀 摸金角色阵亡，撤离失败！\n"
-                f"● {xp_text}\n"
-                f"● {pet_exp_text}\n"
-                f"● 装备背包全部掉落！储物柜不受影响\n"
-                f"● 仅保留 {kept} 冥币"
+                f"- {xp_text}\n"
+                f"- {pet_exp_text}\n"
+                f"- 装备背包全部掉落！储物柜不受影响\n"
+                f"- 仅保留 {kept} 冥币"
             )
         if reason == "revive":
             kept = int(session["mingbi"] * 0.5)
@@ -8882,20 +8862,20 @@ class PetParkPlugin(Star):
             stats["fail"] = stats.get("fail", 0) + 1
             return (
                 f"🧧 招魂幡触发，你在濒死之际被强行送出墓穴！\n"
-                f"● {xp_text}\n"
-                f"● {pet_exp_text}\n"
-                f"● 保留 {kept} 冥币\n"
-                f"● 带入的武器和道具已带回"
+                f"- {xp_text}\n"
+                f"- {pet_exp_text}\n"
+                f"- 保留 {kept} 冥币\n"
+                f"- 带入的武器和道具已带回"
             )
         # forfeit
         kept = int(session["mingbi"] * 0.5)
         self.store.add_tomb_mingbi(player, kept)
         return (
             f"🏃 你已放弃本次摸金，仅保留 {kept} 冥币。\n"
-            f"● {xp_text}\n"
-            f"● {pet_exp_text}\n"
-            f"● 损失 {session['mingbi'] - kept} 冥币\n"
-            f"● 带入的武器和道具已带回"
+            f"- {xp_text}\n"
+            f"- {pet_exp_text}\n"
+            f"- 损失 {session['mingbi'] - kept} 冥币\n"
+            f"- 带入的武器和道具已带回"
         )
 
     def _tomb_settle_coop(self, player: dict, p: dict, coop: dict, reason: str) -> str:
@@ -10766,8 +10746,8 @@ class PetParkPlugin(Star):
             return (
                 f"🎉 扫雷成功！难度{session['difficulty']} {cfg['name']}，"
                 f"用时 {elapsed // 60}:{elapsed % 60:02d}。\n"
-                f"● 扫雷积分 +{cfg['score']}（累计 {st['score']}）\n"
-                f"● 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）",
+                f"- 扫雷积分 +{cfg['score']}（累计 {st['score']}）\n"
+                f"- 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）",
                 self._ms_board_md(session, reveal=True),
             )
 
@@ -10776,7 +10756,7 @@ class PetParkPlugin(Star):
         exp_text = ""
         if exp > 0:
             self.store.add_ms_pending_pet_exp(qq, exp)
-            exp_text = f"\n● 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）"
+            exp_text = f"\n- 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）"
         if session["mines"] is None:
             session["mines"] = set()
         if reason == "boom":
@@ -10992,8 +10972,8 @@ class PetParkPlugin(Star):
         sect["master_qq"] = master["qq"]
         return (
             f"🏯 宗主选举完成\n"
-            f"● 原宗主：`{old or '无'}`\n"
-            f"● 新宗主：`{master['qq']}`（战力优先，活跃次之）"
+            f"- 原宗主：`{old or '无'}`\n"
+            f"- 新宗主：`{master['qq']}`（战力优先，活跃次之）"
         )
 
     def _sect_today_forced(self, group_id: str) -> list[dict]:
@@ -11155,8 +11135,8 @@ class PetParkPlugin(Star):
         self._sect_inc_active(player, 1)
         return (
             f"## 🏯 宗门报名成功\n"
-            f"● 你的『{p['nickname']}』已加入报名队列（{len(enroll)}/{data.SECT_ENROLL_COUNT}）\n"
-            f"● 宗主将在 20:30 前确认最终出战名单。"
+            f"- 你的『{p['nickname']}』已加入报名队列（{len(enroll)}/{data.SECT_ENROLL_COUNT}）\n"
+            f"- 宗主将在 20:30 前确认最终出战名单。"
         )
 
     def _sect_confirm_list(self, player: dict, group_id: str) -> str:
@@ -11277,8 +11257,8 @@ class PetParkPlugin(Star):
         sect["master_qq"] = master["qq"]
         return (
             f"🏯 宗主重选完成\n"
-            f"● 原宗主：`{old or '无'}`\n"
-            f"● 新宗主：`{master['qq']}`（战力优先，活跃次之）"
+            f"- 原宗主：`{old or '无'}`\n"
+            f"- 新宗主：`{master['qq']}`（战力优先，活跃次之）"
         )
 
     def _sect_sign(self, player: dict, group_id: str) -> str:
@@ -11297,8 +11277,8 @@ class PetParkPlugin(Star):
         psect["season_contribution"] = psect.get("season_contribution", 0) + data.SECT_CONTRIBUTION_SIGN
         return (
             f"🏯 宗门签到成功！\n"
-            f"● 宗门积分 +{data.SECT_SIGN_POINTS}\n"
-            f"● 个人宗门贡献 +{data.SECT_CONTRIBUTION_SIGN}"
+            f"- 宗门积分 +{data.SECT_SIGN_POINTS}\n"
+            f"- 个人宗门贡献 +{data.SECT_CONTRIBUTION_SIGN}"
         )
 
     def _sect_give_points(self, group_id: str, points: int) -> None:
@@ -12124,7 +12104,7 @@ class PetParkPlugin(Star):
                     gid,
                     f"## ⚔️ 宗门战正式开战！\n"
                     f"本宗 vs **{opp}**\n"
-                    f"● 本宗初始战力：{self._fmt_power(my_base)}\n"
+                    f"- 本宗初始战力：{self._fmt_power(my_base)}\n"
                     f"> 第 1 回合开始！群内所有人发送『加油』为本宗加战力。"
                     f"每 {data.SECT_WAR_ROUND_MINUTES} 分钟一个回合，共 {data.SECT_WAR_ROUNDS} 回合，"
                     f"21:10 结束。",
@@ -12215,12 +12195,12 @@ class PetParkPlugin(Star):
             text = (
                 f"## ⚔️ 宗门战 · 第{round_num}回合结束\n"
                 f"**{my_name}** vs **{opp_name}**\n"
-                f"● 本宗战力：{self._fmt_power(last['my_power'])}"
+                f"- 本宗战力：{self._fmt_power(last['my_power'])}"
                 f"（初始 {self._fmt_power(last['my_base'])} + 加油 {self._fmt_power(last['my_cheer'])}）\n"
-                f"● 敌方战力：{self._fmt_power(last['opp_power'])}"
+                f"- 敌方战力：{self._fmt_power(last['opp_power'])}"
                 f"（初始 {self._fmt_power(last['opp_base'])} + 加油 {self._fmt_power(last['opp_cheer'])}）\n"
-                f"● 本回合结果：{rtxt}\n"
-                f"● 当前比分：本宗 {war['my_wins']} : {war['opp_wins']} 敌方\n"
+                f"- 本回合结果：{rtxt}\n"
+                f"- 当前比分：本宗 {war['my_wins']} : {war['opp_wins']} 敌方\n"
                 f"> 下回合继续加油！"
             )
             await self._send_to_group(gid, text)
@@ -12250,8 +12230,8 @@ class PetParkPlugin(Star):
             text = (
                 f"## 🏆 宗门战 · 最终战报\n"
                 f"**{my_name}** vs **{opp_name}**\n"
-                f"● 三回合比分：本宗 {war['my_wins']} : {war['opp_wins']} 敌方\n"
-                f"● 最终结果：**{rtxt}**\n\n"
+                f"- 三回合比分：本宗 {war['my_wins']} : {war['opp_wins']} 敌方\n"
+                f"- 最终结果：**{rtxt}**\n\n"
                 f"{round_lines}\n\n"
                 f"> 奖励已发放，发送『宗门战报』查看详情。"
             )
@@ -12443,9 +12423,9 @@ class PetParkPlugin(Star):
                 pass
         return (
             f"📣 加油成功！为本宗增加战力 **+{self._fmt_power(bonus)}**\n"
-            f"● 本宗当前总战力：{self._fmt_power(my_total)}"
+            f"- 本宗当前总战力：{self._fmt_power(my_total)}"
             f"（初始 {self._fmt_power(my_base)} + 加油 {self._fmt_power(war['cheer_bonus'])}，{war['cheer_count']} 次）\n"
-            f"● 对手：{opp}　● 冷却 {cd_sec} 秒\n"
+            f"- 对手：{opp} · 冷却 {cd_sec} 秒\n"
             f"> 第{war.get('round', 1)}回合进行中，继续加油！"
         )
 
@@ -12795,10 +12775,10 @@ class PetParkPlugin(Star):
         icon = cfg.get("icon", "")
         lines = [
             f"🏗️ 成功建造 {icon}**{name}** Lv1！消耗 {cost} 金币。",
-            f"● 产量：{self._homestead_prod_text(name, 1)}",
+            f"- 产量：{self._homestead_prod_text(name, 1)}",
         ]
         if levelup:
-            lines.append(f"● {levelup}")
+            lines.append(f"- {levelup}")
         return "\n".join(lines)
 
     def _homestead_upgrade(self, player: dict, tokens: list[str]) -> str:
@@ -12827,10 +12807,10 @@ class PetParkPlugin(Star):
         icon = cfg.get("icon", "")
         lines = [
             f"⬆️ {icon}**{name}** Lv{current_lv} → **Lv{new_lv}**！消耗 {cost} 金币。",
-            f"● 产量：{self._homestead_prod_text(name, new_lv)}",
+            f"- 产量：{self._homestead_prod_text(name, new_lv)}",
         ]
         if levelup:
-            lines.append(f"● {levelup}")
+            lines.append(f"- {levelup}")
         return "\n".join(lines)
 
     def _homestead_collect(self, player: dict) -> str:
@@ -13018,8 +12998,8 @@ class PetParkPlugin(Star):
         icon = cfg.get("icon", "")
         return (
             f"🔨 已拆除 {icon}**{name}** Lv{current_lv}。\n"
-            f"● 累计投入 {total_cost} 金币，返还 **{refund}** 金币（20%）\n"
-            f"● 建筑位已释放（{len(buildings)}/{data.homestead_slots(hs['level'])}）"
+            f"- 累计投入 {total_cost} 金币，返还 **{refund}** 金币（20%）\n"
+            f"- 建筑位已释放（{len(buildings)}/{data.homestead_slots(hs['level'])}）"
         )
 
     def _homestead_buildings(self, player: dict) -> str:
@@ -13159,9 +13139,9 @@ class PetParkPlugin(Star):
         icon = cfg.get("icon", "")
         return (
             f"🐾 『{p.get('nickname', '?')}』已派遣到 {icon}**{name}**！\n"
-            f"● 产量倍率：×**{mult}**{element_tag}\n"
-            f"● 每小时消耗 {data.HOMESTEAD_DISPATCH_ENERGY_PER_HOUR} 点精力\n"
-            f"● 发送「**召回 {name}**」召回宠物"
+            f"- 产量倍率：×**{mult}**{element_tag}\n"
+            f"- 每小时消耗 {data.HOMESTEAD_DISPATCH_ENERGY_PER_HOUR} 点精力\n"
+            f"- 发送「**召回 {name}**」召回宠物"
         )
 
     def _homestead_recall(self, player: dict, tokens: list[str]) -> str:
@@ -13288,16 +13268,16 @@ class PetParkPlugin(Star):
             ths["be_stolen_today"] = ths.get("be_stolen_today", 0) + 1
             return (
                 f"💀 **偷菜成功！**（成功率 {success_rate:.0%}）\n"
-                f"● 偷得 {target_qq} 的 💰{stolen_coin} 金币 + 💎{stolen_jifen} 积分\n"
-                f"● 目标防御力：{target_defense}　今日剩余偷取：{data.HOMESTEAD_STEAL_MAX_PER_DAY - hs['steal_today']} 次"
+                f"- 偷得 {target_qq} 的 💰{stolen_coin} 金币 + 💎{stolen_jifen} 积分\n"
+                f"- 目标防御力：{target_defense}　今日剩余偷取：{data.HOMESTEAD_STEAL_MAX_PER_DAY - hs['steal_today']} 次"
             )
         else:
             player["coin"] = max(0, player.get("coin", 0) - data.HOMESTEAD_STEAL_FAIL_PENALTY)
             tp["coin"] = tp.get("coin", 0) + data.HOMESTEAD_STEAL_FAIL_PENALTY
             return (
                 f"🚨 **偷菜被抓！**（成功率 {success_rate:.0%}）\n"
-                f"● 被 {target_qq} 的哨塔发现了！赔偿 {data.HOMESTEAD_STEAL_FAIL_PENALTY} 金币\n"
-                f"● 目标防御力：{target_defense}"
+                f"- 被 {target_qq} 的哨塔发现了！赔偿 {data.HOMESTEAD_STEAL_FAIL_PENALTY} 金币\n"
+                f"- 目标防御力：{target_defense}"
             )
 
     # =====================================================================
