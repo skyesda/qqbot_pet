@@ -1112,6 +1112,12 @@ class PetParkPlugin(Star):
         text = (event.message_str or "").strip()
         if not text:
             return
+        # @提及统一替换为对方用户ID：所有「用户ID/QQ号」参数位都支持直接 @ 对方
+        # （dispatch 内也会再做一次同样处理，此处提前替换是为让 AI 意图路由
+        #  拿到干净文本；对禁言/撤回指令无影响——它们解析的是 raw.mentions）
+        text = _MENTION_RE.sub(lambda m: f" {m.group(1)} ", text).strip()
+        if not text:
+            return
         qq = str(event.get_sender_id())
         group_id = self._group_id(event)
         # 记录群聊统一消息来源，便于 Boss 击杀/复活时向授权群主动推送
@@ -2742,6 +2748,10 @@ class PetParkPlugin(Star):
 
     def dispatch(self, event, qq, group_id, text):
         """处理一条指令。返回 None / 文本字符串 / (文本, 图片路径) 二元组。"""
+        # @提及统一替换为对方用户ID：所有「用户ID/QQ号」参数位
+        # （赠送/转让/PK/拜访/加金币/任命小管理等）都支持直接 @ 对方。
+        # 替换时两侧补空格，兼容「赠送<@!xx>100」这类@与文字粘连的写法。
+        text = _MENTION_RE.sub(lambda m: f" {m.group(1)} ", text)
         tokens = text.split()
         cmd = tokens[0]
         # 扫雷紧凑指令归一化：扫a1b2 → 扫 a1b2；插旗a1 → 插旗 a1；开始扫雷2 → 开始扫雷 2
@@ -4501,7 +4511,8 @@ class PetParkPlugin(Star):
                 f"用法：{cmd_name} QQ号\n"
                 f"● 绑定后向该QQ邮箱发送验证码验证\n"
                 f"● 跨群通用，其他群无需重复绑定\n"
-                f"● 绑定后可用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）"
+                f"● 绑定后可用QQ号代替用户ID指定他人（转让/赠送/PK/拜访等）\n"
+                f"● 也可直接 @ 对方代替输入用户ID"
             )
         qq_num = str(tokens[1]).strip()
         if not (qq_num.isdigit() and 5 <= len(qq_num) <= 11):
@@ -5169,12 +5180,13 @@ class PetParkPlugin(Star):
                 "- 我的邀请情况 · 受邀 用户ID",
                 "- 绑定QQ QQ号 · 验证码 123456 · 换绑QQ · 解绑QQ",
                 "> 绑定QQ后可用QQ号代替用户ID指定他人，跨群通用",
+                "> 也可直接 @ 对方代替输入 用户ID（赠送/转让/PK/拜访等均支持）",
                 "",
                 "【图鉴】",
                 "- 宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋",
                 "- 查看说明 名称",
                 "",
-                "> 指令均无需前缀，直接发送即可。需指定对方时直接填 用户ID。",
+                "> 指令均无需前缀，直接发送即可。需指定对方时直接填 用户ID 或 @ 对方。",
                 "> 管理员指令请发送 `管理菜单` 查看。",
             ]
         )
@@ -5210,6 +5222,8 @@ class PetParkPlugin(Star):
                 "- 全体禁言（查询当前全员禁言状态）",
                 "- 撤回 @成员 [数量]（撤回其最近发送的消息，默认 1 条，最多 10 条）",
                 "> 需机器人被设为群管理员；新成员入群/退群会自动推送通知",
+                "",
+                "> 所有「用户ID」参数位均支持直接 @ 对方（如 `加金币 @某人 100`）",
             ]
         )
 
