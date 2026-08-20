@@ -6742,37 +6742,121 @@ class PetParkPlugin(Star):
         ):
             attacker["hp"] = 1
             return self._battle_win(
-                attacker, defender, ap_player, dp_player, flawless=True
+                attacker, defender, ap_player, dp_player, flawless=True, ap=ap, dp=dp
             )
         if ap >= dp:
-            return self._battle_win(attacker, defender, ap_player, dp_player)
+            return self._battle_win(
+                attacker, defender, ap_player, dp_player, ap=ap, dp=dp
+            )
         # 攻击方失败：扣血，可能因此死亡；『不死之体』则至少保留 1 点血
+        pre_ahp = attacker["hp"]
         loss = attacker["hp_max"] // 3
         if attacker.get("talent") == "不死之体":
             attacker["hp"] = max(1, attacker["hp"] - loss)
-            dead_txt = f"，HP -{loss}"
+            state_txt = "触发【不死之体】保住性命！"
         else:
             attacker["hp"] = max(0, attacker["hp"] - loss)
             if attacker["hp"] <= 0:
                 attacker["status"] = "死亡"
                 attacker["mood"] = max(1, attacker.get("mood", 5) - 1)
-                dead_txt = (
-                    f"，HP -{loss}，你的宠物力竭身亡！"
-                    f"心情降至 {attacker['mood']} 颗星。"
+                state_txt = (
+                    f"力竭身亡！心情降至 {attacker['mood']} 颗星。"
                 )
             else:
-                dead_txt = f"，HP -{loss}，受了点伤。"
+                state_txt = "受了点伤。"
+        rounds = self._battle_rounds_text(defender, attacker, loss, pre_ahp)
         return (
-            f"⚔ 战斗失败！你的『{attacker['nickname']}』(战力{ap}) 不敌 "
-            f"『{defender['nickname']}』(战力{dp}){dead_txt}"
+            f"⚔ 战斗失败！\n"
+            f"━━━━━━ 战况回放 ━━━━━━\n"
+            f"{rounds}\n"
+            f"━━━━━━ 战后状态 ━━━━━━\n"
+            f"『{attacker['nickname']}』(战力{ap}) {self._hp_line(attacker, pre_ahp)}，{state_txt}\n"
+            f"『{defender['nickname']}』(战力{dp}) {self._hp_line(defender)}，毫发无伤"
         )
 
+    # ------------------------------------------------------------------
+    # 战斗战况展示（回合回放 + 血条）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _hp_bar(hp: int, hp_max: int, width: int = 8) -> str:
+        """血条：▓▓▓░░░░░"""
+        if hp_max <= 0:
+            return "░" * width
+        filled = max(0, min(width, round(hp / hp_max * width)))
+        return "▓" * filled + "░" * (width - filled)
+
+    def _hp_line(self, pet: dict, pre_hp: int | None = None) -> str:
+        """血量行：HP ▓▓░░ 12/40（-28）"""
+        hp = int(pet.get("hp", 0) or 0)
+        hp_max = int(pet.get("hp_max", 1) or 1)
+        loss = (
+            f"（-{pre_hp - hp}）"
+            if pre_hp is not None and pre_hp > hp
+            else ""
+        )
+        return f"HP {self._hp_bar(hp, hp_max)} {hp}/{hp_max}{loss}"
+
+    def _battle_rounds_text(
+        self,
+        winner: dict,
+        loser: dict,
+        total_dmg: int,
+        loser_pre_hp: int,
+        nullified: bool = False,
+        flawless: bool = False,
+    ) -> str:
+        """按回合生成战况回放。
+
+        伤害数字与实际结算完全一致：胜方命中造成的伤害合计 = total_dmg
+        （败方战前 HP = loser_pre_hp，逐回合扣到战后真实血量）；
+        败方的还击全部被格挡/闪避（实际结算中败方不造成伤害）。
+        nullified：败方触发【不死之体】，伤害尽数化解。
+        """
+        wname = winner.get("nickname", "")
+        lname = loser.get("nickname", "")
+        atk_verbs = ["猛击", "撕咬", "飞扑", "连击", "蓄力重击", "旋风爪击"]
+        def_verbs = ["格挡了下来", "闪身躲过", "用护甲弹开", "侧身避开"]
+        if flawless:
+            return f"▶ 『{wname}』濒死之际爆发全部潜能，一击命中『{lname}』！"
+        n = 3 if total_dmg <= 0 else random.randint(3, 5)
+        parts: list[int] = []
+        if total_dmg > 0:
+            weights = [random.uniform(0.6, 1.4) for _ in range(n)]
+            ws = sum(weights)
+            parts = [max(1, round(total_dmg * w / ws)) for w in weights]
+            parts[0] += total_dmg - sum(parts)  # 修正四舍五入误差
+        lines = []
+        hp_left = loser_pre_hp
+        for i in range(n):
+            dmg = parts[i] if i < len(parts) else 0
+            verb = random.choice(atk_verbs)
+            if nullified:
+                lines.append(
+                    f"▶ 回合{i + 1}：『{wname}』{verb}命中，"
+                    f"却被『{lname}』的【不死之体】尽数化解"
+                )
+            elif dmg > 0:
+                hp_left = max(0, hp_left - dmg)
+                lines.append(
+                    f"▶ 回合{i + 1}：『{wname}』{verb}命中，"
+                    f"造成 **{dmg}** 伤害（『{lname}』HP 剩 {hp_left}）"
+                )
+            else:
+                lines.append(
+                    f"▶ 回合{i + 1}：『{wname}』{verb}，被『{lname}』{random.choice(def_verbs)}"
+                )
+            if i < n - 1:
+                lines.append(f"　　　　『{lname}』还击，被『{wname}』{random.choice(def_verbs)}")
+        return "\n".join(lines)
+
     def _battle_win(
-        self, attacker, defender, ap_player, dp_player, flawless=False
+        self, attacker, defender, ap_player, dp_player, flawless=False, ap=0, dp=0
     ) -> str:
         # 不死之体
         killed = False
-        if defender.get("talent") != "不死之体":
+        pre_dhp = defender["hp"]
+        nullified = defender.get("talent") == "不死之体"
+        if not nullified:
             defender["hp"] = max(0, defender["hp"] - defender["hp_max"] // 2)
             if defender["hp"] <= 0:
                 defender["status"] = "死亡"
@@ -6800,9 +6884,28 @@ class PetParkPlugin(Star):
             self.store.remove_item(dp_player, item, 1)
             self.store.add_item(ap_player, item, 1)
             steal = f"，并偷得对方『{item}』x1"
-        head = "💥 触发【蝶逆轮回】，一滴血秒杀对手！\n" if flawless else "⚔ 战斗胜利！"
+        head = "💥 触发【蝶逆轮回】，一滴血秒杀对手！" if flawless else "⚔ 战斗胜利！"
         kill_txt = "（对方宠物已死亡）" if killed else ""
-        return f"{head}经验 +{exp}{steal}{kill_txt}。"
+        dloss = pre_dhp - defender["hp"]
+        rounds = self._battle_rounds_text(
+            attacker, defender, dloss, pre_dhp,
+            nullified=nullified, flawless=flawless,
+        )
+        # 胜方：普通胜利毫发无伤；蝶逆轮回时只剩 1 点血（战前满血）
+        a_line = self._hp_line(attacker, attacker["hp_max"] if flawless else None)
+        a_note = "，濒死爆发" if flawless else "，毫发无伤"
+        d_note = "，重伤倒地" if killed else ("，毫发无损（不死之体）" if nullified else "")
+        pw = f"(战力{ap}) " if ap else ""
+        pw2 = f"(战力{dp}) " if dp else ""
+        return (
+            f"{head}\n"
+            f"━━━━━━ 战况回放 ━━━━━━\n"
+            f"{rounds}\n"
+            f"━━━━━━ 战后状态 ━━━━━━\n"
+            f"『{attacker['nickname']}』{pw}{a_line}{a_note}\n"
+            f"『{defender['nickname']}』{pw2}{self._hp_line(defender, pre_dhp)}{d_note}\n"
+            f"经验 +{exp}{steal}{kill_txt}。"
+        )
 
     def _attack(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
