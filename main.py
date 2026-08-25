@@ -117,6 +117,11 @@ KNOWN_COMMANDS = {
     "授权",
     "授权状态",
     "授权本群",
+    # 群绑定（跨机器人数据互通）
+    "绑定群",
+    "解绑群",
+    "群映射",
+    "群ID",
     # 群管理（禁言 / 全体禁言，仅群主/管理员或插件管理员可用）
     "禁言",
     "解除禁言",
@@ -367,6 +372,10 @@ WEB_BLOCKED_COMMANDS = {
     "我的管理额度",
     "授权",
     "授权本群",
+    "绑定群",
+    "解绑群",
+    "群映射",
+    "群ID",
     # 宠物家园
     "家园",
     "家园介绍",
@@ -504,6 +513,8 @@ class PetParkPlugin(Star):
         self._tomb_coop_teams, self._tomb_coop_index = self.store.load_tomb_coops()
         # QQ 绑定待验证码（内存中，platform_id -> {code, qq, expires_at, sent_at}）
         self._pending_qq_bind: dict[str, dict] = {}
+        # 群绑定待确认（内存中，token -> {"group": 规范群 openid, "expires": 时间戳}）
+        self._pending_group_bind: dict[str, dict] = {}
         # AI 意图路由：自然语言 → 标准指令（使用 AstrBot 当前启用的 LLM Provider）
         self._ai_router = AIRouter(
             context,
@@ -1120,6 +1131,9 @@ class PetParkPlugin(Star):
             return
         qq = str(event.get_sender_id())
         group_id = self._group_id(event)
+        # 跨机器人数据互通：把本机器人视角的群 openid 解析为规范群 ID，
+        # 使授权/宗门/群设置等按同一逻辑群共享（绑定群后生效）。
+        group_id = self.store.resolve_group(group_id)
         # 记录群聊统一消息来源，便于 Boss 击杀/复活时向授权群主动推送
         if self._is_group(group_id):
             umo = getattr(event, "unified_msg_origin", None)
@@ -2820,6 +2834,14 @@ class PetParkPlugin(Star):
             return self._redeem_auth_card(event, group_id, qq, tokens)
         if cmd == "授权本群":
             return self._grant_auth(event, group_id, tokens)
+
+        # ---- 群绑定（跨机器人数据互通）----
+        if cmd == "绑定群":
+            return self._cmd_group_bind(event, group_id, qq, tokens)
+        if cmd == "解绑群":
+            return self._cmd_group_unbind(event, group_id, qq)
+        if cmd in ("群映射", "群ID"):
+            return self._cmd_group_map(event, group_id)
 
         # ---- 群授权校验：严格模式，所有群聊都需有效授权才能使用 ----
         if self._is_group(group_id) and not self._is_group_authorized(group_id):
@@ -5035,6 +5057,83 @@ class PetParkPlugin(Star):
             "## 🔐 大管理员授权\n"
             f"已为本群{verb} **{abs(days)} 天**。\n到期时间：{when}\n"
             f"剩余：**{self._fmt_remain(until)}**"
+        )
+
+    # --------------------------- 群绑定（跨机器人互通） ---------------------------
+    def _cmd_group_bind(self, event, group_id: str, qq: str, tokens: list[str]) -> str:
+        """把两个机器人在同一物理群的不同 openid 绑定为同一逻辑群。
+
+        用法：
+          - 「绑定群」：在本群发起绑定，生成一次性令牌；再用另一机器人在本群发送「绑定群 令牌」。
+          - 「绑定群 令牌」：用另一机器人兑换令牌，把本机器人视角的群 openid 映射到规范群。
+        """
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可绑定群。"
+        if not self._is_group(group_id):
+            return "请在群聊内使用本指令。"
+        raw = self._group_id(event) or group_id  # 本机器人视角的原始 openid（映射表键）
+        if len(tokens) >= 2 and tokens[1].strip():
+            token = tokens[1].strip()
+            pend = self._pending_group_bind.get(token)
+            if not pend:
+                return "❌ 绑定令牌无效，请先在另一机器人所在本群发送「绑定群」获取令牌。"
+            if int(time.time()) > int(pend.get("expires", 0)):
+                self._pending_group_bind.pop(token, None)
+                return "❌ 绑定令牌已过期，请重新发起「绑定群」。"
+            canonical = str(pend["group"])
+            if raw == canonical:
+                self._pending_group_bind.pop(token, None)
+                return "ℹ️ 该令牌即本群发起，无需绑定；请改用**另一个机器人**在本群发送「绑定群 令牌」。"
+            if self.store.resolve_group(raw) == canonical:
+                self._pending_group_bind.pop(token, None)
+                return f"ℹ️ 本机器人视角群 `{raw}` 已绑定到规范群 `{canonical}`，无需重复绑定。"
+            self.store.set_group_map(raw, canonical)
+            self._pending_group_bind.pop(token, None)
+            return (
+                "## 🔗 群绑定成功\n"
+                f"已把本机器人视角群 `{raw}` 映射到规范群 `{canonical}`。\n"
+                "> 两机器人在本群的**授权、宗门、群设置、跨群**等数据现已互通。"
+            )
+        token = uuid.uuid4().hex[:6]
+        self._pending_group_bind[token] = {
+            "group": self.store.resolve_group(raw),
+            "expires": int(time.time()) + 300,
+        }
+        return (
+            "## 🔗 群绑定已发起\n"
+            f"令牌：`{token}`（5 分钟内有效）\n"
+            f"> 请用**另一个机器人**在本群发送：`绑定群 {token}` 完成绑定。"
+        )
+
+    def _cmd_group_unbind(self, event, group_id: str, qq: str) -> str:
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可解绑群。"
+        if not self._is_group(group_id):
+            return "请在群聊内使用本指令。"
+        raw = self._group_id(event) or group_id
+        if self.store.unset_group_map(raw):
+            return f"## 🔓 群解绑成功\n已解除本机器人视角群 `{raw}` 的映射，恢复为独立群。"
+        return "ℹ️ 本机器人视角群当前没有绑定映射（无需解绑）。"
+
+    def _cmd_group_map(self, event, group_id: str) -> str:
+        if not self._is_group(group_id):
+            return "请在群聊内使用本指令。"
+        raw = self._group_id(event) or group_id
+        canonical = self.store.resolve_group(raw)
+        mapping = self.store.group_map()
+        if raw == canonical:
+            children = [k for k, v in mapping.items() if v == raw]
+            extra = (
+                f"> 已绑定到本群的其他机器人视角群：\n> `{'`、`'.join(children)}`"
+                if children
+                else "> 当前没有其他机器人视角群绑定到本群。"
+            )
+        else:
+            extra = f"> 本机器人视角群已绑定到规范群 `{canonical}`。"
+        return (
+            "## 🔗 群映射信息\n"
+            f"本机器人视角群 openid：`{raw}`\n"
+            f"规范群 openid：`{canonical}`\n{extra}"
         )
 
     @staticmethod

@@ -80,6 +80,7 @@ class PetStore:
         self._data.setdefault("events", {})
         self._data.setdefault("accounts", {})
         self._data.setdefault("custom_reviews", {})
+        self._data.setdefault("group_map", {})
         self._data.setdefault("portal_secret", "".join(random.choices("abcdef0123456789", k=32)))
         self._data.setdefault("tomb_players", {})
         self._data.setdefault("ms_players", {})
@@ -411,6 +412,37 @@ class PetStore:
         sect.setdefault("history", [])
         sect.setdefault("deputy_qqs", [])
         return group
+
+    # ----------------------------- 群映射（跨机器人群身份统一） -----------------------------
+    def resolve_group(self, group_id: str) -> str:
+        """把某机器人视角的群 openid 解析为规范群 ID（跨机器人数据互通的键）。
+
+        QQ 官方机器人的 group_openid 按 appid 隔离：同一物理群在不同机器人处
+        openid 不同。通过 ``group_map`` 把「其他机器人视角的 openid」映射到
+        「主机器人视角的 openid」，使授权/宗门/群设置/跨群等按同一逻辑群共享。
+        无映射时原样返回；带环保护（至多跟随若干次）。
+        """
+        group_id = str(group_id)
+        mapping = self._data.get("group_map") or {}
+        seen: set[str] = set()
+        while group_id in mapping and group_id not in seen:
+            seen.add(group_id)
+            group_id = str(mapping[group_id])
+        return group_id
+
+    def group_map(self) -> dict:
+        return self._data.setdefault("group_map", {})
+
+    def set_group_map(self, src: str, dst: str) -> None:
+        """把 src 群 openid 映射到规范群 dst openid。"""
+        self._data.setdefault("group_map", {})[str(src)] = str(dst)
+
+    def unset_group_map(self, src: str) -> bool:
+        mapping = self._data.setdefault("group_map", {})
+        if str(src) in mapping:
+            del mapping[str(src)]
+            return True
+        return False
 
     def next_sign_order(self, group_id: str, date_str: str) -> int:
         """记录并返回今天本群第几位签到（每天从 1 开始）。"""
