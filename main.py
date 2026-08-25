@@ -438,12 +438,18 @@ class _WebEvent:
     "https://github.com/skyesda/qqbot_pet",
 )
 class PetParkPlugin(Star):
-    # 类级引用，用于插件重载时取消旧的后台任务，防止多实例并行运行
-    _auto_cultivation_task_ref: Any = None
-    _sect_war_task_ref: Any = None
-    _sect_daily_reset_task_ref: Any = None
-    _bank_interest_task_ref: Any = None
-    _group_auto_approve_task_ref: Any = None
+    # 后台任务引用均为实例属性（self.*），统一由 terminate() 逐个取消。
+    # 不用类属性：热重载（importlib.reload 重建类）后类级引用会丢成 None，
+    # 导致 __init__ 的取消判断拿不到旧任务 → 旧任务泄漏，与新任务并存重复触发。
+    _BG_TASK_REFS = (
+        "_auto_cultivation_task_ref",
+        "_sect_war_task_ref",
+        "_sect_daily_reset_task_ref",
+        "_sect_forced_refresh_task_ref",
+        "_bank_interest_task_ref",
+        "_group_auto_approve_task_ref",
+        "_lottery_task_ref",
+    )
     _sect_war_lock = asyncio.Lock()  # 宗门战操作用锁，防止并发重入
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -527,96 +533,15 @@ class PetParkPlugin(Star):
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
         self._patch_qqofficial_message_extensions()
-        # 启动后台自动修炼循环；重载插件时先取消旧任务，避免并发
-        try:
-            if (
-                PetParkPlugin._auto_cultivation_task_ref
-                and not PetParkPlugin._auto_cultivation_task_ref.done()
-            ):
-                PetParkPlugin._auto_cultivation_task_ref.cancel()
-        except Exception:
-            pass
-        PetParkPlugin._auto_cultivation_task_ref = asyncio.create_task(
-            self._auto_cultivation_loop()
-        )
-        # 启动宗门战后台任务；重载插件时先取消旧任务
-        try:
-            if (
-                PetParkPlugin._sect_war_task_ref
-                and not PetParkPlugin._sect_war_task_ref.done()
-            ):
-                PetParkPlugin._sect_war_task_ref.cancel()
-        except Exception:
-            pass
-        PetParkPlugin._sect_war_task_ref = asyncio.create_task(
-            self._background_sect_war()
-        )
-        try:
-            if (
-                PetParkPlugin._sect_daily_reset_task_ref
-                and not PetParkPlugin._sect_daily_reset_task_ref.done()
-            ):
-                PetParkPlugin._sect_daily_reset_task_ref.cancel()
-        except Exception:
-            pass
-        PetParkPlugin._sect_daily_reset_task_ref = asyncio.create_task(
-            self._background_sect_daily_reset()
-        )
-        try:
-            if (
-                PetParkPlugin._sect_forced_refresh_task_ref
-                and not PetParkPlugin._sect_forced_refresh_task_ref.done()
-            ):
-                PetParkPlugin._sect_forced_refresh_task_ref.cancel()
-        except Exception:
-            pass
-        PetParkPlugin._sect_forced_refresh_task_ref = asyncio.create_task(
-            self._background_sect_forced_refresh()
-        )
-        # 银行周利息后台任务
-        try:
-            if (
-                PetParkPlugin._bank_interest_task_ref
-                and not PetParkPlugin._bank_interest_task_ref.done()
-            ):
-                PetParkPlugin._bank_interest_task_ref.cancel()
-        except Exception:
-            pass
-        PetParkPlugin._bank_interest_task_ref = asyncio.create_task(
-            self._bank_interest_loop()
-        )
-        # 群自动审批后台任务（每 30 秒拉取并审批入群申请）
-        try:
-            if (
-                PetParkPlugin._group_auto_approve_task_ref
-                and not PetParkPlugin._group_auto_approve_task_ref.done()
-            ):
-                PetParkPlugin._group_auto_approve_task_ref.cancel()
-        except Exception:
-            pass
-        PetParkPlugin._group_auto_approve_task_ref = asyncio.create_task(
-            self._group_auto_approve_loop()
-        )
-        # 口令抽奖后台任务（到点自动开奖 + 全群播报）；重载插件时先取消旧任务
-        try:
-            if (
-                PetParkPlugin._lottery_task_ref
-                and not PetParkPlugin._lottery_task_ref.done()
-            ):
-                PetParkPlugin._lottery_task_ref.cancel()
-        except Exception:
-            pass
-        PetParkPlugin._lottery_task_ref = asyncio.create_task(
-            self._lottery_loop()
-        )
-
-    # 类级别后台任务引用，避免重载后并发
-    _sect_war_task_ref = None
-    _sect_daily_reset_task_ref = None
-    _sect_forced_refresh_task_ref = None
-    _bank_interest_task_ref = None
-    _sect_forced_refresh_task_ref = None
-    _lottery_task_ref = None
+        # 启动后台循环：任务引用存到 self（实例属性）。重载插件时 terminate()
+        # 会先取消旧实例的全部后台任务再走到这里，避免旧任务和新任务并存、重复触发。
+        self._auto_cultivation_task_ref = asyncio.create_task(self._auto_cultivation_loop())
+        self._sect_war_task_ref = asyncio.create_task(self._background_sect_war())
+        self._sect_daily_reset_task_ref = asyncio.create_task(self._background_sect_daily_reset())
+        self._sect_forced_refresh_task_ref = asyncio.create_task(self._background_sect_forced_refresh())
+        self._bank_interest_task_ref = asyncio.create_task(self._bank_interest_loop())
+        self._group_auto_approve_task_ref = asyncio.create_task(self._group_auto_approve_loop())
+        self._lottery_task_ref = asyncio.create_task(self._lottery_loop())
 
     # =====================================================================
     # 银行周利息后台循环
@@ -1305,6 +1230,17 @@ class PetParkPlugin(Star):
         return reply
 
     async def terminate(self):
+        # 先取消全部后台循环：重载/停机时若不清理，旧任务会带着旧 store 一直跑，
+        # 与新实例并存导致重复触发（如宗门战匹配结果被对全群广播两遍）。
+        for name in self._BG_TASK_REFS:
+            task = getattr(self, name, None)
+            if task is not None and not task.done():
+                try:
+                    task.cancel()
+                except Exception:
+                    pass
+        # 给被取消的任务处理 CancelledError 的机会，再落盘
+        await asyncio.sleep(0)
         await self.store.save()
         if self._web is not None:
             await self._web.stop()
