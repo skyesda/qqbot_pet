@@ -79,6 +79,8 @@ KNOWN_COMMANDS = {
     "管理菜单",
     "我的信息",
     "个人信息",
+    "我的奖品",
+    "口令抽奖",
     "绑定QQ",
     "验证码",
     "换绑QQ",
@@ -595,6 +597,18 @@ class PetParkPlugin(Star):
         PetParkPlugin._group_auto_approve_task_ref = asyncio.create_task(
             self._group_auto_approve_loop()
         )
+        # 口令抽奖后台任务（到点自动开奖 + 全群播报）；重载插件时先取消旧任务
+        try:
+            if (
+                PetParkPlugin._lottery_task_ref
+                and not PetParkPlugin._lottery_task_ref.done()
+            ):
+                PetParkPlugin._lottery_task_ref.cancel()
+        except Exception:
+            pass
+        PetParkPlugin._lottery_task_ref = asyncio.create_task(
+            self._lottery_loop()
+        )
 
     # 类级别后台任务引用，避免重载后并发
     _sect_war_task_ref = None
@@ -602,6 +616,7 @@ class PetParkPlugin(Star):
     _sect_forced_refresh_task_ref = None
     _bank_interest_task_ref = None
     _sect_forced_refresh_task_ref = None
+    _lottery_task_ref = None
 
     # =====================================================================
     # 银行周利息后台循环
@@ -2762,6 +2777,12 @@ class PetParkPlugin(Star):
 
     def dispatch(self, event, qq, group_id, text):
         """处理一条指令。返回 None / 文本字符串 / (文本, 图片路径) 二元组。"""
+        # 口令抽奖：口令本身即参与指令（全群共享，全局唯一口令）。在 KNOWN_COMMANDS
+        # 过滤之前匹配，输入完整口令即可登记报名。
+        lottery = self.store.lottery()
+        if lottery and lottery.get("enabled") and not lottery.get("drawn") \
+                and text.strip() == str(lottery.get("password", "")):
+            return self._register_lottery_claim(qq, group_id, lottery)
         # @提及统一替换为对方用户ID：所有「用户ID/QQ号」参数位
         # （赠送/转让/PK/拜访/加金币/任命小管理等）都支持直接 @ 对方。
         # 替换时两侧补空格，兼容「赠送<@!xx>100」这类@与文字粘连的写法。
@@ -2874,7 +2895,8 @@ class PetParkPlugin(Star):
                         "授权状态", "授权", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
-                        "绑定QQ", "验证码", "换绑QQ", "解绑QQ"}
+                        "绑定QQ", "验证码", "换绑QQ", "解绑QQ",
+                        "我的奖品", "口令抽奖"}
         if cmd not in _bank_allow:
             bank_block = self._bank_block_check(player)
             if bank_block:
@@ -2890,6 +2912,12 @@ class PetParkPlugin(Star):
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
             return self._my_info(player, group_id)
+
+        # ---- 口令抽奖 / 我的奖品（全群共享，以用户 id 为主键）----
+        if cmd == "口令抽奖":
+            return self._handle_lottery_status()
+        if cmd == "我的奖品":
+            return self._handle_my_prizes(player, group_id, tokens)
 
         # ---- QQ 绑定（邮箱验证码）----
         if cmd == "绑定QQ":
@@ -4298,6 +4326,241 @@ class PetParkPlugin(Star):
         for k, v in reward_texts.items():
             parts.append(f"{k} +{v}")
         return "、".join(parts) if parts else ""
+
+    # =====================================================================
+    # 口令抽奖 / 我的奖品（全群共享，以用户 id 为主键）
+    # =====================================================================
+    LOTTERY_CHECK_SEC = 30  # 后台每 30 秒检查一次是否到点开奖
+    DEFAULT_LOTTERY_BROADCAST = (
+        "## 🎉 口令抽奖开奖！\n"
+        "口令「{{password}}」开奖啦～共 {{count}} 份「{{prize}}」\n"
+        "中奖名单：{{winners}}\n"
+        "（中奖者请到所在群发送「我的奖品」查看并兑换到想要的群）"
+    )
+
+    async def _lottery_loop(self) -> None:
+        """后台循环：到「开奖时间」自动开奖并全群播报（口令抽奖，全局唯一）。"""
+        while True:
+            try:
+                lottery = self.store.lottery()
+                if lottery and lottery.get("enabled") and not lottery.get("drawn"):
+                    if int(time.time()) >= int(lottery.get("draw_at", 0)):
+                        await self._do_lottery_draw()
+                await asyncio.sleep(self.LOTTERY_CHECK_SEC)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("[petpark] 口令抽奖后台循环出错")
+                await asyncio.sleep(self.LOTTERY_CHECK_SEC)
+
+    def _register_lottery_claim(self, qq: str, group_id: str, lottery: dict) -> str:
+        """玩家输入口令即登记参与（按 openid 去重，全群共享）。"""
+        g = self.store.get_group(group_id)
+        if not g.get("enabled", True):
+            return "本群未开启宠物乐园，暂时无法参与口令抽奖。"
+        if self._is_group(group_id) and not self._is_group_authorized(group_id):
+            return self._auth_blocked_text()
+        qq = str(qq)
+        now = int(time.time())
+        start = int(lottery.get("start_at") or 0)
+        draw = int(lottery.get("draw_at") or 0)
+        if lottery.get("drawn"):
+            return "本期口令抽奖已开奖。"
+        if now < start:
+            return "口令抽奖尚未开始，请等待。"
+        if now >= draw:
+            return "口令抽奖已到开奖时间，等待开奖…"
+        entries = lottery.setdefault("entries", {})
+        if qq in entries:
+            return "你已参与本次口令抽奖，请耐心等待开奖～"
+        entries[qq] = {"group": str(group_id), "time": now}
+        qty = int(lottery.get("quantity", 0))
+        prize_text = PetStore.prize_display_text(lottery.get("prize", {}))
+        mode = "随机抽取" if lottery.get("mode") == "lottery" else "先到先得"
+        return (
+            f"## 🔐 口令正确！\n你已成功参与本次口令抽奖。\n"
+            f"奖品：{prize_text}（共 {qty} 份 · {mode}）\n"
+            f"开奖时间：{self._fmt_lottery_time(draw)}\n"
+            f"开奖后在群里发「我的奖品」即可查看 / 兑换到想要的群～"
+        )
+
+    def _handle_lottery_status(self) -> str:
+        """口令抽奖公开状态（所有人可见）。口令本身不泄露。"""
+        lottery = self.store.lottery()
+        if not lottery or not lottery.get("enabled"):
+            return "当前没有进行中的口令抽奖。"
+        if lottery.get("drawn"):
+            return f"最近一期口令抽奖已开奖（{len(lottery.get('winners', []))} 份）。发「我的奖品」查看你是否中奖。"
+        now = int(time.time())
+        draw = int(lottery.get("draw_at") or 0)
+        entries = lottery.get("entries", {})
+        qty = int(lottery.get("quantity") or 0)
+        prize_text = PetStore.prize_display_text(lottery.get("prize", {}))
+        mode = "随机抽取" if lottery.get("mode") == "lottery" else "先到先得"
+        if now >= draw:
+            return "口令抽奖已到开奖时间，正在开奖…"
+        return (
+            f"## 🔐 口令抽奖进行中\n"
+            f"输入口令参与，抽取 {qty} 份「{prize_text}」\n"
+            f"开奖方式：{mode} ｜ 开奖时间：{self._fmt_lottery_time(draw)}\n"
+            f"当前已有 {len(entries)} 人参与"
+        )
+
+    def _handle_my_prizes(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """我的奖品：列出本人全局奖品背包（unclaimed/claimed），支持「我的奖品 兑换 <序号> [群id]」。"""
+        qq = str(player["qq"])
+        wallet = self.store.prize_wallet()
+        w = PetStore.wallet_for(wallet, qq)
+        if len(tokens) >= 2 and str(tokens[1]) == "兑换":
+            return self._redeem_prize(qq, tokens, w, group_id)
+        unclaimed = w["unclaimed"]
+        claimed = w["claimed"]
+        if not unclaimed and not claimed:
+            return "🎁 你暂无奖品。参与口令抽奖、中奖后奖品会出现在这里。"
+        lines = ["## 🎁 我的奖品"]
+        if unclaimed:
+            lines.append(f"**未兑换（{len(unclaimed)}）**")
+            for i, p in enumerate(unclaimed, 1):
+                lines.append(
+                    f"{i}. {p.get('text', '')} ｜ 口令「{p.get('lottery', '')}」"
+                    f"（{self._fmt_lottery_time(p.get('won_at'))}）"
+                )
+            lines.append("> 领取：`我的奖品 兑换 <序号>`（到当前群），或 `我的奖品 兑换 <序号> <群id>`")
+        if claimed:
+            lines.append(f"**已兑换（{len(claimed)}）**")
+            for p in claimed:
+                lines.append(
+                    f"- {p.get('text', '')} ｜ 已发放到群 {p.get('claimed_group', '')}"
+                    f"（{self._fmt_lottery_time(p.get('claimed_at'))}）"
+                )
+        return "\n".join(lines)
+
+    def _redeem_prize(self, qq: str, tokens: list[str], w: dict, current_group: str) -> str:
+        if len(tokens) < 3:
+            return "用法：`我的奖品 兑换 <序号>`（兑换到当前群），或 `我的奖品 兑换 <序号> <群id>`。"
+        try:
+            idx = int(tokens[2])
+        except ValueError:
+            return "❌ 序号需为数字。"
+        unclaimed = w["unclaimed"]
+        if idx < 1 or idx > len(unclaimed):
+            return "❌ 没有该序号的可兑换奖品。"
+        target_group = current_group
+        if len(tokens) >= 4 and tokens[3].strip():
+            target_group = str(tokens[3]).strip()
+            if target_group != current_group and target_group not in self.store._data.get("groups", {}):
+                return "❌ 未识别的群，无法兑换到该群。"
+        prize_entry = unclaimed[idx - 1]
+        prize = prize_entry.get("prize", {})
+        grant = self._grant_prize_to_group(qq, target_group, prize)
+        if grant is not None:
+            return grant
+        now = int(time.time())
+        self.store.move_unclaimed_to_claimed(
+            self.store.prize_wallet(), qq, str(prize_entry.get("id", "")), target_group, now
+        )
+        text = prize_entry.get("text", "") or PetStore.prize_display_text(prize)
+        return f"✅ 兑换成功！「{text}」已发放到群 {target_group} 你的名下，发送「我的信息」查看。"
+
+    def _grant_prize_to_group(self, qq: str, group_id: str, prize: dict) -> str | None:
+        """把奖品发放到指定群的玩家记录。成功返回 None，失败返回错误文案。奖品只含货币/道具。"""
+        if not isinstance(prize, dict):
+            return "❌ 奖品数据异常，请联系管理员。"
+        kind = prize.get("kind")
+        name = str(prize.get("name", "") or "")
+        count = int(prize.get("count", 1) or 1)
+        if not name:
+            return "❌ 奖品数据异常（缺少名称），请联系管理员。"
+        player = self.store.get_player(qq, group_id)  # 目标群若无档案则自动创建
+        if kind == "currency":
+            if name not in self.store.CURRENCY_KEYS:
+                return f"❌ 货币「{name}」不存在，请联系管理员。"
+            self.store.add_currency(player, name, count)
+            return None
+        if kind == "item":
+            if name not in data.ITEMS:
+                return f"❌ 道具「{name}」不存在，请联系管理员。"
+            self.store.add_item(player, name, count)
+            return None
+        return "❌ 奖品类型不识别，请联系管理员。"
+
+    async def _do_lottery_draw(self, force: bool = False) -> str:
+        """开奖：抽取/排序选出中奖者 → 记入全局奖品背包 → 全群播报。返回结果描述。"""
+        lottery = self.store.lottery()
+        if not lottery:
+            return "当前没有口令抽奖。"
+        if lottery.get("drawn"):
+            return "本期口令抽奖已开奖。"
+        now = int(time.time())
+        if not force and now < int(lottery.get("draw_at") or 0):
+            return "还没到开奖时间。"
+        entries = lottery.setdefault("entries", {})
+        quantity = max(0, int(lottery.get("quantity") or 0))
+        mode = lottery.get("mode", "lottery")
+        openids = list(entries.keys())
+        if mode == "claim":
+            ordered = sorted(openids, key=lambda oid: entries[oid].get("time", 0))
+        else:
+            ordered = list(openids)
+            random.shuffle(ordered)
+        winners = ordered[:quantity]
+        prize = lottery.get("prize", {})
+        wallet = self.store.prize_wallet()
+        created_at = int(lottery.get("created_at") or now)
+        for oid in winners:
+            self.store.add_prize(wallet, oid, {
+                "id": f"{created_at}_{oid}",
+                "lottery": str(lottery.get("password", "口令抽奖")),
+                "prize": prize,
+                "text": PetStore.prize_display_text(prize),
+                "won_at": now,
+            })
+        lottery["drawn"] = True
+        lottery["drawn_at"] = now
+        lottery["winners"] = winners
+        # 解析中奖者昵称用于播报（失败则回退 openid）
+        names = []
+        for oid in winners:
+            gid = entries[oid].get("group", "")
+            nick = ""
+            if gid:
+                try:
+                    nick = await self._member_nick(gid, oid)
+                except Exception:
+                    nick = ""
+            names.append(nick or oid)
+        text = self._build_lottery_broadcast(
+            lottery, names, len(winners), len(entries)
+        )
+        await self.store.save()
+        self._broadcast_to_authorized_groups(text)
+        return f"本期口令抽奖已开奖：共 {len(winners)} 人中奖，已全群播报。"
+
+    def _build_lottery_broadcast(self, lottery: dict, winner_names: list[str],
+                                 count: int, total: int) -> str:
+        """按管理员自定义播报文本（带占位符）或默认模板生成全群通报内容。"""
+        tpl = str(lottery.get("broadcast_text") or "").strip() or self.DEFAULT_LOTTERY_BROADCAST
+        mode = "随机抽取" if lottery.get("mode") == "lottery" else "先到先得"
+        prize_text = PetStore.prize_display_text(lottery.get("prize", {}))
+        return (
+            tpl.replace("{{password}}", str(lottery.get("password", "")))
+            .replace("{{count}}", str(count))
+            .replace("{{total}}", str(total))
+            .replace("{{prize}}", prize_text)
+            .replace("{{mode}}", mode)
+            .replace("{{winners}}", "、".join(winner_names) if winner_names else "（无人中奖）")
+        )
+
+    @staticmethod
+    def _fmt_lottery_time(ts) -> str:
+        ts = int(ts or 0)
+        if ts <= 0:
+            return "—"
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+    async def lottery_force_draw(self) -> str:
+        """管理后台「立即开奖」入口（幂等：已开奖则返回提示）。"""
+        return await self._do_lottery_draw(force=True)
 
     # =====================================================================
     # 帮助 / 信息查询

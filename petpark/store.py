@@ -92,6 +92,8 @@ class PetStore:
         self._data.setdefault("bank_players", {})
         self._data.setdefault("qq_bindings", {})      # 平台用户ID -> QQ号（全局）
         self._data.setdefault("email_config", {})      # 邮箱服务配置（SMTP）
+        self._data.setdefault("lottery", None)         # 口令抽奖（单例：一个进行中的口令抽奖）
+        self._data.setdefault("prize_wallet", {})      # 全局奖品背包：按 openid 主键，全群共享（不按群隔离）
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()
@@ -754,6 +756,70 @@ class PetStore:
         st = PetStore.player_event_state(player, event_id)
         if "pity_counts" in st and pity_name in st["pity_counts"]:
             st["pity_counts"][pity_name] = 0
+
+    # ----------------------------- 口令抽奖 / 全局奖品背包 -----------------------------
+    # 设计要点：奖品数据「全群共享、以用户 id（openid）为主键、不做群隔离」。
+    # 玩家发口令 -> 登记进 lottery.entries（按 openid 去重）；到点开奖 -> 把奖品记入
+    # 全局 prize_wallet（此时尚未发放到任何群）；玩家在群里「我的奖品 - 兑换」时，
+    # 才把奖品发放到指定群（该群的玩家记录），并移入 claimed 列表。
+    def lottery(self) -> Optional[dict]:
+        """当前口令抽奖配置（None 表示尚未创建）。"""
+        return self._data.get("lottery")
+
+    def set_lottery(self, cfg: dict) -> None:
+        self._data["lottery"] = cfg
+
+    def clear_lottery(self) -> None:
+        self._data["lottery"] = None
+
+    def prize_wallet(self) -> dict:
+        return self._data.setdefault("prize_wallet", {})
+
+    @staticmethod
+    def wallet_for(wallet: dict, openid: str) -> dict:
+        """取某一用户（openid）的全局奖品背包（unclaimed/claimed 两个列表）。"""
+        w = wallet.setdefault(str(openid), {})
+        w.setdefault("unclaimed", [])
+        w.setdefault("claimed", [])
+        return w
+
+    @staticmethod
+    def add_prize(wallet: dict, openid: str, entry: dict) -> None:
+        """把一份已开奖奖品记入用户背包（unclaimed）。entry 至少含 id/lottery/prize/text/won_at/claimed=False。"""
+        w = PetStore.wallet_for(wallet, openid)
+        entry["claimed"] = False
+        w["unclaimed"].append(entry)
+
+    @staticmethod
+    def move_unclaimed_to_claimed(
+        wallet: dict, openid: str, prize_id: str, claimed_group: str, now: int
+    ) -> Optional[dict]:
+        """把背包中指定的奖品从 unclaimed 移入 claimed。应由调用方先把奖品真正发放到群后调用，
+        返回被移走的奖品字典；id 不存在返回 None。"""
+        w = PetStore.wallet_for(wallet, openid)
+        for i, p in enumerate(w["unclaimed"]):
+            if p.get("id") == prize_id:
+                p = w["unclaimed"].pop(i)
+                p["claimed"] = True
+                p["claimed_at"] = now
+                p["claimed_group"] = claimed_group
+                w["claimed"].append(p)
+                return p
+        return None
+
+    @staticmethod
+    def prize_display_text(prize: dict) -> str:
+        """把奖品字典 {kind,name,count} 转成人类可读文本（如『金币 x1000』、『还魂丹 x2』）。"""
+        if not isinstance(prize, dict):
+            return ""
+        kind = prize.get("kind")
+        name = prize.get("name", "")
+        count = prize.get("count", 1)
+        if kind == "currency":
+            return f"{name} x{count}"
+        if kind == "item":
+            return f"{name} x{count}"
+        return str(name)
 
     # ----------------------------- 深渊秘境 -----------------------------
     @staticmethod

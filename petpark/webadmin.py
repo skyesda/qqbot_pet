@@ -76,6 +76,9 @@ class WebAdmin:
         app.router.add_post("/api/feedbacks/delete", self._api_feedback_delete)
         app.router.add_post("/api/app_release/info", self._api_app_release_info)
         app.router.add_post("/api/app_release/upload", self._api_app_release_upload)
+        app.router.add_post("/api/lottery/state", self._api_lottery_state)
+        app.router.add_post("/api/lottery/save", self._api_lottery_save)
+        app.router.add_post("/api/lottery/draw", self._api_lottery_draw)
 
         portal = PlayerPortal(
             self.store,
@@ -562,6 +565,52 @@ class WebAdmin:
                 logger.exception("[petpark] 后台复活 Boss 广播失败")
         return self._json({"ok": True, "msg": f"Boss {bname} 已复活并全服播报"})
 
+    async def _api_lottery_state(self, request):
+        """口令抽奖当前状态（配置 + 报名 + 开奖结果）。"""
+        self._require(request)
+        return self._json({"ok": True, "data": self.store.lottery()})
+
+    async def _api_lottery_save(self, request):
+        """保存口令抽奖配置。默认保留运行时状态（报名 entries / 开奖结果）；reset=true 清空重来。"""
+        self._require(request)
+        body = await request.json()
+        cfg = body.get("cfg")
+        if not isinstance(cfg, dict):
+            return self._json({"ok": False, "msg": "配置必须是对象"})
+        existing = self.store.lottery()
+        existing = existing if isinstance(existing, dict) else {}
+        if body.get("reset"):
+            # 重置为全新抽奖：清空报名与开奖结果，并生成新一轮编号
+            cfg["entries"] = {}
+            cfg["winners"] = []
+            cfg["drawn"] = False
+            cfg["drawn_at"] = 0
+            cfg["created_at"] = int(time.time())
+        else:
+            # 编辑配置时不要冲掉已报名用户与开奖结果；全新配置用安全的默认值
+            cfg.setdefault("entries", existing.get("entries", {}))
+            cfg.setdefault("winners", existing.get("winners", []))
+            cfg.setdefault("drawn", bool(existing.get("drawn", False)))
+            cfg.setdefault("drawn_at", existing.get("drawn_at", 0))
+            cfg.setdefault("created_at", existing.get("created_at", 0) or int(time.time()))
+        self.store.set_lottery(cfg)
+        await self.store.save()
+        logger.info(f"[petpark][webadmin] 口令抽奖配置保存 by {request.remote}")
+        return self._json({"ok": True})
+
+    async def _api_lottery_draw(self, request):
+        """管理后台「立即开奖」：由插件执行抽取 + 全群播报（幂等）。"""
+        self._require(request)
+        gw = self._command_gateway
+        if gw is None or not hasattr(gw, "lottery_force_draw"):
+            return self._json({"ok": False, "msg": "开奖由插件执行，当前网关不可用"})
+        try:
+            msg = await gw.lottery_force_draw()
+        except Exception as e:
+            logger.exception("[petpark] 后台手动开奖失败")
+            return self._json({"ok": False, "msg": f"开奖失败：{e}"})
+        return self._json({"ok": True, "msg": msg})
+
     async def _api_test_sect_broadcast(self, request):
         """临时：向指定群发送一条定向广播测试消息，验证 _send_to_group 通路。"""
         from aiohttp import web
@@ -900,6 +949,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="groups" onclick="tab('groups')">群设置</button>
 <button data-t="cards" onclick="tab('cards')">卡密</button>
 <button data-t="events" onclick="tab('events')">活动</button>
+<button data-t="lottery" onclick="tab('lottery')">口令抽奖</button>
 <button data-t="portal_accounts" onclick="tab('portal_accounts')">网页账号</button>
 <button data-t="custom_reviews" onclick="tab('custom_reviews')">定制审核</button>
 <button data-t="custom_pets" onclick="tab('custom_pets')">定制管理</button>
@@ -968,6 +1018,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <script>
 let cur='players', cache={}, editKey=null, editSnapshot=null, META={};
 let paCache=[];
+let LOTTERY=null;
 
 async function loadPortalAccounts(){
  const r=await (await fetch('/api/portal_accounts')).json();
@@ -1225,17 +1276,18 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
  else if(t==='feedbacks') loadFeedbacks();
  else if(t==='app_release') loadAppRelease();
+ else if(t==='lottery') loadLottery();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1249,6 +1301,89 @@ function render(){
  else if(cur==='custom_pets')renderCustomPets();
  else if(cur==='feedbacks')renderFeedbacks();
  else renderCards();
+}
+// ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
+async function loadLottery(){
+ const r=await api('/api/lottery/state',{});
+ LOTTERY=r.data||null;
+ renderLottery();
+}
+function renderLottery(){
+ document.getElementById('count').textContent='';
+ document.getElementById('extrawrap').innerHTML='';
+ const l=LOTTERY||{};
+ const prize=l.prize||{};
+ const kind=prize.kind||'currency';
+ const count=Number(prize.count)||1;
+ const curName=(kind==='currency')?(prize.name||'金币'):(prize.name||'');
+ const winners=(l.winners||[]).map(esc).join('、')||'（未开奖）';
+ const entriesN=l.entries?Object.keys(l.entries).length:0;
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:880px">
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+   <h3 style="margin:0 0 16px">口令抽奖 <span class="muted" style="font-weight:400">（玩家输入口令参与；到点自动开奖并全群播报）</span></h3>
+   <div class="row">
+    <label class="fld">启用 <input id="lt_enabled" type="checkbox" ${l.enabled?'checked':''}></label>
+    <label class="fld">开奖方式 <select id="lt_mode"><option value="lottery" ${l.mode==='lottery'?'selected':''}>随机抽取</option><option value="claim" ${l.mode==='claim'?'selected':''}>先到先得</option></select></label>
+   </div>
+   <label class="fld">口令 <input id="lt_password" placeholder="如：一起发财" value="${esc(l.password||'')}"></label>
+   <div class="row">
+    <label class="fld">份数 / 中奖人数 <input id="lt_quantity" type="number" value="${Number(l.quantity)||10}" style="width:140px"></label>
+    <label class="fld">开奖时间 <input id="lt_draw_at" type="datetime-local" value="${eventTsToLocal(l.draw_at)}"></label>
+   </div>
+   <div class="sec">奖品（全部货币 / 全部道具，二选一）</div>
+   <div class="row">
+    <label class="fld">类型 <select id="lt_kind" onchange="ltFillName()"><option value="currency" ${kind==='currency'?'selected':''}>货币</option><option value="item" ${kind==='item'?'selected':''}>道具</option></select></label>
+    <label class="fld">名称 <select id="lt_name"></select></label>
+    <label class="fld">数量 <input id="lt_count" type="number" value="${count}" style="width:110px"></label>
+   </div>
+   <div class="sec">全群播报文本</div>
+   <div class="muted" style="margin:-4px 0 8px">支持占位符：<code>{{password}}</code> <code>{{prize}}</code> <code>{{count}}</code> <code>{{total}}</code> <code>{{mode}}</code> <code>{{winners}}</code>（留空用默认模板）</div>
+   <textarea id="lt_broadcast" rows="4" placeholder="留空使用默认开奖公告" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical">${esc(l.broadcast_text||'')}</textarea>
+   <label class="fld" style="margin-top:12px"><input id="lt_reset" type="checkbox"> 重置为全新抽奖（清空已有报名与结果）</label>
+   <div style="margin-top:16px;display:flex;gap:10px">
+    <button class="act" onclick="saveLottery()">保存</button>
+    <button class="act del" onclick="lotteryDraw()">立即开奖</button>
+    <button class="act ghost" onclick="loadLottery()">刷新</button>
+   </div>
+   <div class="muted" id="lt_msg" style="margin-top:10px"></div>
+  </div>
+  <div style="margin-top:12px;padding:14px;background:#fff;border:1px solid #e8ecf6;border-radius:12px">
+   <span class="muted">报名人数：</span><b>${entriesN}</b>
+   &nbsp;&nbsp;<span class="muted">状态：</span><b>${l.drawn?'已开奖':'进行中'}</b>
+   &nbsp;&nbsp;<span class="muted">中奖名单：</span><span>${winners}</span>
+  </div>
+ </div>`;
+ ltFillName();
+}
+function ltFillName(){
+ const kind=(g('lt_kind').value||'currency');
+ const list=kind==='currency'?(META.currencies||['金币','积分','钻石']):(META.items||[]);
+ const cur=((LOTTERY||{}).prize||{}).name||'';
+ g('lt_name').innerHTML=optHtml(list, cur, kind==='currency'?'': '道具名称');
+}
+async function saveLottery(){
+ const kind=g('lt_kind').value;
+ const cfg={
+  enabled:g('lt_enabled').checked,
+  mode:g('lt_mode').value,
+  password:g('lt_password').value.trim(),
+  quantity:Number(g('lt_quantity').value)||0,
+  draw_at:eventLocalToTs(g('lt_draw_at').value)||0,
+  prize:{kind, name:g('lt_name').value, count:Number(g('lt_count').value)||1},
+  broadcast_text:g('lt_broadcast').value.trim(),
+ };
+ if(!cfg.password){alert('请填写口令');return;}
+ if(!cfg.quantity){alert('请填写份数 / 中奖人数');return;}
+ const r=await api('/api/lottery/save',{cfg, reset:g('lt_reset').checked});
+ g('lt_msg').textContent=r.ok?'✅ 已保存':'❌ 保存失败：'+(r.msg||'');
+ if(r.ok) loadLottery();
+}
+async function lotteryDraw(){
+ if(!confirm('确认立即开奖？')) return;
+ const r=await api('/api/lottery/draw',{});
+ alert(r.ok?(r.msg||'✅ 已开奖'):(r.msg||'开奖失败'));
+ loadLottery();
 }
 function shell(head,rows,cols){
  document.getElementById('count').textContent='共 '+Object.keys(cache).length+' 条';
