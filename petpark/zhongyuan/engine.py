@@ -45,8 +45,8 @@ COMMANDS = {
     # 玩家
     "中元活动", "中元活动介绍", "中元状态", "我的中元",
     "副本进度", "我的副本",
-    "绑定中元宠物", "中元绑定", "中元功德榜", "中元排行", "中元签到",
-    "放河灯", "中元问答", "焚香", "供灯", "答", "中元答", "解除阴气", "中元兑换",
+    "相约中元", "中元功德榜", "中元排行", "中元签到",
+    "放河灯", "中元问答", "焚香", "供灯", "答", "中元答", "解除阴气", "功德商店",
     # 管理
     "开启中元活动", "关闭中元活动", "中元配置", "中元开始", "中元结束",
     "删除中元活动", "重置中元活动", "中元结算",
@@ -115,6 +115,24 @@ class ZhongyuanActivity:
         self._data.setdefault("players", {})
         self._data.setdefault("groups", {})
         self._data.setdefault("sessions", {})
+        # 迁移：旧版按「群\x1f用户」隔离，现改为按用户 ID 全局唯一（相约中元）。
+        migrated: dict[str, Any] = {}
+        for k, v in self._data.get("players", {}).items():
+            ks = str(k)
+            if "\x1f" in ks:
+                gid, qq = ks.split("\x1f", 1)
+                v.setdefault("qq", qq)
+                v.setdefault("group", gid)
+                v.pop("pet_id", None)
+                v.pop("pet_level", None)
+                if "name" not in v and v.get("pet_name"):
+                    v["name"] = v["pet_name"]
+                v.pop("pet_name", None)
+                migrated[qq] = v  # 同一用户跨群重复时，后者覆盖（活动 ID 按用户唯一）
+            else:
+                migrated[ks] = v
+        if migrated:
+            self._data["players"] = migrated
 
     def _flush(self) -> None:
         try:
@@ -250,7 +268,8 @@ class ZhongyuanActivity:
         return self._data.setdefault("sessions", {})
 
     def _key(self, group_id: str, qq: str) -> str:
-        return f"{group_id}\x1f{qq}"
+        # 活动身份按用户 ID（QQ）全局唯一，跨群共享，不再与群/宠物绑定
+        return str(qq)
 
     def _get_player(self, group_id: str, qq: str, create: bool = False) -> dict | None:
         players = self._players()
@@ -259,10 +278,8 @@ class ZhongyuanActivity:
             players[key] = {
                 "qq": str(qq),
                 "group": str(group_id),
+                "name": str(qq),
                 "activity_id": 0,
-                "pet_id": "",
-                "pet_name": "",
-                "pet_level": 1,
                 "gongde": 0,
                 "clear_count": 0,
                 "perfect_count": 0,
@@ -323,41 +340,37 @@ class ZhongyuanActivity:
         return f"{m} 分 {s} 秒"
 
     # ------------------------------------------------------------------
-    # 绑定宠物（绑定后不可换、不可解）
+    # 相约中元（参与活动领号，按用户 ID 绑定，跨群唯一；不可重复参加）
     # ------------------------------------------------------------------
-    def _bind_pet(self, group_id: str, qq: str, index: int | None = None) -> str:
+    def _bind_user(self, group_id: str, qq: str, event=None) -> str:
         if not self._enabled():
             return f"❌ {ACTIVITY_TAG} 尚未开启或已结束。"
-        tp = self.bot.store.get_player(qq, group_id, create=False)
-        if not tp or not tp.get("pets"):
-            return "❌ 你尚未在本群拥有任何宠物，无法绑定（先去「砸蛋」抽一只吧）。"
-        pets = tp["pets"]
-        if index is None:
-            index = tp.get("active_pet", 0)
-            if index < 0 or index >= len(pets):
-                index = 0
-        else:
-            index -= 1  # 用户按 1 起序号
-            if index < 0 or index >= len(pets):
-                return f"❌ 序号超出范围，你共有 {len(pets)} 只宠物。"
-        pet = pets[index]
         ap = self._get_player(group_id, qq, create=True)
         if ap.get("activity_id"):
             return (
-                f"❌ 你已绑定宠物「{ap.get('pet_name')}」（活动 ID #{ap['activity_id']:04d}），"
-                "活动期间不可换绑、不可解绑。"
+                f"❌ 你已相约中元（活动 ID #{ap['activity_id']:04d}），"
+                "活动期间不可重复参加、不可更换。"
             )
-        ap["pet_id"] = pet.get("pet_id", "")
-        ap["pet_name"] = pet.get("nickname", pet.get("species", "?"))
-        ap["pet_level"] = int(pet.get("level", 1))
         ap["activity_id"] = self._alloc_activity_id()
+        ap["group"] = str(group_id)
+        # 展示名：昵称优先，取不到回退为 QQ 号
+        ap["name"] = self._user_name(event, qq)
         # 注册本群状态，使其进入每小时抽人的候选群
         self._group_state(group_id)
         return (
-            f"🕯️ 绑定成功！你已将群宠物 **{ap['pet_name']}** 托付给中元之夜。\n"
+            f"🕯️ 相约中元！你已踏入阴阳两界。\n"
             f"> 你的活动 ID：**#{ap['activity_id']:04d}**\n"
-            "> ⚠️ 绑定后不可放生、赠送或换绑；解不开馆里的规矩，你与它，就都留下吧。"
+            "> ⚠️ 此 ID 与你本人绑定、跨群唯一，活动期间不可更换。"
         )
+
+    def _user_name(self, event, qq: str) -> str:
+        if event is None:
+            return str(qq)
+        try:
+            name = self.bot._sender_name(event)
+        except Exception:  # noqa: BLE001
+            name = ""
+        return str(name).strip() or str(qq)
 
     def _alloc_activity_id(self) -> int:
         seq = int(self._data["meta"].get("activity_id_seq", 0)) + 1
@@ -417,15 +430,15 @@ class ZhongyuanActivity:
         return newly
 
     def _players_in_group(self, group_id: str) -> list[dict]:
-        prefix = self._key(group_id, "")
-        return [v for k, v in self._players().items() if k.startswith(prefix)]
+        gid = str(group_id)
+        return [v for v in self._players().values() if str(v.get("group", "")) == gid]
 
     def _cmd_lantern(self, group_id: str, qq: str, event, message: str) -> str:
         if not self._enabled() or not self._in_open_hours():
             return f"❌ 当前不在中元活动开放时段。"
         ap = self._get_player(group_id, qq, create=True)
         if not ap.get("activity_id"):
-            return "❌ 请先「绑定中元宠物」领取活动 ID 后再放河灯。"
+            return "❌ 请先「相约中元」领取活动 ID 后再放河灯。"
         d = self._daily_reset(ap)
         limit = self._int_cfg("lantern_daily_limit", 10)
         if d["lantern"] >= limit:
@@ -442,7 +455,7 @@ class ZhongyuanActivity:
         msg = (message or "").strip() or "愿逝者安息，愿生者珍重"
         echo = random.choice(_LANTERN_ECHOES)
         # DeepSeek 温情回文（后台异步推送，不阻塞）
-        self._spawn(self._lantern_echo(group_id, ap.get("pet_name", ""), msg))
+        self._spawn(self._lantern_echo(group_id, ap.get("name", ""), msg))
         return (
             f"🕯️ 你点亮一盏河灯，写下：\n> 「{msg}」\n"
             f"灯随水流去，思念寄远乡。\n> **{echo}**\n"
@@ -450,7 +463,7 @@ class ZhongyuanActivity:
             f"> 今日 {d['lantern']}/{limit} 盏 · 冷却 {self._int_cfg('lantern_cooldown_min', 20)} 分钟"
         )
 
-    async def _lantern_echo(self, group_id: str, pet_name: str, message: str) -> None:
+    async def _lantern_echo(self, group_id: str, name: str, message: str) -> None:
         if not self._deepseek.available:
             return
         system = "你是中元节的摆渡人，为玩家的思念寄语写一句温婉、克制、治愈的中式回文，不超过 40 字。"
@@ -463,7 +476,7 @@ class ZhongyuanActivity:
             return f"❌ 当前不在中元活动开放时段。"
         ap = self._get_player(group_id, qq, create=True)
         if not ap.get("activity_id"):
-            return "❌ 请先「绑定中元宠物」领取活动 ID 后再参与问答。"
+            return "❌ 请先「相约中元」领取活动 ID 后再参与问答。"
         d = self._daily_reset(ap)
         limit = self._int_cfg("quiz_daily_limit", 20)
         if answer is None:
@@ -509,7 +522,7 @@ class ZhongyuanActivity:
             return f"❌ 当前不在中元活动开放时段。"
         ap = self._get_player(group_id, qq, create=True)
         if not ap.get("activity_id"):
-            return "❌ 请先「绑定中元宠物」领取活动 ID 后再祭祖。"
+            return "❌ 请先「相约中元」领取活动 ID 后再祭祖。"
         d = self._daily_reset(ap)
         limit = self._int_cfg("incense_daily_limit", 10)
         if d["incense"] >= limit:
@@ -535,7 +548,7 @@ class ZhongyuanActivity:
             return f"❌ 活动未开启。"
         ap = self._get_player(group_id, qq, create=True)
         if not ap.get("activity_id"):
-            return "❌ 请先「绑定中元宠物」领取活动 ID 后再签到。"
+            return "❌ 请先「相约中元」领取活动 ID 后再签到。"
         d = self._daily_reset(ap)
         if d["sign"] >= 1:
             return "❌ 今日已签到。"
@@ -579,7 +592,7 @@ class ZhongyuanActivity:
             str(ap["qq"]): {
                 "qq": str(ap["qq"]),
                 "activity_id": ap.get("activity_id"),
-                "pet_name": ap.get("pet_name", "?"),
+                "name": ap.get("name", "?"),
                 "correct": 0,
                 "wrong": 0,
                 "alive": True,
@@ -595,7 +608,7 @@ class ZhongyuanActivity:
             "deadline": self._now() + self._int_cfg("dungeon_limit_min", 40) * 60,
             "last_activity": self._now(),
         }
-        names = "、".join(f"#{p['activity_id']:04d} {p['pet_name']}" for p in participants.values())
+        names = "、".join(f"#{p['activity_id']:04d} {p['name']}" for p in participants.values())
         await self._push_group(
             gid,
             f"## 🚪 阴门开 · 幽影饲育馆（协作解密）\n"
@@ -677,7 +690,7 @@ class ZhongyuanActivity:
             ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
         alive = [x for x in s["participants"].values() if x.get("alive")]
         msg = (
-            f"💀 编号 #{p['activity_id']:04d}（{p.get('pet_name', '?')}）答错满 "
+            f"💀 编号 #{p['activity_id']:04d}（{p.get('name', '?')}）答错满 "
             f"{self._int_cfg('individual_fail_wrong', 3)} 次，被阴气淘汰，退出本场。"
         )
         if not alive:
@@ -721,7 +734,7 @@ class ZhongyuanActivity:
             if perfect:
                 ap["perfect_count"] = int(ap.get("perfect_count", 0)) + 1
             tag = "✨完美" if perfect else "🎉通关"
-            lines.append(f"{tag} #{p['activity_id']:04d} {p.get('pet_name','?')}：答对 {p['correct']} 题，功德 +{reward}")
+            lines.append(f"{tag} #{p['activity_id']:04d} {p.get('name','?')}：答对 {p['correct']} 题，功德 +{reward}")
         return (
             f"## 🎉 幽影饲育馆通关\n"
             f"> 全队协作解完 {len(s['puzzles'])} 题，存活 {len(survivors)} 人。\n"
@@ -768,7 +781,7 @@ class ZhongyuanActivity:
     def _cmd_clear_yin(self, group_id: str, qq: str) -> str:
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
-            return "❌ 你尚未绑定中元宠物。"
+            return "❌ 你尚未相约中元。"
         until = int(ap.get("yin_until", 0))
         if until <= self._now():
             return "✅ 你当前并无「阴气缠身」。"
@@ -796,11 +809,11 @@ class ZhongyuanActivity:
             return "🕯️ 中元功德榜：本群暂无已绑定玩家。"
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines = ["## 🕯️ 中元功德榜（前 20）", ""]
-        lines.append("| 排名 | 段位 | 活动ID | 宠物 | 功德 | 通关 | 完美 |")
+        lines.append("| 排名 | 段位 | 活动ID | 玩家 | 功德 | 通关 | 完美 |")
         lines.append("|:--:|:--:|:--:|:--:|--:|--:|--:|")
         for i, p in enumerate(ranked[:20], start=1):
             tier = tier_name_for_rank(i, self.cfg.get("tiers", [])) or "—"
-            name = str(p.get("pet_name", "?")).replace("|", "丨")
+            name = str(p.get("name", "?")).replace("|", "丨")
             rk = medals.get(i, str(i))
             lines.append(
                 f"| {rk} | {tier} | #{p['activity_id']:04d} | {name} | "
@@ -812,8 +825,8 @@ class ZhongyuanActivity:
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
             return (
-                "🕯️ 你尚未绑定中元宠物。\n"
-                "> 发送「绑定中元宠物」领取活动 ID，踏入阴阳两界。"
+                "🕯️ 你尚未相约中元。\n"
+                "> 发送「相约中元」领取活动 ID，踏入阴阳两界。"
             )
         yin = "🈳 无" if int(ap.get("yin_until", 0)) <= self._now() else (
             f"⚠️ 阴气缠身（剩余 {self._fmt_remain(int(ap['yin_until']))}，"
@@ -822,7 +835,7 @@ class ZhongyuanActivity:
         return (
             f"## 🕯️ 我的中元\n"
             f"> 活动 ID：**#{ap['activity_id']:04d}**\n"
-            f"> 绑定宠物：**{ap.get('pet_name', '?')}**（Lv.{ap.get('pet_level', 1)}）\n"
+            f"> 玩家：**{ap.get('name', '?')}**\n"
             f"> 功德：**{ap.get('gongde', 0)}**\n"
             f"> 暂存功德：{ap.get('escrow', 0)}\n"
             f"> 通关 {ap.get('clear_count', 0)} 次 · 完美 {ap.get('perfect_count', 0)} 次 · 失败 {ap.get('fail_count', 0)} 次\n"
@@ -847,7 +860,7 @@ class ZhongyuanActivity:
         remain = self._fmt_remain(int(s.get("deadline", 0)))
         return (
             f"## 🕯️ 你的副本进度\n"
-            f"> 编号：**#{p['activity_id']:04d}** · 宠物：**{p.get('pet_name', '?')}**\n"
+            f"> 编号：**#{p['activity_id']:04d}** · 玩家：**{p.get('name', '?')}**\n"
             f"> 状态：{status}\n"
             f"> 个人答对：**{correct}** 题\n"
             f"> 个人答错：**{wrong}/{limit}**"
@@ -856,20 +869,11 @@ class ZhongyuanActivity:
             f"> 本场剩余：{remain}"
         )
 
-    def _cmd_redeem(self, group_id: str, qq: str) -> str:
+    def _cmd_shop(self, group_id: str, qq: str) -> str:
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
-            return "❌ 你尚未绑定中元宠物。"
-        if not self._activity_over():
-            return "❌ 活动尚未结束，暂存功德需等活动结算后兑换。"
-        if not self._redeem_open():
-            return "❌ 兑换窗口已关闭。"
-        escrow = int(ap.get("escrow", 0))
-        if escrow <= 0:
-            return "✅ 你暂无待兑换的暂存功德。"
-        ap["gongde"] = int(ap.get("gongde", 0)) + escrow
-        ap["escrow"] = 0
-        return f"✅ 已兑换 **{escrow}** 暂存功德给绑定宠物「{ap.get('pet_name')}」！最终功德 {ap['gongde']}。"
+            return "❌ 你尚未相约中元。"
+        return "🕯️ 功德商店暂未上架任何商品，敬请期待。"
 
     # ------------------------------------------------------------------
     # 管理指令
@@ -887,7 +891,7 @@ class ZhongyuanActivity:
             self._spawn(self._push_all_groups(
                 f"## 🕯️ 中元活动已开启\n"
                 f"《{ACTIVITY_NAME}》正式开启！全群共享功德数据，人人可参与。\n"
-                f"> 发送「中元活动」查看玩法；「绑定中元宠物」领取活动 ID 踏入阴阳两界。"
+                f"> 发送「中元活动」查看玩法；「相约中元」领取活动 ID 踏入阴阳两界。"
             ))
             return f"✅ 中元活动已开始，并已向全群通报（start_at={self.cfg['start_at']}）。"
         if cmd == "中元结束":
@@ -897,7 +901,7 @@ class ZhongyuanActivity:
             self._spawn(self._push_all_groups(
                 f"## 🕯️ 中元活动已结束\n"
                 f"《{ACTIVITY_NAME}》已落下帷幕，段位功德已结算完毕。\n"
-                f"> 发送「中元兑换」领取暂存功德（兑换窗口内有效）。"
+                f"> 段位功德已结算，可发送「功德商店」查看奖励。"
             ))
             return f"✅ 中元活动已结束并结算，已向全群通报（end_at={self.cfg['end_at']}）。"
         if cmd in ("删除中元活动", "重置中元活动"):
@@ -995,11 +999,8 @@ class ZhongyuanActivity:
             return self._cmd_status(group_id, qq)
         if cmd in ("副本进度", "我的副本"):
             return self._cmd_dungeon_status(group_id, qq)
-        if cmd in ("绑定中元宠物", "中元绑定"):
-            index = None
-            if len(tokens) > 1 and tokens[1].isdigit():
-                index = int(tokens[1])
-            return self._bind_pet(group_id, qq, index)
+        if cmd == "相约中元":
+            return self._bind_user(group_id, qq, event)
         if cmd in ("中元功德榜", "中元排行"):
             return self._cmd_rank(group_id)
         if cmd == "中元签到":
@@ -1014,8 +1015,8 @@ class ZhongyuanActivity:
             return self._cmd_incense(group_id, qq, cmd)
         if cmd == "解除阴气":
             return self._cmd_clear_yin(group_id, qq)
-        if cmd == "中元兑换":
-            return self._cmd_redeem(group_id, qq)
+        if cmd == "功德商店":
+            return self._cmd_shop(group_id, qq)
         return None
 
     def _cmd_menu(self, group_id: str) -> str:
@@ -1024,12 +1025,12 @@ class ZhongyuanActivity:
             f"## {ACTIVITY_NAME}\n"
             f"> 状态：{state}\n\n"
             "**🎭 阴面 · 幽影饲育馆**（恐怖解密）\n"
-            "> 绑定宠物 → 领取活动 ID → 每小时被勾入馆解谜 → 功德\n"
+            "> 相约中元 → 领取活动 ID → 每小时被勾入馆解谜 → 功德\n"
             "**🕯️ 阳面 · 青灯寄思**（文化温情）\n"
             "> 放河灯 / 中元问答 / 供灯焚香 / 中元签到 → 功德\n\n"
             "**指令一览**\n"
-            "`绑定中元宠物` · `中元状态` · `中元功德榜` · `中元签到`\n"
-            "`放河灯 <寄语>` · `中元问答` · `焚香`/`供灯` · `解除阴气` · `中元兑换`\n"
+            "`相约中元` · `中元状态` · `中元功德榜` · `中元签到`\n"
+            "`放河灯 <寄语>` · `中元问答` · `焚香`/`供灯` · `解除阴气` · `功德商店`\n"
             "> 中元不是鬼节，是勾连阴阳两界的思念。"
         )
 
