@@ -6,6 +6,7 @@ API Key 一律从环境变量 ``DEEPSEEK_API_KEY`` 读取（可被显式配置�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -121,18 +122,35 @@ class DeepSeekClient:
             return None
 
     async def generate_puzzles_batch(self, rule: str, count: int) -> list[dict]:
-        """围绕规则怪谈一次性生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。"""
-        user = f"规则怪谈：{rule}\n请围绕此规则生成 {count} 道谜题。"
-        try:
-            text = await self.chat(
-                user,
-                system=RULE_PUZZLE_SYSTEM_PROMPT,
-                max_tokens=max(1200, int(count) * 160),
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
+        """围绕规则怪谈分批生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
+
+        推理模型 deepseek-v4-flash-vision-exp 在单次生成过多题目时，会把输出
+        token 消耗在 reasoning_content 上，导致最终 content 为空、解析出 0 题，
+        故拆成每批 4 题并发生成，保证单批任务足够简单、content 稳定返回 JSON。
+        """
+        if count <= 0:
             return []
-        return self._parse_puzzle_batch(text)
+        batch = 4
+        slots = [min(batch, count - i * batch) for i in range((count + batch - 1) // batch)]
+
+        async def _one(need: int) -> list[dict]:
+            user = f"规则怪谈：{rule}\n请围绕此规则生成 {need} 道谜题。"
+            try:
+                text = await self.chat(
+                    user,
+                    system=RULE_PUZZLE_SYSTEM_PROMPT,
+                    max_tokens=max(1200, int(need) * 300),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
+                return []
+            return self._parse_puzzle_batch(text)
+
+        results = await asyncio.gather(*(_one(n) for n in slots))
+        out: list[dict] = []
+        for r in results:
+            out.extend(r)
+        return out[:count]
 
     async def reply_echo(self, prompt: str, system: str | None = None) -> str | None:
         """生成温情回文 / 文案，失败返回 None。"""
