@@ -31,6 +31,14 @@ from .petpark import data, images, pet as petmod
 from .petpark.ai_router import AIRouter
 from .petpark.store import PetStore
 
+# 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响宠物乐园主程序。
+try:
+    from .petpark.zhongyuan import COMMANDS as _ZY_COMMANDS, ZhongyuanActivity
+except Exception as _zy_err:  # pragma: no cover
+    _ZY_COMMANDS: set[str] = set()
+    ZhongyuanActivity = None
+    logger.warning("[petpark] 中元活动模块加载失败，已自动关闭：%s", _zy_err)
+
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except Exception:  # pragma: no cover - 兼容旧版本
@@ -340,6 +348,9 @@ KNOWN_COMMANDS = {
     "宠物信息",
 }
 
+# 合并中元活动指令（由独立模块动态提供，避免在 KNOWN_COMMANDS 手写两份清单）
+KNOWN_COMMANDS |= _ZY_COMMANDS
+
 # 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
 WEB_BLOCKED_COMMANDS = {
     # 不可逆 / 资产转移
@@ -410,6 +421,9 @@ WEB_BLOCKED_COMMANDS = {
     "确认重生",
     "祭奠",
 }
+
+# 中元活动为群聊玩法，网页端一并屏蔽
+WEB_BLOCKED_COMMANDS |= _ZY_COMMANDS
 
 
 class _WebEvent:
@@ -530,6 +544,16 @@ class PetParkPlugin(Star):
             timeout=float(self.config.get("ai_router_timeout", 20)),
             provider_id=str(self.config.get("ai_router_provider_id", "")),
         )
+        # 中元节活动（独立模块：独立数据 zhongyuan.json、独立开关、独立后台循环）
+        self.zhongyuan = None
+        self._zy_commands: set[str] = set()
+        if ZhongyuanActivity is not None:
+            try:
+                self.zhongyuan = ZhongyuanActivity(self, data_dir)
+                self._zy_commands = self.zhongyuan.commands()
+            except Exception:
+                logger.exception("[petpark] 中元活动初始化失败")
+                self.zhongyuan = None
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
         self._patch_qqofficial_message_extensions()
@@ -542,6 +566,8 @@ class PetParkPlugin(Star):
         self._bank_interest_task_ref = asyncio.create_task(self._bank_interest_loop())
         self._group_auto_approve_task_ref = asyncio.create_task(self._group_auto_approve_loop())
         self._lottery_task_ref = asyncio.create_task(self._lottery_loop())
+        if self.zhongyuan is not None:
+            self.zhongyuan.start()
 
     # =====================================================================
     # 银行周利息后台循环
@@ -1239,6 +1265,12 @@ class PetParkPlugin(Star):
                     task.cancel()
                 except Exception:
                     pass
+        # 中元活动独立模块：取消其后台循环并落盘
+        if self.zhongyuan is not None:
+            try:
+                await self.zhongyuan.terminate()
+            except Exception:
+                logger.exception("[petpark] 中元活动终止出错")
         # 给被取消的任务处理 CancelledError 的机会，再落盘
         await asyncio.sleep(0)
         await self.store.save()
@@ -2807,6 +2839,10 @@ class PetParkPlugin(Star):
         # 群未开启则不响应任何宠物指令
         if not group.get("enabled", True):
             return None
+
+        # ---- 中元活动（独立模块）：已授权且宠物乐园开启的群路由给活动引擎 ----
+        if self.zhongyuan is not None and cmd in self._zy_commands:
+            return self.zhongyuan.dispatch(event, qq, group_id, text)
 
         # ---- 查看类型 / 说明（信息查询，无需有宠物）----
         info = self._handle_info(cmd, tokens)
