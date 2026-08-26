@@ -196,11 +196,16 @@ def normalize_answer(user_text: str, puzzle: dict) -> str | None:
         m = _INT_RE.search(t)
         return m.group(0) if m else None
     # str：剥离常见前缀后与选项/答案比对
-    t2 = re.sub(r"^(答案|答|选|我选|第)", "", t).strip()
+    t2 = re.sub(r"^(答案是|答案|答|选|我选|第|是)", "", t).strip()
     options = puzzle.get("options") or []
     for opt in options:
         if opt and (t == opt or t2 == opt):
             return opt
+    # 用户输入纯数字 → 视为选项序号（1 起），对齐到对应选项原文
+    if t2.isdigit() and options:
+        idx = int(t2) - 1
+        if 0 <= idx < len(options):
+            return options[idx]
     # 兜底：答案关键词包含在输入里
     ans = str(puzzle.get("answer", ""))
     if ans and ans in t:

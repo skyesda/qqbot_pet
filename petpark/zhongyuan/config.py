@@ -63,7 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "puzzle_count": 20,             # 每场题数（20 题，全体共享进度）
     "no_response_sec": 90,          # 全体连续无响应判定（秒，超时自动进入下一题）
     "dungeon_status_interval_sec": 120,  # 副本进行中每隔 N 秒全群播报一次倒计时/进度/存活
-    "individual_fail_wrong": 3,     # 个人答错满 N 次即个人出局
+    "individual_fail_wrong": 2,     # 个人答错满 N 次即揭示答案并出局
     "pull_min_pct": 20,             # 每次拉入参与人数比例下限（%）
     "pull_max_pct": 50,             # 每次拉入参与人数比例上限（%）
     # ---- 功德（唯一货币 / 唯一奖励）----

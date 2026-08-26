@@ -47,9 +47,11 @@ COMMANDS = {
     "副本进度", "我的副本",
     "相约中元", "中元功德榜", "中元排行", "中元签到", "中元里程碑", "功德里程碑",
     "放河灯", "中元问答", "焚香", "供灯", "答", "中元答", "解除阴气", "功德商店",
+    "预定副本", "取消预定",
     # 管理
     "开启中元活动", "关闭中元活动", "中元配置", "中元开始", "中元结束",
     "删除中元活动", "重置中元活动", "中元结算",
+    "强行开副本", "强制开副本", "强行启动副本",
 }
 
 # 中元文化问答（本地题库，DeepSeek 可扩充）
@@ -289,6 +291,7 @@ class ZhongyuanActivity:
                 "yin_until": 0,
                 "last_draw_date": "",
                 "draw_count_today": 0,
+                "reserved": False,
                 "escrow": 0,
                 "daily": {"date": "", "lantern": 0, "quiz": 0, "incense": 0, "sign": 0},
                 "quiz": {},
@@ -575,27 +578,37 @@ class ZhongyuanActivity:
         return int(meta.get("dungeon_draw_count", 0))
 
     async def _start_dungeon(self, group_id: str) -> None:
-        """每次随机拉入本群参与人数的 20%~50%，协作解密一场副本。"""
+        """每次随机拉入本群参与人数的 20%~50%，协作解密一场副本。
+
+        已「预定副本」的玩家被强行拉入（不占随机名额、不受每日被抽上限限制）。
+        """
         gid = str(group_id)
         self._group_state(gid)
         today = self._bj_date()
-        # 本群可被抽取的已绑定玩家（排除当日已到被抽上限者）
-        bound = [
-            ap for ap in self._players_in_group(gid)
-            if ap.get("activity_id")
+        all_bound = [ap for ap in self._players_in_group(gid) if ap.get("activity_id")]
+        # 预定玩家：强行拉入
+        reserved = [ap for ap in all_bound if ap.get("reserved")]
+        # 其余可被随机抽取的（排除当日已到被抽上限者）
+        pool = [
+            ap for ap in all_bound
+            if not ap.get("reserved")
             and not (ap.get("last_draw_date") == today
                      and int(ap.get("draw_count_today", 0)) >= self._int_cfg("max_draw_per_day", 2))
         ]
-        if not bound:
+        if not reserved and not pool:
             return
-        # 随机拉入 20%~50%
+        # 随机拉入 20%~50%（仅对 pool）
         lo = max(1, min(100, self._int_cfg("pull_min_pct", 20)))
         hi = max(lo, min(100, self._int_cfg("pull_max_pct", 50)))
         pct = random.randint(lo, hi) if lo < hi else lo
-        count = max(1, int(len(bound) * pct / 100))
-        count = min(count, len(bound))
-        chosen = random.sample(bound, count)
+        if reserved:
+            count = max(0, int(len(pool) * pct / 100))
+        else:
+            count = max(1, int(len(pool) * pct / 100))
+        count = min(count, len(pool))
+        chosen = reserved + random.sample(pool, count)
         for ap in chosen:
+            ap["reserved"] = False
             ap["last_draw_date"] = today
             ap["draw_count_today"] = int(ap.get("draw_count_today", 0)) + 1
         # 规则怪谈 + 围绕规则生成谜题
@@ -625,13 +638,16 @@ class ZhongyuanActivity:
         meta = self._data.setdefault("meta", {})
         meta["dungeon_draw_count"] = self._dungeon_draw_today() + 1
         names = "、".join(f"#{p['activity_id']:04d} {p['name']}" for p in participants.values())
+        reserve_note = ""
+        if reserved:
+            reserve_note = f"\n> 🎫 其中 **{len(reserved)}** 人为「预定」强行拉入。"
         await self._push_group(
             gid,
             f"## 🚪 阴门开 · 幽影饲育馆（协作解密）\n"
-            f"本次共拉入 **{count}** 名驯宠师：{names}\n"
+            f"本次共拉入 **{len(chosen)}** 名驯宠师：{names}{reserve_note}\n"
             f"> 📜 **规则怪谈**：{rule}\n"
             f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 40)} 分钟内解完 {len(puzzles_list)} 题即通关；"
-            f"个人答错满 {self._int_cfg('individual_fail_wrong', 3)} 次会被淘汰出局。",
+            f"个人答错满 {self._int_cfg('individual_fail_wrong', 2)} 次会揭晓答案并淘汰出局。",
         )
         await self._push_puzzle(gid)
 
@@ -711,16 +727,16 @@ class ZhongyuanActivity:
             return f"✅ #{p['activity_id']:04d} 答对！全体进度 {s['index']}/{len(s['puzzles'])}。"
         p["wrong"] = int(p.get("wrong", 0)) + 1
         s["last_activity"] = self._now()
-        limit = self._int_cfg("individual_fail_wrong", 3)
+        limit = self._int_cfg("individual_fail_wrong", 2)
         if p["wrong"] >= limit:
-            return self._eliminate_participant(group_id, qq)
+            return self._eliminate_participant(group_id, qq, puzzle.get("answer", ""))
         return (
             f"❌ #{p['activity_id']:04d} 答错（个人 {p['wrong']}/{limit}）。\n"
             f"> 提示：{puzzle.get('hint', '') or '规则怪谈里藏着答案，再想想。'}"
         )
 
-    def _eliminate_participant(self, group_id: str, qq: str) -> str:
-        """个人答错满 N 次出局，并「阴气缠身」；若全员出局则副本失败。"""
+    def _eliminate_participant(self, group_id: str, qq: str, answer: str = "") -> str:
+        """个人答错满 N 次出局，并「阴气缠身」+ 揭晓正确答案；若全员出局则副本失败。"""
         s = self._session(group_id)
         p = s["participants"].get(str(qq))
         p["alive"] = False
@@ -729,9 +745,10 @@ class ZhongyuanActivity:
             self._apply_yin(ap)
             ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
         alive = [x for x in s["participants"].values() if x.get("alive")]
+        reveal = f"\n> 正确答案是：**{answer}**" if answer else ""
         msg = (
             f"💀 编号 #{p['activity_id']:04d}（{p.get('name', '?')}）答错满 "
-            f"{self._int_cfg('individual_fail_wrong', 3)} 次，被阴气淘汰，退出本场。"
+            f"{self._int_cfg('individual_fail_wrong', 2)} 次，被阴气淘汰，退出本场。{reveal}"
         )
         if not alive:
             self._sessions().pop(str(group_id), None)
@@ -912,7 +929,7 @@ class ZhongyuanActivity:
         total = len(s.get("puzzles", []))
         correct = int(p.get("correct", 0))
         wrong = int(p.get("wrong", 0))
-        limit = self._int_cfg("individual_fail_wrong", 3)
+        limit = self._int_cfg("individual_fail_wrong", 2)
         alive = bool(p.get("alive"))
         status = "✅ 存活" if alive else "💀 已淘汰（阴气缠身）"
         remain = self._fmt_remain(int(s.get("deadline", 0)))
@@ -934,8 +951,50 @@ class ZhongyuanActivity:
         return "🕯️ 功德商店暂未上架任何商品，敬请期待。"
 
     # ------------------------------------------------------------------
+    # 预定副本（可无限次预定，下次开本时强行拉入，不占随机名额）
+    # ------------------------------------------------------------------
+    def _cmd_reserve(self, group_id: str, qq: str) -> str:
+        ap = self._get_player(group_id, qq, create=False)
+        if not ap or not ap.get("activity_id"):
+            return "❌ 请先「相约中元」领取活动 ID 后再预定副本。"
+        if ap.get("reserved"):
+            return f"🕯️ 你已预定下一场副本（活动 ID #{ap['activity_id']:04d}），阴门开启时将强行拉入。"
+        ap["reserved"] = True
+        return (
+            f"🕯️ 预定成功！下一场「幽影饲育馆」开启时，你将**被强行拉入**，"
+            f"且不占用随机抽取名额（可无限次预定）。\n"
+            f"> 想退出可发送「取消预定」。"
+        )
+
+    def _cmd_cancel_reserve(self, group_id: str, qq: str) -> str:
+        ap = self._get_player(group_id, qq, create=False)
+        if not ap or not ap.get("activity_id"):
+            return "❌ 你尚未相约中元。"
+        if not ap.get("reserved"):
+            return "🕯️ 你当前并无预定，无需取消。"
+        ap["reserved"] = False
+        return "✅ 已取消预定，下一场副本将按正常随机抽取。"
+
+    # ------------------------------------------------------------------
     # 管理指令
     # ------------------------------------------------------------------
+    def _is_superadmin(self, qq: str) -> bool:
+        """大管理员：仅 config 里 admins 白名单，权限高于普通群管理员。"""
+        try:
+            admins = getattr(self.bot, "admins", None) or []
+            return str(qq) in {str(a) for a in admins}
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _cmd_force_dungeon(self, group_id: str, qq: str) -> str | None:
+        """大管理员强行启动一场副本（无视开放时段 / 当日场次上限）。"""
+        if not self._is_superadmin(qq):
+            return "❌ 仅大管理员可强行启动副本。"
+        if self._session(group_id):
+            return "🕯️ 本群已有一场进行中的副本，无法重复开启。"
+        self._spawn(self._start_dungeon(group_id))
+        return "🕯️ 已收到强行开启指令，阴门即将开启…"
+
     def _cmd_admin(self, group_id: str, qq: str, event, cmd: str, args: list[str]) -> str | None:
         if not self.bot._is_admin(event):
             return "❌ 仅管理员可操作中元活动后台。"
@@ -1049,6 +1108,9 @@ class ZhongyuanActivity:
         if cmd in ("开启中元活动", "关闭中元活动", "中元开始", "中元结束",
                    "删除中元活动", "重置中元活动", "中元结算", "中元配置"):
             return self._cmd_admin(group_id, qq, event, cmd, tokens[1:])
+        # 大管理员强行启动副本（权限高于普通群管理员）
+        if cmd in ("强行开副本", "强制开副本", "强行启动副本"):
+            return self._cmd_force_dungeon(group_id, qq)
         # 解密作答（仅被勾中玩家）
         if cmd in ("答", "中元答"):
             answer = text[len(cmd):].strip()
@@ -1081,6 +1143,10 @@ class ZhongyuanActivity:
             return self._cmd_clear_yin(group_id, qq)
         if cmd == "功德商店":
             return self._cmd_shop(group_id, qq)
+        if cmd == "预定副本":
+            return self._cmd_reserve(group_id, qq)
+        if cmd == "取消预定":
+            return self._cmd_cancel_reserve(group_id, qq)
         return None
 
     def _cmd_menu(self, group_id: str) -> str:
@@ -1095,6 +1161,7 @@ class ZhongyuanActivity:
             "**指令一览**\n"
             "`相约中元` · `中元状态` · `中元功德榜` · `中元里程碑` · `中元签到`\n"
             "`放河灯 <寄语>` · `中元问答` · `焚香`/`供灯` · `解除阴气` · `功德商店`\n"
+            "`预定副本`（下次强行拉入）· `取消预定`\n"
             "> 中元不是鬼节，是勾连阴阳两界的思念。"
         )
 
