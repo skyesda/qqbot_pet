@@ -96,7 +96,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "deepseek_api_key": "",         # 默认从环境变量 DEEPSEEK_API_KEY 读取，绝不写死
     "deepseek_temperature": 0.3,
     "deepseek_max_tokens": 800,
-    "deepseek_timeout": 30,         # 单次请求超时（秒）
+    "deepseek_timeout": 120,        # 单次请求超时（秒，批量生成 20 题较慢）
 }
 
 # 允许通过「中元配置 <key> <value>」热改的整型/浮点/字符串键（白名单，防误改结构字段）

@@ -165,6 +165,38 @@ class DeepSeekClient:
         return True, f"连接正常，模型回复：{text.strip()[:24]}", dt
 
     @staticmethod
+    def _strip_option_prefix(text: str) -> str:
+        """剥离选项/答案的编号前缀（A. / 1、 / ③ 等），返回纯文本。"""
+        import re
+        return re.sub(r"^[A-Za-z0-9０-９①②③④⑤⑥⑦⑧⑨]+[\.、．:：\)）]\s*", "", str(text)).strip()
+
+    @staticmethod
+    def _match_answer_to_option(answer: str, options: list[str]) -> str | None:
+        """把模型 answer（可能是 A/B/C、1/2/3 或选项原文）对齐到选项原文；失败返回 None。"""
+        import re
+        a = str(answer).strip()
+        if not a or not options:
+            return None
+        if a in options:
+            return a
+        # 去掉选项编号前缀（A. / 1、 / ③ 等）后与 answer 比对
+        for opt in options:
+            stripped = re.sub(r"^[A-Za-z0-9０-９①②③④⑤⑥⑦⑧⑨]+[\.、．:：\)）]\s*", "", opt).strip()
+            if stripped and a == stripped:
+                return opt
+        # 单字母 A/B/C… → 按字母序映射
+        if len(a) == 1 and a.isalpha():
+            idx = ord(a.upper()) - ord("A")
+            if 0 <= idx < len(options):
+                return options[idx]
+        # 纯数字 → 序号（1 起）
+        if a.isdigit():
+            idx = int(a) - 1
+            if 0 <= idx < len(options):
+                return options[idx]
+        return None
+
+    @staticmethod
     def _parse_puzzle(text: str) -> dict | None:
         """把模型输出解析为谜题 dict；容忍 ```json 围栏与前后空白。"""
         if not text:
@@ -186,14 +218,15 @@ class DeepSeekClient:
         except json.JSONDecodeError:
             return None
         question = str(obj.get("question", "")).strip()
-        options = [str(o).strip() for o in obj.get("options", []) if str(o).strip()]
-        answer = str(obj.get("answer", "")).strip()
+        options = [s for s in (DeepSeekClient._strip_option_prefix(o) for o in obj.get("options", [])) if s]
+        answer = DeepSeekClient._strip_option_prefix(str(obj.get("answer", "")))
         hint = str(obj.get("hint", "")).strip()
         if not question or not answer:
             return None
         if options and answer not in options:
-            # answer 必须是某个选项原文，否则判分无法对齐
-            answer = options[0]
+            # answer 可能是 A/B/C 或序号，先对齐到选项原文
+            mapped = DeepSeekClient._match_answer_to_option(answer, options)
+            answer = mapped or options[0]
         return {
             "question": question,
             "options": options,
@@ -229,13 +262,14 @@ class DeepSeekClient:
             if not isinstance(obj, dict):
                 continue
             question = str(obj.get("question", "")).strip()
-            options = [str(o).strip() for o in obj.get("options", []) if str(o).strip()]
-            answer = str(obj.get("answer", "")).strip()
+            options = [s for s in (cls._strip_option_prefix(o) for o in obj.get("options", [])) if s]
+            answer = cls._strip_option_prefix(str(obj.get("answer", "")))
             hint = str(obj.get("hint", "")).strip()
             if not question or not answer:
                 continue
             if options and answer not in options:
-                answer = options[0]
+                mapped = cls._match_answer_to_option(answer, options)
+                answer = mapped or options[0]
             out.append({
                 "question": question,
                 "options": options,
