@@ -1768,7 +1768,7 @@ async function testSectWar(){
  if(!a||!b){alert('请填写两个群号');return;}
  const r=await apiForm('/api/test_sect_war_full',{group_a:a, group_b:b});
  let t=(r.ok?'✅ ':'❌ ')+(r.msg||'');
- if(r.precheck&&r.precheck.length)t+='\n预检：'+r.precheck.join('；');
+ if(r.precheck&&r.precheck.length)t+='\\n预检：'+r.precheck.join('；');
  g('test_msg').textContent=t;
 }
 async function testClearData(scope){
