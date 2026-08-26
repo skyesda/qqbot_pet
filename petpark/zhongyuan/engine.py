@@ -1194,22 +1194,11 @@ class ZhongyuanActivity:
 
     async def _tick(self) -> None:
         now = self._now()
-        # 1. 解密时限 / 无响应判定
+        # 1. 解密时限 / 周期播报
         for gid, s in list(self._sessions().items()):
             if now > s.get("deadline", 0):
                 reply = self._fail_dungeon(gid, "超时")
                 await self._push_group(gid, reply)
-                continue
-            if now - s.get("last_activity", now) > self._int_cfg("no_response_sec", 90):
-                # 全体连续无响应：自动进入下一题（由 AI 推进）
-                s["index"] += 1
-                s["last_activity"] = now
-                if s["index"] >= len(s["puzzles"]):
-                    reply = self._finish_dungeon(gid)
-                    await self._push_group(gid, reply)
-                else:
-                    await self._push_group(gid, "⏳ 长时间无人作答，已自动进入下一题。")
-                    await self._push_puzzle(gid)
                 continue
             # 周期性播报倒计时 / 答题进度 / 存活与淘汰
             if now - s.get("last_status_ts", 0) >= self._int_cfg("dungeon_status_interval_sec", 120):
