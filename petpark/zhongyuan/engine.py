@@ -694,7 +694,15 @@ class ZhongyuanActivity:
         survivors.sort(key=lambda p: -int(p.get("correct", 0)))
         total_correct = sum(int(p.get("correct", 0)) for p in survivors)
         if total_correct <= 0:
-            return "🕯️ 全员沉默，阴门闭合。本场无人答对，不计通关。"
+            for p in survivors:
+                ap = self._get_player(gid, p["qq"])
+                if ap is not None:
+                    self._apply_yin(ap)
+                    ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
+            return (
+                f"🕯️ 全员沉默，阴门闭合。本场无人答对，计为失败，存活玩家 {len(survivors)} 人"
+                f"均被「阴气缠身」（{self._int_cfg('yin_penalty_min', 60)} 分钟）。"
+            )
         perfect_n = max(1, (len(survivors) + 9) // 10)  # 前 10%，至少 1 人
         perfect_set = {p["qq"] for p in survivors[:perfect_n] if int(p.get("correct", 0)) > 0}
         base = self._int_cfg("gongde_clear", 300)
