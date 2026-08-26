@@ -83,6 +83,9 @@ class WebAdmin:
         app.router.add_post("/api/lottery/draw", self._api_lottery_draw)
         app.router.add_post("/api/zhongyuan/config", self._api_zhongyuan_config)
         app.router.add_post("/api/zhongyuan/config/save", self._api_zhongyuan_config_save)
+        app.router.add_post("/api/test/broadcast", self._api_test_broadcast)
+        app.router.add_post("/api/test/zhongyuan_push", self._api_test_zhongyuan_push)
+        app.router.add_post("/api/test/clear_data", self._api_test_clear_data)
 
         portal = PlayerPortal(
             self.store,
@@ -645,6 +648,115 @@ class WebAdmin:
         logger.info(f"[petpark][webadmin] 中元活动配置保存 by {request.remote}（成功 {ok}，跳过 {len(bad)}）")
         return self._json({"ok": True, "changed": ok, "bad": bad})
 
+    async def _api_test_broadcast(self, request):
+        """测试：向所有已授权且有 UMO 的群推送一条全服广播测试消息。"""
+        self._require(request)
+        gw = self._command_gateway
+        if gw is None:
+            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
+        text = (
+            "## 🧪 全服广播测试\n"
+            "本消息由「全服广播」主动推送到所有已授权群。若你看到此消息，说明全服广播链路正常。\n"
+            "> 此为测试广播，可忽略。"
+        )
+        try:
+            result = await gw._do_broadcast(text)
+        except Exception as e:
+            logger.exception("[petpark] 全服广播测试异常")
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        return self._json(
+            {
+                "ok": True,
+                "msg": (
+                    f"全服广播完成：成功 {result.get('sent', 0)} / 目标 {result.get('targets', 0)}"
+                    f"（总群 {result.get('total_groups', 0)}，授权 {result.get('authorized_groups', 0)}，"
+                    f"有UMO {result.get('umo_ready_groups', 0)}，失败 {result.get('failed', 0)}）"
+                ),
+                "detail": result,
+            }
+        )
+
+    async def _api_test_zhongyuan_push(self, request):
+        """测试：中元活动引擎向指定群推送一条测试消息。"""
+        self._require(request)
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
+        body = await request.json()
+        gid = str(body.get("group_id", "") or "").strip()
+        if not gid:
+            return self._json({"ok": False, "msg": "缺少 group_id"})
+        text = (
+            "## 🕯️ 中元活动推送测试\n"
+            "本消息由中元活动引擎主动推送。若你看到此消息，说明中元推送链路正常。\n"
+            "> 此为测试推送，可忽略。"
+        )
+        try:
+            await zy._push_group(gid, text)
+        except Exception as e:
+            logger.exception("[petpark] 中元推送测试异常")
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        return self._json({"ok": True, "msg": f"已向群 {gid} 发起中元活动推送"})
+
+    async def _api_test_clear_data(self, request):
+        """测试：清除内测数据。
+
+        scope：
+        - ``all``       一键清除全部内测进度（玩家/活动/卡密/各玩法/宗门赛季/中元等），
+                        保留群列表与 umo/授权、网页账号、portal_secret、group_map、
+                        qq_bindings、email_config 等配置，无需重新授权。
+        - ``zhongyuan`` 仅清除中元活动数据（保留配置）。
+        """
+        self._require(request)
+        body = await request.json()
+        scope = str(body.get("scope", "all")).strip()
+        gw = self._command_gateway
+        if gw is None:
+            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
+
+        cleared: list[str] = []
+        if scope in ("all", "players"):
+            d = gw.store._data
+            wipe_keys = [
+                "players", "events", "cards", "tomb_players", "ms_players",
+                "homestead_players", "bank_players", "tomb_active_sessions",
+                "tomb_active_coops", "tomb_active_coop_index", "prize_wallet",
+                "custom_reviews", "custom_pets", "app_release", "feedbacks",
+                "tomb_daily_reward",
+            ]
+            for k in wipe_keys:
+                if k in d:
+                    d[k] = {}
+                    cleared.append(k)
+            d["sect_season"] = gw.store._default_sect_season()
+            cleared.append("sect_season")
+            d["lottery"] = None
+            cleared.append("lottery")
+            # 重置各群运行时状态（保留 umo / enabled / cross / 群名等注册信息）
+            for g in d.get("groups", {}).values():
+                g["sect"] = gw.store._default_group_sect()
+                for rk in ("sign_count", "boss_states", "boss_state", "sect_war",
+                           "war", "today", "_daily", "last_sign"):
+                    g.pop(rk, None)
+            await gw.store.save()
+
+        if scope in ("all", "zhongyuan"):
+            zy = self.zhongyuan
+            if zy is not None:
+                zy._data["players"] = {}
+                zy._data["groups"] = {}
+                zy._data["sessions"] = {}
+                zy._data["meta"]["activity_id_seq"] = 0
+                zy._data.pop("settled", None)
+                await zy.save()
+                cleared.append("zhongyuan")
+            else:
+                cleared.append("zhongyuan(未加载)")
+
+        msg = "已清除：" + "、".join(cleared) if cleared else "无数据可清除"
+        logger.info(f"[petpark][webadmin] 内测数据清除 scope={scope} by {request.remote}：{msg}")
+        return self._json({"ok": True, "msg": msg, "cleared": cleared})
+
     async def _api_test_sect_broadcast(self, request):
         """临时：向指定群发送一条定向广播测试消息，验证 _send_to_group 通路。"""
         from aiohttp import web
@@ -990,6 +1102,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button>
 <button data-t="app_release" onclick="tab('app_release')">App 发布</button>
 <button data-t="zhongyuan" onclick="tab('zhongyuan')">中元活动</button>
+<button data-t="test" onclick="tab('test')">测试</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -1311,8 +1424,8 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='test')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='test')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
@@ -1320,10 +1433,11 @@ function tab(t){
  else if(t==='app_release') loadAppRelease();
  else if(t==='lottery') loadLottery();
  else if(t==='zhongyuan') loadZhongyuan();
+ else if(t==='test') loadTest();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='test') return loadTest(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1337,6 +1451,7 @@ function render(){
  else if(cur==='custom_pets')renderCustomPets();
  else if(cur==='feedbacks')renderFeedbacks();
  else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘 */ }
+ else if(cur==='test'){ /* 由 loadTest 自绘 */ }
  else renderCards();
 }
 // ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
@@ -1514,6 +1629,94 @@ async function saveZhongyuan(){
  if(!r){msg.textContent='❌ 保存失败：无响应';return;}
  msg.textContent=r.ok?('✅ 已保存'+(r.bad&&r.bad.length?'（跳过：'+r.bad.join(', ')+'）':'')):('❌ 保存失败：'+(r.msg||'未知错误'));
  if(r.ok) loadZhongyuan();
+}
+// ---- 测试面板（推送测试 + 内测数据清除）----
+function apiForm(p,b){const fd=new URLSearchParams();for(const k in b)fd.append(k,b[k]);return fetch(p,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:fd}).then(r=>r.json());}
+function loadTest(){
+ document.getElementById('count').textContent='';
+ document.getElementById('extrawrap').innerHTML='';
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:960px">
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px;margin-bottom:14px">
+   <h3 style="margin:0 0 16px">📡 推送测试 <span class="muted" style="font-weight:400">（点击立即真实投递到 QQ 群）</span></h3>
+   <div class="row" style="align-items:center">
+    <label class="fld">定向群推送 <input id="t_direct_gid" placeholder="群号" style="width:190px"></label>
+    <button class="act" onclick="testDirectPush()">立即推送</button>
+   </div>
+   <div class="row" style="align-items:center">
+    <label class="fld">全服广播 <span class="muted">（所有已授权且有 UMO 的群）</span></label>
+    <button class="act" onclick="testBroadcast()">立即广播</button>
+   </div>
+   <div class="row" style="align-items:center">
+    <label class="fld">中元活动推送 <input id="t_zy_gid" placeholder="群号" style="width:190px"></label>
+    <button class="act" onclick="testZhongyuanPush()">立即推送</button>
+   </div>
+   <div class="row" style="align-items:center">
+    <label class="fld">Boss 复活广播 <input id="t_boss_eid" placeholder="活动ID" style="width:190px"></label>
+    <button class="act" onclick="testBossRespawn()">复活并播报</button>
+   </div>
+   <div class="row" style="align-items:center">
+    <label class="fld">口令抽奖开奖</label>
+    <button class="act" onclick="testLotteryDraw()">立即开奖</button>
+   </div>
+   <div class="row" style="align-items:center">
+    <label class="fld">宗门战整套广播 A <input id="t_war_a" placeholder="群A号" style="width:170px"></label>
+    <label class="fld">B <input id="t_war_b" placeholder="群B号" style="width:170px"></label>
+    <button class="act" onclick="testSectWar()">跑整套</button>
+   </div>
+   <div class="muted" id="test_msg" style="margin-top:10px;white-space:pre-wrap"></div>
+  </div>
+  <div style="background:#fff;border:1px solid #ffd9d9;border-radius:14px;padding:22px">
+   <h3 style="margin:0 0 16px;color:#c0392b">🗑️ 内测数据清除 <span class="muted" style="font-weight:400;color:#999">（不可恢复，请谨慎）</span></h3>
+   <div class="row">
+    <button class="act del" onclick="testClearData('all')">一键清除全部内测数据</button>
+    <button class="act del" onclick="testClearData('zhongyuan')">仅清除中元活动数据</button>
+   </div>
+   <div class="muted" style="margin-top:8px">「全部」会清空玩家 / 活动 / 卡密 / 各玩法 / 宗门赛季 / 中元等所有进度数据；保留群列表与 umo/授权（无需重新授权）、网页账号、邮箱等配置。</div>
+   <div class="muted" id="clear_msg" style="margin-top:10px"></div>
+  </div>
+ </div>`;
+}
+async function testDirectPush(){
+ const gid=g('t_direct_gid').value.trim();
+ if(!gid){alert('请填写群号');return;}
+ const r=await apiForm('/api/test_sect_broadcast',{group_id:gid});
+ g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
+async function testBroadcast(){
+ const r=await api('/api/test/broadcast',{});
+ g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
+async function testZhongyuanPush(){
+ const gid=g('t_zy_gid').value.trim();
+ if(!gid){alert('请填写群号');return;}
+ const r=await api('/api/test/zhongyuan_push',{group_id:gid});
+ g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
+async function testBossRespawn(){
+ const eid=g('t_boss_eid').value.trim();
+ if(!eid){alert('请填写活动ID');return;}
+ const r=await api('/api/boss_respawn',{event_id:eid});
+ g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
+async function testLotteryDraw(){
+ if(!confirm('确认立即开奖？'))return;
+ const r=await api('/api/lottery/draw',{});
+ g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
+async function testSectWar(){
+ const a=g('t_war_a').value.trim(), b=g('t_war_b').value.trim();
+ if(!a||!b){alert('请填写两个群号');return;}
+ const r=await apiForm('/api/test_sect_war_full',{group_a:a, group_b:b});
+ let t=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+ if(r.precheck&&r.precheck.length)t+='\n预检：'+r.precheck.join('；');
+ g('test_msg').textContent=t;
+}
+async function testClearData(scope){
+ const label=scope==='all'?'全部内测数据（玩家/活动/卡密/各玩法/宗门/中元）':'中元活动数据';
+ if(!confirm('确认清除 '+label+' ？此操作不可恢复！'))return;
+ const r=await api('/api/test/clear_data',{scope});
+ g('clear_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
 }
 function shell(head,rows,cols){
  document.getElementById('count').textContent='共 '+Object.keys(cache).length+' 条';
