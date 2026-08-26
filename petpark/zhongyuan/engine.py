@@ -44,6 +44,7 @@ BJ = ZoneInfo("Asia/Shanghai")
 COMMANDS = {
     # 玩家
     "中元活动", "中元活动介绍", "中元状态", "我的中元",
+    "副本进度", "我的副本",
     "绑定中元宠物", "中元绑定", "中元功德榜", "中元排行", "中元签到",
     "放河灯", "中元问答", "焚香", "供灯", "答", "中元答", "解除阴气", "中元兑换",
     # 管理
@@ -591,16 +592,16 @@ class ZhongyuanActivity:
             "index": 0,
             "participants": participants,
             "started_at": self._now(),
-            "deadline": self._now() + self._int_cfg("dungeon_limit_min", 30) * 60,
+            "deadline": self._now() + self._int_cfg("dungeon_limit_min", 40) * 60,
             "last_activity": self._now(),
         }
-        names = "、".join(p["pet_name"] for p in participants.values())
+        names = "、".join(f"#{p['activity_id']:04d} {p['pet_name']}" for p in participants.values())
         await self._push_group(
             gid,
             f"## 🚪 阴门开 · 幽影饲育馆（协作解密）\n"
             f"本次共拉入 **{count}** 名驯宠师：{names}\n"
             f"> 📜 **规则怪谈**：{rule}\n"
-            f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 30)} 分钟内解完 {len(puzzles_list)} 题即通关；"
+            f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 40)} 分钟内解完 {len(puzzles_list)} 题即通关；"
             f"个人答错满 {self._int_cfg('individual_fail_wrong', 3)} 次会被淘汰出局。",
         )
         await self._push_puzzle(gid)
@@ -828,6 +829,33 @@ class ZhongyuanActivity:
             f"> 状态：{yin}"
         )
 
+    def _cmd_dungeon_status(self, group_id: str, qq: str) -> str:
+        """副本进行中：查看自己的答题进度（答对/答错）与是否已淘汰。"""
+        s = self._session(group_id)
+        if not s:
+            return "🕯️ 当前本群没有进行中的副本（阴门未开）。"
+        p = s["participants"].get(str(qq))
+        if p is None:
+            return "🕯️ 你不在本场副本的参与者之列。"
+        idx = int(s.get("index", 0))
+        total = len(s.get("puzzles", []))
+        correct = int(p.get("correct", 0))
+        wrong = int(p.get("wrong", 0))
+        limit = self._int_cfg("individual_fail_wrong", 3)
+        alive = bool(p.get("alive"))
+        status = "✅ 存活" if alive else "💀 已淘汰（阴气缠身）"
+        remain = self._fmt_remain(int(s.get("deadline", 0)))
+        return (
+            f"## 🕯️ 你的副本进度\n"
+            f"> 编号：**#{p['activity_id']:04d}** · 宠物：**{p.get('pet_name', '?')}**\n"
+            f"> 状态：{status}\n"
+            f"> 个人答对：**{correct}** 题\n"
+            f"> 个人答错：**{wrong}/{limit}**"
+            f"{'（再错 ' + str(max(0, limit - wrong)) + ' 次即淘汰）' if alive else ''}\n"
+            f"> 全队进度：**{idx}/{total}** 题\n"
+            f"> 本场剩余：{remain}"
+        )
+
     def _cmd_redeem(self, group_id: str, qq: str) -> str:
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
@@ -965,6 +993,8 @@ class ZhongyuanActivity:
             return self._cmd_menu(group_id)
         if cmd in ("中元状态", "我的中元"):
             return self._cmd_status(group_id, qq)
+        if cmd in ("副本进度", "我的副本"):
+            return self._cmd_dungeon_status(group_id, qq)
         if cmd in ("绑定中元宠物", "中元绑定"):
             index = None
             if len(tokens) > 1 and tokens[1].isdigit():
