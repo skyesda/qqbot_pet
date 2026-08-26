@@ -2845,6 +2845,12 @@ class PetParkPlugin(Star):
         if self.zhongyuan is not None and cmd in self._zy_commands:
             return self.zhongyuan.dispatch(event, qq, group_id, text)
 
+        # ---- 「阴气缠身」锁定：中元副本失败后禁止一切宠物指令，仅可参与中元活动 ----
+        if self.zhongyuan is not None:
+            block = self.zhongyuan.yin_lock_block(qq, group_id)
+            if block:
+                return block
+
         # ---- 查看类型 / 说明（信息查询，无需有宠物）----
         info = self._handle_info(cmd, tokens)
         if info is not None:

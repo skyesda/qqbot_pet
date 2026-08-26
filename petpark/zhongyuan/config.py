@@ -56,15 +56,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "redeem_window_hours": 48,      # 活动结束后兑换窗口（小时）
     # ---- 抽人 ----
     "max_draw_per_day": 2,          # 每人每日最多被抽入次数
-    # ---- 解密 ----
-    "puzzle_count": 3,              # 单场题数
-    "yin_max": 3,                   # 阴气上限（满格判负）
-    "no_response_sec": 90,          # 连续无响应判定（秒）
-    "yin_debuff_pct": 3,            # 失败「阴气缠身」全属性降低百分比
+    # ---- 解密（协作副本：全体共享进度）----
+    "puzzle_count": 20,             # 每场题数（20 题，全体共享进度）
+    "no_response_sec": 90,          # 全体连续无响应判定（秒，超时自动进入下一题）
+    "individual_fail_wrong": 3,     # 个人答错满 N 次即个人出局
+    "pull_min_pct": 20,             # 每次拉入参与人数比例下限（%）
+    "pull_max_pct": 50,             # 每次拉入参与人数比例上限（%）
     # ---- 功德（唯一货币 / 唯一奖励）----
-    "gongde_clear": 300,            # 通关基础功德
-    "gongde_perfect": 200,          # 完美通关额外功德
-    "gongde_fail": 20,              # 失败安慰功德
+    "gongde_clear": 300,            # 通关基础功德（存活玩家）
+    "perfect_reward_mult": 2,       # 完美成就（答对次数前 10%）奖励倍数
     # ---- 文化玩法：放河灯 / 供灯焚香 / 中元问答（次数 / 冷却 / 随机功德）----
     "lantern_daily_limit": 10,      # 放河灯每日次数
     "incense_daily_limit": 10,      # 供灯 / 焚香每日次数
@@ -79,8 +79,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gongde_quiz_min": 10,          # 问答答对功德随机下限
     "gongde_quiz_max": 20,          # 问答答对功德随机上限
     "gongde_sign": 10,              # 每日签到功德
-    "yin_clear_cost": 300,          # 功德快速解除「阴气缠身」消耗
-    "yin_clear_discount": 0.7,      # 单日两次失败后的解除折扣（0.7 = 7 折）
+    "yin_penalty_min": 60,          # 副本失败「阴气缠身」时长（分钟，默认 1 小时）
+    "yin_clear_cost": 100,          # 快速解除「阴气缠身」消耗功德
     # ---- 段位 / 里程碑 ----
     "tiers": DEFAULT_TIERS,
     "milestones": DEFAULT_MILESTONES,
@@ -98,12 +98,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
 _EDITABLE_KEYS = {
     "enabled", "open_hour", "close_hour", "trigger_interval_min", "dungeon_limit_min",
     "bind_open_hours_before", "bind_close_hours_before", "redeem_window_hours",
-    "max_draw_per_day", "puzzle_count", "yin_max", "no_response_sec", "yin_debuff_pct",
-    "gongde_clear", "gongde_perfect", "gongde_fail",
+    "max_draw_per_day", "puzzle_count", "no_response_sec",
+    "individual_fail_wrong", "pull_min_pct", "pull_max_pct",
+    "gongde_clear", "perfect_reward_mult",
     "lantern_daily_limit", "incense_daily_limit", "quiz_daily_limit",
     "lantern_cooldown_min", "incense_cooldown_min", "quiz_timeout_sec",
     "gongde_lantern_min", "gongde_lantern_max", "gongde_incense_min", "gongde_incense_max",
-    "gongde_quiz_min", "gongde_quiz_max", "gongde_sign", "yin_clear_cost", "yin_clear_discount",
+    "gongde_quiz_min", "gongde_quiz_max", "gongde_sign",
+    "yin_penalty_min", "yin_clear_cost",
     "deepseek_enabled", "deepseek_model", "deepseek_base_url", "deepseek_api_key",
     "deepseek_temperature", "deepseek_max_tokens", "deepseek_timeout",
 }

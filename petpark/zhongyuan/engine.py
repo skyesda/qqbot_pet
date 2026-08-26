@@ -269,8 +269,6 @@ class ZhongyuanActivity:
                 "best_time_sec": 0,
                 "bound_at": self._now(),
                 "yin_until": 0,
-                "yin_fail_today": 0,
-                "yin_fail_date": "",
                 "last_draw_date": "",
                 "draw_count_today": 0,
                 "escrow": 0,
@@ -550,11 +548,11 @@ class ZhongyuanActivity:
     # 解密会话（阴面）
     # ------------------------------------------------------------------
     async def _start_dungeon(self, group_id: str) -> None:
-        """为一个群抽取一名玩家并生成谜题、开始解密。"""
+        """每次随机拉入本群参与人数的 20%~50%，协作解密一场副本。"""
         gid = str(group_id)
-        g = self._group_state(gid)
+        self._group_state(gid)
         today = self._bj_date()
-        # 本群可被抽取的已绑定玩家（排除当日已到上限者）
+        # 本群可被抽取的已绑定玩家（排除当日已到被抽上限者）
         bound = [
             ap for ap in self._players_in_group(gid)
             if ap.get("activity_id")
@@ -563,60 +561,64 @@ class ZhongyuanActivity:
         ]
         if not bound:
             return
-        ap = random.choice(bound)
-        pet = self._resolve_pet(ap)
-        if pet is None:
-            # 宠物已被放生/丢失，跳过并提示
-            self._spawn(self._push_group(
-                gid, f"⚠️ 编号 #{ap['activity_id']:04d} 的绑定宠物已不在，无法拉入副本。"))
-            return
-        ap["last_draw_date"] = today
-        ap["draw_count_today"] = int(ap.get("draw_count_today", 0)) + 1
-        # 生成谜题
-        puzzles_list = await self._generate_puzzles()
-        session = {
-            "qq": ap["qq"],
-            "activity_id": ap["activity_id"],
-            "pet_name": ap.get("pet_name", "?"),
+        # 随机拉入 20%~50%
+        lo = max(1, min(100, self._int_cfg("pull_min_pct", 20)))
+        hi = max(lo, min(100, self._int_cfg("pull_max_pct", 50)))
+        pct = random.randint(lo, hi) if lo < hi else lo
+        count = max(1, int(len(bound) * pct / 100))
+        count = min(count, len(bound))
+        chosen = random.sample(bound, count)
+        for ap in chosen:
+            ap["last_draw_date"] = today
+            ap["draw_count_today"] = int(ap.get("draw_count_today", 0)) + 1
+        # 规则怪谈 + 围绕规则生成谜题
+        rule = await self._generate_rule()
+        puzzles_list = await self._generate_puzzles(rule)
+        participants = {
+            str(ap["qq"]): {
+                "qq": str(ap["qq"]),
+                "activity_id": ap.get("activity_id"),
+                "pet_name": ap.get("pet_name", "?"),
+                "correct": 0,
+                "wrong": 0,
+                "alive": True,
+            } for ap in chosen
+        }
+        self._sessions()[gid] = {
+            "group": gid,
+            "rule": rule,
             "puzzles": puzzles_list,
             "index": 0,
-            "yin": 0,
-            "perfect": True,
+            "participants": participants,
             "started_at": self._now(),
             "deadline": self._now() + self._int_cfg("dungeon_limit_min", 30) * 60,
             "last_activity": self._now(),
         }
-        self._sessions()[gid] = session
+        names = "、".join(p["pet_name"] for p in participants.values())
         await self._push_group(
             gid,
-            f"## 🚪 阴门开 · 诡异副本降临\n"
-            f"【{self._bj_hour():02d}时 阴门开】编号 **#{ap['activity_id']:04d}** 的驯宠师，"
-            f"其宠物 **{ap.get('pet_name')}** 已被勾入「幽影饲育馆」。\n"
-            f"> 全群围观见证，被勾者请在 {self._int_cfg('dungeon_limit_min', 30)} 分钟内解完 "
-            f"{self._int_cfg('puzzle_count', 3)} 道谜题。\n"
-            f"> 以「答 <答案>」作答；答错积阴气，阴气满格（{self._int_cfg('yin_max', 3)} 层）即败。",
+            f"## 🚪 阴门开 · 幽影饲育馆（协作解密）\n"
+            f"本次共拉入 **{count}** 名驯宠师：{names}\n"
+            f"> 📜 **规则怪谈**：{rule}\n"
+            f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 30)} 分钟内解完 {len(puzzles_list)} 题即通关；"
+            f"个人答错满 {self._int_cfg('individual_fail_wrong', 3)} 次会被淘汰出局。",
         )
         await self._push_puzzle(gid)
 
-    async def _generate_puzzles(self) -> list[dict]:
-        """生成单场谜题：优先 DeepSeek，失败/关闭回退本地模板。"""
-        count = max(1, self._int_cfg("puzzle_count", 3))
-        out = []
+    async def _generate_rule(self) -> str:
+        """生成「规则怪谈」总线索：优先 DeepSeek，失败/关闭回退本地模板。"""
         if self._deepseek.available:
-            themes = random.sample(puzzles.THEMES, k=min(count, len(puzzles.THEMES)))
-            results = await asyncio.gather(
-                *(self._deepseek.generate_puzzle(t) for t in themes),
-                return_exceptions=True,
-            )
-            for theme, p in zip(themes, results):
-                if isinstance(p, dict) and p:
-                    out.append(p)
-                else:
-                    out.append(puzzles.local_puzzle(theme))
-        else:
-            for _ in range(count):
-                out.append(puzzles.local_puzzle())
-        # 不足则补齐
+            rule = await self._deepseek.generate_rule()
+            if rule:
+                return rule
+        return random.choice(puzzles.LOCAL_RULES)
+
+    async def _generate_puzzles(self, rule: str) -> list[dict]:
+        """围绕规则怪谈生成整场谜题：优先 DeepSeek 批量，失败/关闭回退本地模板补齐。"""
+        count = max(1, self._int_cfg("puzzle_count", 20))
+        out: list[dict] = []
+        if self._deepseek.available:
+            out = await self._deepseek.generate_puzzles_batch(rule, count)
         while len(out) < count:
             out.append(puzzles.local_puzzle())
         return out[:count]
@@ -629,102 +631,127 @@ class ZhongyuanActivity:
         opts = "\n".join(f"{i + 1}. {o}" for i, o in enumerate(p.get("options", [])))
         await self._push_group(
             group_id,
-            f"## 🕯️ 第 {s['index'] + 1}/{len(s['puzzles'])} 题 · {p.get('theme', '')}\n"
+            f"## 🕯️ 第 {s['index'] + 1}/{len(s['puzzles'])} 题\n"
             f"> {p.get('question')}\n\n{opts}\n"
-            f"> 以「答 <答案>」作答。",
+            f"> 任意参与者以「答 <答案>」作答；有人答对，全体进度 +1。",
         )
 
     def _check_answer(self, group_id: str, qq: str, text: str) -> str | None:
-        """被勾中的玩家作答；返回回复文本（异步推送后续题/结算在 loop 中处理）。"""
+        """协作副本作答：有人答对全体进度 +1；个人答错满 N 次即个人出局。"""
         s = self._session(group_id)
         if not s:
             return None
-        if str(s.get("qq")) != str(qq):
-            return None  # 非被勾中玩家，忽略
+        p = s["participants"].get(str(qq))
+        if p is None or not p.get("alive"):
+            return None  # 非参与者或已出局，忽略
         if self._now() > s.get("deadline", 0):
-            return "⏰ 本场解密已超时。"
-        p = s["puzzles"][s["index"]]
-        if puzzles.is_correct(text, p):
-            s["index"] += 1
+            return "⏰ 本场副本已超时。"
+        puzzle = s["puzzles"][s["index"]]
+        if puzzles.is_correct(text, puzzle):
+            p["correct"] = int(p.get("correct", 0)) + 1
             s["last_activity"] = self._now()
+            s["index"] += 1
             if s["index"] >= len(s["puzzles"]):
                 return self._finish_dungeon(group_id)
-            # 推进下一题（异步推送）
             self._spawn(self._push_puzzle(group_id))
-            return f"✅ 答对。阴气 {s['yin']}/{self._int_cfg('yin_max', 3)}。"
-        else:
-            s["yin"] += 1
-            s["perfect"] = False
-            s["last_activity"] = self._now()
-            if s["yin"] >= self._int_cfg("yin_max", 3):
-                return self._fail_dungeon(group_id, "阴气满格")
-            return (
-                f"❌ 答错。阴气 +1（{s['yin']}/{self._int_cfg('yin_max', 3)}）。\n"
-                f"> 提示：{p.get('hint', '') or '再想想。'}"
-            )
+            return f"✅ #{p['activity_id']:04d} 答对！全体进度 {s['index']}/{len(s['puzzles'])}。"
+        p["wrong"] = int(p.get("wrong", 0)) + 1
+        s["last_activity"] = self._now()
+        limit = self._int_cfg("individual_fail_wrong", 3)
+        if p["wrong"] >= limit:
+            return self._eliminate_participant(group_id, qq)
+        return (
+            f"❌ #{p['activity_id']:04d} 答错（个人 {p['wrong']}/{limit}）。\n"
+            f"> 提示：{puzzle.get('hint', '') or '规则怪谈里藏着答案，再想想。'}"
+        )
+
+    def _eliminate_participant(self, group_id: str, qq: str) -> str:
+        """个人答错满 N 次出局，并「阴气缠身」；若全员出局则副本失败。"""
+        s = self._session(group_id)
+        p = s["participants"].get(str(qq))
+        p["alive"] = False
+        ap = self._get_player(group_id, qq)
+        if ap is not None:
+            self._apply_yin(ap)
+            ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
+        alive = [x for x in s["participants"].values() if x.get("alive")]
+        msg = (
+            f"💀 编号 #{p['activity_id']:04d}（{p.get('pet_name', '?')}）答错满 "
+            f"{self._int_cfg('individual_fail_wrong', 3)} 次，被阴气淘汰，退出本场。"
+        )
+        if not alive:
+            self._sessions().pop(str(group_id), None)
+            msg += "\n全员淘汰，副本失败。"
+        return msg
 
     def _finish_dungeon(self, group_id: str) -> str:
+        """通关结算：存活玩家共享通关功德；答对次数前 10% 达成完美，奖励翻倍。"""
         s = self._sessions().pop(group_id, None)
-        ap = self._get_player(group_id, s["qq"])
-        if ap is None:
-            return "✅ 通关。"
-        ap["clear_count"] = int(ap.get("clear_count", 0)) + 1
-        elapsed = self._now() - s["started_at"]
-        if not ap.get("best_time_sec") or elapsed < ap["best_time_sec"]:
-            ap["best_time_sec"] = elapsed
-        perfect = bool(s.get("perfect"))
-        reward = self._int_cfg("gongde_clear", 300)
-        if perfect:
-            ap["perfect_count"] = int(ap.get("perfect_count", 0)) + 1
-            reward += self._int_cfg("gongde_perfect", 200)
-        self._add_gongde(ap, reward)
-        self._group_add_gongde(group_id, reward)
-        tag = "✨ 完美通关" if perfect else "🎉 通关"
+        gid = str(group_id)
+        survivors = [p for p in s["participants"].values() if p.get("alive")]
+        if not survivors:
+            return "🕯️ 全员淘汰，阴门闭合。"
+        survivors.sort(key=lambda p: -int(p.get("correct", 0)))
+        total_correct = sum(int(p.get("correct", 0)) for p in survivors)
+        if total_correct <= 0:
+            return "🕯️ 全员沉默，阴门闭合。本场无人答对，不计通关。"
+        perfect_n = max(1, (len(survivors) + 9) // 10)  # 前 10%，至少 1 人
+        perfect_set = {p["qq"] for p in survivors[:perfect_n] if int(p.get("correct", 0)) > 0}
+        base = self._int_cfg("gongde_clear", 300)
+        mult = self._int_cfg("perfect_reward_mult", 2)
+        lines = []
+        for p in survivors:
+            ap = self._get_player(gid, p["qq"])
+            if ap is None:
+                continue
+            perfect = p["qq"] in perfect_set
+            reward = base * mult if perfect else base
+            self._add_gongde(ap, reward)
+            self._group_add_gongde(gid, reward)
+            ap["clear_count"] = int(ap.get("clear_count", 0)) + 1
+            if perfect:
+                ap["perfect_count"] = int(ap.get("perfect_count", 0)) + 1
+            tag = "✨完美" if perfect else "🎉通关"
+            lines.append(f"{tag} #{p['activity_id']:04d} {p.get('pet_name','?')}：答对 {p['correct']} 题，功德 +{reward}")
         return (
-            f"{tag}！编号 #{s['activity_id']:04d} 解开了《规矩簿》，用时 {elapsed // 60} 分 {elapsed % 60} 秒。\n"
-            f"> 功德 **+{reward}**（当前 {ap['gongde']}）。"
+            f"## 🎉 幽影饲育馆通关\n"
+            f"> 全队协作解完 {len(s['puzzles'])} 题，存活 {len(survivors)} 人。\n"
+            + "\n".join(lines)
         )
 
     def _fail_dungeon(self, group_id: str, reason: str) -> str:
+        """整场超时失败：存活玩家全部「阴气缠身」。"""
         s = self._sessions().pop(group_id, None)
-        ap = self._get_player(group_id, s["qq"])
-        if ap is None:
-            return f"❌ 失败（{reason}）。"
-        ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
-        # 失败安慰功德
-        reward = self._int_cfg("gongde_fail", 20)
-        self._add_gongde(ap, reward)
-        self._group_add_gongde(group_id, reward)
-        # 阴气缠身 debuff（至次日 8:00）
-        ap["yin_until"] = self._next_open_ts()
-        # 记录当日失败次数（用于解除折扣）
-        today = self._bj_date()
-        if ap.get("yin_fail_date") != today:
-            ap["yin_fail_date"] = today
-            ap["yin_fail_today"] = 0
-        ap["yin_fail_today"] = int(ap.get("yin_fail_today", 0)) + 1
+        gid = str(group_id)
+        survivors = [p for p in s["participants"].values() if p.get("alive")]
+        for p in survivors:
+            ap = self._get_player(gid, p["qq"])
+            if ap is not None:
+                self._apply_yin(ap)
+                ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
         return (
-            f"❌ 失败（{reason}）。编号 #{s['activity_id']:04d} 的宠物被「阴气缠身」"
-            f"（至次日 8:00）。\n> 安慰功德 **+{reward}**（当前 {ap['gongde']}）。"
+            f"❌ 副本失败（{reason}）。存活玩家 {len(survivors)} 人均被「阴气缠身」"
+            f"（{self._int_cfg('yin_penalty_min', 60)} 分钟）。"
         )
 
-    def _resolve_pet(self, ap: dict) -> dict | None:
-        tp = self.bot.store.get_player(ap.get("qq"), ap.get("group"), create=False)
-        if not tp:
-            return None
-        for p in tp.get("pets", []):
-            if p.get("pet_id") == ap.get("pet_id"):
-                return p
-        return None
+    def _apply_yin(self, ap: dict) -> None:
+        """施加「阴气缠身」：禁止宠物指令，持续 yin_penalty_min 分钟。"""
+        ap["yin_until"] = self._now() + self._int_cfg("yin_penalty_min", 60) * 60
 
-    def _next_open_ts(self) -> int:
-        now = self._now_bj()
-        open_hour = self._int_cfg("open_hour", 8)
-        target = now.replace(hour=open_hour, minute=0, second=0, microsecond=0)
-        if target <= now:
-            from datetime import timedelta
-            target += timedelta(days=1)
-        return int(target.timestamp())
+    def yin_lock_block(self, qq: str, group_id: str) -> str | None:
+        """「阴气缠身」锁定：main.py 在宠物指令前调用。锁定则返回拦截文案，否则 None。"""
+        ap = self._get_player(group_id, qq, create=False)
+        if not ap:
+            return None
+        until = int(ap.get("yin_until", 0))
+        if until <= self._now():
+            return None
+        return (
+            f"🕯️ 你的宠物正被「阴气缠身」，无法执行任何宠物指令"
+            f"（剩余 {self._fmt_remain(until)}）。\n"
+            f"> 期间仅可参与中元活动；发送「解除阴气」消耗 "
+            f"{self._int_cfg('yin_clear_cost', 100)} 功德立即解除。"
+        )
 
     # ------------------------------------------------------------------
     # 解除阴气
@@ -736,12 +763,9 @@ class ZhongyuanActivity:
         until = int(ap.get("yin_until", 0))
         if until <= self._now():
             return "✅ 你当前并无「阴气缠身」。"
-        cost = self._int_cfg("yin_clear_cost", 300)
-        # 单日两次失败折扣
-        if int(ap.get("yin_fail_today", 0)) >= 2:
-            cost = int(cost * float(self._cfg("yin_clear_discount", 0.7)))
+        cost = self._int_cfg("yin_clear_cost", 100)
         if int(ap.get("gongde", 0)) < cost:
-            return f"❌ 功德不足，快速解除需 {cost} 功德（当前 {ap['gongde']}）；或等次日 8:00 自然解除。"
+            return f"❌ 功德不足，快速解除需 {cost} 功德（当前 {ap['gongde']}）；或等剩余时间自然解除。"
         ap["gongde"] = int(ap.get("gongde", 0)) - cost
         ap["yin_until"] = 0
         return f"✅ 已耗费 **{cost}** 功德解除「阴气缠身」，你的宠物重归清明。"
@@ -782,7 +806,10 @@ class ZhongyuanActivity:
                 "🕯️ 你尚未绑定中元宠物。\n"
                 "> 发送「绑定中元宠物」领取活动 ID，踏入阴阳两界。"
             )
-        yin = "🈳 无" if int(ap.get("yin_until", 0)) <= self._now() else f"⚠️ 阴气缠身（{self._fmt_remain(int(ap['yin_until']))}）"
+        yin = "🈳 无" if int(ap.get("yin_until", 0)) <= self._now() else (
+            f"⚠️ 阴气缠身（剩余 {self._fmt_remain(int(ap['yin_until']))}，"
+            f"禁止宠物指令，「解除阴气」需 {self._int_cfg('yin_clear_cost', 100)} 功德）"
+        )
         return (
             f"## 🕯️ 我的中元\n"
             f"> 活动 ID：**#{ap['activity_id']:04d}**\n"
@@ -840,9 +867,10 @@ class ZhongyuanActivity:
         if not args:
             # 展示当前配置（关键项）
             keys = ["enabled", "start_at", "end_at", "open_hour", "close_hour",
-                    "trigger_interval_min", "dungeon_limit_min", "puzzle_count", "yin_max",
-                    "gongde_clear", "gongde_perfect", "gongde_fail", "deepseek_model",
-                    "deepseek_enabled"]
+                    "trigger_interval_min", "dungeon_limit_min", "puzzle_count", "no_response_sec",
+                    "individual_fail_wrong", "pull_min_pct", "pull_max_pct",
+                    "gongde_clear", "perfect_reward_mult",
+                    "yin_penalty_min", "yin_clear_cost", "deepseek_model", "deepseek_enabled"]
             rows = []
             for k in keys:
                 v = self.cfg.get(k, "")
@@ -979,8 +1007,15 @@ class ZhongyuanActivity:
                 reply = self._fail_dungeon(gid, "超时")
                 await self._push_group(gid, reply)
             elif now - s.get("last_activity", now) > self._int_cfg("no_response_sec", 90):
-                reply = self._fail_dungeon(gid, "连续无响应")
-                await self._push_group(gid, reply)
+                # 全体连续无响应：自动进入下一题（由 AI 推进）
+                s["index"] += 1
+                s["last_activity"] = now
+                if s["index"] >= len(s["puzzles"]):
+                    reply = self._finish_dungeon(gid)
+                    await self._push_group(gid, reply)
+                else:
+                    await self._push_group(gid, "⏳ 长时间无人作答，已自动进入下一题。")
+                    await self._push_puzzle(gid)
         # 2. 每小时抽人（活动开启 + 开放时段内）
         if self._enabled() and self._in_open_hours():
             for gid in list(self._groups().keys()):

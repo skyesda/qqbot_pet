@@ -24,6 +24,24 @@ PUZZLE_SYSTEM_PROMPT = (
     "answer(正确项，须等于某个选项的原文)、hint(一句提示)。不要输出 JSON 以外的任何内容。"
 )
 
+# 规则怪谈生成用的 system prompt（本场解密总线索，题目线索皆由此规则引出）
+RULE_SYSTEM_PROMPT = (
+    "你是中元节「幽影饲育馆」的馆主。请制定一条「规则怪谈」式的馆内规则，作为本场解密的总线索。"
+    "要求：1) 半文言、阴森克制、有东方怪谈质感；2) 不血腥、不猎奇、无政治敏感或迷信误导；"
+    "3) 一到三句话、60 字以内，必须能引出可解谜的「暗号/禁忌/数目/次序」等线索。"
+    "只输出规则本身，不要任何解释、前缀或引号。"
+)
+
+# 围绕规则怪谈批量生成谜题（题目线索一律回扣该规则）
+RULE_PUZZLE_SYSTEM_PROMPT = (
+    "你是中元节「幽影饲育馆」的谜题设计者。馆主已定下一条「规则怪谈」，"
+    "你要围绕这条规则设计一组解密谜题，每道题的题干或提示都必须回扣该规则。要求："
+    "1) 每题有唯一可判定的正确项；2) 文字选择题或短答，附 3~6 个选项；"
+    "3) 半文言、阴森克制、不血腥、不猎奇、无政治敏感或迷信误导。"
+    "只输出一个 JSON 数组，元素字段为：question(题干)、options(选项字符串数组)、"
+    "answer(正确项，须等于某个选项的原文)、hint(一句提示)。不要输出 JSON 以外的任何内容。"
+)
+
 
 class DeepSeekClient:
     def __init__(
@@ -93,6 +111,29 @@ class DeepSeekClient:
             return None
         return self._parse_puzzle(text)
 
+    async def generate_rule(self) -> str | None:
+        """生成一条「规则怪谈」作为本场解密总线索；失败返回 None。"""
+        try:
+            text = await self.chat("请制定一条本馆的规则怪谈。", system=RULE_SYSTEM_PROMPT)
+            return text.strip() or None
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[zhongyuan] DeepSeek 规则怪谈生成失败：%s", e)
+            return None
+
+    async def generate_puzzles_batch(self, rule: str, count: int) -> list[dict]:
+        """围绕规则怪谈一次性生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。"""
+        user = f"规则怪谈：{rule}\n请围绕此规则生成 {count} 道谜题。"
+        try:
+            text = await self.chat(
+                user,
+                system=RULE_PUZZLE_SYSTEM_PROMPT,
+                max_tokens=max(1200, int(count) * 160),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
+            return []
+        return self._parse_puzzle_batch(text)
+
     async def reply_echo(self, prompt: str, system: str | None = None) -> str | None:
         """生成温情回文 / 文案，失败返回 None。"""
         try:
@@ -139,3 +180,46 @@ class DeepSeekClient:
             "theme": "",
             "source": "deepseek",
         }
+
+    @classmethod
+    def _parse_puzzle_batch(cls, text: str) -> list[dict]:
+        """把模型输出的 JSON 数组解析为谜题列表；容忍围栏与前后空白，逐条清洗。"""
+        if not text:
+            return []
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+        start = cleaned.find("[")
+        end = cleaned.rfind("]")
+        if start < 0 or end <= start:
+            return []
+        try:
+            arr = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(arr, list):
+            return []
+        out: list[dict] = []
+        for obj in arr:
+            if not isinstance(obj, dict):
+                continue
+            question = str(obj.get("question", "")).strip()
+            options = [str(o).strip() for o in obj.get("options", []) if str(o).strip()]
+            answer = str(obj.get("answer", "")).strip()
+            hint = str(obj.get("hint", "")).strip()
+            if not question or not answer:
+                continue
+            if options and answer not in options:
+                answer = options[0]
+            out.append({
+                "question": question,
+                "options": options,
+                "answer": answer,
+                "hint": hint,
+                "theme": "",
+                "source": "deepseek",
+            })
+        return out
