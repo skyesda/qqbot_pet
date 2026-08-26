@@ -680,9 +680,12 @@ class ZhongyuanActivity:
         idx = int(s.get("index", 0))
         remain = self._fmt_remain(int(s.get("deadline", 0)))
         alive = [x for x in s["participants"].values() if x.get("alive")]
+        rule = str(s.get("rule", "")).strip()
+        rule_line = f"> 📜 **规则怪谈**：{rule}\n" if rule else ""
         await self._push_group(
             group_id,
             f"## 🕯️ 第 {idx + 1}/{total} 题\n"
+            f"{rule_line}"
             f"> {p.get('question')}\n\n{opts}\n"
             f"> 任意参与者以「答 <答案>」作答；有人答对，全体进度 +1。\n"
             f"> ⏳ 倒计时 **{remain}** · 存活 **{len(alive)}/{len(s['participants'])}** 人",
