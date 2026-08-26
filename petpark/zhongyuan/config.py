@@ -58,6 +58,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "redeem_window_hours": 48,      # 活动结束后兑换窗口（小时）
     # ---- 抽人 ----
     "max_draw_per_day": 2,          # 每人每日最多被抽入次数
+    "max_dungeon_per_day": 8,       # 副本每日最多拉入场数（全活动总量）
     # ---- 解密（协作副本：全体共享进度）----
     "puzzle_count": 20,             # 每场题数（20 题，全体共享进度）
     "no_response_sec": 90,          # 全体连续无响应判定（秒，超时自动进入下一题）
@@ -101,7 +102,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 _EDITABLE_KEYS = {
     "enabled", "open_hour", "close_hour", "trigger_interval_min", "dungeon_limit_min",
     "bind_open_hours_before", "bind_close_hours_before", "redeem_window_hours",
-    "max_draw_per_day", "puzzle_count", "no_response_sec", "dungeon_status_interval_sec",
+    "max_draw_per_day", "max_dungeon_per_day", "puzzle_count", "no_response_sec", "dungeon_status_interval_sec",
     "individual_fail_wrong", "pull_min_pct", "pull_max_pct",
     "gongde_clear", "perfect_reward_mult",
     "lantern_daily_limit", "incense_daily_limit", "quiz_daily_limit",

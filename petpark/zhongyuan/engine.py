@@ -565,6 +565,15 @@ class ZhongyuanActivity:
     # ------------------------------------------------------------------
     # 解密会话（阴面）
     # ------------------------------------------------------------------
+    def _dungeon_draw_today(self) -> int:
+        """返回今日已开启的副本场数（跨日自动清零）。"""
+        meta = self._data.setdefault("meta", {})
+        today = self._bj_date()
+        if meta.get("dungeon_draw_date") != today:
+            meta["dungeon_draw_date"] = today
+            meta["dungeon_draw_count"] = 0
+        return int(meta.get("dungeon_draw_count", 0))
+
     async def _start_dungeon(self, group_id: str) -> None:
         """每次随机拉入本群参与人数的 20%~50%，协作解密一场副本。"""
         gid = str(group_id)
@@ -613,6 +622,8 @@ class ZhongyuanActivity:
             "last_activity": self._now(),
             "last_status_ts": self._now(),
         }
+        meta = self._data.setdefault("meta", {})
+        meta["dungeon_draw_count"] = self._dungeon_draw_today() + 1
         names = "、".join(f"#{p['activity_id']:04d} {p['name']}" for p in participants.values())
         await self._push_group(
             gid,
@@ -1124,9 +1135,12 @@ class ZhongyuanActivity:
             if now - s.get("last_status_ts", 0) >= self._int_cfg("dungeon_status_interval_sec", 120):
                 s["last_status_ts"] = now
                 await self._push_dungeon_status(gid)
-        # 2. 每小时抽人（活动开启 + 开放时段内）
+        # 2. 每小时抽人（活动开启 + 开放时段内 + 当日拉入场数未满）
         if self._enabled() and self._in_open_hours():
+            cap = self._int_cfg("max_dungeon_per_day", 8)
             for gid in list(self._groups().keys()):
+                if self._dungeon_draw_today() >= cap:
+                    break
                 g = self._group_state(gid)
                 if now >= g.get("next_trigger_ts", 0) and not self._session(gid):
                     if self._eligible_group(gid):
