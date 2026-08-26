@@ -614,6 +614,13 @@ class ZhongyuanActivity:
             ap["draw_count_today"] = int(ap.get("draw_count_today", 0)) + 1
         # 规则怪谈 + 围绕规则生成谜题
         rule, theme = await self._generate_rule()
+        # 先推规则预告，让玩家立即有反馈（题目炼制需数十秒，避免误以为无响应）
+        await self._push_group(
+            gid,
+            f"🕯️ 阴门开启中… 本场规则已定：\n"
+            f"> 📜 **规则怪谈**：{rule}\n"
+            f"> 正在炼制本场谜题，请稍候…",
+        )
         puzzles_list = await self._generate_puzzles(rule, theme)
         participants = {
             str(ap["qq"]): {
