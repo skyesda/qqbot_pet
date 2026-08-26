@@ -44,6 +44,8 @@ DEFAULT_MILESTONES: list[dict[str, Any]] = [
 DEFAULT_CONFIG: dict[str, Any] = {
     # ---- 总控 ----
     "enabled": True,                # 活动总开关
+    "start_at": 0,                  # 活动开始时间戳（0=不限；「中元开始/结束」指令或后台设置）
+    "end_at": 0,                    # 活动结束时间戳（0=不限）
     # ---- 时间 ----
     "open_hour": 8,                 # 每日开放时段（含）
     "close_hour": 22,               # 每日停止时段（不含，22:00 后当日停止）

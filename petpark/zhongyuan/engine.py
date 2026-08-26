@@ -155,6 +155,57 @@ class ZhongyuanActivity:
         except (TypeError, ValueError):
             return default
 
+    def apply_config(self, updates: dict) -> tuple[int, list[str]]:
+        """应用一批配置（web 后台保存用）。返回 (成功数, 失败键列表)。"""
+        ok, bad = 0, []
+        for key, raw in updates.items():
+            if key not in self.cfg:
+                bad.append(key)
+                continue
+            try:
+                new = self._coerce_config(self.cfg[key], raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                bad.append(key)
+                continue
+            self.cfg[key] = new
+            self._data["config"][key] = new
+            ok += 1
+        # DeepSeek 相关配置变更后重建客户端，即时生效
+        if any(
+            k in ("deepseek_api_key", "deepseek_model", "deepseek_base_url",
+                  "deepseek_timeout", "deepseek_temperature", "deepseek_max_tokens",
+                  "deepseek_enabled")
+            for k in updates
+            if k in self.cfg
+        ):
+            api_key = self.cfg.get("deepseek_api_key") or os.environ.get("DEEPSEEK_API_KEY", "")
+            self._deepseek = DeepSeekClient(
+                base_url=self.cfg.get("deepseek_base_url", "https://api.deepseek.com"),
+                api_key=api_key if self.cfg.get("deepseek_enabled", True) else "",
+                model=self.cfg.get("deepseek_model", "deepseek-v4-flash-vision-exp"),
+                timeout=float(self.cfg.get("deepseek_timeout", 30)),
+                temperature=float(self.cfg.get("deepseek_temperature", 0.3)),
+                max_tokens=int(self.cfg.get("deepseek_max_tokens", 800)),
+            )
+        return ok, bad
+
+    @staticmethod
+    def _coerce_config(cur, raw):
+        """按当前值类型把 raw 转换为目标类型；list/dict 字段接受 JSON 字符串或原对象。"""
+        if isinstance(cur, bool):
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() in ("true", "1", "yes", "on", "开启", "开")
+        if isinstance(cur, int):
+            return int(raw)
+        if isinstance(cur, float):
+            return float(raw)
+        if isinstance(cur, (list, dict)):
+            if isinstance(raw, str):
+                return json.loads(raw)
+            return raw
+        return raw
+
     # ------------------------------------------------------------------
     # 活动状态
     # ------------------------------------------------------------------
@@ -665,14 +716,19 @@ class ZhongyuanActivity:
         )
         if not ranked:
             return "🕯️ 中元功德榜：本群暂无已绑定玩家。"
-        lines = []
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines = ["## 🕯️ 中元功德榜（前 20）", ""]
+        lines.append("| 排名 | 段位 | 活动ID | 宠物 | 功德 | 通关 | 完美 |")
+        lines.append("|:--:|:--:|:--:|:--:|--:|--:|--:|")
         for i, p in enumerate(ranked[:20], start=1):
-            tier = tier_name_for_rank(i, self.cfg.get("tiers", []))
+            tier = tier_name_for_rank(i, self.cfg.get("tiers", [])) or "—"
+            name = str(p.get("pet_name", "?")).replace("|", "丨")
+            rk = medals.get(i, str(i))
             lines.append(
-                f"{i}. #{p['activity_id']:04d} · {p.get('pet_name', '?')} — "
-                f"**{p.get('gongde', 0)}** 功德" + (f" · 【{tier}】" if tier else "")
+                f"| {rk} | {tier} | #{p['activity_id']:04d} | {name} | "
+                f"{p.get('gongde', 0)} | {p.get('clear_count', 0)} | {p.get('perfect_count', 0)} |"
             )
-        return "## 🕯️ 中元功德榜（前 20）\n" + "\n".join(lines)
+        return "\n".join(lines)
 
     def _cmd_status(self, group_id: str, qq: str) -> str:
         ap = self._get_player(group_id, qq, create=False)

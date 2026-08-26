@@ -33,6 +33,7 @@ class WebAdmin:
         password: str,
         broadcast_callback=None,
         command_gateway=None,
+        zhongyuan=None,
     ):
         self.store = store
         self.host = host
@@ -41,6 +42,7 @@ class WebAdmin:
         self.password = password
         self._broadcast_callback = broadcast_callback
         self._command_gateway = command_gateway
+        self.zhongyuan = zhongyuan  # 中元活动引擎（可为 None = 模块未加载）
         self._tokens: set[str] = set()
         self._runner = None
 
@@ -79,6 +81,8 @@ class WebAdmin:
         app.router.add_post("/api/lottery/state", self._api_lottery_state)
         app.router.add_post("/api/lottery/save", self._api_lottery_save)
         app.router.add_post("/api/lottery/draw", self._api_lottery_draw)
+        app.router.add_post("/api/zhongyuan/config", self._api_zhongyuan_config)
+        app.router.add_post("/api/zhongyuan/config/save", self._api_zhongyuan_config_save)
 
         portal = PlayerPortal(
             self.store,
@@ -611,6 +615,36 @@ class WebAdmin:
             return self._json({"ok": False, "msg": f"开奖失败：{e}"})
         return self._json({"ok": True, "msg": msg})
 
+    async def _api_zhongyuan_config(self, request):
+        """中元活动：读取完整配置（供后台「中元活动」页渲染）。API Key 脱敏返回。"""
+        self._require(request)
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
+        cfg = dict(zy.cfg)
+        key = str(cfg.get("deepseek_api_key") or "")
+        if key:
+            cfg["deepseek_api_key"] = (key[:3] + "••••" + key[-4:]) if len(key) > 8 else "••••"
+        return self._json({"ok": True, "data": cfg})
+
+    async def _api_zhongyuan_config_save(self, request):
+        """中元活动：保存配置（类型由引擎按当前值强制转换，list/dict 字段解析 JSON）。"""
+        self._require(request)
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json({"ok": False, "msg": "请求体必须是 JSON"})
+        updates = body.get("config")
+        if not isinstance(updates, dict):
+            return self._json({"ok": False, "msg": "配置必须是对象"})
+        ok, bad = zy.apply_config(updates)
+        await zy.save()
+        logger.info(f"[petpark][webadmin] 中元活动配置保存 by {request.remote}（成功 {ok}，跳过 {len(bad)}）")
+        return self._json({"ok": True, "changed": ok, "bad": bad})
+
     async def _api_test_sect_broadcast(self, request):
         """临时：向指定群发送一条定向广播测试消息，验证 _send_to_group 通路。"""
         from aiohttp import web
@@ -955,6 +989,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="custom_pets" onclick="tab('custom_pets')">定制管理</button>
 <button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button>
 <button data-t="app_release" onclick="tab('app_release')">App 发布</button>
+<button data-t="zhongyuan" onclick="tab('zhongyuan')">中元活动</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -1276,18 +1311,19 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
  else if(t==='feedbacks') loadFeedbacks();
  else if(t==='app_release') loadAppRelease();
  else if(t==='lottery') loadLottery();
+ else if(t==='zhongyuan') loadZhongyuan();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1300,6 +1336,7 @@ function render(){
  else if(cur==='custom_reviews')renderCustomReviews();
  else if(cur==='custom_pets')renderCustomPets();
  else if(cur==='feedbacks')renderFeedbacks();
+ else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘 */ }
  else renderCards();
 }
 // ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
@@ -1384,6 +1421,99 @@ async function lotteryDraw(){
  const r=await api('/api/lottery/draw',{});
  alert(r.ok?(r.msg||'✅ 已开奖'):(r.msg||'开奖失败'));
  loadLottery();
+}
+// ---- 中元活动（独立模块配置，保存即时生效）----
+const ZY_FIELDS=[
+ {k:'enabled',label:'活动总开关',t:'bool'},
+ {k:'start_at',label:'开始时间(0=不限)',t:'ts'},
+ {k:'end_at',label:'结束时间(0=不限)',t:'ts'},
+ {k:'open_hour',label:'每日开放小时(含)',t:'num'},
+ {k:'close_hour',label:'每日关闭小时(不含)',t:'num'},
+ {k:'trigger_interval_min',label:'解密触发间隔(分)',t:'num'},
+ {k:'dungeon_limit_min',label:'单场解密时限(分)',t:'num'},
+ {k:'bind_open_hours_before',label:'绑定提前开启(时)',t:'num'},
+ {k:'bind_close_hours_before',label:'绑定截止(时)',t:'num'},
+ {k:'redeem_window_hours',label:'兑换窗口(时)',t:'num'},
+ {k:'max_draw_per_day',label:'每人每日被抽上限',t:'num'},
+ {k:'puzzle_count',label:'单场题数',t:'num'},
+ {k:'yin_max',label:'阴气上限(层)',t:'num'},
+ {k:'no_response_sec',label:'无响应判定(秒)',t:'num'},
+ {k:'yin_debuff_pct',label:'阴气降属性%',t:'num'},
+ {k:'gongde_clear',label:'通关功德',t:'num'},
+ {k:'gongde_perfect',label:'完美额外功德',t:'num'},
+ {k:'gongde_fail',label:'失败安慰功德',t:'num'},
+ {k:'gongde_lantern',label:'放河灯功德',t:'num'},
+ {k:'gongde_quiz',label:'问答功德',t:'num'},
+ {k:'gongde_incense',label:'供灯/焚香功德',t:'num'},
+ {k:'gongde_sign',label:'签到功德',t:'num'},
+ {k:'yin_clear_cost',label:'解除阴气消耗',t:'num'},
+ {k:'yin_clear_discount',label:'解除折扣(0.7=7折)',t:'num',step:'0.01'},
+ {k:'deepseek_enabled',label:'启用 DeepSeek',t:'bool'},
+ {k:'deepseek_model',label:'DeepSeek 模型',t:'txt'},
+ {k:'deepseek_base_url',label:'接口地址',t:'txt'},
+ {k:'deepseek_api_key',label:'API Key',t:'pwd'},
+ {k:'deepseek_temperature',label:'温度',t:'num',step:'0.1'},
+ {k:'deepseek_max_tokens',label:'最大 tokens',t:'num'},
+ {k:'deepseek_timeout',label:'超时(秒)',t:'num'},
+];
+let ZY_CFG=null;
+async function loadZhongyuan(){
+ const r=await api('/api/zhongyuan/config',{});
+ ZY_CFG=(r&&r.ok)?r.data:null;
+ renderZhongyuan();
+}
+function renderZhongyuan(){
+ document.getElementById('count').textContent='';
+ document.getElementById('extrawrap').innerHTML='';
+ const c=ZY_CFG||{};
+ let rows='';
+ for(const f of ZY_FIELDS){
+  const v=c[f.k];
+  let inp;
+  if(f.t==='bool') inp=`<input id="zy_${f.k}" type="checkbox" ${v?'checked':''}>`;
+  else if(f.t==='ts') inp=`<input id="zy_${f.k}" type="datetime-local" value="${eventTsToLocal(v||0)}">`;
+  else if(f.t==='pwd') inp=`<input id="zy_${f.k}" type="password" autocomplete="off" placeholder="${v?'已设置（留空不修改）':'未设置'}" value="">`;
+  else if(f.t==='num') inp=`<input id="zy_${f.k}" type="number" step="${f.step||'1'}" value="${(v===undefined||v===null)?'':v}">`;
+  else inp=`<input id="zy_${f.k}" value="${esc(v==null?'':v)}">`;
+  rows+=`<label class="fld">${f.label} ${inp}</label>`;
+ }
+ const tiers=JSON.stringify(c.tiers||[],null,2);
+ const miles=JSON.stringify(c.milestones||[],null,2);
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:960px">
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+   <h3 style="margin:0 0 16px">🕯️ 中元节活动 <span class="muted" style="font-weight:400">（独立模块配置，保存即时生效）</span></h3>
+   <div class="sec">总控 / 时间 / 抽人 / 解密 / 功德</div>
+   <div class="row">${rows}</div>
+   <div class="sec">段位（前 20 名功德奖励，JSON：name / min / max / gongde）</div>
+   <textarea id="zy_tiers" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical;font-family:monospace">${esc(tiers)}</textarea>
+   <div class="sec">群里程碑（累计功德达标，JSON：threshold / gongde）</div>
+   <textarea id="zy_milestones" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical;font-family:monospace">${esc(miles)}</textarea>
+   <div style="margin-top:16px;display:flex;gap:10px">
+    <button class="act" onclick="saveZhongyuan()">保存配置</button>
+    <button class="act ghost" onclick="loadZhongyuan()">刷新</button>
+   </div>
+   <div class="muted" id="zy_msg" style="margin-top:10px"></div>
+  </div>
+ </div>`;
+}
+async function saveZhongyuan(){
+ const cfg={};
+ for(const f of ZY_FIELDS){
+  const el=g('zy_'+f.k);
+  if(f.t==='bool') cfg[f.k]=el.checked;
+  else if(f.t==='pwd'){const v=el.value.trim(); if(v!=='') cfg[f.k]=v;} // 留空 = 不修改
+  else if(f.t==='ts') cfg[f.k]=eventLocalToTs(el.value)||0;
+  else if(f.t==='num'){const raw=el.value;cfg[f.k]=(raw===''?(ZY_CFG&&ZY_CFG[f.k]!==undefined?ZY_CFG[f.k]:0):parseFloat(raw));}
+  else cfg[f.k]=el.value.trim();
+ }
+ try{cfg.tiers=JSON.parse(g('zy_tiers').value);}catch(e){alert('段位 JSON 解析失败：'+e.message);return;}
+ try{cfg.milestones=JSON.parse(g('zy_milestones').value);}catch(e){alert('里程碑 JSON 解析失败：'+e.message);return;}
+ const r=await api('/api/zhongyuan/config/save',{config:cfg});
+ const msg=g('zy_msg');
+ if(!r){msg.textContent='❌ 保存失败：无响应';return;}
+ msg.textContent=r.ok?('✅ 已保存'+(r.bad&&r.bad.length?'（跳过：'+r.bad.join(', ')+'）':'')):('❌ 保存失败：'+(r.msg||'未知错误'));
+ if(r.ok) loadZhongyuan();
 }
 function shell(head,rows,cols){
  document.getElementById('count').textContent='共 '+Object.keys(cache).length+' 条';
