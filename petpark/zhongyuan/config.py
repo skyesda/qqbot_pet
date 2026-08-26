@@ -64,6 +64,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "no_response_sec": 90,          # 全体连续无响应判定（秒，超时自动进入下一题）
     "dungeon_status_interval_sec": 120,  # 副本进行中每隔 N 秒全群播报一次倒计时/进度/存活
     "individual_fail_wrong": 2,     # 个人答错满 N 次即揭示答案并出局
+    "answer_cooldown_sec": 10,      # 答对后冷却秒数（防同时抢答）
     "pull_min_pct": 20,             # 每次拉入参与人数比例下限（%）
     "pull_max_pct": 50,             # 每次拉入参与人数比例上限（%）
     # ---- 功德（唯一货币 / 唯一奖励）----
@@ -103,7 +104,7 @@ _EDITABLE_KEYS = {
     "enabled", "open_hour", "close_hour", "trigger_interval_min", "dungeon_limit_min",
     "bind_open_hours_before", "bind_close_hours_before", "redeem_window_hours",
     "max_draw_per_day", "max_dungeon_per_day", "puzzle_count", "no_response_sec", "dungeon_status_interval_sec",
-    "individual_fail_wrong", "pull_min_pct", "pull_max_pct",
+    "individual_fail_wrong", "answer_cooldown_sec", "pull_min_pct", "pull_max_pct",
     "gongde_clear", "perfect_reward_mult",
     "lantern_daily_limit", "incense_daily_limit", "quiz_daily_limit",
     "lantern_cooldown_min", "incense_cooldown_min", "quiz_timeout_sec",

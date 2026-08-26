@@ -688,6 +688,11 @@ class ZhongyuanActivity:
             f"> ⏳ 倒计时 **{remain}** · 存活 **{len(alive)}/{len(s['participants'])}** 人",
         )
 
+    async def _push_puzzle_after(self, group_id: str, delay: float) -> None:
+        """答对后延迟 N 秒再推下一题（冷却防抢答）。"""
+        await asyncio.sleep(delay)
+        await self._push_puzzle(group_id)
+
     async def _push_dungeon_status(self, group_id: str) -> None:
         """副本进行中，向全群播报倒计时 / 答题进度 / 存活与淘汰情况。"""
         s = self._session(group_id)
@@ -717,6 +722,9 @@ class ZhongyuanActivity:
             return None  # 非参与者或已出局，忽略
         if self._now() > s.get("deadline", 0):
             return "⏰ 本场副本已超时。"
+        # 答对冷却：上一题刚被答对，冷却期内暂不接受作答（防同时抢答）
+        if self._now() < int(s.get("cooldown_until", 0)):
+            return None
         puzzle = s["puzzles"][s["index"]]
         if puzzles.is_correct(text, puzzle):
             p["correct"] = int(p.get("correct", 0)) + 1
@@ -724,8 +732,10 @@ class ZhongyuanActivity:
             s["index"] += 1
             if s["index"] >= len(s["puzzles"]):
                 return self._finish_dungeon(group_id)
-            self._spawn(self._push_puzzle(group_id))
-            return f"✅ #{p['activity_id']:04d} 答对！全体进度 {s['index']}/{len(s['puzzles'])}。"
+            cd = self._int_cfg("answer_cooldown_sec", 10)
+            s["cooldown_until"] = self._now() + cd
+            self._spawn(self._push_puzzle_after(group_id, cd))
+            return f"✅ #{p['activity_id']:04d} 答对！全体进度 {s['index']}/{len(s['puzzles'])}（{cd} 秒后进入下一题）。"
         p["wrong"] = int(p.get("wrong", 0)) + 1
         s["last_activity"] = self._now()
         limit = self._int_cfg("individual_fail_wrong", 2)

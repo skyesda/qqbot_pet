@@ -1384,7 +1384,7 @@ const ZY_FIELDS=[
  {k:'max_draw_per_day',label:'每人每日被抽上限',t:'num'},
  {k:'max_dungeon_per_day',label:'副本每日拉入上限(场)',t:'num'},
  {k:'puzzle_count',label:'每场题数(协作)',t:'num'},
- {k:'no_response_sec',label:'无响应自动下一题(秒)',t:'num'},
+ {k:'answer_cooldown_sec',label:'答对后冷却(秒)',t:'num'},
  {k:'individual_fail_wrong',label:'个人答错出局次数',t:'num'},
  {k:'pull_min_pct',label:'拉入人数下限%',t:'num'},
  {k:'pull_max_pct',label:'拉入人数上限%',t:'num'},
