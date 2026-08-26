@@ -19,6 +19,7 @@ from typing import Any
 from astrbot.api import logger
 
 from .portal import PlayerPortal
+from .zhongyuan.config import ACTIVITY_NAME
 
 COOKIE = "pp_session"
 TABLES = ("players", "groups", "cards", "events")
@@ -87,6 +88,7 @@ class WebAdmin:
         app.router.add_post("/api/zhongyuan/test_start", self._api_zhongyuan_test_start)
         app.router.add_post("/api/zhongyuan/test_end", self._api_zhongyuan_test_end)
         app.router.add_post("/api/zhongyuan/data", self._api_zhongyuan_data)
+        app.router.add_post("/api/zhongyuan/clear_data", self._api_zhongyuan_clear_data)
 
         portal = PlayerPortal(
             self.store,
@@ -690,9 +692,21 @@ class WebAdmin:
         if zy is None:
             return self._json({"ok": False, "msg": "中元活动模块未加载"})
         text = (
-            "## 🕯️ 中元活动已开启\n"
-            f"《{zy.ACTIVITY_NAME}》正式开启！全群共享功德数据，人人可参与。\n"
-            "> 发送「中元活动」查看玩法；「相约中元」领取活动 ID 踏入阴阳两界。"
+            "## 🕯️ 中元活动开启\n"
+            f"{ACTIVITY_NAME}\n"
+            "—— 勾连阴阳两界的思念，一阴一阳，同场并陈 ——\n\n"
+            "🕳️ **阴面 · 幽影饲育馆**（规则怪谈解密）\n"
+            "旧年江南一座饲育馆，馆主以「点灵续命」邪术抽离灵宠魂魄，封进青灯符箓；反噬之夜整馆被阴气吞没，只剩一部残破《规矩簿》与游荡不去的灵宠残魂。每逢中元，它便锁定一名驯宠师，强行勾你入馆——\n"
+            "> 「解不开这馆里的规矩，你与你的宠物，就都留下吧。」\n\n"
+            "🕯️ **阳面 · 青灯寄思**（文化温情）\n"
+            "放河灯、敬祖先、知中元，用一盏青灯照见思念归途。\n"
+            "> 中元点灯，不为驱鬼，只为照见思念归途。\n\n"
+            "💰 **全场唯一货币「功德」**：既是排行榜积分，也是唯一奖励。\n\n"
+            "━━━━━━━━━━\n"
+            "📜 **参与方式**\n"
+            "发送「**相约中元**」领取你的活动 ID，踏入阴阳两界。\n"
+            "> ⚠️ 未「相约中元」领取 ID 者，其余活动指令一律无效。\n"
+            "发送「**中元活动**」查看完整玩法。"
         )
         try:
             await zy._push_all_groups(text)
@@ -708,9 +722,16 @@ class WebAdmin:
         if zy is None:
             return self._json({"ok": False, "msg": "中元活动模块未加载"})
         text = (
-            "## 🕯️ 中元活动已结束\n"
-            f"《{zy.ACTIVITY_NAME}》已落下帷幕，段位功德已结算完毕。\n"
-            "> 段位功德已结算，可发送「功德商店」查看奖励。"
+            "## 🕯️ 中元活动落幕\n"
+            f"{ACTIVITY_NAME}\n"
+            "已落下帷幕。\n"
+            "阴阳门缓缓合拢，青灯渐次熄灭，思念长河终将收束。\n\n"
+            "🏮 段位功德已结算完毕，功德榜就此定格，奖励已入「功德商店」。\n"
+            "> 中元点灯，不为驱鬼，只为照见思念归途。这一程的思念，愿已送达故人。\n\n"
+            "━━━━━━━━━━\n"
+            "📜 **兑换提醒**\n"
+            "段位 / 里程碑功德已入账，发送「**功德商店**」查看并兑换你的奖励。\n"
+            "> ⏳ 兑换窗口 48 小时，逾期未兑换将作废。"
         )
         try:
             await zy._push_all_groups(text)
@@ -737,6 +758,17 @@ class WebAdmin:
             "sessions": len(data.get("sessions", {})),
         }
         return self._json({"ok": True, "data": data, "stats": stats})
+
+    async def _api_zhongyuan_clear_data(self, request):
+        """中元活动：清空全部玩家数据（players / groups / sessions + 活动 ID 序号）。保留 config。"""
+        self._require(request)
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
+        zy.reset_data()
+        await zy.save()
+        logger.info(f"[petpark][webadmin] 中元活动数据已清空 by {request.remote}")
+        return self._json({"ok": True, "msg": "已清空中元所有玩家数据（配置与代码保留，活动 ID 从 1 重新分配）"})
 
     # --------------------------- 网页账号管理 ---------------------------
     async def _api_portal_accounts(self, request):
@@ -1421,6 +1453,7 @@ function renderZhongyuan(){
     <button class="act ghost" onclick="testZhongyuanStart()">测试活动开始全群播放</button>
     <button class="act ghost" onclick="testZhongyuanEnd()">测试活动结束全群播放</button>
     <button class="act ghost" onclick="viewZhongyuanData()">查看中元所有数据</button>
+    <button class="act del" onclick="clearZhongyuanData()">清空中元玩家数据</button>
    </div>
    <div class="muted" id="zy_msg" style="margin-top:10px"></div>
    <div class="muted" id="zy_test_msg" style="margin-top:6px"></div>
@@ -1479,6 +1512,14 @@ async function viewZhongyuanData(){
  if(!r.ok){ if(msg) msg.textContent='❌ '+(r.msg||'读取失败'); return; }
  if(msg) msg.textContent='✅ 已读取：玩家 '+r.stats.players+' · 群 '+r.stats.groups+' · 进行中副本 '+r.stats.sessions;
  if(box){ box.value=JSON.stringify(r.data,null,2); box.style.display='block'; }
+}
+async function clearZhongyuanData(){
+ if(!confirm('⚠️ 将清空中元所有玩家数据（玩家 / 群 / 副本 + 活动 ID 从 1 重新分配），配置保留。此操作不可撤销，确认继续？')) return;
+ if(!confirm('再次确认：真的要删除当前中元全部玩家数据吗？')) return;
+ const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在清空…';
+ const r=await api('/api/zhongyuan/clear_data',{});
+ if(msg) msg.textContent=r?(r.ok?'✅ '+r.msg:'❌ '+r.msg):'❌ 清空失败：无响应';
+ if(r&&r.ok) viewZhongyuanData();
 }
 
 function shell(head,rows,cols){

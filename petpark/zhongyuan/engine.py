@@ -994,11 +994,15 @@ class ZhongyuanActivity:
         return f"✅ 已设置 `{key}` = {self.cfg[key]}"
 
     def _cmd_reset(self) -> str:
+        self.reset_data()
+        return "✅ 中元活动数据已清空（代码与配置保留）。若要彻底下架，删除 `petpark/zhongyuan/` 目录及 main.py 中的接入钩子即可。"
+
+    def reset_data(self) -> None:
+        """清空活动数据（玩家 / 群 / 副本会话 + 活动 ID 序号），保留配置与代码。"""
         self._data["players"] = {}
         self._data["groups"] = {}
         self._data["sessions"] = {}
-        self._data["meta"]["activity_id_seq"] = 0
-        return "✅ 中元活动数据已清空（代码与配置保留）。若要彻底下架，删除 `petpark/zhongyuan/` 目录及 main.py 中的接入钩子即可。"
+        self._data.setdefault("meta", {})["activity_id_seq"] = 0
 
     def _settle(self) -> None:
         """活动结算：按功德榜名次向前 20 名发放段位功德（入暂存）。"""
