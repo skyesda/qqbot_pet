@@ -276,6 +276,8 @@ class ZhongyuanActivity:
                 "escrow": 0,
                 "daily": {"date": "", "lantern": 0, "quiz": 0, "incense": 0, "sign": 0},
                 "quiz": {},
+                "last_lantern_ts": 0,
+                "last_incense_ts": 0,
             }
         return players.get(key)
 
@@ -376,6 +378,16 @@ class ZhongyuanActivity:
     def _add_gongde(self, ap: dict, amount: int) -> None:
         ap["gongde"] = int(ap.get("gongde", 0)) + max(0, int(amount))
 
+    def _rand_gongde(self, min_key: str, max_key: str, default_min: int, default_max: int) -> int:
+        """在配置的 [min, max] 区间内取随机功德（闭合区间，上下限相等则固定）。"""
+        lo = self._int_cfg(min_key, default_min)
+        hi = self._int_cfg(max_key, default_max)
+        if lo > hi:
+            lo, hi = hi, lo
+        if lo == hi:
+            return lo
+        return random.randint(lo, hi)
+
     def _group_add_gongde(self, group_id: str, amount: int) -> None:
         g = self._group_state(group_id)
         g["gongde_total"] = int(g.get("gongde_total", 0)) + max(0, int(amount))
@@ -416,10 +428,16 @@ class ZhongyuanActivity:
         if not ap.get("activity_id"):
             return "❌ 请先「绑定中元宠物」领取活动 ID 后再放河灯。"
         d = self._daily_reset(ap)
-        if d["lantern"] >= 1:
-            return "❌ 今日已放过河灯，每日限一盏。"
+        limit = self._int_cfg("lantern_daily_limit", 10)
+        if d["lantern"] >= limit:
+            return f"❌ 今日已放过 {limit} 盏河灯，明日再来吧。"
+        cd = self._int_cfg("lantern_cooldown_min", 20) * 60
+        last = int(ap.get("last_lantern_ts", 0))
+        if last and self._now() - last < cd:
+            return f"❌ 河灯随流水远去，还需 **{self._fmt_remain(last + cd)}** 才能再放下一盏。"
         d["lantern"] += 1
-        reward = self._int_cfg("gongde_lantern", 10)
+        ap["last_lantern_ts"] = self._now()
+        reward = self._rand_gongde("gongde_lantern_min", "gongde_lantern_max", 10, 30)
         self._add_gongde(ap, reward)
         self._group_add_gongde(group_id, reward)
         msg = (message or "").strip() or "愿逝者安息，愿生者珍重"
@@ -429,7 +447,8 @@ class ZhongyuanActivity:
         return (
             f"🕯️ 你点亮一盏河灯，写下：\n> 「{msg}」\n"
             f"灯随水流去，思念寄远乡。\n> **{echo}**\n"
-            f"功德 **+{reward}**（当前 {ap['gongde']}）"
+            f"功德 **+{reward}**（当前 {ap['gongde']}）\n"
+            f"> 今日 {d['lantern']}/{limit} 盏 · 冷却 {self._int_cfg('lantern_cooldown_min', 20)} 分钟"
         )
 
     async def _lantern_echo(self, group_id: str, pet_name: str, message: str) -> None:
@@ -447,25 +466,44 @@ class ZhongyuanActivity:
         if not ap.get("activity_id"):
             return "❌ 请先「绑定中元宠物」领取活动 ID 后再参与问答。"
         d = self._daily_reset(ap)
+        limit = self._int_cfg("quiz_daily_limit", 20)
         if answer is None:
+            if d["quiz"] >= limit:
+                return f"❌ 今日已答满 {limit} 题，明日再来吧。"
             q = random.choice(_CULTURE_QUIZ)
-            ap["quiz"] = {"q": q["q"], "a": q["a"], "date": self._bj_date()}
+            ap["quiz"] = {"q": q["q"], "a": q["a"], "date": self._bj_date(), "ts": self._now()}
             return (
-                f"🕯️ 中元知多少 · 文化问答\n> {q['q']}\n"
-                f"发送「中元问答 <你的答案>」作答，答对 +{self._int_cfg('gongde_quiz', 10)} 功德。"
+                f"🕯️ 中元知多少 · 文化问答（今日 {d['quiz']}/{limit}）\n> {q['q']}\n"
+                f"发送「中元问答 <你的答案>」作答，答对得随机功德；"
+                f"答错或超时（{self._int_cfg('quiz_timeout_sec', 60)} 秒）即判失败并揭晓答案。"
             )
         quiz = ap.get("quiz", {})
         if not quiz or quiz.get("date") != self._bj_date():
             return "❌ 请先发送「中元问答」领取今日题目。"
-        if d["quiz"] >= 1:
-            return "❌ 今日已答过题。"
-        if answer.strip() == quiz["a"]:
+        if d["quiz"] >= limit:
+            return f"❌ 今日已答满 {limit} 题。"
+        timeout = self._int_cfg("quiz_timeout_sec", 60)
+        elapsed = self._now() - int(quiz.get("ts", 0))
+        if elapsed > timeout:
             d["quiz"] += 1
-            reward = self._int_cfg("gongde_quiz", 10)
-            self._add_gongde(ap, reward)
-            self._group_add_gongde(group_id, reward)
-            return f"✅ 答对了！功德 **+{reward}**（当前 {ap['gongde']}）。中元不是鬼节，是勾连阴阳的思念。"
-        return f"❌ 不太对。提示：{quiz.get('q', '')}（可再答，直到答对；今日限一次奖励）"
+            ap["quiz"] = {}
+            return (
+                f"⏰ 答题超时（超过 {timeout} 秒）。正确答案：**{quiz.get('a')}**\n"
+                f"❌ 本次无功德。今日已答 {d['quiz']}/{limit}，发送「中元问答」领取下一题。"
+            )
+        if (answer or "").strip() != str(quiz.get("a", "")).strip():
+            d["quiz"] += 1
+            ap["quiz"] = {}
+            return (
+                f"❌ 答错了。正确答案：**{quiz.get('a')}**\n"
+                f"本次无功德。今日已答 {d['quiz']}/{limit}，发送「中元问答」领取下一题。"
+            )
+        d["quiz"] += 1
+        ap["quiz"] = {}
+        reward = self._rand_gongde("gongde_quiz_min", "gongde_quiz_max", 10, 20)
+        self._add_gongde(ap, reward)
+        self._group_add_gongde(group_id, reward)
+        return f"✅ 答对了！功德 **+{reward}**（当前 {ap['gongde']}）。中元不是鬼节，是勾连阴阳的思念。"
 
     def _cmd_incense(self, group_id: str, qq: str, kind: str) -> str:
         if not self._enabled() or not self._in_open_hours():
@@ -474,16 +512,23 @@ class ZhongyuanActivity:
         if not ap.get("activity_id"):
             return "❌ 请先「绑定中元宠物」领取活动 ID 后再祭祖。"
         d = self._daily_reset(ap)
-        if d["incense"] >= 1:
-            return "❌ 今日已「供灯/焚香」过，每日限一次。"
+        limit = self._int_cfg("incense_daily_limit", 10)
+        if d["incense"] >= limit:
+            return f"❌ 今日已「供灯/焚香」{limit} 次，明日再来吧。"
+        cd = self._int_cfg("incense_cooldown_min", 20) * 60
+        last = int(ap.get("last_incense_ts", 0))
+        if last and self._now() - last < cd:
+            return f"❌ 香火未尽，还需 **{self._fmt_remain(last + cd)}** 才能再次祭祖。"
         d["incense"] += 1
-        reward = self._int_cfg("gongde_incense", 10)
+        ap["last_incense_ts"] = self._now()
+        reward = self._rand_gongde("gongde_incense_min", "gongde_incense_max", 10, 30)
         self._add_gongde(ap, reward)
         self._group_add_gongde(group_id, reward)
         act = "焚三炷香" if kind == "焚香" else "供一盏灯"
         return (
             f"🕯️ 你{act}，一敬天、二敬地、三敬祖先。\n"
-            f"> 香火相传，追思绵长。功德 **+{reward}**（当前 {ap['gongde']}）。"
+            f"> 香火相传，追思绵长。功德 **+{reward}**（当前 {ap['gongde']}）。\n"
+            f"> 今日 {d['incense']}/{limit} 次 · 冷却 {self._int_cfg('incense_cooldown_min', 20)} 分钟"
         )
 
     def _cmd_sign(self, group_id: str, qq: str) -> str:

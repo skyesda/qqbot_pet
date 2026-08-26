@@ -65,9 +65,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gongde_clear": 300,            # 通关基础功德
     "gongde_perfect": 200,          # 完美通关额外功德
     "gongde_fail": 20,              # 失败安慰功德
-    "gongde_lantern": 10,           # 放河灯功德（每日一次）
-    "gongde_quiz": 10,              # 文化问答答对功德
-    "gongde_incense": 10,           # 供灯 / 焚香功德（每日一次）
+    # ---- 文化玩法：放河灯 / 供灯焚香 / 中元问答（次数 / 冷却 / 随机功德）----
+    "lantern_daily_limit": 10,      # 放河灯每日次数
+    "incense_daily_limit": 10,      # 供灯 / 焚香每日次数
+    "quiz_daily_limit": 20,         # 中元问答每日次数
+    "lantern_cooldown_min": 20,     # 放河灯冷却（分钟）
+    "incense_cooldown_min": 20,     # 供灯 / 焚香冷却（分钟）
+    "quiz_timeout_sec": 60,         # 问答作答超时（秒，超时判失败）
+    "gongde_lantern_min": 10,       # 放河灯功德随机下限
+    "gongde_lantern_max": 30,       # 放河灯功德随机上限
+    "gongde_incense_min": 10,       # 供灯 / 焚香功德随机下限
+    "gongde_incense_max": 30,       # 供灯 / 焚香功德随机上限
+    "gongde_quiz_min": 10,          # 问答答对功德随机下限
+    "gongde_quiz_max": 20,          # 问答答对功德随机上限
     "gongde_sign": 10,              # 每日签到功德
     "yin_clear_cost": 300,          # 功德快速解除「阴气缠身」消耗
     "yin_clear_discount": 0.7,      # 单日两次失败后的解除折扣（0.7 = 7 折）
@@ -89,8 +99,11 @@ _EDITABLE_KEYS = {
     "enabled", "open_hour", "close_hour", "trigger_interval_min", "dungeon_limit_min",
     "bind_open_hours_before", "bind_close_hours_before", "redeem_window_hours",
     "max_draw_per_day", "puzzle_count", "yin_max", "no_response_sec", "yin_debuff_pct",
-    "gongde_clear", "gongde_perfect", "gongde_fail", "gongde_lantern", "gongde_quiz",
-    "gongde_incense", "gongde_sign", "yin_clear_cost", "yin_clear_discount",
+    "gongde_clear", "gongde_perfect", "gongde_fail",
+    "lantern_daily_limit", "incense_daily_limit", "quiz_daily_limit",
+    "lantern_cooldown_min", "incense_cooldown_min", "quiz_timeout_sec",
+    "gongde_lantern_min", "gongde_lantern_max", "gongde_incense_min", "gongde_incense_max",
+    "gongde_quiz_min", "gongde_quiz_max", "gongde_sign", "yin_clear_cost", "yin_clear_discount",
     "deepseek_enabled", "deepseek_model", "deepseek_base_url", "deepseek_api_key",
     "deepseek_temperature", "deepseek_max_tokens", "deepseek_timeout",
 }
