@@ -406,26 +406,30 @@ class ZhongyuanActivity:
         self._check_milestones(group_id)
 
     def _check_milestones(self, group_id: str) -> list[str]:
-        """群累计功德达标时，向全群每位已绑定玩家发放共享功德（入暂存），返回新达成的档位。"""
+        """群累计功德达标时，向本群每位参与者直接发放共享功德（不入暂存），返回新达成的档位。"""
         g = self._group_state(group_id)
         total = int(g.get("gongde_total", 0))
         reached = set(g.get("milestone_reached", []))
         newly = []
+        last_info = None
         for i, ms in enumerate(self.cfg.get("milestones", [])):
             if i in reached:
                 continue
             if total >= int(ms.get("threshold", 0)):
                 reached.add(i)
-                newly.append(f"{int(ms['threshold'])}（+{int(ms.get('gongde', 0))} 功德）")
-                # 全员各得一份，入暂存
+                rw = int(ms.get("gongde", 0))
+                newly.append(f"阶段{i + 1}（{int(ms['threshold'])} 功德 → +{rw}）")
+                last_info = (i + 1, int(ms.get("threshold", 0)), rw)
+                # 每位参与者直接发放，不入暂存
                 for ap in self._players_in_group(group_id):
-                    ap["escrow"] = int(ap.get("escrow", 0)) + int(ms.get("gongde", 0))
+                    self._add_gongde(ap, rw)
         g["milestone_reached"] = sorted(reached)
-        if newly:
+        if newly and last_info:
+            stage, th, rw = last_info
             self._spawn(self._push_group(
                 group_id,
-                f"## 🎊 全群里程碑达成\n群累计功德突破 **{newly[-1]}**，"
-                f"全群每位已绑定驯宠师共享功德已入「暂存」，活动结束后兑换！",
+                f"## 🎊 中元里程碑 · 第 {stage} 阶段达成\n"
+                f"群累计功德突破 **{th}**，本群每位参与者直接获得 **+{rw}** 功德！",
             ))
         return newly
 
@@ -607,6 +611,7 @@ class ZhongyuanActivity:
             "started_at": self._now(),
             "deadline": self._now() + self._int_cfg("dungeon_limit_min", 40) * 60,
             "last_activity": self._now(),
+            "last_status_ts": self._now(),
         }
         names = "、".join(f"#{p['activity_id']:04d} {p['name']}" for p in participants.values())
         await self._push_group(
@@ -643,12 +648,36 @@ class ZhongyuanActivity:
             return
         p = s["puzzles"][s["index"]]
         opts = "\n".join(f"{i + 1}. {o}" for i, o in enumerate(p.get("options", [])))
+        total = len(s["puzzles"])
+        idx = int(s.get("index", 0))
+        remain = self._fmt_remain(int(s.get("deadline", 0)))
+        alive = [x for x in s["participants"].values() if x.get("alive")]
         await self._push_group(
             group_id,
-            f"## 🕯️ 第 {s['index'] + 1}/{len(s['puzzles'])} 题\n"
+            f"## 🕯️ 第 {idx + 1}/{total} 题\n"
             f"> {p.get('question')}\n\n{opts}\n"
-            f"> 任意参与者以「答 <答案>」作答；有人答对，全体进度 +1。",
+            f"> 任意参与者以「答 <答案>」作答；有人答对，全体进度 +1。\n"
+            f"> ⏳ 倒计时 **{remain}** · 存活 **{len(alive)}/{len(s['participants'])}** 人",
         )
+
+    async def _push_dungeon_status(self, group_id: str) -> None:
+        """副本进行中，向全群播报倒计时 / 答题进度 / 存活与淘汰情况。"""
+        s = self._session(group_id)
+        if not s:
+            return
+        total = len(s.get("puzzles", []))
+        idx = int(s.get("index", 0))
+        remain = self._fmt_remain(int(s.get("deadline", 0)))
+        parts = list(s.get("participants", {}).values())
+        alive = [p for p in parts if p.get("alive")]
+        dead = [p for p in parts if not p.get("alive")]
+        lines = [
+            f"⏳ **副本进行中** · 倒计时 {remain}",
+            f"📊 答题进度 **{idx}/{total}** 题 · 存活 **{len(alive)}/{len(parts)}** 人",
+        ]
+        if dead:
+            lines.append("💀 已淘汰：" + "、".join(f"#{p['activity_id']:04d}" for p in dead))
+        await self._push_group(group_id, "\n".join(lines))
 
     def _check_answer(self, group_id: str, qq: str, text: str) -> str | None:
         """协作副本作答：有人答对全体进度 +1；个人答错满 N 次即个人出局。"""
@@ -822,7 +851,7 @@ class ZhongyuanActivity:
         return "\n".join(lines)
 
     def _cmd_milestone(self, group_id: str) -> str:
-        """查看全群累计功德里程碑进度（最高档 1 万功德为满）。"""
+        """查看全群累计功德里程碑进度（5 个阶段，最高档 1 万功德为满）。"""
         g = self._group_state(group_id)
         total = int(g.get("gongde_total", 0))
         reached = set(g.get("milestone_reached", []))
@@ -834,7 +863,7 @@ class ZhongyuanActivity:
             th = int(m.get("threshold", 0))
             rw = int(m.get("gongde", 0))
             mark = "✅ 已达成" if i in reached else "⏳ 未达成"
-            lines.append(f"{mark} · 累计 **{th}** 功德 → 每位参与者 **+{rw}** 功德（入暂存）")
+            lines.append(f"{mark} · 阶段{i + 1}：累计 **{th}** 功德 → 每位参与者 **+{rw}** 功德（直接发放）")
         lines.append("")
         lines.append(f"> 当前全群累计功德：**{total}**")
         return "\n".join(lines)
@@ -1075,7 +1104,8 @@ class ZhongyuanActivity:
             if now > s.get("deadline", 0):
                 reply = self._fail_dungeon(gid, "超时")
                 await self._push_group(gid, reply)
-            elif now - s.get("last_activity", now) > self._int_cfg("no_response_sec", 90):
+                continue
+            if now - s.get("last_activity", now) > self._int_cfg("no_response_sec", 90):
                 # 全体连续无响应：自动进入下一题（由 AI 推进）
                 s["index"] += 1
                 s["last_activity"] = now
@@ -1085,6 +1115,11 @@ class ZhongyuanActivity:
                 else:
                     await self._push_group(gid, "⏳ 长时间无人作答，已自动进入下一题。")
                     await self._push_puzzle(gid)
+                continue
+            # 周期性播报倒计时 / 答题进度 / 存活与淘汰
+            if now - s.get("last_status_ts", 0) >= self._int_cfg("dungeon_status_interval_sec", 120):
+                s["last_status_ts"] = now
+                await self._push_dungeon_status(gid)
         # 2. 每小时抽人（活动开启 + 开放时段内）
         if self._enabled() and self._in_open_hours():
             for gid in list(self._groups().keys()):

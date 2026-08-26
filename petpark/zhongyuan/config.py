@@ -29,10 +29,14 @@ DEFAULT_TIERS: list[dict[str, Any]] = [
 ]
 
 # ---------------------------------------------------------------------------
-# 群里程碑（全群累计功德达标 → 每位参与者发放共享功德，入暂存）
-# 最高档「1 万功德」为满；可后台配置多档，当前仅保留最高档一档。
+# 群里程碑（全群累计功德达标 → 每位参与者直接发放共享功德，不入暂存）
+# 分 5 个阶段，最高档「1 万功德」为满；可后台配置。
 # ---------------------------------------------------------------------------
 DEFAULT_MILESTONES: list[dict[str, Any]] = [
+    {"threshold": 2000, "gongde": 50},
+    {"threshold": 4000, "gongde": 50},
+    {"threshold": 6000, "gongde": 100},
+    {"threshold": 8000, "gongde": 100},
     {"threshold": 10000, "gongde": 200},
 ]
 
@@ -57,6 +61,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- 解密（协作副本：全体共享进度）----
     "puzzle_count": 20,             # 每场题数（20 题，全体共享进度）
     "no_response_sec": 90,          # 全体连续无响应判定（秒，超时自动进入下一题）
+    "dungeon_status_interval_sec": 120,  # 副本进行中每隔 N 秒全群播报一次倒计时/进度/存活
     "individual_fail_wrong": 3,     # 个人答错满 N 次即个人出局
     "pull_min_pct": 20,             # 每次拉入参与人数比例下限（%）
     "pull_max_pct": 50,             # 每次拉入参与人数比例上限（%）
@@ -96,7 +101,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 _EDITABLE_KEYS = {
     "enabled", "open_hour", "close_hour", "trigger_interval_min", "dungeon_limit_min",
     "bind_open_hours_before", "bind_close_hours_before", "redeem_window_hours",
-    "max_draw_per_day", "puzzle_count", "no_response_sec",
+    "max_draw_per_day", "puzzle_count", "no_response_sec", "dungeon_status_interval_sec",
     "individual_fail_wrong", "pull_min_pct", "pull_max_pct",
     "gongde_clear", "perfect_reward_mult",
     "lantern_daily_limit", "incense_daily_limit", "quiz_daily_limit",
