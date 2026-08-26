@@ -45,7 +45,7 @@ COMMANDS = {
     # 玩家
     "中元活动", "中元活动介绍", "中元状态", "我的中元",
     "副本进度", "我的副本",
-    "相约中元", "中元功德榜", "中元排行", "中元签到",
+    "相约中元", "中元功德榜", "中元排行", "中元签到", "中元里程碑", "功德里程碑",
     "放河灯", "中元问答", "焚香", "供灯", "答", "中元答", "解除阴气", "功德商店",
     # 管理
     "开启中元活动", "关闭中元活动", "中元配置", "中元开始", "中元结束",
@@ -821,6 +821,24 @@ class ZhongyuanActivity:
             )
         return "\n".join(lines)
 
+    def _cmd_milestone(self, group_id: str) -> str:
+        """查看全群累计功德里程碑进度（最高档 1 万功德为满）。"""
+        g = self._group_state(group_id)
+        total = int(g.get("gongde_total", 0))
+        reached = set(g.get("milestone_reached", []))
+        ms = self.cfg.get("milestones", [])
+        if not ms:
+            return "🕯️ 本活动中元里程碑尚未配置。"
+        lines = ["## 🎊 中元里程碑（全群累计功德）", ""]
+        for i, m in enumerate(ms):
+            th = int(m.get("threshold", 0))
+            rw = int(m.get("gongde", 0))
+            mark = "✅ 已达成" if i in reached else "⏳ 未达成"
+            lines.append(f"{mark} · 累计 **{th}** 功德 → 每位参与者 **+{rw}** 功德（入暂存）")
+        lines.append("")
+        lines.append(f"> 当前全群累计功德：**{total}**")
+        return "\n".join(lines)
+
     def _cmd_status(self, group_id: str, qq: str) -> str:
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
@@ -1003,6 +1021,8 @@ class ZhongyuanActivity:
             return self._bind_user(group_id, qq, event)
         if cmd in ("中元功德榜", "中元排行"):
             return self._cmd_rank(group_id)
+        if cmd in ("中元里程碑", "功德里程碑"):
+            return self._cmd_milestone(group_id)
         if cmd == "中元签到":
             return self._cmd_sign(group_id, qq)
         if cmd == "放河灯":
@@ -1029,7 +1049,7 @@ class ZhongyuanActivity:
             "**🕯️ 阳面 · 青灯寄思**（文化温情）\n"
             "> 放河灯 / 中元问答 / 供灯焚香 / 中元签到 → 功德\n\n"
             "**指令一览**\n"
-            "`相约中元` · `中元状态` · `中元功德榜` · `中元签到`\n"
+            "`相约中元` · `中元状态` · `中元功德榜` · `中元里程碑` · `中元签到`\n"
             "`放河灯 <寄语>` · `中元问答` · `焚香`/`供灯` · `解除阴气` · `功德商店`\n"
             "> 中元不是鬼节，是勾连阴阳两界的思念。"
         )
