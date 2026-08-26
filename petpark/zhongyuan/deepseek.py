@@ -6,7 +6,6 @@ API Key 一律从环境变量 ``DEEPSEEK_API_KEY`` 读取（可被显式配置�
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -125,15 +124,18 @@ class DeepSeekClient:
         """围绕规则怪谈分批生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
 
         推理模型 deepseek-v4-flash-vision-exp 在单次生成过多题目时，会把输出
-        token 消耗在 reasoning_content 上，导致最终 content 为空、解析出 0 题，
-        故拆成每批 4 题并发生成，保证单批任务足够简单、content 稳定返回 JSON。
+        token 消耗在 reasoning_content 上，导致最终 content 为空、解析出 0 题；
+        并发请求又易触发限流/空 content。故拆成每批 4 题串行生成，单批任务
+        足够简单、content 稳定返回 JSON，一批失败自动降档重试。
         """
         if count <= 0:
             return []
         batch = 4
-        slots = [min(batch, count - i * batch) for i in range((count + batch - 1) // batch)]
-
-        async def _one(need: int) -> list[dict]:
+        out: list[dict] = []
+        guard = 0
+        while len(out) < count and guard < 12:
+            guard += 1
+            need = min(batch, count - len(out))
             user = f"规则怪谈：{rule}\n请围绕此规则生成 {need} 道谜题。"
             try:
                 text = await self.chat(
@@ -143,13 +145,15 @@ class DeepSeekClient:
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
-                return []
-            return self._parse_puzzle_batch(text)
-
-        results = await asyncio.gather(*(_one(n) for n in slots))
-        out: list[dict] = []
-        for r in results:
-            out.extend(r)
+                break
+            parsed = self._parse_puzzle_batch(text)
+            if not parsed:
+                # 单批 content 为空/格式异常：降档重试，仍失败则停止（由本地模板兜底）
+                if batch > 1:
+                    batch -= 1
+                    continue
+                break
+            out.extend(parsed)
         return out[:count]
 
     async def reply_echo(self, prompt: str, system: str | None = None) -> str | None:
