@@ -83,6 +83,8 @@ class WebAdmin:
         app.router.add_post("/api/lottery/draw", self._api_lottery_draw)
         app.router.add_post("/api/zhongyuan/config", self._api_zhongyuan_config)
         app.router.add_post("/api/zhongyuan/config/save", self._api_zhongyuan_config_save)
+        app.router.add_post("/api/zhongyuan/test_deepseek", self._api_zhongyuan_test_deepseek)
+        app.router.add_post("/api/zhongyuan/test_broadcast", self._api_zhongyuan_test_broadcast)
         app.router.add_post("/api/test/broadcast", self._api_test_broadcast)
         app.router.add_post("/api/test/zhongyuan_push", self._api_test_zhongyuan_push)
         app.router.add_post("/api/test/clear_data", self._api_test_clear_data)
@@ -647,6 +649,40 @@ class WebAdmin:
         await zy.save()
         logger.info(f"[petpark][webadmin] 中元活动配置保存 by {request.remote}（成功 {ok}，跳过 {len(bad)}）")
         return self._json({"ok": True, "changed": ok, "bad": bad})
+
+    async def _api_zhongyuan_test_deepseek(self, request):
+        """中元活动：测试 DeepSeek 模型连接是否正常。"""
+        self._require(request)
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
+        ok, note, cost = await zy._deepseek.ping()
+        model = str(zy.cfg.get("deepseek_model", "") or "")
+        base = str(zy.cfg.get("deepseek_base_url", "") or "")
+        msg = (
+            ("✅ " if ok else "❌ ") + note
+            + (f"（耗时 {cost:.2f}s，模型 {model or '未配置'}，接口 {base or '默认'}）")
+        )
+        logger.info(f"[petpark][webadmin] DeepSeek 连接测试 by {request.remote}：{msg}")
+        return self._json({"ok": ok, "msg": msg, "cost": round(cost, 2)})
+
+    async def _api_zhongyuan_test_broadcast(self, request):
+        """中元活动：向所有已注册群推送一条全群通报测试消息。"""
+        self._require(request)
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
+        text = (
+            "## 🕯️ 中元全群通报测试\n"
+            "本消息由中元活动引擎向所有已注册群主动推送。若你看到此消息，说明中元全群通报链路正常。\n"
+            "> 此为测试通报，可忽略。"
+        )
+        try:
+            await zy._push_all_groups(text)
+        except Exception as e:
+            logger.exception("[petpark] 中元全群通报测试异常")
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        return self._json({"ok": True, "msg": "已向所有已注册群发起中元全群通报"})
 
     async def _api_test_broadcast(self, request):
         """测试：向所有已授权且有 UMO 的群推送一条全服广播测试消息。"""
@@ -1613,11 +1649,14 @@ function renderZhongyuan(){
    <textarea id="zy_tiers" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical;font-family:monospace">${esc(tiers)}</textarea>
    <div class="sec">群里程碑（累计功德达标，JSON：threshold / gongde）</div>
    <textarea id="zy_milestones" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical;font-family:monospace">${esc(miles)}</textarea>
-   <div style="margin-top:16px;display:flex;gap:10px">
+   <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
     <button class="act" onclick="saveZhongyuan()">保存配置</button>
     <button class="act ghost" onclick="loadZhongyuan()">刷新</button>
+    <button class="act ghost" onclick="testDeepSeek()">测试 DeepSeek 连接</button>
+    <button class="act ghost" onclick="testZhongyuanBroadcast()">全群通报测试</button>
    </div>
    <div class="muted" id="zy_msg" style="margin-top:10px"></div>
+   <div class="muted" id="zy_test_msg" style="margin-top:6px"></div>
   </div>
  </div>`;
 }
@@ -1638,6 +1677,17 @@ async function saveZhongyuan(){
  if(!r){msg.textContent='❌ 保存失败：无响应';return;}
  msg.textContent=r.ok?('✅ 已保存'+(r.bad&&r.bad.length?'（跳过：'+r.bad.join(', ')+'）':'')):('❌ 保存失败：'+(r.msg||'未知错误'));
  if(r.ok) loadZhongyuan();
+}
+async function testDeepSeek(){
+ const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在测试连接…';
+ const r=await api('/api/zhongyuan/test_deepseek',{});
+ if(msg) msg.textContent=r?(r.ok?'✅ '+r.msg:'❌ '+r.msg):'❌ 测试失败：无响应';
+}
+async function testZhongyuanBroadcast(){
+ if(!confirm('将向所有已注册群真实推送一条测试消息，确认继续？')) return;
+ const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在广播…';
+ const r=await api('/api/zhongyuan/test_broadcast',{});
+ if(msg) msg.textContent=r?(r.ok?'✅ '+r.msg:'❌ '+r.msg):'❌ 广播失败：无响应';
 }
 // ---- 测试面板（推送测试 + 内测数据清除）----
 function apiForm(p,b){const fd=new URLSearchParams();for(const k in b)fd.append(k,b[k]);return fetch(p,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:fd}).then(r=>r.json());}

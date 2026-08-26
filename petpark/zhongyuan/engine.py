@@ -856,12 +856,22 @@ class ZhongyuanActivity:
         if cmd == "中元开始":
             self.cfg["start_at"] = self._now()
             self._data["config"]["start_at"] = self.cfg["start_at"]
-            return f"✅ 中元活动已开始（start_at={self.cfg['start_at']}）。"
+            self._spawn(self._push_all_groups(
+                f"## 🕯️ 中元活动已开启\n"
+                f"《{ACTIVITY_NAME}》正式开启！全群共享功德数据，人人可参与。\n"
+                f"> 发送「中元活动」查看玩法；「绑定中元宠物」领取活动 ID 踏入阴阳两界。"
+            ))
+            return f"✅ 中元活动已开始，并已向全群通报（start_at={self.cfg['start_at']}）。"
         if cmd == "中元结束":
             self.cfg["end_at"] = self._now()
             self._data["config"]["end_at"] = self.cfg["end_at"]
             self._settle()
-            return f"✅ 中元活动已结束并结算（end_at={self.cfg['end_at']}）。"
+            self._spawn(self._push_all_groups(
+                f"## 🕯️ 中元活动已结束\n"
+                f"《{ACTIVITY_NAME}》已落下帷幕，段位功德已结算完毕。\n"
+                f"> 发送「中元兑换」领取暂存功德（兑换窗口内有效）。"
+            ))
+            return f"✅ 中元活动已结束并结算，已向全群通报（end_at={self.cfg['end_at']}）。"
         if cmd in ("删除中元活动", "重置中元活动"):
             return self._cmd_reset()
         if cmd == "中元结算":
@@ -1060,6 +1070,15 @@ class ZhongyuanActivity:
             await self.bot._send_to_group(str(group_id), text)
         except Exception as e:  # noqa: BLE001
             logger.warning("[zhongyuan] 推送群 %s 失败：%s", group_id, e)
+
+    async def _push_all_groups(self, text: str) -> None:
+        """向所有已注册群广播（全群通报）；单群失败不影响其余群。"""
+        try:
+            gids = list(self.bot.store._data.get("groups", {}).keys())
+        except Exception:  # noqa: BLE001
+            gids = list(self._groups().keys())
+        for gid in gids:
+            await self._push_group(gid, text)
 
     # ------------------------------------------------------------------
     # 生命周期

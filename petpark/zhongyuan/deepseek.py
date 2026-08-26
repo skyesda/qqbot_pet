@@ -142,6 +142,28 @@ class DeepSeekClient:
             logger.warning("[zhongyuan] DeepSeek 文案生成失败：%s", e)
             return None
 
+    async def ping(self) -> tuple[bool, str, float]:
+        """连通性测试：返回 (是否成功, 说明, 耗时秒)。供后台「测试连接」按钮调用。"""
+        import asyncio
+        import time as _time
+
+        if not self.available:
+            return False, "未配置 API Key（或未从环境变量 DEEPSEEK_API_KEY 读取到）", 0.0
+        t0 = _time.monotonic()
+        try:
+            text = await asyncio.wait_for(
+                self.chat("请回复「正常」二字。", system="连通性测试。", max_tokens=16),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            return False, "连接超时（15 秒无响应）", _time.monotonic() - t0
+        except Exception as e:  # noqa: BLE001
+            return False, f"连接失败：{e}", _time.monotonic() - t0
+        dt = _time.monotonic() - t0
+        if not text:
+            return False, "连接成功但返回为空", dt
+        return True, f"连接正常，模型回复：{text.strip()[:24]}", dt
+
     @staticmethod
     def _parse_puzzle(text: str) -> dict | None:
         """把模型输出解析为谜题 dict；容忍 ```json 围栏与前后空白。"""
