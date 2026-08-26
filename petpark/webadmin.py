@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import secrets
 import time
@@ -62,8 +63,6 @@ class WebAdmin:
         app.router.add_post("/api/cards/generate", self._api_gen_cards)
         app.router.add_post("/api/cards/batch_delete", self._api_cards_batch_delete)
         app.router.add_post("/api/boss_respawn", self._api_boss_respawn)
-        app.router.add_post("/api/test_sect_broadcast", self._api_test_sect_broadcast)
-        app.router.add_post("/api/test_sect_war_full", self._api_test_sect_war_full)
         app.router.add_get("/api/portal_accounts", self._api_portal_accounts)
         app.router.add_post("/api/portal_accounts/reset_password", self._api_portal_reset_password)
         app.router.add_post("/api/portal_accounts/delete", self._api_portal_delete_account)
@@ -85,9 +84,9 @@ class WebAdmin:
         app.router.add_post("/api/zhongyuan/config/save", self._api_zhongyuan_config_save)
         app.router.add_post("/api/zhongyuan/test_deepseek", self._api_zhongyuan_test_deepseek)
         app.router.add_post("/api/zhongyuan/test_broadcast", self._api_zhongyuan_test_broadcast)
-        app.router.add_post("/api/test/broadcast", self._api_test_broadcast)
-        app.router.add_post("/api/test/zhongyuan_push", self._api_test_zhongyuan_push)
-        app.router.add_post("/api/test/clear_data", self._api_test_clear_data)
+        app.router.add_post("/api/zhongyuan/test_start", self._api_zhongyuan_test_start)
+        app.router.add_post("/api/zhongyuan/test_end", self._api_zhongyuan_test_end)
+        app.router.add_post("/api/zhongyuan/data", self._api_zhongyuan_data)
 
         portal = PlayerPortal(
             self.store,
@@ -684,292 +683,60 @@ class WebAdmin:
             return self._json({"ok": False, "msg": f"异常: {e}"})
         return self._json({"ok": True, "msg": "已向所有已注册群发起中元全群通报"})
 
-    async def _api_test_broadcast(self, request):
-        """测试：向所有已授权且有 UMO 的群推送一条全服广播测试消息。"""
-        self._require(request)
-        gw = self._command_gateway
-        if gw is None:
-            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
-        text = (
-            "## 🧪 全服广播测试\n"
-            "本消息由「全服广播」主动推送到所有已授权群。若你看到此消息，说明全服广播链路正常。\n"
-            "> 此为测试广播，可忽略。"
-        )
-        try:
-            result = await gw._do_broadcast(text)
-        except Exception as e:
-            logger.exception("[petpark] 全服广播测试异常")
-            return self._json({"ok": False, "msg": f"异常: {e}"})
-        return self._json(
-            {
-                "ok": True,
-                "msg": (
-                    f"全服广播完成：成功 {result.get('sent', 0)} / 目标 {result.get('targets', 0)}"
-                    f"（总群 {result.get('total_groups', 0)}，授权 {result.get('authorized_groups', 0)}，"
-                    f"有UMO {result.get('umo_ready_groups', 0)}，失败 {result.get('failed', 0)}）"
-                ),
-                "detail": result,
-            }
-        )
-
-    async def _api_test_zhongyuan_push(self, request):
-        """测试：中元活动引擎向指定群推送一条测试消息。"""
+    async def _api_zhongyuan_test_start(self, request):
+        """中元活动：测试「活动开始」全群通报（仅推送，不更改活动状态）。"""
         self._require(request)
         zy = self.zhongyuan
         if zy is None:
             return self._json({"ok": False, "msg": "中元活动模块未加载"})
-        body = await request.json()
-        gid = str(body.get("group_id", "") or "").strip()
-        if not gid:
-            return self._json({"ok": False, "msg": "缺少 group_id"})
         text = (
-            "## 🕯️ 中元活动推送测试\n"
-            "本消息由中元活动引擎主动推送。若你看到此消息，说明中元推送链路正常。\n"
-            "> 此为测试推送，可忽略。"
+            "## 🕯️ 中元活动已开启\n"
+            f"《{zy.ACTIVITY_NAME}》正式开启！全群共享功德数据，人人可参与。\n"
+            "> 发送「中元活动」查看玩法；「相约中元」领取活动 ID 踏入阴阳两界。"
         )
         try:
-            await zy._push_group(gid, text)
+            await zy._push_all_groups(text)
         except Exception as e:
-            logger.exception("[petpark] 中元推送测试异常")
+            logger.exception("[petpark] 中元「活动开始」通报测试异常")
             return self._json({"ok": False, "msg": f"异常: {e}"})
-        return self._json({"ok": True, "msg": f"已向群 {gid} 发起中元活动推送"})
+        return self._json({"ok": True, "msg": "已向所有已注册群发起「活动开始」全群通报（测试，未更改活动状态）"})
 
-    async def _api_test_clear_data(self, request):
-        """测试：清除内测数据。
-
-        scope：
-        - ``all``       一键清除全部内测进度（玩家/活动/卡密/各玩法/宗门赛季/中元等），
-                        保留群列表与 umo/授权、网页账号、portal_secret、group_map、
-                        qq_bindings、email_config 等配置，无需重新授权。
-        - ``zhongyuan`` 仅清除中元活动数据（保留配置）。
-        """
+    async def _api_zhongyuan_test_end(self, request):
+        """中元活动：测试「活动结束」全群通报（仅推送，不结算、不更改活动状态）。"""
         self._require(request)
-        body = await request.json()
-        scope = str(body.get("scope", "all")).strip()
-        gw = self._command_gateway
-        if gw is None:
-            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
-
-        cleared: list[str] = []
-        if scope in ("all", "players"):
-            d = gw.store._data
-            wipe_keys = [
-                "players", "events", "cards", "tomb_players", "ms_players",
-                "homestead_players", "bank_players", "tomb_active_sessions",
-                "tomb_active_coops", "tomb_active_coop_index", "prize_wallet",
-                "custom_reviews", "custom_pets", "app_release", "feedbacks",
-                "tomb_daily_reward",
-            ]
-            for k in wipe_keys:
-                if k in d:
-                    d[k] = {}
-                    cleared.append(k)
-            d["sect_season"] = gw.store._default_sect_season()
-            cleared.append("sect_season")
-            d["lottery"] = None
-            cleared.append("lottery")
-            # 重置各群运行时状态（保留 umo / enabled / cross / 群名等注册信息）
-            for g in d.get("groups", {}).values():
-                g["sect"] = gw.store._default_group_sect()
-                for rk in ("sign_count", "boss_states", "boss_state", "sect_war",
-                           "war", "today", "_daily", "last_sign"):
-                    g.pop(rk, None)
-            await gw.store.save()
-
-        if scope in ("all", "zhongyuan"):
-            zy = self.zhongyuan
-            if zy is not None:
-                zy._data["players"] = {}
-                zy._data["groups"] = {}
-                zy._data["sessions"] = {}
-                zy._data["meta"]["activity_id_seq"] = 0
-                zy._data.pop("settled", None)
-                await zy.save()
-                cleared.append("zhongyuan")
-            else:
-                cleared.append("zhongyuan(未加载)")
-
-        msg = "已清除：" + "、".join(cleared) if cleared else "无数据可清除"
-        logger.info(f"[petpark][webadmin] 内测数据清除 scope={scope} by {request.remote}：{msg}")
-        return self._json({"ok": True, "msg": msg, "cleared": cleared})
-
-    async def _api_test_sect_broadcast(self, request):
-        """临时：向指定群发送一条定向广播测试消息，验证 _send_to_group 通路。"""
-        from aiohttp import web
-
-        self._require(request)
-        data = await request.post()
-        gid = (data.get("group_id") or "").strip()
-        if not gid:
-            return self._json({"ok": False, "msg": "缺少 group_id"})
-        gw = self._command_gateway
-        if gw is None:
-            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
         text = (
-            "## 🧪 宗门定向广播测试\n"
-            "本消息由 _send_to_group 主动推送。若你在本群看到此消息，说明定向主动广播功能正常。\n"
-            "> 此为测试广播，可忽略。"
+            "## 🕯️ 中元活动已结束\n"
+            f"《{zy.ACTIVITY_NAME}》已落下帷幕，段位功德已结算完毕。\n"
+            "> 段位功德已结算，可发送「功德商店」查看奖励。"
         )
         try:
-            ok = await gw._send_to_group(gid, text)
+            await zy._push_all_groups(text)
         except Exception as e:
+            logger.exception("[petpark] 中元「活动结束」通报测试异常")
             return self._json({"ok": False, "msg": f"异常: {e}"})
-        return self._json(
-            {"ok": bool(ok), "msg": "定向推送成功" if ok else "定向推送失败（无 umo/未授权/发送异常，详见日志）"}
-        )
+        return self._json({"ok": True, "msg": "已向所有已注册群发起「活动结束」全群通报（测试，未结算、未更改活动状态）"})
 
-    async def _api_test_sect_war_full(self, request):
-        """临时测试：用模拟数据在指定两个群完整跑一遍宗门战广播链路（真实投递到 QQ 群）。
-
-        依次触发：对阵公布 -> 开战 -> 第1/2回合 -> 决赛战报，共 5 条广播 × 2 群 = 10 条。
-        使用模拟宠物/成员填充出战名单，跑完即还原两群 sect、赛季 matches 及模拟玩家，不影响真实数据。
-        """
-        import asyncio
-        import copy
-
-        from . import pet as petmod
-
+    async def _api_zhongyuan_data(self, request):
+        """中元活动：查看全部数据（config / meta / players / groups / sessions）。API Key 脱敏。"""
         self._require(request)
-        form = await request.post()
-        ga = (form.get("group_a") or "").strip()
-        gb = (form.get("group_b") or "").strip()
-        if not ga or not gb:
-            return self._json({"ok": False, "msg": "缺少 group_a / group_b"})
-        if ga == gb:
-            return self._json({"ok": False, "msg": "两个群不能相同"})
-        gw = self._command_gateway
-        if gw is None:
-            return self._json({"ok": False, "msg": "command_gateway 未就绪"})
-        store = gw.store
-        groups = store._data.get("groups", {})
-        if ga not in groups or gb not in groups:
-            return self._json({"ok": False, "msg": "群不存在于 groups"})
-
-        # 预检：两群 umo / 授权 / 开关状态
-        pre = []
-        for gid in (ga, gb):
-            g = groups[gid]
-            umo = g.get("umo")
-            authed = gw._is_group_authorized(gid)
-            pre.append(
-                f"{gid}: umo={'有' if umo else '无'}, 授权={'是' if authed else '否'}, "
-                f"enabled={g.get('enabled')}, cross={g.get('cross')}"
-            )
-
-        today = time.strftime("%Y-%m-%d")
-        season = gw._sect_ensure_season()
-        # 快照（含模拟玩家碰撞兜底）
-        sect_a_bak = copy.deepcopy(groups[ga].get("sect", {}))
-        sect_b_bak = copy.deepcopy(groups[gb].get("sect", {}))
-        season_bak = copy.deepcopy(store._data.get("sect_season", {}))
-        players = store._data.setdefault("players", {})
-        sim_keys: list[str] = []
-        collide_bak: dict = {}
-
-        def make_sim_pet(idx: int, src=None) -> dict:
-            if isinstance(src, dict):
-                p = copy.deepcopy(src)
-            else:
-                p = {
-                    "nickname": f"测试战宠{idx}", "species": "幼龙", "quality": "史诗",
-                    "element": "金", "gender": "男", "stage": "成熟期", "level": 60,
-                    "exp": 0, "hp": 3000, "hp_max": 3000, "atk": 180, "def": 90,
-                    "intel": 90, "mood": 5, "energy": 100, "energy_max": 100,
-                    "status": "正常", "love_state": "单身", "love_target": None,
-                    "favor": 0, "artifact": None, "talent": None, "skills": [],
-                    "custom": False, "ascended": False, "frozen_until": 0,
-                }
-            p["nickname"] = f"测试战宠{idx}"
-            p["hp"] = p.get("hp_max", 3000) or 3000
-            p["hp_max"] = p.get("hp_max", 3000) or 3000
-            p["status"] = "正常"
-            p["mood"] = 5
-            return p
-
-        def find_real_pet(gid):
-            for k, pl in players.items():
-                if "\x1f" in k and k.split("\x1f", 1)[0] == gid:
-                    pet = pl.get("pet")
-                    if pet and not petmod.is_dead(pet):
-                        return pet
-            return None
-
-        steps = []
-        ok = False
-        msg = ""
-        try:
-            for gi, gid in enumerate((ga, gb)):
-                g = groups[gid]
-                sect = g.setdefault("sect", store._default_group_sect())
-                if not sect.get("name"):
-                    sect["name"] = "测试宗门甲" if gi == 0 else "测试宗门乙"
-                gw._sect_ensure_today(sect)
-                src_pet = find_real_pet(gid)
-                confirmed = []
-                for i in range(5):
-                    qq = f"9000000{gi * 5 + i + 1}"
-                    key = store.make_key(gid, qq)
-                    if key in players:
-                        collide_bak[key] = copy.deepcopy(players[key])
-                    else:
-                        sim_keys.append(key)
-                    pl = store.get_player(qq, gid, create=True)
-                    pl["qq"] = qq
-                    pl["group"] = gid
-                    pet = make_sim_pet(i + 1, src_pet)
-                    pl["pet"] = pet
-                    confirmed.append({"qq": qq, "bp": petmod.battle_power(pet)})
-                sect["today"]["confirmed"] = confirmed
-                sect["today"]["date"] = today
-
-            # 初始化双方 war 状态并写入今日赛季对阵
-            gw._sect_init_war(ga, gb)
-            gw._sect_init_war(gb, ga)
-            season.setdefault("matches", []).append({
-                "date": today, "time": int(time.time()),
-                "group_a": ga, "group_b": gb,
-                "a_wins": 0, "b_wins": 0, "winner": "",
-            })
-            await store.save()
-
-            # 依次触发整套广播（真实投递到两个 QQ 群）
-            await asyncio.sleep(1)
-            await gw._sect_broadcast_matchup(ga, gb)
-            steps.append("对阵公布")
-            await asyncio.sleep(2)
-            await gw._sect_war_start()
-            steps.append("开战")
-            await asyncio.sleep(2)
-            await gw._sect_war_round_end(1, False)
-            steps.append("第1回合")
-            await asyncio.sleep(2)
-            await gw._sect_war_round_end(2, False)
-            steps.append("第2回合")
-            await asyncio.sleep(2)
-            await gw._sect_war_round_end(3, True)
-            steps.append("决赛战报")
-            await store.save()
-            ok = True
-            msg = "宗门战整套广播已依次推送（5 条 × 2 群 = 10 条），请到两个 QQ 群核对。"
-        except Exception as e:
-            ok = False
-            msg = f"执行异常: {e}"
-            logger.exception("[petpark] 宗门战整套广播测试异常")
-        finally:
-            # 还原：两群 sect、赛季、模拟玩家
-            try:
-                groups[ga]["sect"] = sect_a_bak
-                groups[gb]["sect"] = sect_b_bak
-                store._data["sect_season"] = season_bak
-                for key in sim_keys:
-                    players.pop(key, None)
-                for key, bak in collide_bak.items():
-                    players[key] = bak
-                await store.save()
-            except Exception:
-                logger.exception("[petpark] 宗门战整套广播测试还原失败")
-
-        return self._json({"ok": ok, "msg": msg, "steps": steps, "precheck": pre})
+        zy = self.zhongyuan
+        if zy is None:
+            return self._json({"ok": False, "msg": "中元活动模块未加载"})
+        data = copy.deepcopy(zy._data)
+        cfg = data.get("config") or {}
+        key = str(cfg.get("deepseek_api_key") or "")
+        if key:
+            cfg["deepseek_api_key"] = (key[:3] + "••••" + key[-4:]) if len(key) > 8 else "••••"
+            data["config"] = cfg
+        stats = {
+            "players": len(data.get("players", {})),
+            "groups": len(data.get("groups", {})),
+            "sessions": len(data.get("sessions", {})),
+        }
+        return self._json({"ok": True, "data": data, "stats": stats})
 
     # --------------------------- 网页账号管理 ---------------------------
     async def _api_portal_accounts(self, request):
@@ -1138,7 +905,6 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button>
 <button data-t="app_release" onclick="tab('app_release')">App 发布</button>
 <button data-t="zhongyuan" onclick="tab('zhongyuan')">中元活动</button>
-<button data-t="test" onclick="tab('test')">测试</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -1460,8 +1226,8 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='test')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='test')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
@@ -1469,11 +1235,10 @@ function tab(t){
  else if(t==='app_release') loadAppRelease();
  else if(t==='lottery') loadLottery();
  else if(t==='zhongyuan') loadZhongyuan();
- else if(t==='test') loadTest();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='test') return loadTest(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1487,7 +1252,6 @@ function render(){
  else if(cur==='custom_pets')renderCustomPets();
  else if(cur==='feedbacks')renderFeedbacks();
  else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘 */ }
- else if(cur==='test'){ /* 由 loadTest 自绘 */ }
  else renderCards();
 }
 // ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
@@ -1654,9 +1418,14 @@ function renderZhongyuan(){
     <button class="act ghost" onclick="loadZhongyuan()">刷新</button>
     <button class="act ghost" onclick="testDeepSeek()">测试 DeepSeek 连接</button>
     <button class="act ghost" onclick="testZhongyuanBroadcast()">全群通报测试</button>
+    <button class="act ghost" onclick="testZhongyuanStart()">测试活动开始全群播放</button>
+    <button class="act ghost" onclick="testZhongyuanEnd()">测试活动结束全群播放</button>
+    <button class="act ghost" onclick="viewZhongyuanData()">查看中元所有数据</button>
    </div>
    <div class="muted" id="zy_msg" style="margin-top:10px"></div>
    <div class="muted" id="zy_test_msg" style="margin-top:6px"></div>
+   <div class="muted" id="zy_data_msg" style="margin-top:6px"></div>
+   <textarea id="zy_data_box" rows="16" style="display:none;width:100%;margin-top:8px;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;font-family:monospace;font-size:12px;white-space:pre" readonly></textarea>
   </div>
  </div>`;
 }
@@ -1689,94 +1458,29 @@ async function testZhongyuanBroadcast(){
  const r=await api('/api/zhongyuan/test_broadcast',{});
  if(msg) msg.textContent=r?(r.ok?'✅ '+r.msg:'❌ '+r.msg):'❌ 广播失败：无响应';
 }
-// ---- 测试面板（推送测试 + 内测数据清除）----
-function apiForm(p,b){const fd=new URLSearchParams();for(const k in b)fd.append(k,b[k]);return fetch(p,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:fd}).then(r=>r.json());}
-function loadTest(){
- document.getElementById('count').textContent='';
- document.getElementById('extrawrap').innerHTML='';
- document.getElementById('tablewrap').innerHTML=`
- <div style="max-width:960px">
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px;margin-bottom:14px">
-   <h3 style="margin:0 0 16px">📡 推送测试 <span class="muted" style="font-weight:400">（点击立即真实投递到 QQ 群）</span></h3>
-   <div class="row" style="align-items:center">
-    <label class="fld">定向群推送 <input id="t_direct_gid" placeholder="群号" style="width:190px"></label>
-    <button class="act" onclick="testDirectPush()">立即推送</button>
-   </div>
-   <div class="row" style="align-items:center">
-    <label class="fld">全服广播 <span class="muted">（所有已授权且有 UMO 的群）</span></label>
-    <button class="act" onclick="testBroadcast()">立即广播</button>
-   </div>
-   <div class="row" style="align-items:center">
-    <label class="fld">中元活动推送 <input id="t_zy_gid" placeholder="群号" style="width:190px"></label>
-    <button class="act" onclick="testZhongyuanPush()">立即推送</button>
-   </div>
-   <div class="row" style="align-items:center">
-    <label class="fld">Boss 复活广播 <input id="t_boss_eid" placeholder="活动ID" style="width:190px"></label>
-    <button class="act" onclick="testBossRespawn()">复活并播报</button>
-   </div>
-   <div class="row" style="align-items:center">
-    <label class="fld">口令抽奖开奖</label>
-    <button class="act" onclick="testLotteryDraw()">立即开奖</button>
-   </div>
-   <div class="row" style="align-items:center">
-    <label class="fld">宗门战整套广播 A <input id="t_war_a" placeholder="群A号" style="width:170px"></label>
-    <label class="fld">B <input id="t_war_b" placeholder="群B号" style="width:170px"></label>
-    <button class="act" onclick="testSectWar()">跑整套</button>
-   </div>
-   <div class="muted" id="test_msg" style="margin-top:10px;white-space:pre-wrap"></div>
-  </div>
-  <div style="background:#fff;border:1px solid #ffd9d9;border-radius:14px;padding:22px">
-   <h3 style="margin:0 0 16px;color:#c0392b">🗑️ 内测数据清除 <span class="muted" style="font-weight:400;color:#999">（不可恢复，请谨慎）</span></h3>
-   <div class="row">
-    <button class="act del" onclick="testClearData('all')">一键清除全部内测数据</button>
-    <button class="act del" onclick="testClearData('zhongyuan')">仅清除中元活动数据</button>
-   </div>
-   <div class="muted" style="margin-top:8px">「全部」会清空玩家 / 活动 / 卡密 / 各玩法 / 宗门赛季 / 中元等所有进度数据；保留群列表与 umo/授权（无需重新授权）、网页账号、邮箱等配置。</div>
-   <div class="muted" id="clear_msg" style="margin-top:10px"></div>
-  </div>
- </div>`;
+
+async function testZhongyuanStart(){
+ if(!confirm('将向所有已注册群真实推送「活动开始」通报（不更改活动状态），确认继续？')) return;
+ const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在推送「活动开始」通报…';
+ const r=await api('/api/zhongyuan/test_start',{});
+ if(msg) msg.textContent=r?(r.ok?'✅ '+r.msg:'❌ '+r.msg):'❌ 推送失败：无响应';
 }
-async function testDirectPush(){
- const gid=g('t_direct_gid').value.trim();
- if(!gid){alert('请填写群号');return;}
- const r=await apiForm('/api/test_sect_broadcast',{group_id:gid});
- g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+async function testZhongyuanEnd(){
+ if(!confirm('将向所有已注册群真实推送「活动结束」通报（不结算、不更改状态），确认继续？')) return;
+ const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在推送「活动结束」通报…';
+ const r=await api('/api/zhongyuan/test_end',{});
+ if(msg) msg.textContent=r?(r.ok?'✅ '+r.msg:'❌ '+r.msg):'❌ 推送失败：无响应';
 }
-async function testBroadcast(){
- const r=await api('/api/test/broadcast',{});
- g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+async function viewZhongyuanData(){
+ const msg=g('zy_data_msg'); const box=g('zy_data_box');
+ if(msg) msg.textContent='⏳ 正在读取中元数据…';
+ const r=await api('/api/zhongyuan/data',{});
+ if(!r){ if(msg) msg.textContent='❌ 读取失败：无响应'; return; }
+ if(!r.ok){ if(msg) msg.textContent='❌ '+(r.msg||'读取失败'); return; }
+ if(msg) msg.textContent='✅ 已读取：玩家 '+r.stats.players+' · 群 '+r.stats.groups+' · 进行中副本 '+r.stats.sessions;
+ if(box){ box.value=JSON.stringify(r.data,null,2); box.style.display='block'; }
 }
-async function testZhongyuanPush(){
- const gid=g('t_zy_gid').value.trim();
- if(!gid){alert('请填写群号');return;}
- const r=await api('/api/test/zhongyuan_push',{group_id:gid});
- g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
-}
-async function testBossRespawn(){
- const eid=g('t_boss_eid').value.trim();
- if(!eid){alert('请填写活动ID');return;}
- const r=await api('/api/boss_respawn',{event_id:eid});
- g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
-}
-async function testLotteryDraw(){
- if(!confirm('确认立即开奖？'))return;
- const r=await api('/api/lottery/draw',{});
- g('test_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
-}
-async function testSectWar(){
- const a=g('t_war_a').value.trim(), b=g('t_war_b').value.trim();
- if(!a||!b){alert('请填写两个群号');return;}
- const r=await apiForm('/api/test_sect_war_full',{group_a:a, group_b:b});
- let t=(r.ok?'✅ ':'❌ ')+(r.msg||'');
- if(r.precheck&&r.precheck.length)t+='\\n预检：'+r.precheck.join('；');
- g('test_msg').textContent=t;
-}
-async function testClearData(scope){
- const label=scope==='all'?'全部内测数据（玩家/活动/卡密/各玩法/宗门/中元）':'中元活动数据';
- if(!confirm('确认清除 '+label+' ？此操作不可恢复！'))return;
- const r=await api('/api/test/clear_data',{scope});
- g('clear_msg').textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
-}
+
 function shell(head,rows,cols){
  document.getElementById('count').textContent='共 '+Object.keys(cache).length+' 条';
  document.getElementById('extrawrap').innerHTML='';
