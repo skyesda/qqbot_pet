@@ -52,6 +52,7 @@ COMMANDS = {
     "开启中元活动", "关闭中元活动", "中元配置", "中元开始", "中元结束",
     "删除中元活动", "重置中元活动", "中元结算",
     "强行开副本", "强制开副本", "强行启动副本",
+    "强制关副本", "强行关副本", "强制结束副本",
 }
 
 # 中元文化问答（本地题库，DeepSeek 可扩充）
@@ -995,6 +996,15 @@ class ZhongyuanActivity:
         self._spawn(self._start_dungeon(group_id))
         return "🕯️ 已收到强行开启指令，阴门即将开启…"
 
+    def _cmd_force_stop_dungeon(self, group_id: str, qq: str, event) -> str:
+        """管理员强制关闭本群进行中的副本（不结算、不施加惩罚）。"""
+        if not self.bot._is_admin(event):
+            return "❌ 仅管理员可强制关闭副本。"
+        s = self._sessions().pop(str(group_id), None)
+        if not s:
+            return "🕯️ 本群当前没有进行中的副本。"
+        return "🕯️ 本场副本已被管理员强制关闭（不结算、不施加惩罚）。"
+
     def _cmd_admin(self, group_id: str, qq: str, event, cmd: str, args: list[str]) -> str | None:
         if not self.bot._is_admin(event):
             return "❌ 仅管理员可操作中元活动后台。"
@@ -1111,6 +1121,9 @@ class ZhongyuanActivity:
         # 大管理员强行启动副本（权限高于普通群管理员）
         if cmd in ("强行开副本", "强制开副本", "强行启动副本"):
             return self._cmd_force_dungeon(group_id, qq)
+        # 管理员强制关闭副本
+        if cmd in ("强制关副本", "强行关副本", "强制结束副本"):
+            return self._cmd_force_stop_dungeon(group_id, qq, event)
         # 解密作答（仅被勾中玩家）
         if cmd in ("答", "中元答"):
             answer = text[len(cmd):].strip()
