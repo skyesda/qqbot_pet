@@ -613,8 +613,8 @@ class ZhongyuanActivity:
             ap["last_draw_date"] = today
             ap["draw_count_today"] = int(ap.get("draw_count_today", 0)) + 1
         # 规则怪谈 + 围绕规则生成谜题
-        rule = await self._generate_rule()
-        puzzles_list = await self._generate_puzzles(rule)
+        rule, theme = await self._generate_rule()
+        puzzles_list = await self._generate_puzzles(rule, theme)
         participants = {
             str(ap["qq"]): {
                 "qq": str(ap["qq"]),
@@ -652,22 +652,36 @@ class ZhongyuanActivity:
         )
         await self._push_puzzle(gid)
 
-    async def _generate_rule(self) -> str:
-        """生成「规则怪谈」总线索：优先 DeepSeek，失败/关闭回退本地模板。"""
+    async def _generate_rule(self) -> tuple[str, str | None]:
+        """生成「规则怪谈」总线索。返回 (rule, theme)：
+        - DeepSeek 可用：rule=AI 生成，theme=None（各题由 DeepSeek 在批量内保持一致）；
+        - 否则：随机取一个本地母题为主题，rule 取该母题的配套规则，theme 一并返回，
+          供 _generate_puzzles 用同一母题生成整场谜题，保证「规则与题目同母题、互相呼应」。
+        """
         if self._deepseek.available:
             rule = await self._deepseek.generate_rule()
             if rule:
-                return rule
-        return random.choice(puzzles.LOCAL_RULES)
+                return rule, None
+        theme = puzzles.local_theme()
+        return puzzles.RULE_BY_THEME.get(theme) or random.choice(puzzles.LOCAL_RULES), theme
 
-    async def _generate_puzzles(self, rule: str) -> list[dict]:
-        """围绕规则怪谈生成整场谜题：优先 DeepSeek 批量，失败/关闭回退本地模板补齐。"""
+    async def _generate_puzzles(self, rule: str, theme: str | None = None) -> list[dict]:
+        """围绕规则怪谈生成整场谜题：优先 DeepSeek 批量，失败/关闭回退本地模板补齐。
+
+        每条题都绑定一条与自身内容一致的 rule（DeepSeek 题打上会话 rule，
+        本地题按母题取 RULE_BY_THEME），展示时以题内 rule 为准，杜绝「规则与题目不相关」。
+        """
         count = max(1, self._int_cfg("puzzle_count", 20))
         out: list[dict] = []
         if self._deepseek.available:
             out = await self._deepseek.generate_puzzles_batch(rule, count)
+            for pz in out:
+                pz.setdefault("rule", rule)
         while len(out) < count:
-            out.append(puzzles.local_puzzle())
+            p = puzzles.local_puzzle(theme)
+            if not p.get("rule"):
+                p["rule"] = puzzles.RULE_BY_THEME.get(p.get("theme", ""), rule)
+            out.append(p)
         return out[:count]
 
     async def _push_puzzle(self, group_id: str) -> None:
@@ -680,7 +694,8 @@ class ZhongyuanActivity:
         idx = int(s.get("index", 0))
         remain = self._fmt_remain(int(s.get("deadline", 0)))
         alive = [x for x in s["participants"].values() if x.get("alive")]
-        rule = str(s.get("rule", "")).strip()
+        # 规则随题走：优先用本题自带 rule（与本题目主题一致），无则回退会话级规则。
+        rule = str(p.get("rule") or s.get("rule") or "").strip()
         rule_line = f"> 📜 **规则怪谈**：{rule}\n" if rule else ""
         await self._push_group(
             group_id,

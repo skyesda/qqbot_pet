@@ -38,6 +38,24 @@ LOCAL_RULES = [
     "灯油以七钱为限，多一分则魂魄外溢，少一分则灯芯噬主。",
 ]
 
+# 每个母题对应一条「规则怪谈」。本地谜题按自身 theme 绑定 rule，
+# 保证「显示出的规则」与「本题题干」始终同母题、内容呼应用（不再随机错配）。
+RULE_BY_THEME = {
+    "青灯引魂": "堂前青灯只准添灯，不准吹灯。谁吹熄一盏，谁的影子就替它站到天明。",
+    "五行生克": "五行为序，生者为续。作答者须先顺口诵出相生之数，逆序者影随灯灭。",
+    "十二生肖": "生肖有冲，逢冲必避。口中不可言及「相冲之兽」，言错者隔日方归。",
+    "纸扎点灵": "纸人点睛者非活物，不可与之对答。谁算错点睛之数，谁便被纸人替上。",
+    "符箓真伪": "符箓一张真，余皆伪。对真符者须先算清真符之序，序错则符反噬。",
+    "铜钱问卦": "铜钱问卦，正反有定数。数错者卦象反噬，须代为投一卦方能解开。",
+    "鬼门开关": "馆中门扉一为生门，余皆通阴司。走错生门者，与门内之物对坐一炷香。",
+}
+
+
+def local_theme() -> str:
+    """随机挑一个本地母题（DeepSeek 不可用时作为整场的统一主主题）。"""
+    return random.choice(THEMES)
+
+
 # 五行相生：木→火→土→金→水→木
 WUXING_SHENG = {"木": "火", "火": "土", "土": "金", "金": "水", "水": "木"}
 WUXING = list(WUXING_SHENG.keys())
@@ -181,10 +199,13 @@ _LOCAL_GENERATORS = {
 
 
 def local_puzzle(theme: str | None = None) -> dict:
-    """本地模板生成一道谜题（兜底用）。"""
+    """本地模板生成一道谜题（兜底用）。规则与题干同母题绑定。"""
     if theme in _LOCAL_GENERATORS:
-        return _LOCAL_GENERATORS[theme]()
-    return _LOCAL_GENERATORS[random.choice(THEMES)]()
+        p = _LOCAL_GENERATORS[theme]()
+    else:
+        p = _LOCAL_GENERATORS[random.choice(THEMES)]()
+    p.setdefault("rule", RULE_BY_THEME.get(p.get("theme", ""), ""))
+    return p
 
 
 def normalize_answer(user_text: str, puzzle: dict) -> str | None:
