@@ -438,8 +438,8 @@ class ZhongyuanActivity:
         return [v for v in self._players().values() if str(v.get("group", "")) == gid]
 
     def _cmd_lantern(self, group_id: str, qq: str, event, message: str) -> str:
-        if not self._enabled() or not self._in_open_hours():
-            return f"❌ 当前不在中元活动开放时段。"
+        if not self._enabled():
+            return f"❌ {ACTIVITY_TAG} 尚未开启或已结束。"
         ap = self._get_player(group_id, qq, create=True)
         if not ap.get("activity_id"):
             return "❌ 请先「相约中元」领取活动 ID 后再放河灯。"
@@ -476,8 +476,8 @@ class ZhongyuanActivity:
             await self._push_group(group_id, f"💫 青灯回音：{echo.strip()}")
 
     def _cmd_quiz(self, group_id: str, qq: str, answer: str | None) -> str:
-        if not self._enabled() or not self._in_open_hours():
-            return f"❌ 当前不在中元活动开放时段。"
+        if not self._enabled():
+            return f"❌ {ACTIVITY_TAG} 尚未开启或已结束。"
         ap = self._get_player(group_id, qq, create=True)
         if not ap.get("activity_id"):
             return "❌ 请先「相约中元」领取活动 ID 后再参与问答。"
@@ -522,8 +522,8 @@ class ZhongyuanActivity:
         return f"✅ 答对了！功德 **+{reward}**（当前 {ap['gongde']}）。中元不是鬼节，是勾连阴阳的思念。"
 
     def _cmd_incense(self, group_id: str, qq: str, kind: str) -> str:
-        if not self._enabled() or not self._in_open_hours():
-            return f"❌ 当前不在中元活动开放时段。"
+        if not self._enabled():
+            return f"❌ {ACTIVITY_TAG} 尚未开启或已结束。"
         ap = self._get_player(group_id, qq, create=True)
         if not ap.get("activity_id"):
             return "❌ 请先「相约中元」领取活动 ID 后再祭祖。"
@@ -1077,9 +1077,9 @@ class ZhongyuanActivity:
         return (
             f"## {ACTIVITY_NAME}\n"
             f"> 状态：{state}\n\n"
-            "**🎭 阴面 · 幽影饲育馆**（恐怖解密）\n"
+            "**🎭 阴面 · 幽影饲育馆**（协作解密 · 每日 8:00–22:00）\n"
             "> 相约中元 → 领取活动 ID → 每小时被勾入馆解谜 → 功德\n"
-            "**🕯️ 阳面 · 青灯寄思**（文化温情）\n"
+            "**🕯️ 阳面 · 青灯寄思**（文化温情 · 全天开放）\n"
             "> 放河灯 / 中元问答 / 供灯焚香 / 中元签到 → 功德\n\n"
             "**指令一览**\n"
             "`相约中元` · `中元状态` · `中元功德榜` · `中元里程碑` · `中元签到`\n"
