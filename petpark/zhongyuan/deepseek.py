@@ -136,15 +136,32 @@ class DeepSeekClient:
             return None
 
     async def generate_puzzles_batch(self, rule: str, count: int) -> list[dict]:
-        """围绕规则怪谈分批生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
+        """围绕规则怪谈一次性生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
 
-        推理模型 deepseek-v4-flash-vision-exp 在单次生成过多题目时，会把输出
-        token 消耗在 reasoning_content 上，导致最终 content 为空、解析出 0 题；
-        并发请求又易触发限流/空 content。故拆成每批 4 题串行生成，单批任务
-        足够简单、content 稳定返回 JSON，一批失败自动降档重试。
+        推理模型 deepseek-v4-flash-vision-exp 会先把大量 token 消耗在 reasoning
+        上，max_tokens 给足（每题 ~800 token）才能让 content 完整输出 JSON；
+        单次生成让模型拥有全局视野，题目分散取材、避免重复（分批会反复复用
+        靠前的线索点导致雷同）。若单次失败则降级分批补齐。
         """
         if count <= 0:
             return []
+        user = f"规则怪谈：{rule}\n请围绕此规则生成 {count} 道谜题。"
+        try:
+            text = await self.chat(
+                user,
+                system=RULE_PUZZLE_SYSTEM_PROMPT,
+                max_tokens=max(16000, int(count) * 800),
+            )
+            out = self._parse_puzzle_batch(text)
+            if out:
+                return out[:count]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
+        # 单次失败降级分批（每批 4 题，容忍少量重复）
+        return await self._generate_puzzles_in_batches(rule, count)
+
+    async def _generate_puzzles_in_batches(self, rule: str, count: int) -> list[dict]:
+        """分批生成兜底（单次生成失败时使用）。"""
         batch = 4
         total_batches = (count + batch - 1) // batch
         out: list[dict] = []
@@ -168,7 +185,6 @@ class DeepSeekClient:
                 break
             parsed = self._parse_puzzle_batch(text)
             if not parsed:
-                # 单批 content 为空/格式异常：降档重试，仍失败则停止（由本地模板兜底）
                 if batch > 1:
                     batch -= 1
                     continue
