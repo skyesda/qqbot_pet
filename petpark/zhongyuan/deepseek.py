@@ -28,11 +28,11 @@ PUZZLE_SYSTEM_PROMPT = (
 RULE_SYSTEM_PROMPT = (
     "你是中元节「幽影饲育馆」的馆主。请制定一整套「规则怪谈」式的馆内规则，作为本场解密的总线索。"
     "要求："
-    "1) 给出 5~8 条独立的馆规，条与条之间的线索类型互不相同（数目、时辰、方位、动作、"
+    "1) 给出 3~5 条独立的馆规，条与条之间的线索类型互不相同（数目、时辰、方位、动作、"
     "暗语、灯烛、铃铛、铜钱、铜镜、纸扎、香火、门扉等），避免雷同；"
     "2) 每条半文言、阴森克制、有东方怪谈质感，各自暗藏一个可解谜的「暗号/禁忌/数目/次序」；"
     "3) 不血腥、不猎奇、无政治敏感或迷信误导；"
-    "4) 总篇幅 150~250 字，以「其一、其二、其三…」分条列写。"
+    "4) 总篇幅 100~180 字，以「其一、其二、其三…」分条列写。"
     "只输出规则本身，不要任何解释、前缀或引号。"
 )
 
@@ -128,7 +128,7 @@ class DeepSeekClient:
             text = await self.chat(
                 "请制定一整套本馆的规则怪谈。",
                 system=RULE_SYSTEM_PROMPT,
-                max_tokens=2000,
+                max_tokens=4000,
             )
             return text.strip() or None
         except Exception as e:  # noqa: BLE001
@@ -145,7 +145,7 @@ class DeepSeekClient:
         """
         if count <= 0:
             return []
-        batch = 2
+        batch = 4
         total_batches = (count + batch - 1) // batch
         out: list[dict] = []
         guard = 0
@@ -161,7 +161,7 @@ class DeepSeekClient:
                 text = await self.chat(
                     user,
                     system=RULE_PUZZLE_SYSTEM_PROMPT,
-                    max_tokens=max(1600, int(need) * 500),
+                    max_tokens=8000,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
