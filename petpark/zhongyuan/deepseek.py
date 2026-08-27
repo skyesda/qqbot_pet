@@ -103,9 +103,14 @@ class DeepSeekClient:
                     raise RuntimeError(f"DeepSeek HTTP {resp.status}: {body[:200]}")
                 data = await resp.json()
         try:
-            return data["choices"][0]["message"]["content"] or ""
+            msg = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as e:
             raise RuntimeError(f"DeepSeek 响应格式异常：{e}") from e
+        content = msg.get("content") or ""
+        if content:
+            return content
+        # 推理模型可能把输出放在 reasoning_content（content 为空时兜底抢救）
+        return msg.get("reasoning_content") or ""
 
     async def generate_puzzle(self, theme: str) -> dict | None:
         """按母题生成一道谜题，返回 dict(question/options/answer/hint)；失败返回 None。"""
@@ -140,7 +145,7 @@ class DeepSeekClient:
         """
         if count <= 0:
             return []
-        batch = 3
+        batch = 2
         total_batches = (count + batch - 1) // batch
         out: list[dict] = []
         guard = 0
@@ -156,7 +161,7 @@ class DeepSeekClient:
                 text = await self.chat(
                     user,
                     system=RULE_PUZZLE_SYSTEM_PROMPT,
-                    max_tokens=max(1600, int(need) * 400),
+                    max_tokens=max(1600, int(need) * 500),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
