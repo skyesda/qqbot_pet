@@ -26,18 +26,24 @@ PUZZLE_SYSTEM_PROMPT = (
 
 # 规则怪谈生成用的 system prompt（本场解密总线索，题目线索皆由此规则引出）
 RULE_SYSTEM_PROMPT = (
-    "你是中元节「幽影饲育馆」的馆主。请制定一条「规则怪谈」式的馆内规则，作为本场解密的总线索。"
-    "要求：1) 半文言、阴森克制、有东方怪谈质感；2) 不血腥、不猎奇、无政治敏感或迷信误导；"
-    "3) 一到三句话、60 字以内，必须能引出可解谜的「暗号/禁忌/数目/次序」等线索。"
+    "你是中元节「幽影饲育馆」的馆主。请制定一整套「规则怪谈」式的馆内规则，作为本场解密的总线索。"
+    "要求："
+    "1) 给出 5~8 条独立的馆规，条与条之间的线索类型互不相同（数目、时辰、方位、动作、"
+    "暗语、灯烛、铃铛、铜钱、铜镜、纸扎、香火、门扉等），避免雷同；"
+    "2) 每条半文言、阴森克制、有东方怪谈质感，各自暗藏一个可解谜的「暗号/禁忌/数目/次序」；"
+    "3) 不血腥、不猎奇、无政治敏感或迷信误导；"
+    "4) 总篇幅 150~250 字，以「其一、其二、其三…」分条列写。"
     "只输出规则本身，不要任何解释、前缀或引号。"
 )
 
 # 围绕规则怪谈批量生成谜题（题目线索一律回扣该规则）
 RULE_PUZZLE_SYSTEM_PROMPT = (
-    "你是中元节「幽影饲育馆」的谜题设计者。馆主已定下一条「规则怪谈」，"
-    "你要围绕这条规则设计一组解密谜题，每道题的题干或提示都必须回扣该规则。要求："
+    "你是中元节「幽影饲育馆」的谜题设计者。馆主已定下一整套「规则怪谈」（含多条独立规则）。"
+    "你要围绕这套规则设计一组解密谜题。要求："
     "1) 每题有唯一可判定的正确项；2) 文字选择题或短答，附 3~6 个选项；"
-    "3) 半文言、阴森克制、不血腥、不猎奇、无政治敏感或迷信误导。"
+    "3) 半文言、阴森克制、不血腥、不猎奇、无政治敏感或迷信误导；"
+    "4) 题目务必分散取材于规则中的不同线索点（数目、时辰、方位、动作、暗语、灯烛、铃铛、"
+    "铜钱、铜镜、纸扎、香火、门扉等），每题回扣不同的规则条，题目之间不得重复或雷同。"
     "只输出一个 JSON 数组，元素字段为：question(题干)、options(选项字符串数组)、"
     "answer(正确项，须等于某个选项的原文)、hint(一句提示)。不要输出 JSON 以外的任何内容。"
 )
@@ -112,9 +118,13 @@ class DeepSeekClient:
         return self._parse_puzzle(text)
 
     async def generate_rule(self) -> str | None:
-        """生成一条「规则怪谈」作为本场解密总线索；失败返回 None。"""
+        """生成一整套「规则怪谈」作为本场解密总线索；失败返回 None。"""
         try:
-            text = await self.chat("请制定一条本馆的规则怪谈。", system=RULE_SYSTEM_PROMPT)
+            text = await self.chat(
+                "请制定一整套本馆的规则怪谈。",
+                system=RULE_SYSTEM_PROMPT,
+                max_tokens=2000,
+            )
             return text.strip() or None
         except Exception as e:  # noqa: BLE001
             logger.warning("[zhongyuan] DeepSeek 规则怪谈生成失败：%s", e)
@@ -131,12 +141,17 @@ class DeepSeekClient:
         if count <= 0:
             return []
         batch = 4
+        total_batches = (count + batch - 1) // batch
         out: list[dict] = []
         guard = 0
         while len(out) < count and guard < 12:
             guard += 1
             need = min(batch, count - len(out))
-            user = f"规则怪谈：{rule}\n请围绕此规则生成 {need} 道谜题。"
+            user = (
+                f"规则怪谈：{rule}\n"
+                f"请围绕此规则生成 {need} 道谜题（本场第 {guard} 批，共 {total_batches} 批；"
+                f"请优先取规则中尚未用到的线索点，避免与他批重复）。"
+            )
             try:
                 text = await self.chat(
                     user,
