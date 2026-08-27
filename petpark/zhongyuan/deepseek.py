@@ -6,6 +6,7 @@ API Key 一律从环境变量 ``DEEPSEEK_API_KEY`` 读取（可被显式配置�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -149,34 +150,81 @@ class DeepSeekClient:
             return None
 
     async def generate_puzzles_batch(self, rule: str, count: int, theme: str | None = None) -> list[dict]:
-        """围绕规则怪谈一次性生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
+        """围绕规则怪谈并发 5 路生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
 
-        推理模型 deepseek-v4-flash-vision-exp 会先把大量 token 消耗在 reasoning
-        上，max_tokens 给足（每题 ~800 token）才能让 content 完整输出 JSON；
-        单次生成让模型拥有全局视野，题目分散取材、避免重复（分批会反复复用
-        靠前的线索点导致雷同）。若单次失败则降级分批补齐。
+        5 路并行：让 5 个独立模型进程各自负责一场，每路聚焦不同线索点，既避免
+        单一路重复，也避免旧分批反复复用靠前线索导致的雷同。各路独立失败互不影响；
+        总产出若不足 count，再降级顺序分批补齐。推理模型会先耗大量 token 在 reasoning
+        上，故每路 max_tokens 给足（每题 ~800）。
         """
         if count <= 0:
             return []
-        user = f"规则怪谈：{rule}\n请围绕此规则生成 {count} 道谜题。"
+
+        parallel = 5
+        per = (count + parallel - 1) // parallel
+        focus = ["数目与次序", "时辰与方位", "动作与禁忌", "暗语与称谓", "器物与物象"]
+        tasks: list = []
+        start = 0
+        for i in range(parallel):
+            need = min(per, count - start)
+            if need <= 0:
+                break
+            bucket = focus[i] if i < len(focus) else f"第 {i + 1} 组线索点"
+            tasks.append(self._gen_one_chunk(rule, theme, need, i, parallel, bucket))
+            start += need
+
+        if not tasks:
+            return []
+
+        results = await asyncio.gather(*tasks)
+        seen: set = set()
+        out: list[dict] = []
+        for chunk in results:
+            for p in chunk or []:
+                q = str(p.get("question", "")).strip()
+                if not q or q in seen:
+                    continue
+                seen.add(q)
+                out.append(p)
+                if len(out) >= count:
+                    break
+            if len(out) >= count:
+                break
+        # 不足则用顺序分批兜底补齐
+        if len(out) < count:
+            out.extend(await self._generate_puzzles_in_batches(rule, count - len(out), theme, exclude=seen))
+        return out[:count]
+
+    async def _gen_one_chunk(
+        self,
+        rule: str,
+        theme: str | None,
+        need: int,
+        seq: int,
+        parallel: int,
+        focus: str,
+    ) -> list[dict]:
+        """单路并发生成：一人负责 need 道题，只围绕本路聚焦的那一类线索点取材，避免雷同。"""
+        user = (
+            f"规则怪谈：{rule}\n"
+            f"本场谜题共 {parallel} 路并行生成，你是第 {seq + 1} 路。请你这一路专注于"
+            f"「{focus}」方向的线索点，并优先取规则中尚未被其它路使用的线索，生成 {need} 道谜题。"
+        )
         if theme:
             user += f"\n母题：{theme}（全部题目严格贴合该母题与规则）。"
         try:
             text = await self.chat(
                 user,
                 system=RULE_PUZZLE_SYSTEM_PROMPT,
-                max_tokens=max(16000, int(count) * 800),
+                max_tokens=max(3200, int(need) * 800),
             )
-            out = self._parse_puzzle_batch(text)
-            if out:
-                return out[:count]
         except Exception as e:  # noqa: BLE001
-            logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
-        # 单次失败降级分批（每批 4 题，容忍少量重复）
-        return await self._generate_puzzles_in_batches(rule, count, theme)
+            logger.warning("[zhongyuan] DeepSeek 第 %s 路谜题生成失败：%s", seq + 1, e)
+            return []
+        return self._parse_puzzle_batch(text)
 
-    async def _generate_puzzles_in_batches(self, rule: str, count: int, theme: str | None = None) -> list[dict]:
-        """分批生成兜底（单次生成失败时使用）。"""
+    async def _generate_puzzles_in_batches(self, rule: str, count: int, theme: str | None = None, exclude: set[str] | None = None) -> list[dict]:
+        """分批生成兜底（并发产出不足时使用）。"""
         batch = 4
         total_batches = (count + batch - 1) // batch
         out: list[dict] = []
@@ -206,7 +254,11 @@ class DeepSeekClient:
                     batch -= 1
                     continue
                 break
-            out.extend(parsed)
+            for p in parsed:
+                q = str(p.get("question", "")).strip()
+                if not q or (exclude and q in exclude):
+                    continue
+                out.append(p)
         return out[:count]
 
     async def reply_echo(self, prompt: str, system: str | None = None) -> str | None:

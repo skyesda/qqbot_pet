@@ -1351,7 +1351,9 @@ class ZhongyuanActivity:
                 meta = self._data.setdefault("meta", {})
                 next_ts = int(meta.get("dungeon_next_trigger_ts", 0))
                 if next_ts == 0:
+                    # 首次：把下一次触发固定为下一个整点并持久化（否则每 tick 重算永远到不了点）
                     next_ts = self._next_hour_ts(now)
+                    meta["dungeon_next_trigger_ts"] = next_ts
                 if now >= next_ts:
                     if not self._session() and self._any_eligible_group():
                         await self._start_dungeon()
