@@ -135,7 +135,20 @@ class DeepSeekClient:
             logger.warning("[zhongyuan] DeepSeek 规则怪谈生成失败：%s", e)
             return None
 
-    async def generate_puzzles_batch(self, rule: str, count: int) -> list[dict]:
+    async def generate_rule_for_theme(self, theme: str) -> str | None:
+        """围绕大管理员固定主题生成「规则怪谈」总线索；失败返回 None。"""
+        try:
+            text = await self.chat(
+                f"本场副本的母题是「{theme}」。请围绕该母题制定一整套规则怪谈，作为全场解密总线索。",
+                system=RULE_SYSTEM_PROMPT,
+                max_tokens=4000,
+            )
+            return text.strip() or None
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[zhongyuan] DeepSeek 按主题生成规则怪谈失败：%s", e)
+            return None
+
+    async def generate_puzzles_batch(self, rule: str, count: int, theme: str | None = None) -> list[dict]:
         """围绕规则怪谈一次性生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
 
         推理模型 deepseek-v4-flash-vision-exp 会先把大量 token 消耗在 reasoning
@@ -146,6 +159,8 @@ class DeepSeekClient:
         if count <= 0:
             return []
         user = f"规则怪谈：{rule}\n请围绕此规则生成 {count} 道谜题。"
+        if theme:
+            user += f"\n母题：{theme}（全部题目严格贴合该母题与规则）。"
         try:
             text = await self.chat(
                 user,
@@ -158,9 +173,9 @@ class DeepSeekClient:
         except Exception as e:  # noqa: BLE001
             logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
         # 单次失败降级分批（每批 4 题，容忍少量重复）
-        return await self._generate_puzzles_in_batches(rule, count)
+        return await self._generate_puzzles_in_batches(rule, count, theme)
 
-    async def _generate_puzzles_in_batches(self, rule: str, count: int) -> list[dict]:
+    async def _generate_puzzles_in_batches(self, rule: str, count: int, theme: str | None = None) -> list[dict]:
         """分批生成兜底（单次生成失败时使用）。"""
         batch = 4
         total_batches = (count + batch - 1) // batch
@@ -174,6 +189,8 @@ class DeepSeekClient:
                 f"请围绕此规则生成 {need} 道谜题（本场第 {guard} 批，共 {total_batches} 批；"
                 f"请优先取规则中尚未用到的线索点，避免与他批重复）。"
             )
+            if theme:
+                user += f"\n母题：{theme}（全部题目严格贴合该母题与规则）。"
             try:
                 text = await self.chat(
                     user,

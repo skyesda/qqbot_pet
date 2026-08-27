@@ -40,6 +40,9 @@ from .deepseek import DeepSeekClient
 
 BJ = ZoneInfo("Asia/Shanghai")
 
+# 解密副本为「全服单局」：全局只有一个会话，存于该固定 Key（替换原先每群一个实例）。
+_DUNGEON_KEY = "__global__"
+
 # 本活动指令首词（用于 KNOWN_COMMANDS 放行与 AI 意图路由）
 COMMANDS = {
     # 玩家
@@ -318,8 +321,9 @@ class ZhongyuanActivity:
         g.setdefault("next_trigger_ts", self._next_hour_ts(self._now()))
         return g
 
-    def _session(self, group_id: str) -> dict | None:
-        return self._sessions().get(str(group_id))
+    def _session(self, group_id: str = "") -> dict | None:
+        # 解密副本为全服单局，忽略传入的群号，始终取全局会话。
+        return self._sessions().get(_DUNGEON_KEY)
 
     # ------------------------------------------------------------------
     # 帮助方法
@@ -579,23 +583,23 @@ class ZhongyuanActivity:
             meta["dungeon_draw_count"] = 0
         return int(meta.get("dungeon_draw_count", 0))
 
-    async def _start_dungeon(self, group_id: str) -> None:
-        """每次随机拉入本群参与人数的 20%~50%，协作解密一场副本。
+    async def _start_dungeon(self) -> None:
+        """整点全服单局：从所有已绑定玩家中随机拉入 20%~50%，协作解密一场副本。
 
+        副本为全服唯一实例，每次推送面向全部已注册群（全群推送）。
         已「预定副本」的玩家被强行拉入（不占随机名额、不受每日被抽上限限制）。
         """
-        gid = str(group_id)
-        self._group_state(gid)
         today = self._bj_date()
-        all_bound = [ap for ap in self._players_in_group(gid) if ap.get("activity_id")]
+        max_draw = self._int_cfg("max_draw_per_day", 0)
+        all_bound = [ap for ap in self._players().values() if ap.get("activity_id")]
         # 预定玩家：强行拉入
         reserved = [ap for ap in all_bound if ap.get("reserved")]
-        # 其余可被随机抽取的（排除当日已到被抽上限者）
+        # 其余可被随机抽取的（排除当日已到被抽上限者；上限<=0 视为不限制）
         pool = [
             ap for ap in all_bound
             if not ap.get("reserved")
-            and not (ap.get("last_draw_date") == today
-                     and int(ap.get("draw_count_today", 0)) >= self._int_cfg("max_draw_per_day", 2))
+            and not (max_draw > 0 and ap.get("last_draw_date") == today
+                     and int(ap.get("draw_count_today", 0)) >= max_draw)
         ]
         if not reserved and not pool:
             return
@@ -616,25 +620,24 @@ class ZhongyuanActivity:
         # 规则怪谈 + 围绕规则生成谜题
         rule, theme = await self._generate_rule()
         # 先推规则预告，让玩家立即有反馈（题目炼制需数十秒，避免误以为无响应）
-        await self._push_group(
-            gid,
-            f"🕯️ 阴门开启中… 本场规则已定：\n"
+        await self._push_all_groups(
+            "🕯️ 阴门开启中… 本场规则已定：\n"
             f"> 📜 **规则怪谈**：{rule}\n"
-            f"> 正在炼制本场谜题，请稍候…",
+            "> 正在炼制本场谜题，请稍候…",
         )
         puzzles_list = await self._generate_puzzles(rule, theme)
         participants = {
             str(ap["qq"]): {
                 "qq": str(ap["qq"]),
                 "activity_id": ap.get("activity_id"),
+                "group": ap.get("group", ""),
                 "name": ap.get("name", "?"),
                 "correct": 0,
                 "wrong": 0,
                 "alive": True,
             } for ap in chosen
         }
-        self._sessions()[gid] = {
-            "group": gid,
+        self._sessions()[_DUNGEON_KEY] = {
             "rule": rule,
             "puzzles": puzzles_list,
             "index": 0,
@@ -650,34 +653,32 @@ class ZhongyuanActivity:
         reserve_note = ""
         if reserved:
             reserve_note = f"\n> 🎫 其中 **{len(reserved)}** 人为「预定」强行拉入。"
-        await self._push_group(
-            gid,
-            f"## 🚪 阴门开 · 幽影饲育馆（协作解密）\n"
-            f"本次共拉入 **{len(chosen)}** 名驯宠师：{names}{reserve_note}\n"
+        await self._push_all_groups(
+            f"## 🚪 阴门开 · 幽影饲育馆（全服协作解密）\n"
+            f"本次全服共拉入 **{len(chosen)}** 名驯宠师：{names}{reserve_note}\n"
             f"> 📜 **规则怪谈**：{rule}\n"
             f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 40)} 分钟内解完 {len(puzzles_list)} 题即通关；"
             f"个人答错满 {self._int_cfg('individual_fail_wrong', 2)} 次会揭晓答案并淘汰出局。",
         )
-        await self._push_puzzle(gid)
+        await self._push_puzzle()
 
     async def _generate_rule(self) -> tuple[str, str | None]:
         """生成「规则怪谈」总线索。返回 (rule, theme)：
-        - 大管理员固定了 dungeon_theme：取该母题的配套规则作为整场总线索，theme 一并返回，
-          让 DeepSeek / 本地都围绕同一母题出题（「规则与题目同母题」）；
-        - DeepSeek 可用：rule=AI 生成，theme=None（各题由 DeepSeek 在批量内保持一致）；
-        - 否则：随机取一个本地母题为主题，rule 取该母题的配套规则，theme 一并返回，
-          供 _generate_puzzles 用同一母题生成整场谜题，保证「规则与题目同母题、互相呼应」。
+        - 大管理员固定了 dungeon_theme 且 DeepSeek 可用：让大模型按该母题现场写规则，theme 一并返回，
+          整场规则与题目都围绕该母题（不再写死预置规则）；
+        - 固定主题但 DeepSeek 不可用：本地兜底（内置母题取预置规则，自定义母题回退随机本地规则）；
+        - 未固定：DeepSeek 可用走 AI 自由生成，否则随机取一个本地母题。
         """
         pinned = (self.cfg.get("dungeon_theme") or "").strip()
-        if pinned:
-            rule = puzzles.RULE_BY_THEME.get(pinned)
+        if pinned and self._deepseek.available:
+            rule = await self._deepseek.generate_rule_for_theme(pinned)
             if rule:
                 return rule, pinned
         if self._deepseek.available:
             rule = await self._deepseek.generate_rule()
             if rule:
                 return rule, None
-        theme = puzzles.local_theme()
+        theme = pinned if (pinned in puzzles.RULE_BY_THEME) else puzzles.local_theme()
         return puzzles.RULE_BY_THEME.get(theme) or random.choice(puzzles.LOCAL_RULES), theme
 
     async def _generate_puzzles(self, rule: str, theme: str | None = None) -> list[dict]:
@@ -689,7 +690,7 @@ class ZhongyuanActivity:
         count = max(1, self._int_cfg("puzzle_count", 20))
         out: list[dict] = []
         if self._deepseek.available:
-            out = await self._deepseek.generate_puzzles_batch(rule, count)
+            out = await self._deepseek.generate_puzzles_batch(rule, count, theme=theme)
             for pz in out:
                 pz.setdefault("rule", rule)
         while len(out) < count:
@@ -699,7 +700,7 @@ class ZhongyuanActivity:
             out.append(p)
         return out[:count]
 
-    async def _push_puzzle(self, group_id: str) -> None:
+    async def _push_puzzle(self, group_id: str = "") -> None:
         s = self._session(group_id)
         if not s:
             return
@@ -712,8 +713,7 @@ class ZhongyuanActivity:
         # 规则随题走：优先用本题自带 rule（与本题目主题一致），无则回退会话级规则。
         rule = str(p.get("rule") or s.get("rule") or "").strip()
         rule_line = f"> 📜 **规则怪谈**：{rule}\n" if rule else ""
-        await self._push_group(
-            group_id,
+        await self._push_all_groups(
             f"## 🕯️ 第 {idx + 1}/{total} 题\n"
             f"{rule_line}"
             f"> {p.get('question')}\n\n{opts}\n"
@@ -721,12 +721,12 @@ class ZhongyuanActivity:
             f"> ⏳ 倒计时 **{remain}** · 存活 **{len(alive)}/{len(s['participants'])}** 人",
         )
 
-    async def _push_puzzle_after(self, group_id: str, delay: float) -> None:
+    async def _push_puzzle_after(self, delay: float, group_id: str = "") -> None:
         """答对后延迟 N 秒再推下一题（冷却防抢答）。"""
         await asyncio.sleep(delay)
         await self._push_puzzle(group_id)
 
-    async def _push_dungeon_status(self, group_id: str) -> None:
+    async def _push_dungeon_status(self, group_id: str = "") -> None:
         """副本进行中，向全群播报倒计时 / 答题进度 / 存活与淘汰情况。"""
         s = self._session(group_id)
         if not s:
@@ -743,7 +743,7 @@ class ZhongyuanActivity:
         ]
         if dead:
             lines.append("💀 已淘汰：" + "、".join(f"#{p['activity_id']:04d}" for p in dead))
-        await self._push_group(group_id, "\n".join(lines))
+        await self._push_all_groups("\n".join(lines))
 
     def _check_answer(self, group_id: str, qq: str, text: str) -> str | None:
         """协作副本作答：有人答对全体进度 +1；个人答错满 N 次即个人出局。"""
@@ -764,16 +764,20 @@ class ZhongyuanActivity:
             s["last_activity"] = self._now()
             s["index"] += 1
             if s["index"] >= len(s["puzzles"]):
-                return self._finish_dungeon(group_id)
+                msg = self._finish_dungeon(group_id)
+                self._spawn(self._push_all_groups(msg))
+                return msg
             cd = self._int_cfg("answer_cooldown_sec", 10)
             s["cooldown_until"] = self._now() + cd
-            self._spawn(self._push_puzzle_after(group_id, cd))
+            self._spawn(self._push_puzzle_after(cd))
             return f"✅ #{p['activity_id']:04d} 答对！全体进度 {s['index']}/{len(s['puzzles'])}（{cd} 秒后进入下一题）。"
         p["wrong"] = int(p.get("wrong", 0)) + 1
         s["last_activity"] = self._now()
         limit = self._int_cfg("individual_fail_wrong", 2)
         if p["wrong"] >= limit:
-            return self._eliminate_participant(group_id, qq, puzzle.get("answer", ""))
+            msg = self._eliminate_participant(group_id, qq, puzzle.get("answer", ""))
+            self._spawn(self._push_all_groups(msg))
+            return msg
         return (
             f"❌ #{p['activity_id']:04d} 答错（个人 {p['wrong']}/{limit}）。\n"
             f"> 提示：{puzzle.get('hint', '') or '规则怪谈里藏着答案，再想想。'}"
@@ -795,14 +799,18 @@ class ZhongyuanActivity:
             f"{self._int_cfg('individual_fail_wrong', 2)} 次，被阴气淘汰，退出本场。{reveal}"
         )
         if not alive:
-            self._sessions().pop(str(group_id), None)
+            self._sessions().pop(_DUNGEON_KEY, None)
             msg += "\n全员淘汰，副本失败。"
         return msg
 
-    def _finish_dungeon(self, group_id: str) -> str:
-        """通关结算：存活玩家共享通关功德；答对次数前 10% 达成完美，奖励翻倍。"""
-        s = self._sessions().pop(group_id, None)
-        gid = str(group_id)
+    def _finish_dungeon(self, group_id: str = "") -> str:
+        """通关结算：存活玩家共享通关功德；答对次数前 10% 达成完美，奖励翻倍。
+
+        副本为全服单局，玩家来自各群，功德记入各自所属群。
+        """
+        s = self._sessions().pop(_DUNGEON_KEY, None)
+        if not s:
+            return "🕯️ 全员淘汰，阴门闭合。"
         survivors = [p for p in s["participants"].values() if p.get("alive")]
         if not survivors:
             return "🕯️ 全员淘汰，阴门闭合。"
@@ -810,7 +818,7 @@ class ZhongyuanActivity:
         total_correct = sum(int(p.get("correct", 0)) for p in survivors)
         if total_correct <= 0:
             for p in survivors:
-                ap = self._get_player(gid, p["qq"])
+                ap = self._get_player(p.get("group", ""), p["qq"])
                 if ap is not None:
                     self._apply_yin(ap)
                     ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
@@ -824,13 +832,14 @@ class ZhongyuanActivity:
         mult = self._int_cfg("perfect_reward_mult", 2)
         lines = []
         for p in survivors:
-            ap = self._get_player(gid, p["qq"])
+            home = str(p.get("group", ""))
+            ap = self._get_player(home, p["qq"])
             if ap is None:
                 continue
             perfect = p["qq"] in perfect_set
             reward = base * mult if perfect else base
             self._add_gongde(ap, reward)
-            self._group_add_gongde(gid, reward)
+            self._group_add_gongde(home, reward)
             ap["clear_count"] = int(ap.get("clear_count", 0)) + 1
             if perfect:
                 ap["perfect_count"] = int(ap.get("perfect_count", 0)) + 1
@@ -842,13 +851,14 @@ class ZhongyuanActivity:
             + "\n".join(lines)
         )
 
-    def _fail_dungeon(self, group_id: str, reason: str) -> str:
+    def _fail_dungeon(self, reason: str, group_id: str = "") -> str:
         """整场超时失败：存活玩家全部「阴气缠身」。"""
-        s = self._sessions().pop(group_id, None)
-        gid = str(group_id)
+        s = self._sessions().pop(_DUNGEON_KEY, None)
+        if not s:
+            return "🕯️ 当前没有进行中的副本。"
         survivors = [p for p in s["participants"].values() if p.get("alive")]
         for p in survivors:
-            ap = self._get_player(gid, p["qq"])
+            ap = self._get_player(p.get("group", ""), p["qq"])
             if ap is not None:
                 self._apply_yin(ap)
                 ap["fail_count"] = int(ap.get("fail_count", 0)) + 1
@@ -965,7 +975,7 @@ class ZhongyuanActivity:
         """副本进行中：查看自己的答题进度（答对/答错）与是否已淘汰。"""
         s = self._session(group_id)
         if not s:
-            return "🕯️ 当前本群没有进行中的副本（阴门未开）。"
+            return "🕯️ 当前全服没有进行中的副本（阴门未开）。"
         p = s["participants"].get(str(qq))
         if p is None:
             return "🕯️ 你不在本场副本的参与者之列。"
@@ -1035,49 +1045,102 @@ class ZhongyuanActivity:
         if not self._is_superadmin(qq):
             return "❌ 仅大管理员可强行启动副本。"
         if self._session(group_id):
-            return "🕯️ 本群已有一场进行中的副本，无法重复开启。"
-        self._spawn(self._start_dungeon(group_id))
+            return "🕯️ 全服已有一场进行中的副本，无法重复开启。"
+        self._spawn(self._start_dungeon())
         return "🕯️ 已收到强行开启指令，阴门即将开启…"
 
     def _cmd_force_stop_dungeon(self, group_id: str, qq: str, event) -> str:
-        """管理员强制关闭本群进行中的副本（不结算、不施加惩罚）。"""
+        """管理员强制关闭当前全服进行中的副本（不结算、不施加惩罚）。"""
         if not self.bot._is_admin(event):
             return "❌ 仅管理员可强制关闭副本。"
-        s = self._sessions().pop(str(group_id), None)
+        s = self._sessions().pop(_DUNGEON_KEY, None)
         if not s:
-            return "🕯️ 本群当前没有进行中的副本。"
+            return "🕯️ 当前全服没有进行中的副本。"
         return "🕯️ 本场副本已被管理员强制关闭（不结算、不施加惩罚）。"
 
-    def _cmd_dungeon_theme(self, event, qq: str, args: list[str]) -> str:
-        """大管理员自定义中元副本主题（母题）；`默认` 恢复自动。
+    def _available_themes(self) -> list[str]:
+        """内置母题 + 大管理员新增的自定义母题（去重、内置优先）。"""
+        builtin = list(puzzles.THEMES)
+        custom = [t for t in self.cfg.get("custom_themes", []) if t and t not in builtin]
+        return builtin + custom
 
-        设置后每次开本，规则怪谈与该场谜题都将围绕该母题生成；
+    def _cmd_dungeon_theme(self, event, qq: str, args: list[str]) -> str:
+        """大管理员自定义中元副本主题（母题），可新增 / 删除自定义母题；`默认` 恢复自动。
+
+        设置后每次开本，规则怪谈与该场谜题都将围绕该母题生成（规则由 DeepSeek 现场写，不预置）；
         恢复默认 = DeepSeek 自由生成 / 本地随机母题。
         """
         if not self._is_superadmin(qq):
             return "❌ 仅大管理员可设置中元副本主题。"
+
+        def _save(key: str, value) -> None:
+            self.cfg[key] = value
+            self._data["config"][key] = value
+
         cur = (self.cfg.get("dungeon_theme") or "").strip()
+        available = self._available_themes()
+        custom = [t for t in self.cfg.get("custom_themes", []) if t and t not in puzzles.THEMES]
+
         if not args:
-            cur_txt = f"**{cur}**" if cur in puzzles.THEMES else "自动（DeepSeek 自由 / 本地随机母题）"
+            cur_txt = f"**{cur}**" if (cur and cur in available) else "自动（DeepSeek 自由 / 本地随机母题）"
             return (
                 "## 🎋 中元副本主题\n"
                 f"> 当前：{cur_txt}\n"
-                f"> 可用母题：{'、'.join(puzzles.THEMES)}\n"
-                "> 设置：`中元副本主题 <母题>`；恢复默认：`中元副本主题 默认`"
+                f"> 内置母题：{'、'.join(puzzles.THEMES)}\n"
+                f"> 自定义母题：{'、'.join(custom) if custom else '（暂无）'}\n"
+                "> 设置：`中元副本主题 <母题>`\n"
+                "> 新增：`中元副本主题 新增 <名字>`；删除：`中元副本主题 删除 <名字>`\n"
+                "> 恢复默认：`中元副本主题 默认`"
             )
-        want = args[0]
-        if want in ("默认", "自动", "无", "还原"):
-            self.cfg["dungeon_theme"] = ""
-            self._data["config"]["dungeon_theme"] = ""
+
+        op = args[0]
+        # 恢复默认
+        if op in ("默认", "自动", "无", "还原"):
+            _save("dungeon_theme", "")
             return "✅ 已恢复默认：副本主题自动（DeepSeek 自由生成 / 本地随机母题）。"
-        if want not in puzzles.THEMES:
-            return f"❌ 没有母题『{want}』。可用：{'、'.join(puzzles.THEMES)}"
-        self.cfg["dungeon_theme"] = want
-        self._data["config"]["dungeon_theme"] = want
+        # 新增自定义母题
+        if op in ("新增", "添加", "增"):
+            name = " ".join(args[1:]).strip()
+            if not name:
+                return "❌ 用法：`中元副本主题 新增 <名字>`"
+            if len(name) > 12:
+                return "❌ 母题名字过长（最多 12 字）。"
+            customs = list(self.cfg.get("custom_themes", []))
+            if name in customs or name in puzzles.THEMES:
+                return f"❌ 母题『{name}』已存在。"
+            customs.append(name)
+            _save("custom_themes", customs)
+            return (
+                f"✅ 已新增自定义母题 **{name}**。\n"
+                f"> 用 `中元副本主题 {name}` 固定本场母题；DeepSeek 将按名现场生成规则怪谈。"
+            )
+        # 删除自定义母题
+        if op in ("删除", "删", "移除", "减"):
+            name = " ".join(args[1:]).strip()
+            if not name:
+                return "❌ 用法：`中元副本主题 删除 <名字>`"
+            customs = list(self.cfg.get("custom_themes", []))
+            if name not in customs:
+                return f"❌ 自定义母题中无『{name}』。"
+            customs.remove(name)
+            _save("custom_themes", customs)
+            extra = ""
+            if cur == name:
+                _save("dungeon_theme", "")
+                extra = "\n> ⚠️ 该母题原为当前主题，已同步恢复默认（自动）。"
+            return f"✅ 已删除自定义母题 **{name}**。{extra}"
+        # 设置固定主题
+        want = " ".join(args).strip()
+        if want not in available:
+            return (
+                f"❌ 没有母题『{want}』。可用：{'、'.join(available)}；"
+                f"或 `中元副本主题 新增 {want}`。"
+            )
+        _save("dungeon_theme", want)
         return (
             f"✅ 已固定中元副本主题为 **{want}**。\n"
-            f"> 📜 规则怪谈：{puzzles.RULE_BY_THEME.get(want, '')}\n"
-            "> 后续开本整场谜题将围绕该母题；「中元副本主题 默认」恢复自动。"
+            "> 后续开本，DeepSeek 将围绕该母题现场生成规则怪谈与谜题；"
+            "「中元副本主题 默认」恢复自动。"
         )
 
     def _cmd_admin(self, group_id: str, qq: str, event, cmd: str, args: list[str]) -> str | None:
@@ -1272,28 +1335,28 @@ class ZhongyuanActivity:
 
     async def _tick(self) -> None:
         now = self._now()
-        # 1. 解密时限 / 周期播报
-        for gid, s in list(self._sessions().items()):
+        # 1. 解密时限 / 周期播报（全服唯一全局会话）
+        s = self._session()
+        if s:
             if now > s.get("deadline", 0):
-                reply = self._fail_dungeon(gid, "超时")
-                await self._push_group(gid, reply)
-                continue
-            # 周期性播报倒计时 / 答题进度 / 存活与淘汰
-            if now - s.get("last_status_ts", 0) >= self._int_cfg("dungeon_status_interval_sec", 120):
+                reply = self._fail_dungeon("超时")
+                await self._push_all_groups(reply)
+            elif now - s.get("last_status_ts", 0) >= self._int_cfg("dungeon_status_interval_sec", 120):
                 s["last_status_ts"] = now
-                await self._push_dungeon_status(gid)
-        # 2. 每小时抽人（活动开启 + 开放时段内 + 当日拉入场数未满）
+                await self._push_dungeon_status()
+        # 2. 每小时全服抽人（活动开启 + 开放时段内 + 当日开本数未满）
         if self._enabled() and self._in_open_hours():
-            cap = self._int_cfg("max_dungeon_per_day", 8)
-            for gid in list(self._groups().keys()):
-                if self._dungeon_draw_today() >= cap:
-                    break
-                g = self._group_state(gid)
-                if now >= g.get("next_trigger_ts", 0) and not self._session(gid):
-                    if self._eligible_group(gid):
-                        await self._start_dungeon(gid)
-                    # 推进到下一个整点
-                    g["next_trigger_ts"] = self._next_hour_ts(now)
+            cap = self._int_cfg("max_dungeon_per_day", 0)
+            if cap <= 0 or self._dungeon_draw_today() < cap:
+                meta = self._data.setdefault("meta", {})
+                next_ts = int(meta.get("dungeon_next_trigger_ts", 0))
+                if next_ts == 0:
+                    next_ts = self._next_hour_ts(now)
+                if now >= next_ts:
+                    if not self._session() and self._any_eligible_group():
+                        await self._start_dungeon()
+                    # 无论是否开本，都推进到下一个整点
+                    meta["dungeon_next_trigger_ts"] = self._next_hour_ts(now)
         # 3. 活动结束自动结算
         if self._activity_over() and not self._data.get("settled"):
             self._settle()
@@ -1309,6 +1372,16 @@ class ZhongyuanActivity:
         if not g.get("umo"):
             return False
         return True
+
+    def _any_eligible_group(self) -> bool:
+        """是否存在至少一个可用（启用/授权/启用单聊）的群，作为全服开本门槛。"""
+        for gid in list(self._groups().keys()):
+            try:
+                if self._eligible_group(gid):
+                    return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
 
     def _next_hour_ts(self, now: int) -> int:
         return ((now // 3600) + 1) * 3600

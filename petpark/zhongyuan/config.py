@@ -57,8 +57,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "bind_close_hours_before": 1,   # 绑定领号截止（活动结束前 N 小时）
     "redeem_window_hours": 48,      # 活动结束后兑换窗口（小时）
     # ---- 抽人 ----
-    "max_draw_per_day": 2,          # 每人每日最多被抽入次数
-    "max_dungeon_per_day": 8,       # 副本每日最多拉入场数（全活动总量）
+    "max_draw_per_day": 0,          # 每人每日最多被抽入次数（0=不限制）
+    "max_dungeon_per_day": 0,       # 副本每日最多开本数（0=不限制）
     # ---- 解密（协作副本：全体共享进度）----
     "puzzle_count": 20,             # 每场题数（20 题，全体共享进度）
     "no_response_sec": 90,          # 全体连续无响应判定（秒，超时自动进入下一题）
@@ -99,6 +99,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "deepseek_timeout": 120,        # 单次请求超时（秒，批量生成 20 题较慢）
     # ---- 大管理员固定副本主题 ----
     "dungeon_theme": "",            # 固定的中元副本主题（母题）；空=自动（DeepSeek 自由/本地随机）
+    "custom_themes": [],            # 大管理员新增的自定义母题（DeepSeek 按名现场生成规则）
 }
 
 # 允许通过「中元配置 <key> <value>」热改的整型/浮点/字符串键（白名单，防误改结构字段）
