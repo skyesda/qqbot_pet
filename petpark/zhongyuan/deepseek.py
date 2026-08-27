@@ -140,7 +140,7 @@ class DeepSeekClient:
         """
         if count <= 0:
             return []
-        batch = 4
+        batch = 3
         total_batches = (count + batch - 1) // batch
         out: list[dict] = []
         guard = 0
@@ -156,7 +156,7 @@ class DeepSeekClient:
                 text = await self.chat(
                     user,
                     system=RULE_PUZZLE_SYSTEM_PROMPT,
-                    max_tokens=max(1200, int(need) * 300),
+                    max_tokens=max(1600, int(need) * 400),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
