@@ -97,6 +97,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "deepseek_temperature": 0.3,
     "deepseek_max_tokens": 800,
     "deepseek_timeout": 120,        # 单次请求超时（秒，批量生成 20 题较慢）
+    # ---- 大管理员固定副本主题 ----
+    "dungeon_theme": "",            # 固定的中元副本主题（母题）；空=自动（DeepSeek 自由/本地随机）
 }
 
 # 允许通过「中元配置 <key> <value>」热改的整型/浮点/字符串键（白名单，防误改结构字段）
@@ -113,6 +115,7 @@ _EDITABLE_KEYS = {
     "yin_penalty_min", "yin_clear_cost",
     "deepseek_enabled", "deepseek_model", "deepseek_base_url", "deepseek_api_key",
     "deepseek_temperature", "deepseek_max_tokens", "deepseek_timeout",
+    "dungeon_theme",
 }
 
 

@@ -53,6 +53,7 @@ COMMANDS = {
     "删除中元活动", "重置中元活动", "中元结算",
     "强行开副本", "强制开副本", "强行启动副本",
     "强制关副本", "强行关副本", "强制结束副本",
+    "中元副本主题",
 }
 
 # 中元文化问答（本地题库，DeepSeek 可扩充）
@@ -661,10 +662,17 @@ class ZhongyuanActivity:
 
     async def _generate_rule(self) -> tuple[str, str | None]:
         """生成「规则怪谈」总线索。返回 (rule, theme)：
+        - 大管理员固定了 dungeon_theme：取该母题的配套规则作为整场总线索，theme 一并返回，
+          让 DeepSeek / 本地都围绕同一母题出题（「规则与题目同母题」）；
         - DeepSeek 可用：rule=AI 生成，theme=None（各题由 DeepSeek 在批量内保持一致）；
         - 否则：随机取一个本地母题为主题，rule 取该母题的配套规则，theme 一并返回，
           供 _generate_puzzles 用同一母题生成整场谜题，保证「规则与题目同母题、互相呼应」。
         """
+        pinned = (self.cfg.get("dungeon_theme") or "").strip()
+        if pinned:
+            rule = puzzles.RULE_BY_THEME.get(pinned)
+            if rule:
+                return rule, pinned
         if self._deepseek.available:
             rule = await self._deepseek.generate_rule()
             if rule:
@@ -1040,6 +1048,38 @@ class ZhongyuanActivity:
             return "🕯️ 本群当前没有进行中的副本。"
         return "🕯️ 本场副本已被管理员强制关闭（不结算、不施加惩罚）。"
 
+    def _cmd_dungeon_theme(self, event, qq: str, args: list[str]) -> str:
+        """大管理员自定义中元副本主题（母题）；`默认` 恢复自动。
+
+        设置后每次开本，规则怪谈与该场谜题都将围绕该母题生成；
+        恢复默认 = DeepSeek 自由生成 / 本地随机母题。
+        """
+        if not self._is_superadmin(qq):
+            return "❌ 仅大管理员可设置中元副本主题。"
+        cur = (self.cfg.get("dungeon_theme") or "").strip()
+        if not args:
+            cur_txt = f"**{cur}**" if cur in puzzles.THEMES else "自动（DeepSeek 自由 / 本地随机母题）"
+            return (
+                "## 🎋 中元副本主题\n"
+                f"> 当前：{cur_txt}\n"
+                f"> 可用母题：{'、'.join(puzzles.THEMES)}\n"
+                "> 设置：`中元副本主题 <母题>`；恢复默认：`中元副本主题 默认`"
+            )
+        want = args[0]
+        if want in ("默认", "自动", "无", "还原"):
+            self.cfg["dungeon_theme"] = ""
+            self._data["config"]["dungeon_theme"] = ""
+            return "✅ 已恢复默认：副本主题自动（DeepSeek 自由生成 / 本地随机母题）。"
+        if want not in puzzles.THEMES:
+            return f"❌ 没有母题『{want}』。可用：{'、'.join(puzzles.THEMES)}"
+        self.cfg["dungeon_theme"] = want
+        self._data["config"]["dungeon_theme"] = want
+        return (
+            f"✅ 已固定中元副本主题为 **{want}**。\n"
+            f"> 📜 规则怪谈：{puzzles.RULE_BY_THEME.get(want, '')}\n"
+            "> 后续开本整场谜题将围绕该母题；「中元副本主题 默认」恢复自动。"
+        )
+
     def _cmd_admin(self, group_id: str, qq: str, event, cmd: str, args: list[str]) -> str | None:
         if not self.bot._is_admin(event):
             return "❌ 仅管理员可操作中元活动后台。"
@@ -1159,6 +1199,9 @@ class ZhongyuanActivity:
         # 管理员强制关闭副本
         if cmd in ("强制关副本", "强行关副本", "强制结束副本"):
             return self._cmd_force_stop_dungeon(group_id, qq, event)
+        # 大管理员：自定义中元副本主题（母题）
+        if cmd == "中元副本主题":
+            return self._cmd_dungeon_theme(event, qq, tokens[1:])
         # 解密作答（仅被勾中玩家）
         if cmd in ("答", "中元答"):
             answer = text[len(cmd):].strip()
