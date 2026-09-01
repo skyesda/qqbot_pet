@@ -89,8 +89,14 @@ class DeepSeekClient:
         system: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> str:
-        """调用 DeepSeek 对话接口，返回 assistant 文本。失败抛异常由调用方兜底。"""
+        """调用 DeepSeek 对话接口，返回 assistant 文本。失败抛异常由调用方兜底。
+
+        reasoning_effort: 传 "none" 关闭推理（对推理模型生效），模型会直接产出正文而非先把
+        token 烧在 reasoning_content 上。生成「规则/谜题」这类必须立即给出 JSON 的场景传 "none"，
+        可避免推理模型过度思考、迟迟不落盘 JSON 导致返空（已实测，默认值会导致极难档谜题返空）。
+        """
         import aiohttp
 
         url = f"{self.base_url}/chat/completions"
@@ -104,6 +110,8 @@ class DeepSeekClient:
             "max_tokens": self.max_tokens if max_tokens is None else max_tokens,
             "stream": False,
         }
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -159,6 +167,7 @@ class DeepSeekClient:
                 user,
                 system=RULE_SYSTEM_PROMPT,
                 max_tokens=4000,
+                reasoning_effort="none",
             )
             return self._clean_rule(text)
         except Exception as e:  # noqa: BLE001
@@ -176,6 +185,7 @@ class DeepSeekClient:
                 user,
                 system=RULE_SYSTEM_PROMPT,
                 max_tokens=4000,
+                reasoning_effort="none",
             )
             return self._clean_rule(text)
         except Exception as e:  # noqa: BLE001
@@ -255,6 +265,7 @@ class DeepSeekClient:
                 user,
                 system=RULE_PUZZLE_SYSTEM_PROMPT,
                 max_tokens=max(3200, int(need) * 800),
+                reasoning_effort="none",
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("[zhongyuan] DeepSeek 第 %s 路谜题生成失败：%s", seq + 1, e)
@@ -285,6 +296,7 @@ class DeepSeekClient:
                     user,
                     system=RULE_PUZZLE_SYSTEM_PROMPT,
                     max_tokens=8000,
+                    reasoning_effort="none",
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("[zhongyuan] DeepSeek 批量谜题生成失败：%s", e)
