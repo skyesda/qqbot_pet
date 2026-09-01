@@ -31,6 +31,7 @@ from .config import (
     ACTIVITY_NAME,
     ACTIVITY_TAG,
     DEFAULT_CONFIG,
+    DEFAULT_DUNGEON_TIERS,
     editable_keys,
     merge_config,
     tier_gongde_for_rank,
@@ -598,15 +599,25 @@ class ZhongyuanActivity:
             return
         for ap in chosen:
             ap["reserved"] = False
-        # 规则怪谈 + 围绕规则生成谜题
-        rule, theme = await self._generate_rule()
+        # 每场随机抽取一档难度（整体奖励池按答题数量分配）
+        tiers = self.cfg.get("dungeon_tiers") or DEFAULT_DUNGEON_TIERS
+        tier = random.choice(tiers) if tiers else {
+            "name": "引魂灯", "reward": self._int_cfg("gongde_clear", 300),
+        }
+        # 规则怪谈 + 围绕规则生成谜题（难度档位注入 DeepSeek：越难规则/题越暗藏玄机）
+        rule, theme = await self._generate_rule(
+            difficulty=str(tier.get("diff", "")), diff_desc=str(tier.get("diff_desc", ""))
+        )
         # 先推规则预告，让玩家立即有反馈（题目炼制需数十秒，避免误以为无响应）
         await self._push_all_groups(
-            "🕯️ 阴门开启中… 本场规则已定：\n"
+            f"🕯️ 阴门开启中… 本场难度【{tier.get('name', '')}】，整体奖励 {int(tier.get('reward', 0))} 功德，规则已定：\n"
             f"> 📜 **规则怪谈**：{rule}\n"
             "> 正在炼制本场谜题，请稍候…",
         )
-        puzzles_list = await self._generate_puzzles(rule, theme)
+        puzzles_list = await self._generate_puzzles(
+            rule, theme,
+            difficulty=str(tier.get("diff", "")), diff_desc=str(tier.get("diff_desc", "")),
+        )
         participants = {
             str(ap["qq"]): {
                 "qq": str(ap["qq"]),
@@ -620,6 +631,7 @@ class ZhongyuanActivity:
         }
         self._sessions()[_DUNGEON_KEY] = {
             "rule": rule,
+            "tier": tier,
             "puzzles": puzzles_list,
             "index": 0,
             "participants": participants,
@@ -634,41 +646,46 @@ class ZhongyuanActivity:
         await self._push_all_groups(
             f"## 🚪 阴门开 · 幽影饲育馆（全服协作解密）\n"
             f"本场 **{len(chosen)}** 名驯宠师预定参与：{names}\n"
+            f"> 难度：**【{tier.get('name', '')}】** · 整体奖励 **{int(tier.get('reward', 0))} 功德**（按答题数量分配）\n"
             f"> 📜 **规则怪谈**：{rule}\n"
             f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 20)} 分钟内解完 {len(puzzles_list)} 题即通关；"
             f"个人答错满 {self._int_cfg('individual_fail_wrong', 2)} 次会揭晓答案并淘汰出局。",
         )
         await self._push_puzzle()
 
-    async def _generate_rule(self) -> tuple[str, str | None]:
+    async def _generate_rule(self, difficulty: str = "", diff_desc: str = "") -> tuple[str, str | None]:
         """生成「规则怪谈」总线索。返回 (rule, theme)：
         - 大管理员固定了 dungeon_theme 且 DeepSeek 可用：让大模型按该母题现场写规则，theme 一并返回，
           整场规则与题目都围绕该母题（不再写死预置规则）；
         - 固定主题但 DeepSeek 不可用：本地兜底（内置母题取预置规则，自定义母题回退随机本地规则）；
         - 未固定：DeepSeek 可用走 AI 自由生成，否则随机取一个本地母题。
+        difficulty/diff_desc 来自本场抽取的难度档位，用于让 DeepSeek 按难度产出深浅不同的规则。
         """
         pinned = (self.cfg.get("dungeon_theme") or "").strip()
         if pinned and self._deepseek.available:
-            rule = await self._deepseek.generate_rule_for_theme(pinned)
+            rule = await self._deepseek.generate_rule_for_theme(pinned, difficulty=difficulty, diff_desc=diff_desc)
             if rule:
                 return rule, pinned
         if self._deepseek.available:
-            rule = await self._deepseek.generate_rule()
+            rule = await self._deepseek.generate_rule(difficulty=difficulty, diff_desc=diff_desc)
             if rule:
                 return rule, None
         theme = pinned if (pinned in puzzles.RULE_BY_THEME) else puzzles.local_theme()
         return puzzles.RULE_BY_THEME.get(theme) or random.choice(puzzles.LOCAL_RULES), theme
 
-    async def _generate_puzzles(self, rule: str, theme: str | None = None) -> list[dict]:
+    async def _generate_puzzles(self, rule: str, theme: str | None = None,
+                                difficulty: str = "", diff_desc: str = "") -> list[dict]:
         """围绕规则怪谈生成整场谜题：优先 DeepSeek 批量，失败/关闭回退本地模板补齐。
 
         每条题都绑定一条与自身内容一致的 rule（DeepSeek 题打上会话 rule，
         本地题按母题取 RULE_BY_THEME），展示时以题内 rule 为准，杜绝「规则与题目不相关」。
+        difficulty/diff_desc 本场难度档位，注入 DeepSeek 使其题目难度随档位变化。
         """
         count = max(1, self._int_cfg("puzzle_count", 20))
         out: list[dict] = []
         if self._deepseek.available:
-            out = await self._deepseek.generate_puzzles_batch(rule, count, theme=theme)
+            out = await self._deepseek.generate_puzzles_batch(
+                rule, count, theme=theme, difficulty=difficulty, diff_desc=diff_desc)
             for pz in out:
                 pz.setdefault("rule", rule)
         while len(out) < count:
@@ -782,8 +799,11 @@ class ZhongyuanActivity:
         return msg
 
     def _finish_dungeon(self, group_id: str = "") -> str:
-        """通关结算：存活玩家共享通关功德；答对次数前 10% 达成完美，奖励翻倍。
+        """通关结算：整场奖励池按各玩家「答题数量（答对题数）」比例分配。
 
+        本场难度在开本时随机抽取（``session['tier']``），其 ``reward`` 即整场奖励池；
+        存活玩家按各自答对题数占全员答对总数之比拆分，总和恰等于奖励池。
+        答对次数前 10% 记「完美」成就（仅作记录，不再叠加翻倍奖励）。
         副本为全服单局，玩家来自各群，功德记入各自所属群。
         """
         s = self._sessions().pop(_DUNGEON_KEY, None)
@@ -804,28 +824,40 @@ class ZhongyuanActivity:
                 f"🕯️ 全员沉默，阴门闭合。本场无人答对，计为失败，存活玩家 {len(survivors)} 人"
                 f"均被「阴气缠身」（{self._int_cfg('yin_penalty_min', 60)} 分钟）。"
             )
+        tier = s.get("tier") or {}
+        pool = int(tier.get("reward", self._int_cfg("gongde_clear", 300)))
         perfect_n = max(1, (len(survivors) + 9) // 10)  # 前 10%，至少 1 人
         perfect_set = {p["qq"] for p in survivors[:perfect_n] if int(p.get("correct", 0)) > 0}
-        base = self._int_cfg("gongde_clear", 300)
-        mult = self._int_cfg("perfect_reward_mult", 2)
+        # 存活玩家按答题数量（答对题数）拆分整场奖励池
+        weights = [max(0, int(p.get("correct", 0))) for p in survivors]
+        shares = self._split_pool(pool, weights)
         lines = []
-        for p in survivors:
+        total_credit = 0
+        for p, share in zip(survivors, shares):
             home = str(p.get("group", ""))
             ap = self._get_player(home, p["qq"])
             if ap is None:
                 continue
+            correct = int(p.get("correct", 0))
             perfect = p["qq"] in perfect_set
-            reward = base * mult if perfect else base
-            self._add_gongde(ap, reward)
-            self._group_add_gongde(home, reward)
+            if share > 0:
+                self._add_gongde(ap, share)
+                self._group_add_gongde(home, share)
+                total_credit += share
             ap["clear_count"] = int(ap.get("clear_count", 0)) + 1
             if perfect:
                 ap["perfect_count"] = int(ap.get("perfect_count", 0)) + 1
             tag = "✨完美" if perfect else "🎉通关"
-            lines.append(f"{tag} #{p['activity_id']:04d} {p.get('name','?')}：答对 {p['correct']} 题，功德 +{reward}")
+            line = f"{tag} #{p['activity_id']:04d} {p.get('name','?')}：答对 {correct} 题"
+            if share > 0:
+                line += f"，功德 +{share}"
+            else:
+                line += "（未答题，无奖励）"
+            lines.append(line)
         return (
             f"## 🎉 幽影饲育馆通关\n"
-            f"> 全队协作解完 {len(s['puzzles'])} 题，存活 {len(survivors)} 人。\n"
+            f"> 全队协作解完 {len(s['puzzles'])} 题，存活 {len(survivors)} 人；"
+            f"难度【{tier.get('name', '')}】，本场共发放 **{total_credit}** 功德。\n"
             + "\n".join(lines)
         )
 
@@ -1339,6 +1371,7 @@ class ZhongyuanActivity:
             f"> 状态：{state}\n\n"
             "**🎭 阴面 · 幽影饲育馆**（协作解密 · 每日 8:00–22:00）\n"
             "> 相约中元 → 领取活动 ID → 预定副本 → 每半小时一场自动参与 → 功德\n"
+            "> 难度每场随机四档（引魂灯/忘川舟/幽影廊/鬼门关），整体奖励 300~3000 功德，按答题数量分配\n"
             "**🕯️ 阳面 · 青灯寄思**（文化温情 · 全天开放）\n"
             "> 放河灯 / 中元问答 / 供灯焚香 / 中元签到 → 功德\n\n"
             "**指令一览**\n"
@@ -1428,6 +1461,28 @@ class ZhongyuanActivity:
         """按 `interval_min`（分钟）对齐的下一个触发时间戳（整点/半点边界）。"""
         interval = max(1, int(interval_min)) * 60
         return (now // interval + 1) * interval
+
+    @staticmethod
+    def _split_pool(pool: int, weights: list[int]) -> list[int]:
+        """按权重(各玩家答题数量)把整场奖励池 `pool` 整数拆分，保证总和恰等于 pool。
+
+        采用最大余数法：先按比例取整，再把余数按「余数从大到小（余数相同则权重大的优先）」
+        依次加 1，确保拆分之和严格等于整体奖励池。
+        """
+        weights = [max(0, int(w)) for w in weights]
+        total = sum(weights)
+        if total <= 0:
+            return [0] * len(weights)
+        shares = [pool * w // total for w in weights]
+        rem = pool - sum(shares)
+        if rem > 0:
+            order = sorted(
+                range(len(weights)),
+                key=lambda i: (-(pool * weights[i] % total), -weights[i]),
+            )
+            for i in range(rem):
+                shares[order[i % len(order)]] += 1
+        return shares
 
     # ------------------------------------------------------------------
     # 推送

@@ -135,11 +135,28 @@ class DeepSeekClient:
             return None
         return self._parse_puzzle(text)
 
-    async def generate_rule(self) -> str | None:
+    @staticmethod
+    def _diff_note(difficulty: str, diff_desc: str) -> str:
+        """根据本场难度，生成注入 DeepSeek 的难度说明（无难度则返回空串）。
+
+        难度越高，规则与题目的线索越要暗藏、越需细读规则才能破解、选项越具迷惑性；
+        越低则越一目了然、直白可判。
+        """
+        if not difficulty:
+            return ""
+        desc = diff_desc or difficulty
+        return (
+            f"\n本场副本难度为「{difficulty}」。请务必让规则与题目的推理深度与该难度完全匹配："
+            f"{desc}。难度越高，规则与线索越要暗藏玄机、越需细读规则才能破解，"
+            f"干扰、陷阱与迷惑性选项越多；难度越低，规则与题目越应一目了然、直白可判。"
+        )
+
+    async def generate_rule(self, difficulty: str = "", diff_desc: str = "") -> str | None:
         """生成一整套「规则怪谈」作为本场解密总线索；失败返回 None。"""
+        user = "请制定一整套本馆的规则怪谈。" + self._diff_note(difficulty, diff_desc)
         try:
             text = await self.chat(
-                "请制定一整套本馆的规则怪谈。",
+                user,
                 system=RULE_SYSTEM_PROMPT,
                 max_tokens=4000,
             )
@@ -148,11 +165,15 @@ class DeepSeekClient:
             logger.warning("[zhongyuan] DeepSeek 规则怪谈生成失败：%s", e)
             return None
 
-    async def generate_rule_for_theme(self, theme: str) -> str | None:
+    async def generate_rule_for_theme(self, theme: str, difficulty: str = "", diff_desc: str = "") -> str | None:
         """围绕大管理员固定主题生成「规则怪谈」总线索；失败返回 None。"""
+        user = (
+            f"本场副本的母题是「{theme}」。请围绕该母题制定一整套规则怪谈，作为全场解密总线索。"
+            + self._diff_note(difficulty, diff_desc)
+        )
         try:
             text = await self.chat(
-                f"本场副本的母题是「{theme}」。请围绕该母题制定一整套规则怪谈，作为全场解密总线索。",
+                user,
                 system=RULE_SYSTEM_PROMPT,
                 max_tokens=4000,
             )
@@ -161,7 +182,8 @@ class DeepSeekClient:
             logger.warning("[zhongyuan] DeepSeek 按主题生成规则怪谈失败：%s", e)
             return None
 
-    async def generate_puzzles_batch(self, rule: str, count: int, theme: str | None = None) -> list[dict]:
+    async def generate_puzzles_batch(self, rule: str, count: int, theme: str | None = None,
+                                     difficulty: str = "", diff_desc: str = "") -> list[dict]:
         """围绕规则怪谈并发 5 路生成 count 道谜题（题干/提示回扣规则）；失败返回空列表。
 
         5 路并行：让 5 个独立模型进程各自负责一场，每路聚焦不同线索点，既避免
@@ -182,7 +204,7 @@ class DeepSeekClient:
             if need <= 0:
                 break
             bucket = focus[i] if i < len(focus) else f"第 {i + 1} 组线索点"
-            tasks.append(self._gen_one_chunk(rule, theme, need, i, parallel, bucket))
+            tasks.append(self._gen_one_chunk(rule, theme, need, i, parallel, bucket, difficulty, diff_desc))
             start += need
 
         if not tasks:
@@ -204,7 +226,8 @@ class DeepSeekClient:
                 break
         # 不足则用顺序分批兜底补齐
         if len(out) < count:
-            out.extend(await self._generate_puzzles_in_batches(rule, count - len(out), theme, exclude=seen))
+            out.extend(await self._generate_puzzles_in_batches(
+                rule, count - len(out), theme, exclude=seen, difficulty=difficulty, diff_desc=diff_desc))
         return out[:count]
 
     async def _gen_one_chunk(
@@ -215,6 +238,8 @@ class DeepSeekClient:
         seq: int,
         parallel: int,
         focus: str,
+        difficulty: str = "",
+        diff_desc: str = "",
     ) -> list[dict]:
         """单路并发生成：一人负责 need 道题，只围绕本路聚焦的那一类线索点取材，避免雷同。"""
         user = (
@@ -222,6 +247,7 @@ class DeepSeekClient:
             f"本场谜题共 {parallel} 路并行生成，你是第 {seq + 1} 路。请你这一路专注于"
             f"「{focus}」方向的线索点，并优先取规则中尚未被其它路使用的线索，生成 {need} 道谜题。"
         )
+        user += self._diff_note(difficulty, diff_desc)
         if theme:
             user += f"\n母题：{theme}（全部题目严格贴合该母题与规则）。"
         try:
@@ -235,7 +261,9 @@ class DeepSeekClient:
             return []
         return self._parse_puzzle_batch(text)
 
-    async def _generate_puzzles_in_batches(self, rule: str, count: int, theme: str | None = None, exclude: set[str] | None = None) -> list[dict]:
+    async def _generate_puzzles_in_batches(self, rule: str, count: int, theme: str | None = None,
+                                           exclude: set[str] | None = None,
+                                           difficulty: str = "", diff_desc: str = "") -> list[dict]:
         """分批生成兜底（并发产出不足时使用）。"""
         batch = 4
         total_batches = (count + batch - 1) // batch
@@ -249,6 +277,7 @@ class DeepSeekClient:
                 f"请围绕此规则生成 {need} 道谜题（本场第 {guard} 批，共 {total_batches} 批；"
                 f"请优先取规则中尚未用到的线索点，避免与他批重复）。"
             )
+            user += self._diff_note(difficulty, diff_desc)
             if theme:
                 user += f"\n母题：{theme}（全部题目严格贴合该母题与规则）。"
             try:
