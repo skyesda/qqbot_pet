@@ -6101,6 +6101,31 @@ class PetParkPlugin(Star):
             player["pet_slots"] = new_slots
             self.store.remove_item(player, name, count)
             return f"✅ 使用『{name}』x{count}：宠物席位 +{actual_add}！当前席位上限：{player['pet_slots']}。"
+        # 自动修炼卡：玩家级别效果，落地到当前宠物（加「自动修炼权限天数」）
+        if it_check and it_check.get("effect", {}).get("add_cultivation_days"):
+            if not self.store.has_item(player, name):
+                return f"背包里没有『{name}』。"
+            count = self._parse_count(tokens, 2)
+            if not self.store.has_item(player, name, count):
+                return f"背包里『{name}』数量不足。"
+            p = self._need_pet(player)
+            if not p:
+                return "你没有宠物，无法使用『自动修炼卡』。"
+            if p.get("custom"):
+                return "定制宠物已永久享有自动修炼权限，无需使用此卡。"
+            days = it_check["effect"]["add_cultivation_days"] * count
+            now = int(time.time())
+            ac = player.setdefault("auto_cultivation", {"card_until": 0})
+            cur = int(ac.get("card_until", 0) or 0)
+            base = cur if cur > now else now
+            ac["card_until"] = base + days * 86400
+            self.store.remove_item(player, name, count)
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ac["card_until"]))
+            return (
+                f"🧘 使用『{name}』x{count}：自动修炼权限 +{days} 天！\n"
+                f"> 有效期至 **{when}**\n"
+                f"> 发送『开启自动修炼』即可开始挂机修炼。"
+            )
         p = self._need_pet(player)
         if not p:
             return "你没有宠物，无法使用物品。"

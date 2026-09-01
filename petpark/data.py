@@ -545,6 +545,15 @@ ITEMS = {
         "desc": "使用后永久增加 100 点生命（上限）并回满。",
         "effect": {"add_hp_max": 100},
     },
+    # ---- 活动道具（中元功德商店等）----
+    "自动修炼卡": {
+        "price": 0,
+        "currency": CURRENCY_DIAMOND,
+        "category": "道具",
+        "usable": True,
+        "desc": "使用后获得 1 天自动修炼权限。",
+        "effect": {"add_cultivation_days": 1},
+    },
     # ---- 深渊道具 ----
     "净化药水": {
         "price": 5000,

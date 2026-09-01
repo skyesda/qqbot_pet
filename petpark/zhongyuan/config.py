@@ -51,8 +51,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- 时间 ----
     "open_hour": 8,                 # 每日开放时段（含）
     "close_hour": 22,               # 每日停止时段（不含，22:00 后当日停止）
-    "trigger_interval_min": 60,     # 解密触发频率（分钟）
-    "dungeon_limit_min": 40,        # 单场解密时限（分钟）
+    "trigger_interval_min": 30,     # 解密触发频率（分钟，每半小时一场）
+    "dungeon_limit_min": 20,        # 单场解密时限（分钟）
     "bind_open_hours_before": 24,   # 绑定领号开启（活动开始前 N 小时）
     "bind_close_hours_before": 1,   # 绑定领号截止（活动结束前 N 小时）
     "redeem_window_hours": 48,      # 活动结束后兑换窗口（小时）

@@ -21,20 +21,28 @@ PUZZLE_SYSTEM_PROMPT = (
     "1) 谜题必须给出唯一可判定的正确项（随随机参数确定，每次不同）；"
     "2) 文案用半文言，营造阴森克制的氛围，但不得出现血腥、猎奇、政治敏感或迷信误导内容；"
     "3) 谜题应为文字选择题或短答，附 3~6 个选项。"
-    "只输出一个 JSON 对象，字段为：question(题干)、options(选项字符串数组)、"
-    "answer(正确项，须等于某个选项的原文)、hint(一句提示)。不要输出 JSON 以外的任何内容。"
+    "\n【输出格式】只输出一个 JSON 对象，字段为：question(题干)、options(选项字符串数组)、"
+    "answer(正确项，须等于某个选项的原文)、hint(一句提示)。"
+    "\n【必须严格遵守】只输出这个 JSON 对象本身，不要输出 JSON 以外的任何字符；"
+    "严禁输出分析、思路、推演、设计草稿、自我检查、字数盘点，也不要任何前言、后缀或解释；"
+    "严禁使用 Markdown 代码围栏（```）；不要加任何标题，也不要用「好的」「我明白了」之类开头；"
+    "一句话：直接成稿，一次到位，不要多想。"
 )
 
 # 规则怪谈生成用的 system prompt（本场解密总线索，题目线索皆由此规则引出）
 RULE_SYSTEM_PROMPT = (
-    "你是中元节「幽影饲育馆」的馆主。请制定一整套「规则怪谈」式的馆内规则，作为本场解密的总线索。"
+    "你是中元节「幽影饲育馆」的馆主。请当场制定一整套「规则怪谈」式的馆内规则，作为本场解密的总线索。"
     "要求："
     "1) 给出 3~5 条独立的馆规，条与条之间的线索类型互不相同（数目、时辰、方位、动作、"
     "暗语、灯烛、铃铛、铜钱、铜镜、纸扎、香火、门扉等），避免雷同；"
     "2) 每条半文言、阴森克制、有东方怪谈质感，各自暗藏一个可解谜的「暗号/禁忌/数目/次序」；"
-    "3) 不血腥、不猎奇、无政治敏感或迷信误导；"
+    "3) 紧扣给定的母题，不血腥、不猎奇、无政治敏感或迷信误导；"
     "4) 总篇幅 100~180 字，以「其一、其二、其三…」分条列写。"
-    "只输出规则本身，不要任何解释、前缀或引号。"
+    "\n【必须严格遵守】只输出规则正文本身，从「其一」直接开始，到末尾一条即停；"
+    "严禁输出任何分析、思路、推演、设计草稿、字数盘点、自我检查或「我考虑一下」之类内容；"
+    "严禁出现「思路」「想法」「下面」「我们先」「不妨」「让我」「拟作」等前缀，也不要任何解释、"
+    "前言或后记；严禁输出 Markdown 代码围栏（```）、JSON 或其它格式包裹；"
+    "不要展示你的构思过程，也不要数字数或写出你对字数的估算——直接成稿，一次到位，不要多想。"
 )
 
 # 围绕规则怪谈批量生成谜题（题目线索一律回扣该规则）
@@ -45,8 +53,12 @@ RULE_PUZZLE_SYSTEM_PROMPT = (
     "3) 半文言、阴森克制、不血腥、不猎奇、无政治敏感或迷信误导；"
     "4) 题目务必分散取材于规则中的不同线索点（数目、时辰、方位、动作、暗语、灯烛、铃铛、"
     "铜钱、铜镜、纸扎、香火、门扉等），每题回扣不同的规则条，题目之间不得重复或雷同。"
-    "只输出一个 JSON 数组，元素字段为：question(题干)、options(选项字符串数组)、"
-    "answer(正确项，须等于某个选项的原文)、hint(一句提示)。不要输出 JSON 以外的任何内容。"
+    "\n【输出格式】只输出一个 JSON 数组，元素字段为：question(题干)、options(选项字符串数组)、"
+    "answer(正确项，须等于某个选项的原文)、hint(一句提示)。"
+    "\n【必须严格遵守】只输出这个 JSON 数组本身，不要输出 JSON 以外的任何字符；"
+    "严禁输出分析、思路、推演、设计草稿、自我检查、字数盘点，也不要任何前言、后缀或解释；"
+    "严禁使用 Markdown 代码围栏（```）；不要加任何标题，也不要用「好的」「我明白了」之类开头；"
+    "不要复述或重构规则怪谈本身，也不要展示你的构思过程——直接成稿，一次到位，不要多想。"
 )
 
 
@@ -131,7 +143,7 @@ class DeepSeekClient:
                 system=RULE_SYSTEM_PROMPT,
                 max_tokens=4000,
             )
-            return text.strip() or None
+            return self._clean_rule(text)
         except Exception as e:  # noqa: BLE001
             logger.warning("[zhongyuan] DeepSeek 规则怪谈生成失败：%s", e)
             return None
@@ -144,7 +156,7 @@ class DeepSeekClient:
                 system=RULE_SYSTEM_PROMPT,
                 max_tokens=4000,
             )
-            return text.strip() or None
+            return self._clean_rule(text)
         except Exception as e:  # noqa: BLE001
             logger.warning("[zhongyuan] DeepSeek 按主题生成规则怪谈失败：%s", e)
             return None
@@ -322,6 +334,26 @@ class DeepSeekClient:
             if 0 <= idx < len(options):
                 return options[idx]
         return None
+
+    @staticmethod
+    def _clean_rule(text: str) -> str | None:
+        """兜底：模型若把「思路/推演/草稿」混进正文，则截取首个「其一/其N」起的正式规则。
+
+        正常时规则应直接以「其一」开头；若模型开头是一段自我检查或构思过程（其中混杂着
+        真正的规则），就从此处截断，避免把大段废话误当作规则推送出去（提示词已禁止思考，
+        此为最后一道保险）。
+        """
+        import re as _re
+
+        t = (text or "").strip()
+        if not t:
+            return None
+        m = _re.search(r"其[一二三四五六]", t)
+        if m and m.start() > 0:
+            candidate = t[m.start():].strip()
+            if candidate:
+                return candidate
+        return t
 
     @staticmethod
     def _parse_puzzle(text: str) -> dict | None:

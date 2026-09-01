@@ -584,39 +584,20 @@ class ZhongyuanActivity:
         return int(meta.get("dungeon_draw_count", 0))
 
     async def _start_dungeon(self) -> None:
-        """整点全服单局：从所有已绑定玩家中随机拉入 20%~50%，协作解密一场副本。
+        """每半小时全服单局：仅由「预定副本」的玩家参与，协作解密一场副本。
 
         副本为全服唯一实例，每次推送面向全部已注册群（全群推送）。
-        已「预定副本」的玩家被强行拉入（不占随机名额、不受每日被抽上限限制）。
+        本场参与者 = 已绑定且自行「预定副本」的玩家；无人预定则本时段跳过（不浪费 DeepSeek）。
         """
-        today = self._bj_date()
-        max_draw = self._int_cfg("max_draw_per_day", 0)
-        all_bound = [ap for ap in self._players().values() if ap.get("activity_id")]
-        # 预定玩家：强行拉入
-        reserved = [ap for ap in all_bound if ap.get("reserved")]
-        # 其余可被随机抽取的（排除当日已到被抽上限者；上限<=0 视为不限制）
-        pool = [
-            ap for ap in all_bound
-            if not ap.get("reserved")
-            and not (max_draw > 0 and ap.get("last_draw_date") == today
-                     and int(ap.get("draw_count_today", 0)) >= max_draw)
+        # 本场参与 = 自行「预定副本」的玩家（不再随机抽取 20%~50%）
+        chosen = [
+            ap for ap in self._players().values()
+            if ap.get("activity_id") and ap.get("reserved")
         ]
-        if not reserved and not pool:
+        if not chosen:
             return
-        # 随机拉入 20%~50%（仅对 pool）
-        lo = max(1, min(100, self._int_cfg("pull_min_pct", 20)))
-        hi = max(lo, min(100, self._int_cfg("pull_max_pct", 50)))
-        pct = random.randint(lo, hi) if lo < hi else lo
-        if reserved:
-            count = max(0, int(len(pool) * pct / 100))
-        else:
-            count = max(1, int(len(pool) * pct / 100))
-        count = min(count, len(pool))
-        chosen = reserved + random.sample(pool, count)
         for ap in chosen:
             ap["reserved"] = False
-            ap["last_draw_date"] = today
-            ap["draw_count_today"] = int(ap.get("draw_count_today", 0)) + 1
         # 规则怪谈 + 围绕规则生成谜题
         rule, theme = await self._generate_rule()
         # 先推规则预告，让玩家立即有反馈（题目炼制需数十秒，避免误以为无响应）
@@ -643,21 +624,18 @@ class ZhongyuanActivity:
             "index": 0,
             "participants": participants,
             "started_at": self._now(),
-            "deadline": self._now() + self._int_cfg("dungeon_limit_min", 40) * 60,
+            "deadline": self._now() + self._int_cfg("dungeon_limit_min", 20) * 60,
             "last_activity": self._now(),
             "last_status_ts": self._now(),
         }
         meta = self._data.setdefault("meta", {})
         meta["dungeon_draw_count"] = self._dungeon_draw_today() + 1
         names = "、".join(f"#{p['activity_id']:04d} {p['name']}" for p in participants.values())
-        reserve_note = ""
-        if reserved:
-            reserve_note = f"\n> 🎫 其中 **{len(reserved)}** 人为「预定」强行拉入。"
         await self._push_all_groups(
             f"## 🚪 阴门开 · 幽影饲育馆（全服协作解密）\n"
-            f"本次全服共拉入 **{len(chosen)}** 名驯宠师：{names}{reserve_note}\n"
+            f"本场 **{len(chosen)}** 名驯宠师预定参与：{names}\n"
             f"> 📜 **规则怪谈**：{rule}\n"
-            f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 40)} 分钟内解完 {len(puzzles_list)} 题即通关；"
+            f"> 全队共享进度，{self._int_cfg('dungeon_limit_min', 20)} 分钟内解完 {len(puzzles_list)} 题即通关；"
             f"个人答错满 {self._int_cfg('individual_fail_wrong', 2)} 次会揭晓答案并淘汰出局。",
         )
         await self._push_puzzle()
@@ -998,26 +976,77 @@ class ZhongyuanActivity:
             f"> 本场剩余：{remain}"
         )
 
-    def _cmd_shop(self, group_id: str, qq: str) -> str:
+    # 功德商店上架商品（价格单位：功德；兑换后进入当前群玩家背包，由玩家自行「使用」）
+    _SHOP_ITEMS: list[dict[str, Any]] = [
+        {"name": "攻击神符", "price": 100, "desc": "使用后永久 攻击 +100"},
+        {"name": "防御神符", "price": 100, "desc": "使用后永久 防御 +100"},
+        {"name": "生命神符", "price": 100, "desc": "使用后永久 生命上限 +100 并回满"},
+        {"name": "智力神符", "price": 100, "desc": "使用后永久 智力 +100"},
+        {"name": "自动修炼卡", "price": 200, "desc": "使用后获得 1 天自动修炼权限"},
+    ]
+
+    def _cmd_shop(self, group_id: str, qq: str, arg: str = "") -> str:
+        """功德商店：无参数列出商品；「功德商店 购买 <道具> [数量]」兑换进当前群背包。"""
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
-            return "❌ 你尚未相约中元。"
-        return "🕯️ 功德商店暂未上架任何商品，敬请期待。"
+            return "❌ 你尚未相约中元，无法使用功德商店。"
+        arg = (arg or "").strip()
+        if not arg:
+            return self._shop_list(ap)
+        return self._shop_buy(ap, qq, group_id, arg)
+
+    def _shop_list(self, ap: dict) -> str:
+        gd = int(ap.get("gongde", 0))
+        lines = ["🕯️ 功德商店", f"> 你的功德：**{gd}**", "", "**兑换列表**"]
+        for it in self._SHOP_ITEMS:
+            lines.append(f"- **{it['name']}** — **{it['price']}** 功德\n  > {it['desc']}")
+        lines.extend([
+            "",
+            "> 发送「功德商店 购买 <道具名> [数量]」兑换；",
+            "> 兑换后进入**当前群背包**，发送「使用 <道具名>」即可生效。",
+        ])
+        return "\n".join(lines)
+
+    def _shop_buy(self, ap: dict, qq: str, group_id: str, arg: str) -> str:
+        parts = arg.split()
+        if parts and parts[0] in ("购买", "买", "换"):
+            parts = parts[1:]
+        if not parts:
+            return "用法：功德商店 购买 <道具名> [数量]"
+        name = parts[0]
+        count = 1
+        if len(parts) > 1 and parts[1].isdigit():
+            count = max(1, int(parts[1]))
+        item = next((c for c in self._SHOP_ITEMS if c["name"] == name), None)
+        if item is None:
+            return f"商店没有『{name}』。发送「功德商店」查看商品。"
+        cost = int(item["price"]) * count
+        gd = int(ap.get("gongde", 0))
+        if gd < cost:
+            return f"功德不足：兑换 {count} 个『{name}』需 **{cost}** 功德，当前仅有 {gd}。"
+        ap["gongde"] = gd - cost
+        main_player = self.bot.store.get_player(qq, group_id)
+        self.bot.store.add_item(main_player, name, count)
+        self._spawn(self.bot.store.save())
+        return (
+            f"✅ 兑换成功：『{name}』x{count} 已放入**当前群背包**！\n"
+            f"> 扣费 **{cost}** 功德（剩余 **{gd - cost}**）\n"
+            f"> 发送「使用 {name}」即可生效。"
+        )
 
     # ------------------------------------------------------------------
-    # 预定副本（可无限次预定，下次开本时强行拉入，不占随机名额）
+    # 预定副本（可无限次预定，下次开本时自动参与）
     # ------------------------------------------------------------------
     def _cmd_reserve(self, group_id: str, qq: str) -> str:
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
             return "❌ 请先「相约中元」领取活动 ID 后再预定副本。"
         if ap.get("reserved"):
-            return f"🕯️ 你已预定下一场副本（活动 ID #{ap['activity_id']:04d}），阴门开启时将强行拉入。"
+            return f"🕯️ 你已预定下一场副本（活动 ID #{ap['activity_id']:04d}），届时将自动参与。"
         ap["reserved"] = True
         return (
-            f"🕯️ 预定成功！下一场「幽影饲育馆」开启时，你将**被强行拉入**，"
-            f"且不占用随机抽取名额（可无限次预定）。\n"
-            f"> 想退出可发送「取消预定」。"
+            f"🕯️ 预定成功！副本不再随机抽人，下一场「幽影饲育馆」开本时你将**自动参与**。\n"
+            f"> 每半小时一场；可无限次预定；想退出可发送「取消预定」。"
         )
 
     def _cmd_cancel_reserve(self, group_id: str, qq: str) -> str:
@@ -1027,7 +1056,7 @@ class ZhongyuanActivity:
         if not ap.get("reserved"):
             return "🕯️ 你当前并无预定，无需取消。"
         ap["reserved"] = False
-        return "✅ 已取消预定，下一场副本将按正常随机抽取。"
+        return "✅ 已取消预定，下一场副本开本时你不再参与。"
 
     # ------------------------------------------------------------------
     # 管理指令
@@ -1296,7 +1325,7 @@ class ZhongyuanActivity:
         if cmd == "解除阴气":
             return self._cmd_clear_yin(group_id, qq)
         if cmd == "功德商店":
-            return self._cmd_shop(group_id, qq)
+            return self._cmd_shop(group_id, qq, text[len(cmd):].strip())
         if cmd == "预定副本":
             return self._cmd_reserve(group_id, qq)
         if cmd == "取消预定":
@@ -1309,13 +1338,13 @@ class ZhongyuanActivity:
             f"## {ACTIVITY_NAME}\n"
             f"> 状态：{state}\n\n"
             "**🎭 阴面 · 幽影饲育馆**（协作解密 · 每日 8:00–22:00）\n"
-            "> 相约中元 → 领取活动 ID → 每小时被勾入馆解谜 → 功德\n"
+            "> 相约中元 → 领取活动 ID → 预定副本 → 每半小时一场自动参与 → 功德\n"
             "**🕯️ 阳面 · 青灯寄思**（文化温情 · 全天开放）\n"
             "> 放河灯 / 中元问答 / 供灯焚香 / 中元签到 → 功德\n\n"
             "**指令一览**\n"
             "`相约中元` · `中元状态` · `中元功德榜` · `中元里程碑` · `中元签到`\n"
             "`放河灯 <寄语>` · `中元问答` · `焚香`/`供灯` · `解除阴气` · `功德商店`\n"
-            "`预定副本`（下次强行拉入）· `取消预定`\n"
+            "`预定副本`（下场自动参与）· `取消预定`\n"
             "> 中元不是鬼节，是勾连阴阳两界的思念。"
         )
 
@@ -1344,21 +1373,22 @@ class ZhongyuanActivity:
             elif now - s.get("last_status_ts", 0) >= self._int_cfg("dungeon_status_interval_sec", 120):
                 s["last_status_ts"] = now
                 await self._push_dungeon_status()
-        # 2. 每小时全服抽人（活动开启 + 开放时段内 + 当日开本数未满）
+        # 2. 每半小时全服开本（活动开启 + 开放时段内 + 当日开本数未满 + 有人预定）
         if self._enabled() and self._in_open_hours():
             cap = self._int_cfg("max_dungeon_per_day", 0)
             if cap <= 0 or self._dungeon_draw_today() < cap:
                 meta = self._data.setdefault("meta", {})
+                interval_min = max(1, self._int_cfg("trigger_interval_min", 30))
                 next_ts = int(meta.get("dungeon_next_trigger_ts", 0))
                 if next_ts == 0:
-                    # 首次：把下一次触发固定为下一个整点并持久化（否则每 tick 重算永远到不了点）
-                    next_ts = self._next_hour_ts(now)
+                    # 首次：把下一次触发固定为下一个边界并持久化（否则每 tick 重算永远到不了点）
+                    next_ts = self._next_interval_ts(now, interval_min)
                     meta["dungeon_next_trigger_ts"] = next_ts
                 if now >= next_ts:
-                    if not self._session() and self._any_eligible_group():
+                    if not self._session() and self._any_eligible_group() and self._has_reserved():
                         await self._start_dungeon()
-                    # 无论是否开本，都推进到下一个整点
-                    meta["dungeon_next_trigger_ts"] = self._next_hour_ts(now)
+                    # 无论是否开本，都推进到下一个边界
+                    meta["dungeon_next_trigger_ts"] = self._next_interval_ts(now, interval_min)
         # 3. 活动结束自动结算
         if self._activity_over() and not self._data.get("settled"):
             self._settle()
@@ -1385,8 +1415,19 @@ class ZhongyuanActivity:
                 continue
         return False
 
+    def _has_reserved(self) -> bool:
+        """是否有已绑定且「预定副本」的玩家（作为全服开本门槛：无人预定则本时段跳过）。"""
+        return any(
+            ap.get("reserved") for ap in self._players().values() if ap.get("activity_id")
+        )
+
     def _next_hour_ts(self, now: int) -> int:
         return ((now // 3600) + 1) * 3600
+
+    def _next_interval_ts(self, now: int, interval_min: int) -> int:
+        """按 `interval_min`（分钟）对齐的下一个触发时间戳（整点/半点边界）。"""
+        interval = max(1, int(interval_min)) * 60
+        return (now // interval + 1) * interval
 
     # ------------------------------------------------------------------
     # 推送
