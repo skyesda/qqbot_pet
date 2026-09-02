@@ -918,6 +918,8 @@ class ZhongyuanActivity:
     # ------------------------------------------------------------------
     def _cmd_rank(self, group_id: str) -> str:
         # 全服功德榜：跨所有群汇总（玩家身份按 QQ 全局唯一），不再按单个群过滤。
+        # 注意：群号只有 32 位 hex openid、无友好名称，放表格列会撑爆 QQ 渲染，
+        # 故用「覆盖 N 个群」统计行体现跨群，而不单独列群号列。
         players = list(self._players().values())
         ranked = sorted(
             players,
@@ -930,16 +932,17 @@ class ZhongyuanActivity:
         if not ranked:
             return "🕯️ 中元功德榜：全服暂无已绑定玩家。"
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        lines = ["## 🕯️ 中元功德榜（全服 · 前 20）", "> 跨所有群汇总，与你当前所在群无关。"]
-        lines.append("| 排名 | 段位 | 活动ID | 玩家 | 群 | 功德 | 通关 | 完美 |")
-        lines.append("|:--:|:--:|:--:|:--:|:--:|--:|--:|--:|")
+        ngroups = len({str(p.get("group", "")) for p in players if p.get("group")})
+        lines = ["## 🕯️ 中元功德榜（全服 · 前 20）"]
+        lines.append(f"> 跨所有群汇总：覆盖 {ngroups} 个群 · 共 {len(ranked)} 位玩家。")
+        lines.append("| 排名 | 段位 | 活动ID | 玩家 | 功德 | 通关 | 完美 |")
+        lines.append("|:--:|:--:|:--:|:--:|--:|--:|--:|")
         for i, p in enumerate(ranked[:20], start=1):
             tier = tier_name_for_rank(i, self.cfg.get("tiers", [])) or "—"
             name = str(p.get("name", "?")).replace("|", "丨")
-            grp = str(p.get("group", "—")).replace("|", "丨")
             rk = medals.get(i, str(i))
             lines.append(
-                f"| {rk} | {tier} | #{p['activity_id']:04d} | {name} | {grp} | "
+                f"| {rk} | {tier} | #{p['activity_id']:04d} | {name} | "
                 f"{p.get('gongde', 0)} | {p.get('clear_count', 0)} | {p.get('perfect_count', 0)} |"
             )
         return "\n".join(lines)
