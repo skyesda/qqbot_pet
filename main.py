@@ -5657,11 +5657,13 @@ class PetParkPlugin(Star):
         shard_name = f"{quality}碎片"
         shard_n = random.randint(1, 2)
         self.store.add_item(player, shard_name, shard_n)
+        lines = [f"💥 **砸蛋成功！**\n获得 **{shard_name} ×{shard_n}**"]
+        if random.random() < data.PET_CARD_DROP_CHANCE:
+            self.store.add_item(player, "宠物卡", 1)
+            lines.append("🎴 附带掉落 **宠物卡 ×1**（使用 `使用 宠物卡 召唤` 随机获得一只宠物）！")
+        lines.append(f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张【{quality}卡】，卡片可召唤宠物或提升品质。")
         self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
-        return (
-            f"💥 **砸蛋成功！**\n获得 **{shard_name} ×{shard_n}**\n"
-            f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张【{quality}卡】，卡片可召唤宠物或提升品质。"
-        )
+        return "\n".join(lines)
 
     def _smash_ten(self, player: dict) -> str:
         """砸蛋十连：一次抽 10 次品质碎片（不再出宠物）。与单发共享同一冷却键「砸蛋」（互斥）。"""
@@ -5670,15 +5672,21 @@ class PetParkPlugin(Star):
         if cd:
             return cd
         shard_tot: dict[str, int] = {}
+        card_cnt = 0
         for _ in range(need):
             quality = self._roll_quality()
             cnt = random.randint(1, 2)
             self.store.add_item(player, f"{quality}碎片", cnt)
             shard_tot[quality] = shard_tot.get(quality, 0) + cnt
+            if random.random() < data.PET_CARD_DROP_CHANCE:
+                self.store.add_item(player, "宠物卡", 1)
+                card_cnt += 1
         self.store.set_cooldown(player, "砸蛋", data.EGG_TEN_COOLDOWN)
         lines = ["💥 **砸蛋十连！**"]
         for q, n in shard_tot.items():
             lines.append(f"- **{q}碎片 ×{n}**")
+        if card_cnt:
+            lines.append(f"- 🎴 **宠物卡 ×{card_cnt}**（使用 `使用 宠物卡 召唤` 随机获得一只宠物）")
         lines.extend([
             "",
             f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张品质卡，卡片可召唤宠物或提升品质。",
@@ -6190,6 +6198,29 @@ class PetParkPlugin(Star):
                 f"🧘 使用『{name}』x{count}：自动修炼权限 +{days} 天！\n"
                 f"> 有效期至 **{when}**\n"
                 f"> 发送『开启自动修炼』即可开始挂机修炼。"
+            )
+        # 宠物卡：召唤出随机品质+随机物种的宠物。召唤无需已有宠物，故须在 _need_pet 门槛前处理。
+        if it_check and it_check.get("effect", {}).get("summon_pet_card"):
+            if not self.store.has_item(player, name):
+                return f"背包里没有『{name}』。"
+            sub = tokens[2].strip() if len(tokens) > 2 else ""
+            if sub not in ("召唤", "随机", "随机召唤", "开卡", "开"):
+                return f"『{name}』使用方式：`使用 {name} 召唤`，随机获得一只宠物。"
+            slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+            if len(player.get("pets", [])) >= slots:
+                return (
+                    f"宠物席位已满（{len(player['pets'])}/{slots}），无法召唤新宠物。\n"
+                    "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
+                )
+            q = self._roll_quality()
+            species = random.choice(data.SPECIES_NAMES)
+            new_p = petmod.new_pet(species, q)
+            if not self._add_pet(player, new_p):
+                return "召唤失败，席位异常。"
+            self.store.remove_item(player, name, 1)
+            return (
+                f"🎴 **召唤成功！** 消耗 {name} ×1，获得 【{q}】品质的 **{species}**！\n"
+                "> 发送 `我的宠物` 查看详情。"
             )
         # 品质卡（普通卡~混沌卡）：双用途 —— ①「召唤」该品质随机宠物；②对指定宠物升品质。
         # 召唤不需要已有宠物，故必须在此分支处理（在 _need_pet 门槛之前）。

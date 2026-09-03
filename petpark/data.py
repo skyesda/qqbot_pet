@@ -680,6 +680,14 @@ ITEMS = {
         "desc": "使用后永久增加1个宠物席位（上限10个），仅可通过管理员卡密获得。",
         "effect": {"add_pet_slot": 1},
     },
+    "宠物卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "材料",
+        "usable": True,
+        "desc": "神秘的宠物卡，使用『使用 宠物卡 召唤』时随机获得一只宠物（品质与种类均随机，与品质卡互相独立）。",
+        "effect": {"summon_pet_card": True},
+    },
 }
 
 # 品质碎片（砸蛋副产物）：同品质 10 片兑换 1 张该品质卡。不可直接使用，仅作合成素材。
@@ -1133,6 +1141,7 @@ ATTACK_ENERGY = 10
 # 各类行为冷却（秒）。日常活动为 [下限, 上限] 随机区间。
 EGG_COOLDOWN = 180  # 砸蛋单发冷却 3 分钟
 EGG_TEN_COOLDOWN = 1500  # 砸蛋十连冷却 25 分钟（与单发共用同一冷却键，互斥）
+PET_CARD_DROP_CHANCE = 0.15  # 砸蛋每抽独立判定掉落「宠物卡」的概率（碎片仍必定获得）
 DUNGEON_COOLDOWN = 900  # 进入副本冷却 15 分钟
 DAILY_COOLDOWN_RANGE = (600, 1200)  # 修炼等日常活动冷却 10~20 分钟随机
 TRIBULATION_FAIL_COOLDOWN = 1800  # 渡劫失败后冷却 30 分钟
