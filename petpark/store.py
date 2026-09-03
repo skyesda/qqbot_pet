@@ -100,10 +100,15 @@ class PetStore:
             "start_at": 0, "end_at": 0,
             "announce": "🎂 生辰盛典开启！", "announce_end": "🎂 生辰盛典收官",
             "announced_start": False, "announced_end": False,
-            "howto": "🎂 如何参与【生辰盛典】\n\n- 发送 `生日抽奖` 报名下一轮开奖箱（每轮1次，到点自动开奖）\n- 发送 `生日快乐` 瓜分千万积分/金币/钻石（30分钟冷却）\n\n> 场次详情见 `生辰活动`。",
+            "howto": "🎂 如何参与【生辰盛典】\n\n- 发送 `生日抽奖` 报名下一轮开奖箱（每轮1次，到点自动开奖，约80%中奖）\n- 发送 `生日快乐` 瓜分千万积分/金币/钻石（30分钟冷却）\n\n> 场次详情见 `生辰活动`。",
             "howto_interval_h": 0, "howto_last_ts": 0,   # 每N小时全群推一次「如何参与」，0=关闭
-            "gacha": {"enabled": True, "cmd": "生日抽奖", "menu_cmd": "生辰活动", "rounds": []},
-            "pool": {"enabled": True, "cmd": "生辰瓜分", "cooldown_min": 30, "currencies": {}},
+            "gacha": {"enabled": True, "cmd": "生日抽奖", "menu_cmd": "生辰活动",
+                      "win_rate": 0.8,                    # 每轮中奖人数≈参与人数×80%
+                      "grand_item": "宠物定制卡", "grand_count": 1, "grand_used": False,   # 仅最后一轮保发的大奖（定制卡不进库存）
+                      "stock": {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动修炼卡": 94},          # 抽奖共享库存（配置总量）
+                      "stock_remain": {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动修炼卡": 94},   # 剩余量（动态扣减）
+                      "rounds": []},
+            "pool": {"enabled": True, "cmd": "生日快乐", "cooldown_min": 30, "currencies": {}},
             "pool_remain": {},          # {"积分": int, "金币": int, "钻石": int}
             "players": {},              # openid -> {"pool_ts": int}
         })

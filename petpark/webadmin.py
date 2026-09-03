@@ -98,6 +98,7 @@ class WebAdmin:
         app.router.add_post("/api/celebrate/state", self._api_celebrate_state)
         app.router.add_post("/api/celebrate/save", self._api_celebrate_save)
         app.router.add_post("/api/celebrate/reset_pool", self._api_celebrate_reset_pool)
+        app.router.add_post("/api/celebrate/reset_stock", self._api_celebrate_reset_stock)
         app.router.add_post("/api/celebrate/broadcast", self._api_celebrate_broadcast)
 
         portal = PlayerPortal(
@@ -809,15 +810,6 @@ class WebAdmin:
             entry = {
                 "time": str(r.get("time") or ""),
                 "draw_at": da,
-                "grand": {
-                    "item": str((r.get("grand") or {}).get("item") or ""),
-                    "count": max(1, int((r.get("grand") or {}).get("count") or 1)),
-                },
-                "normal": {
-                    "item": str((r.get("normal") or {}).get("item") or ""),
-                    "count": max(1, int((r.get("normal") or {}).get("count") or 1)),
-                },
-                "normal_winners": max(0, int(r.get("normal_winners") or 0)),
                 "drawn": False,
                 "participants": {},
                 "result": None,
@@ -831,15 +823,36 @@ class WebAdmin:
         cel.setdefault("gacha", {})
         gacha = cel["gacha"]
         gacha["enabled"] = bool(gcfg.get("enabled", gacha.get("enabled", True)))
-        gacha["cmd"] = str(gcfg.get("cmd") or gacha.get("cmd") or "生辰抽奖")
+        gacha["cmd"] = str(gcfg.get("cmd") or gacha.get("cmd") or "生日抽奖")
         gacha["menu_cmd"] = str(gcfg.get("menu_cmd") or gacha.get("menu_cmd") or "生辰活动")
+        # 中奖率 + 压轴大奖（定制卡，仅最后一轮）
+        gacha["win_rate"] = min(1.0, max(0.0, float(gcfg.get("win_rate") or gacha.get("win_rate") or 0.8)))
+        gacha["grand_item"] = str(gcfg.get("grand_item") or gacha.get("grand_item") or "宠物定制卡")
+        gacha["grand_count"] = max(1, int(gcfg.get("grand_count") or gacha.get("grand_count") or 1))
+        gacha["grand_used"] = bool(gcfg.get("grand_used", gacha.get("grand_used")))
+        # 动态库存：配置总量 + 保留已有剩余
+        def _cnt(sc):
+            if isinstance(sc, (int, float)):
+                return max(0, int(sc))
+            return max(0, int((sc or {}).get("count") or 0))
+        new_stock = {}
+        for nm, sc in (gcfg.get("stock") or {}).items():
+            if not nm:
+                continue
+            new_stock[nm] = _cnt(sc)
+        gacha["stock"] = new_stock
+        old_remain = gacha.get("stock_remain") or {}
+        new_remain = {}
+        for nm, total in new_stock.items():
+            new_remain[nm] = int(old_remain.get(nm, total)) if nm in old_remain else total
+        gacha["stock_remain"] = new_remain
         gacha["rounds"] = rounds
         # 奖池瓜分
         pcfg = cfg.get("pool") or {}
         cel.setdefault("pool", {})
         pool = cel["pool"]
         pool["enabled"] = bool(pcfg.get("enabled", pool.get("enabled", True)))
-        pool["cmd"] = str(pcfg.get("cmd") or pool.get("cmd") or "生辰瓜分")
+        pool["cmd"] = str(pcfg.get("cmd") or pool.get("cmd") or "生日快乐")
         pool["cooldown_min"] = max(1, int(pcfg.get("cooldown_min") or pool.get("cooldown_min") or 30))
         old_cur = pool.get("currencies") or {}
         new_cur = {}
@@ -872,6 +885,16 @@ class WebAdmin:
             remain[name] = int(c.get("total") or 0)
         await self.store.save()
         return self._json({"ok": True, "msg": "奖池剩余已重置回配置总额"})
+
+    async def _api_celebrate_reset_stock(self, request):
+        self._require(request)
+        cel = self._celebrate_state()
+        gacha = cel.setdefault("gacha", {})
+        stock = gacha.get("stock") or {}
+        gacha["stock_remain"] = {nm: max(0, int(c)) for nm, c in stock.items()}
+        gacha["grand_used"] = False   # 同时恢复可再发定制卡压轴大奖
+        await self.store.save()
+        return self._json({"ok": True, "msg": "抽奖库存剩余已重置回配置总量"})
 
     async def _api_celebrate_broadcast(self, request):
         self._require(request)
@@ -1881,8 +1904,11 @@ let CELEBRATE=null;
 async function loadCelebrate(){
  const r=await api('/api/celebrate/state',{});
  CELEBRATE=(r&&r.ok)?r.data:{};
- if(!CELEBRATE.gacha) CELEBRATE.gacha={cmd:'生辰抽奖',menu_cmd:'生辰活动',rounds:[]};
- if(!CELEBRATE.pool) CELEBRATE.pool={cmd:'生辰瓜分',cooldown_min:30,currencies:{}};
+ if(!CELEBRATE.gacha) CELEBRATE.gacha={cmd:'生日抽奖',menu_cmd:'生辰活动',rounds:[]};
+ if(!CELEBRATE.pool) CELEBRATE.pool={cmd:'生日快乐',cooldown_min:30,currencies:{}};
+ // 动态库存：以数组便于增删行
+ const st=CELEBRATE.gacha.stock||{};
+ CELEBRATE._stock=Object.keys(st).map(n=>({name:n,count:st[n]}));
  renderCelebrate();
 }
 function ceRoundDrawAt(timeStr){
@@ -1895,17 +1921,19 @@ function ceRoundDrawAt(timeStr){
 }
 function ceRoundRow(r,i){
  r=r||{};
- const g0=(r.grand||{}), n0=(r.normal||{});
  const drawn=r.drawn?`<span style="color:#17a05e">✓已开奖</span>`:'<span class="muted">未开奖</span>';
  return `<tr>
   <td class="muted">${drawn}</td>
   <td><input type="time" value="${esc(r.time||'')}" id="ce_rt${i}" style="width:105px"></td>
-  <td><input value="${esc(g0.item||'')}" id="ce_rg${i}" placeholder="大奖名" style="width:115px"></td>
-  <td><input type="number" min="1" value="${g0.count||1}" id="ce_rgc${i}" style="width:64px"></td>
-  <td><input value="${esc(n0.item||'')}" id="ce_rn${i}" placeholder="普通奖" style="width:115px"></td>
-  <td><input type="number" min="1" value="${n0.count||1}" id="ce_rnc${i}" style="width:64px"></td>
-  <td><input type="number" min="0" value="${r.normal_winners||0}" id="ce_rnw${i}" style="width:64px"></td>
   <td><button class="act del" onclick="ceDelRound(${i})">删</button></td>
+ </tr>`;
+}
+function ceStockRow(s,i){
+ s=s||{};
+ return `<tr>
+  <td><input value="${esc(s.name||'')}" id="ce_sn${i}" placeholder="奖品名（如 变种卡）" style="width:150px"></td>
+  <td><input type="number" min="0" value="${s.count||0}" id="ce_sc${i}" style="width:100px"></td>
+  <td><button class="act del" onclick="ceDelStock(${i})">删</button></td>
  </tr>`;
 }
 function renderCelebrate(){
@@ -1947,14 +1975,27 @@ function renderCelebrate(){
     <label class="fld" style="flex:1;min-width:280px">文案 <textarea id="ce_how" rows="3" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.howto||'')}</textarea></label>
    </div>
    <div style="color:#9aa3b8;font-size:12px">填 1 表示开奖期间每 1 小时全群推一次此文案；填 0 关闭。</div>
-   <div class="sec" style="margin-top:18px">🎯 抽奖开奖箱（每场到点自动抽 1 位大奖 + N 位普通奖）</div>
+   <div class="sec" style="margin-top:18px">🎯 抽奖开奖箱（每轮按中奖率抽人，奖品从库存动态抽取）</div>
    <div class="row">
-    <label class="fld">指令 <input id="ce_gcmd" value="${esc(ga.cmd||'生辰抽奖')}" style="width:150px"></label>
+    <label class="fld">指令 <input id="ce_gcmd" value="${esc(ga.cmd||'生日抽奖')}" style="width:150px"></label>
     <label class="fld">菜单 <input id="ce_gmenu" value="${esc(ga.menu_cmd||'生辰活动')}" style="width:150px"></label>
+    <label class="fld" style="width:auto">中奖率% <input type="number" min="1" max="100" value="${Math.round((ga.win_rate||0.8)*100)}" id="ce_gwr" style="width:80px"></label>
     <button class="act ghost" onclick="ceAddRound()">+ 加一场（共 ${rounds.length} 场）</button>
    </div>
-   ${rounds.length?`<table><thead><tr><th>状态</th><th>时间</th><th>大奖名</th><th>数</th><th>普通奖</th><th>数</th><th>人数</th><th></th></tr></thead><tbody>${rrows}</tbody></table>`:'<div class="empty">尚未配置开奖场次，点击上方「加一场」。</div>'}
-   <div style="color:#9aa3b8;font-size:12px;margin-top:6px">时间填 HH:MM，开奖日期取「开始」时间的当天；20:00 那场放「宠物定制卡」作为最大奖。</div>
+   <div class="row">
+    <label class="fld">压轴大奖 <input id="ce_ggitem" value="${esc(ga.grand_item||'宠物定制卡')}" style="width:150px"></label>
+    <label class="fld">数量 <input type="number" min="1" value="${ga.grand_count||1}" id="ce_ggcnt" style="width:80px"></label>
+    <span class="muted">仅最后一轮保发（${ga.grand_used?'已发放':'未发放'}）</span>
+   </div>
+   ${rounds.length?`<table><thead><tr><th>状态</th><th>时间</th><th></th></tr></thead><tbody>${rrows}</tbody></table>`:'<div class="empty">尚未配置开奖场次，点击上方「加一场」。</div>'}
+   <div style="color:#9aa3b8;font-size:12px;margin-top:6px">时间填 HH:MM，开奖日期取「开始」时间的当天；每轮中奖人数≈参与人数×中奖率（上限=剩余库存）。</div>
+   <div class="sec" style="margin-top:16px">🎁 动态库存（中奖者按剩余份数加权随机抽 1 份，抽完即止）</div>
+   <table><thead><tr><th>奖品名</th><th>总量</th><th></th></tr></thead><tbody>${(CELEBRATE._stock||[]).map((s,i)=>ceStockRow(s,i)).join('')||'<tr><td colspan="3" class="muted">未配置库存</td></tr>'}</tbody></table>
+   <div class="row" style="margin-top:6px">
+    <button class="act ghost" onclick="ceAddStock()">+ 加一种</button>
+    <button class="act ghost" onclick="resetStock()">重置库存剩余</button>
+    <span class="muted" style="font-size:12px">「保存」后生效；重置将恢复剩余=总量并重置压轴大奖。</span>
+   </div>
    <div class="sec" style="margin-top:20px">💰 奖池瓜分（${esc(po.cmd||'生辰瓜分')}）</div>
    <div class="row">
     <label class="fld">启用瓜分 <input type="checkbox" id="ce_pon" ${po.enabled===false?'':'checked'}></label>
@@ -1973,8 +2014,15 @@ function renderCelebrate(){
   </div>
  </div>`;
 }
-function ceAddRound(){ const c=CELEBRATE||{}; c.gacha=c.gacha||{cmd:'生辰抽奖',menu_cmd:'生辰活动',rounds:[]}; c.gacha.rounds.push({time:'',draw_at:0,grand:{item:'',count:1},normal:{item:'',count:1},normal_winners:0}); renderCelebrate(); }
+function ceAddRound(){ const c=CELEBRATE||{}; c.gacha=c.gacha||{cmd:'生日抽奖',menu_cmd:'生辰活动',rounds:[]}; c.gacha.rounds.push({time:'',draw_at:0}); renderCelebrate(); }
 function ceDelRound(i){ const c=CELEBRATE||{}; if(c.gacha&&c.gacha.rounds){ c.gacha.rounds.splice(i,1); renderCelebrate(); } }
+function ceAddStock(){ const c=CELEBRATE||{}; c._stock=c._stock||[]; c._stock.push({name:'',count:0}); renderCelebrate(); }
+function ceDelStock(i){ const c=CELEBRATE||{}; if(c._stock){ c._stock.splice(i,1); renderCelebrate(); } }
+async function resetStock(){
+ if(!confirm('确认将「动态库存」剩余重置回各总量，并重置压轴大奖为未发放？')) return;
+ const r=await api('/api/celebrate/reset_stock',{});
+ const m=g('ce_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
 async function saveCelebrate(){
  const c=CELEBRATE||{};
  const body={celebrate:{
@@ -1986,18 +2034,27 @@ async function saveCelebrate(){
   announce_end: g('ce_ann_end').value,
   howto: g('ce_how').value,
   howto_interval_h: Number(g('ce_how_ih').value)||0,
-  gacha:{enabled:true, cmd:g('ce_gcmd').value||'生辰抽奖', menu_cmd:g('ce_gmenu').value||'生辰活动', rounds:[]},
-  pool:{enabled:g('ce_pon')?g('ce_pon').checked:true, cmd:g('ce_pcmd').value||'生辰瓜分', cooldown_min:Number(g('ce_pcd').value)||30, currencies:{}}
+  gacha:{enabled:true, cmd:g('ce_gcmd').value||'生日抽奖', menu_cmd:g('ce_gmenu').value||'生辰活动',
+         win_rate: Math.min(1,Math.max(0.01,(Number(g('ce_gwr').value)||80)/100)),
+         grand_item:g('ce_ggitem').value||'宠物定制卡', grand_count:Math.max(1,Number(g('ce_ggcnt').value)||1),
+         grand_used: !!((c.gacha||{}).grand_used),
+         stock:{}, stock_remain:{}, rounds:[]},
+  pool:{enabled:g('ce_pon')?g('ce_pon').checked:true, cmd:g('ce_pcmd').value||'生日快乐', cooldown_min:Number(g('ce_pcd').value)||30, currencies:{}}
  }};
  const nRounds=((c.gacha||{}).rounds||[]).length;
  for(let i=0;i<nRounds;i++){
   const tEl=document.getElementById('ce_rt'+i); if(!tEl) continue;
   const time=tEl.value;
-  body.celebrate.gacha.rounds.push({time,
-   draw_at: ceRoundDrawAt(time),
-   grand:{item:g('ce_rg'+i).value, count:Number(g('ce_rgc'+i).value)||1},
-   normal:{item:g('ce_rn'+i).value, count:Number(g('ce_rnc'+i).value)||1},
-   normal_winners:Number(g('ce_rnw'+i).value)||0});
+  body.celebrate.gacha.rounds.push({time, draw_at: ceRoundDrawAt(time)});
+ }
+ for(const s of (c._stock||[])){
+  const nm=(s.name||'').trim(); if(!nm) continue;
+  body.celebrate.gacha.stock[nm]=Math.max(0,Number(s.count)||0);
+ }
+ const oldRemain=((c.gacha||{}).stock_remain)||{};
+ for(const nm in body.celebrate.gacha.stock){
+  if(typeof oldRemain[nm]==='number') body.celebrate.gacha.stock_remain[nm]=Math.min(oldRemain[nm],body.celebrate.gacha.stock[nm]);
+  else body.celebrate.gacha.stock_remain[nm]=body.celebrate.gacha.stock[nm];
  }
  for(const nm of ['积分','金币','钻石']){
   const tEl=document.getElementById('ce_ct_'+nm); if(!tEl) continue;

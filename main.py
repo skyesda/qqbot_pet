@@ -366,8 +366,8 @@ KNOWN_COMMANDS = {
 # 合并中元活动指令（由独立模块动态提供，避免在 KNOWN_COMMANDS 手写两份清单）
 KNOWN_COMMANDS |= _ZY_COMMANDS
 
-# 生辰盛典（独立庆典活动）：抽奖 / 奖池瓜分 / 活动菜单
-KNOWN_COMMANDS |= {"生辰活动", "生辰抽奖", "生辰瓜分"}
+# 生辰盛典（独立庆典活动）：生日抽奖 / 生日快乐 / 活动菜单
+KNOWN_COMMANDS |= {"生辰活动", "生日抽奖", "生日快乐"}
 
 # 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
 WEB_BLOCKED_COMMANDS = {
@@ -2900,7 +2900,7 @@ class PetParkPlugin(Star):
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
                         "绑定QQ", "验证码", "换绑QQ", "解绑QQ",
                         "我的奖品", "口令抽奖",
-                        "生辰活动", "生辰抽奖", "生辰瓜分"}
+                        "生辰活动", "生日抽奖", "生日快乐"}
         if cmd not in _bank_allow:
             bank_block = self._bank_block_check(player)
             if bank_block:
@@ -3431,26 +3431,55 @@ class PetParkPlugin(Star):
             return self._celebrate_pool(cel, player, qq)
         return None
 
+    @staticmethod
+    def _ga_norm(cel: dict) -> dict:
+        """校验/补全抽奖(gacha)配置：兼容旧数据，缺字段时回填默认（幂等）。"""
+        ga = cel.setdefault("gacha", {})
+        ga.setdefault("enabled", True)
+        ga.setdefault("cmd", "生日抽奖")
+        ga.setdefault("menu_cmd", "生辰活动")
+        ga.setdefault("win_rate", 0.8)
+        ga.setdefault("grand_item", "宠物定制卡")
+        ga.setdefault("grand_count", 1)
+        ga.setdefault("grand_used", False)
+        ga.setdefault("stock", {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动修炼卡": 94})
+        ga.setdefault("stock_remain", dict(ga["stock"]))
+        ga.setdefault("rounds", [])
+        return ga
+
     def _celebrate_menu(self, cel: dict, qq: str) -> str:
-        gacha = cel.get("gacha", {})
+        gacha = self._ga_norm(cel)
         pool = cel.get("pool", {})
         lines = [
             f"## 🎂 {cel.get('name', '生辰盛典')}",
             f"> `{gacha.get('cmd')}` 报名下一轮开奖箱 ｜ `{pool.get('cmd')}` 瓜分货币池",
             "",
-            "**今日开奖场次**",
+            f"**今日开奖场次**（每轮约{int(float(gacha.get('win_rate') or 0.8) * 100)}%中奖，奖品从库存动态抽取）",
         ]
-        rounds = gacha.get("rounds")
-        if not isinstance(rounds, list) or not rounds:
+        rounds = gacha.get("rounds") or []
+        last_i = len(rounds)
+        grand_item = gacha.get("grand_item")
+        grand_count = int(gacha.get("grand_count") or 1)
+        if not rounds:
             lines.append("- （后台尚未配置开奖场次）")
         else:
             for i, r in enumerate(rounds, 1):
-                grand = (r.get("grand") or {})
-                g_item = grand.get("item") or "—"
-                g_cnt = int(grand.get("count") or 1)
                 status = "🔔已开奖" if r.get("drawn") else "🕓未开奖"
                 mine = "　✅已报名" if qq in (r.get("participants") or {}) else ""
-                lines.append(f"- **第{i}场** `{r.get('time') or '?'}`　{status}　大奖：{g_item}×{g_cnt}{mine}")
+                big = f"　🌟{grand_item}" if (i == last_i and grand_item) else ""
+                lines.append(f"- **第{i}场** `{r.get('time') or '?'}`　{status}{big}{mine}")
+            lines.append("")
+            lines.append("**🎁 动态库存**")
+            stock = gacha.get("stock") or {}
+            remain = gacha.get("stock_remain") or {}
+            if stock:
+                for nm, total in stock.items():
+                    left = int(remain.get(nm, total))
+                    lines.append(f"- {nm}×{total}（剩余 {left}）")
+            else:
+                lines.append("- （后台尚未配置库存）")
+            if grand_item and not gacha.get("grand_used"):
+                lines.append(f"- 🌟 {grand_item}×{grand_count} —— 仅最后一轮保发")
         if pool.get("enabled"):
             cur = pool.get("currencies") or {}
             remain = cel.get("pool_remain") or {}
@@ -3462,15 +3491,17 @@ class PetParkPlugin(Star):
             else:
                 lines.append("- （后台尚未配置奖池）")
         lines.append("")
-        lines.append("> 报名后到点自动开奖：每轮随机抽 1 位大奖 + 若干普通奖；每轮每人仅一次。")
+        lines.append("> 报名后到点自动开奖：约{0}%中奖者从剩余库存随机得1份；每人每轮仅一次。".format(int(float(gacha.get('win_rate') or 0.8) * 100)))
         return "\n".join(lines)
 
     def _celebrate_gacha(self, cel: dict, qq: str, group_id: str) -> str:
         """报名进入下一场开奖箱（每轮每人限一次）。"""
-        gacha = cel.get("gacha", {})
-        rounds = gacha.get("rounds")
-        if not isinstance(rounds, list) or not rounds:
+        gacha = self._ga_norm(cel)
+        rounds = gacha.get("rounds") or []
+        if not rounds:
             return "🎂 后台还未配置开奖场次。"
+        last_i = len(rounds)
+        grand_item = gacha.get("grand_item")
         target_i, target = None, None
         for i, r in enumerate(rounds, 1):
             if not r.get("drawn"):
@@ -3478,15 +3509,15 @@ class PetParkPlugin(Star):
                 break
         if target is None:
             return "🎂 今日开奖已全部结束，欢迎关注下一场狂欢！"
+        is_last = target_i == last_i
+        big = f"\n> 🌟 本场压轴大奖：**{grand_item}**（仅此一场）" if (is_last and grand_item) else ""
         parts = target.setdefault("participants", {})
         if qq in parts:
-            grand = (target.get("grand") or {}).get("item") or "—"
             return (f"🎂 你已报名 **第{target_i}场**（`{target.get('time') or '?'}`）开奖箱。\n"
-                    f"> 本场大奖：{grand}，开奖后见分晓～")
+                    f"> 约80%中奖，开奖后见分晓～{big}")
         parts[qq] = group_id
-        grand = (target.get("grand") or {}).get("item") or "—"
         return (f"🎂 **报名成功！** 你已进入 **第{target_i}场**（`{target.get('time') or '?'}`）开奖箱。\n"
-                f"> 本场大奖：{grand}\n"
+                f"> 约80%中奖，奖品将从剩余库存随机抽取。{big}\n"
                 f"> 开奖后将在群内公布中奖名单，记得留意公告哦～")
 
     def _celebrate_pool(self, cel: dict, player: dict, qq: str) -> str:
@@ -3592,40 +3623,58 @@ class PetParkPlugin(Star):
                 logger.exception("[petpark] 生辰盛典广播失败")
 
     async def _celebrate_draw_round(self, cel: dict, idx: int, rnd: dict) -> None:
-        """对某一开奖场次执行抽奖：1 位大奖 + 若干普通奖，并全群公布。"""
+        """对某一开奖场次执行抽奖：每轮约 win_rate 中奖，从共享库存按剩余份数加权动态抽取；最后一轮额外保发定制卡大奖。"""
+        gacha = self._ga_norm(cel)
+        stock_cfg = gacha.get("stock") or {}
+        remain = gacha.setdefault("stock_remain", dict(stock_cfg))
+        win_rate = float(gacha.get("win_rate") or 0.8)
+        grand_item = gacha.get("grand_item")
+        grand_count = max(1, int(gacha.get("grand_count") or 1))
+        rounds = gacha.get("rounds") or []
+        is_last = (idx == len(rounds))
         parts = rnd.get("participants") or {}
         rnd["drawn"] = True
         text = f"## 🎂 生辰盛典 **第{idx}场**开奖（`{rnd.get('time') or '?'}`）\n"
         if not parts:
             rnd["result"] = {"participants": 0, "note": "本轮无有效参与者"}
-            text += "> 本轮无有效参与者，大奖流流，下轮再会～"
+            text += "> 本轮无有效参与者，本轮流流，下轮再会～"
             rnd["participants"] = {}
             await self._fire_celebrate_broadcast(cel, text)
             return
         openids = list(parts.keys())
-        result = {"participants": len(openids), "grand": None, "normal": []}
-        grand = rnd.get("grand") or {}
-        g_item = grand.get("item")
-        g_cnt = int(grand.get("count") or 1)
-        if g_item and openids:
-            w = random.choice(openids)
-            gid = parts[w]
-            self.store.add_item(self.store.get_player(w, gid), g_item, g_cnt)
-            result["grand"] = {"openid": w, "item": g_item, "count": g_cnt}
-            text += f"- 🌟 **大奖**：{g_item}×{g_cnt} → 恭喜 **{w}**\n"
-            openids.remove(w)
-        normal = rnd.get("normal") or {}
-        n_item = normal.get("item")
-        n_cnt = int(normal.get("count") or 1)
-        n_w = int(rnd.get("normal_winners") or 0)
-        if n_item and n_w > 0 and openids:
-            chosen = random.sample(openids, min(n_w, len(openids)))
-            for w2 in chosen:
-                gid2 = parts[w2]
-                self.store.add_item(self.store.get_player(w2, gid2), n_item, n_cnt)
-                result["normal"].append({"openid": w2, "item": n_item, "count": n_cnt})
-            text += f"- 🎁 **普通奖**：{n_item}×{n_cnt} → {len(chosen)} 名（{', '.join(chosen)}）\n"
-        text += f"> 共 **{result['participants']}** 人参与，恭喜中奖者，奖品已到账！"
+        avail_total = sum(int(remain.get(it, stock_cfg[it])) for it in stock_cfg if int(remain.get(it, stock_cfg[it])) > 0)
+        # 中奖人数：参与×win_rate（至少1），上限=参与人数/剩余库存
+        want = max(1, int(len(openids) * win_rate))
+        n_winners = min(want, len(openids), avail_total)
+        result = {"participants": len(openids), "winners": [], "grand": None}
+        if n_winners > 0:
+            chosen = random.sample(openids, n_winners)
+            chunk = [f"- 🎁 **中奖**（约{int(win_rate * 100)}%，剩余库存动态抽取）："]
+            for w in chosen:
+                items = [it for it in stock_cfg if int(remain.get(it, stock_cfg[it])) > 0]
+                if not items:
+                    break
+                weights = [int(remain.get(it, stock_cfg[it])) for it in items]
+                item = random.choices(items, weights=weights)[0]
+                gid = parts[w]
+                self.store.add_item(self.store.get_player(w, gid), item, 1)
+                remain[item] = int(remain.get(item, stock_cfg[item])) - 1
+                result["winners"].append({"openid": w, "item": item, "count": 1})
+                chunk.append(f"　• {w} → {item}×1")
+            text += "\n".join(chunk) + "\n"
+        else:
+            text += "> 本轮库存已发光，无库存奖品。\n"
+        # 最后一轮：保发定制卡大奖（仅一次）
+        if is_last and grand_item and not gacha.get("grand_used") and openids:
+            g = random.choice(openids)
+            self.store.add_item(self.store.get_player(g, parts[g]), grand_item, grand_count)
+            gacha["grand_used"] = True
+            result["grand"] = {"openid": g, "item": grand_item, "count": grand_count}
+            text += f"- 🌟 **压轴大奖**：{grand_item}×{grand_count} → 恭喜 **{g}**\n"
+        if result["winners"] or result["grand"]:
+            text += f"> 共 **{len(openids)}** 人参与，恭喜中奖者，奖品已到账！"
+        else:
+            text += f"> 本轮共 **{len(openids)}** 人参与，无库存派发，下轮再会～"
         rnd["result"] = result
         rnd["participants"] = {}
         await self._fire_celebrate_broadcast(cel, text)
@@ -5999,7 +6048,12 @@ class PetParkPlugin(Star):
         shard_n = random.randint(1, 2)
         self.store.add_item(player, shard_name, shard_n)
         lines = [f"💥 **砸蛋成功！**\n获得 **{shard_name} ×{shard_n}**"]
-        if random.random() < data.PET_CARD_DROP_CHANCE:
+        no_pet = not (player.get("pets") or player.get("pet"))
+        if no_pet:
+            # 新手保护：一个宠物都没时，砸蛋必得 1 张宠物卡（召唤第一只宠）
+            self.store.add_item(player, "宠物卡", 1)
+            lines.append("🎴 **新手保护：必得 宠物卡 ×1**（使用 `使用 宠物卡 召唤` 获得你的第一只宠物）！")
+        elif random.random() < data.PET_CARD_DROP_CHANCE:
             self.store.add_item(player, "宠物卡", 1)
             lines.append("🎴 附带掉落 **宠物卡 ×1**（使用 `使用 宠物卡 召唤` 随机获得一只宠物）！")
         lines.append(f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张【{quality}卡】，卡片可召唤宠物或提升品质。")
@@ -6022,6 +6076,10 @@ class PetParkPlugin(Star):
             if random.random() < data.PET_CARD_DROP_CHANCE:
                 self.store.add_item(player, "宠物卡", 1)
                 card_cnt += 1
+        # 新手保护：一个宠物都没时，十连砸蛋必得至少 1 张宠物卡
+        if not (player.get("pets") or player.get("pet")) and card_cnt == 0:
+            self.store.add_item(player, "宠物卡", 1)
+            card_cnt += 1
         self.store.set_cooldown(player, "砸蛋", data.EGG_TEN_COOLDOWN)
         lines = ["💥 **砸蛋十连！**"]
         for q, n in shard_tot.items():
