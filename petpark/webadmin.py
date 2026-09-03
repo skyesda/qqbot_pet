@@ -861,8 +861,7 @@ class WebAdmin:
                 continue
             new_cur[name] = {
                 "total": max(0, int(c.get("total") or 0)),
-                "min": max(0, int(c.get("min") or 0)),
-                "max": max(0, int(c.get("max") or 0)),
+                # 递减动态：瓜分不再配 min/max，改为每次按剩余比例动态抽取（见 main._celebrate_pool）
             }
         pool["currencies"] = new_cur
         # 池余额：已有币保留，新增币补齐至 total，删除的币清除
@@ -1950,9 +1949,7 @@ function renderCelebrate(){
   const cc=cur[nm]||{};
   curRows+=`<tr>
    <td><input value="${esc(nm)}" style="width:80px" readonly></td>
-   <td><input type="number" min="0" value="${cc.total||0}" id="ce_ct_${nm}" style="width:110px"></td>
-   <td><input type="number" min="0" value="${cc.min||0}" id="ce_cmin_${nm}" style="width:90px"></td>
-   <td><input type="number" min="0" value="${cc.max||0}" id="ce_cmax_${nm}" style="width:90px"></td></tr>`;
+   <td><input type="number" min="0" value="${cc.total||0}" id="ce_ct_${nm}" style="width:140px"></td></tr>`;
  }
  const st=c.start_at||0, en=c.end_at||0;
  document.getElementById('tablewrap').innerHTML=`
@@ -2002,7 +1999,8 @@ function renderCelebrate(){
     <label class="fld">指令 <input id="ce_pcmd" value="${esc(po.cmd||'生辰瓜分')}" style="width:150px"></label>
     <label class="fld">冷却(分钟) <input type="number" min="1" value="${po.cooldown_min||30}" id="ce_pcd" style="width:90px"></label>
    </div>
-   <table><thead><tr><th>货币</th><th>总量</th><th>单次最少</th><th>单次最多</th></tr></thead><tbody>${curRows||'<tr><td colspan="4" class="muted">未配置</td></tr>'}</tbody></table>
+   <table><thead><tr><th>货币</th><th>总量（动态库存）</th></tr></thead><tbody>${curRows||'<tr><td colspan="2" class="muted">未配置</td></tr>'}</tbody></table>
+   <div style="color:#9aa3b8;font-size:12px">每次瓜取剩余池子的一个随机比例（递减动态）：池子越剩越多瓜、越到后面瓜得越少，直到瓜完；无需填单次范围。</div>
    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
     <button class="act" onclick="saveCelebrate()">保存配置</button>
     <button class="act ghost" onclick="resetPool()">重置奖池剩余</button>
@@ -2058,7 +2056,7 @@ async function saveCelebrate(){
  }
  for(const nm of ['积分','金币','钻石']){
   const tEl=document.getElementById('ce_ct_'+nm); if(!tEl) continue;
-  body.celebrate.pool.currencies[nm]={total:Number(tEl.value)||0, min:Number(g('ce_cmin_'+nm).value)||0, max:Number(g('ce_cmax_'+nm).value)||0};
+  body.celebrate.pool.currencies[nm]={total:Number(tEl.value)||0};
  }
  const r=await api('/api/celebrate/save',body);
  const m=g('ce_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');

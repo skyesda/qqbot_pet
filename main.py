@@ -3484,7 +3484,7 @@ class PetParkPlugin(Star):
             cur = pool.get("currencies") or {}
             remain = cel.get("pool_remain") or {}
             lines.append("")
-            lines.append("**奖池瓜分**")
+            lines.append("**奖池瓜分**（每次瓜取剩余的一个随机比例，越瓜越少）")
             if cur:
                 for name in cur:
                     lines.append(f"- {name} 剩余 **{int(remain.get(name, 0)):,}**")
@@ -3541,10 +3541,9 @@ class PetParkPlugin(Star):
             r = int(remain.get(name, 0))
             if r <= 0:
                 continue
-            mn = int(cfg.get("min") or 0)
-            mx = int(cfg.get("max") or 0)
-            share = random.randint(min(mn, mx), max(mn, mx)) if mx >= mn else mn
-            share = max(1, min(share, r))
+            # 递减动态：每次瓜「剩余池子的一个随机比例」，越到后面瓜得越少，直到瓜完。
+            frac = random.uniform(self.POOL_DECAY_LO, self.POOL_DECAY_HI)
+            share = max(1, min(int(r * frac), r))
             remain[name] = r - share
             self.store.add_currency(player, name, share)
             gained.append((name, share))
@@ -3560,6 +3559,9 @@ class PetParkPlugin(Star):
 
     # --------------------------- 生辰盛典后台循环（开奖箱/公告） ----------------------------
     CELEBRATE_CHECK_SEC = 20
+    # 瓜分「递减动态」：每次瓜取剩余池子的一个随机比例（下限/上限），池子越瓜越少。
+    POOL_DECAY_LO = 0.03
+    POOL_DECAY_HI = 0.12
 
     async def _celebrate_loop(self) -> None:
         while True:
