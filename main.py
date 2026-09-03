@@ -177,6 +177,7 @@ KNOWN_COMMANDS = {
     "宠物侦查",
     "赠送宠物",
     "放生宠物",
+    "炼化宠物",
     "锁定宠物",
     "解锁宠物",
     "宠物改名",
@@ -3302,6 +3303,8 @@ class PetParkPlugin(Star):
             return self._pet_info(player, tokens)
         if cmd == "放生宠物":
             return self._release(player)
+        if cmd == "炼化宠物":
+            return self._refine_pet(player, tokens)
 
         # ---- 婚恋 ----
         love = self._handle_love(player, group_id, cmd, tokens)
@@ -5425,6 +5428,7 @@ class PetParkPlugin(Star):
                 "- 宠物信息 序号（查看指定宠物详情）",
                 "- 放生宠物（放生当前宠物，最后一只不可放生）",
                 "- 赠送宠物 QQ（赠送当前宠物）",
+                "- 炼化宠物（消耗 5000 积分，将宠物化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化宠物 宠物卡` 可炼化神秘宠物卡）",
                 "",
                 "**【商城 / 背包】**",
                 "- 宠物商城 · 道具商城 · 宠物市场",
@@ -5938,6 +5942,96 @@ class PetParkPlugin(Star):
             return f"『{p['nickname']}』当前未锁定。"
         p["locked"] = False
         return f"🔓 已解锁『{p['nickname']}』，现在可以放生或赠送了。"
+
+    def _resolve_pet_index(self, player: dict, key: str) -> int | None:
+        """按宠物名/昵称/物种（或 1-based 序号）返回宠物索引，找不到返回 None。"""
+        pets = player.get("pets", [])
+        if not pets:
+            return None
+        key = key.strip()
+        for i, p in enumerate(pets):
+            name = str(p.get("nickname", "")).strip()
+            if name and (name == key or name.lower() == key.lower()):
+                return i
+        for i, p in enumerate(pets):
+            if str(p.get("species", "")).strip() == key:
+                return i
+        if key.isdigit():
+            idx = int(key) - 1
+            if 0 <= idx < len(pets):
+                return idx
+        return None
+
+    def _refine_pet(self, player: dict, tokens: list[str]) -> str:
+        """炼化：消耗积分，将宠物或「宠物卡」化作对应品质的卡/碎片。
+
+        20% 概率炼出对应品质的品质卡；80% 概率炼出对应品质碎片（随机 3-8 个）。
+        - `炼化宠物`：默认炼化当前活跃宠物，可用姓名/昵称/物种/序号指定其他宠物。
+        - `炼化宠物 宠物卡`：改炼化背包里的「宠物卡」（品质随机结算）。
+        """
+        if len(tokens) >= 2 and tokens[1] == "宠物卡":
+            return self._refine_pet_card(player)
+        if not self._need_pet(player):
+            return "你还没有宠物，无法炼化。"
+        if len(tokens) >= 2:
+            idx = self._resolve_pet_index(player, tokens[1])
+            if idx is None:
+                return f"找不到宠物『{tokens[1]}』，发送『宠物列表』查看所有宠物及序号。"
+        else:
+            idx = player.get("active_pet", 0)
+        if idx is None or not (0 <= idx < len(player.get("pets", []))):
+            return "炼化失败，宠物数据异常。"
+        target = player["pets"][idx]
+        if target.get("locked"):
+            return f"🔒 『{target.get('nickname', '?')}』已锁定，无法炼化。如需炼化请先发送『解锁宠物』。"
+        if len(player.get("pets", [])) <= 1:
+            return "⚠️ 这是你最后一只宠物，不能炼化（炼化会消耗宠物）。请先获取新宠物再炼化。"
+        cost = data.REFINE_COST
+        if self.store.get_currency(player, "积分") < cost:
+            return f"炼化需要 **{cost} 积分**，当前积分不足。"
+        quality = target.get("quality", "普通") or "普通"
+        nick = target.get("nickname", "?")
+        self.store.add_currency(player, "积分", -cost)
+        removed = self._remove_pet(player, idx)
+        if not removed:
+            self.store.add_currency(player, "积分", cost)  # 回滚
+            return "炼化失败，宠物移除异常。"
+        if random.random() < data.REFINE_CARD_CHANCE:
+            card = f"{quality}卡"
+            self.store.add_item(player, card, 1)
+            out = f"🎴 **炼化成功！**『{nick}』化作 **{card} ×1**！"
+            hint = f"> 【{card}】可召唤同品质宠物，或用于提升品质。"
+        else:
+            frag = f"{quality}碎片"
+            n = random.randint(*data.REFINE_FRAGMENT_RANGE)
+            self.store.add_item(player, frag, n)
+            out = f"🧩 **炼化成功！**『{nick}』化作 **{frag} ×{n}**。"
+            hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{quality}卡】。"
+        return f"{out}\n\n💠 消耗 **{cost} 积分**。\n{hint}"
+
+    def _refine_pet_card(self, player: dict) -> str:
+        """炼化「宠物卡」（神秘卡）：品质随机结算，20% 出对应品质卡，80% 出对应品质碎片 3-8。"""
+        name = "宠物卡"
+        if not self.store.has_item(player, name, 1):
+            return f"背包里没有『{name}』，无法炼化。"
+        cost = data.REFINE_COST
+        if self.store.get_currency(player, "积分") < cost:
+            return f"炼化需要 **{cost} 积分**，当前积分不足。"
+        self.store.add_currency(player, "积分", -cost)
+        self.store.remove_item(player, name, 1)
+        q = self._roll_quality()
+        if random.random() < data.REFINE_CARD_CHANCE:
+            card = f"{q}卡"
+            self.store.add_item(player, card, 1)
+            out = f"🎴 **炼化成功！**『{name}』化作 **{card} ×1**！"
+            hint = f"> 【{card}】可召唤同品质宠物，或用于提升品质。"
+        else:
+            frag = f"{q}碎片"
+            n = random.randint(*data.REFINE_FRAGMENT_RANGE)
+            self.store.add_item(player, frag, n)
+            out = f"🧩 **炼化成功！**『{name}』化作 **{frag} ×{n}**。"
+            hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{q}卡】。"
+        return f"{out}\n\n💠 消耗 **{cost} 积分**。\n{hint}"
 
     # ------------------------------------------------------------------
     # 多宠物系统：指令处理器
@@ -7257,15 +7351,21 @@ class PetParkPlugin(Star):
                     f"力竭身亡！心情降至 {attacker['mood']} 颗星。"
                 )
             else:
-                state_txt = "受了点伤。"
+                pct = attacker["hp"] / attacker["hp_max"] if attacker["hp_max"] else 0
+                if pct <= 0.15:
+                    state_txt = "重伤倒地，只剩一口气，危在旦夕！"
+                elif pct <= 0.5:
+                    state_txt = "受了重伤，行动艰难。"
+                else:
+                    state_txt = "受了点伤。"
         rounds = self._battle_rounds_text(defender, attacker, loss, pre_ahp)
         return (
-            f"⚔ 战斗失败！\n"
-            f"━━━━━━ 战况回放 ━━━━━━\n"
-            f"{rounds}\n"
-            f"━━━━━━ 战后状态 ━━━━━━\n"
-            f"『{attacker['nickname']}』(战力{ap}) {self._hp_line(attacker, pre_ahp)}，{state_txt}\n"
-            f"『{defender['nickname']}』(战力{dp}) {self._hp_line(defender)}，毫发无伤"
+            f"**⚔ 战斗失败！**\n\n"
+            f"**🔁 战况回放**\n\n"
+            f"{rounds}\n\n"
+            f"**📊 战后状态**\n\n"
+            f"『{attacker['nickname']}』(战力{ap}) {self._hp_line(attacker, pre_ahp)}，{state_txt}\n\n"
+            f"『{defender['nickname']}』(战力{dp}) {self._hp_line(defender)}，毫发无伤。"
         )
 
     # ------------------------------------------------------------------
@@ -7280,7 +7380,7 @@ class PetParkPlugin(Star):
         return "▓" * filled + "░" * (width - filled)
 
     def _hp_line(self, pet: dict, pre_hp: int | None = None) -> str:
-        """血量行：HP ▓▓░░ 12/40（-28）"""
+        """血量行：HP ▓▓░░ **12/40**（-28）"""
         hp = int(pet.get("hp", 0) or 0)
         hp_max = int(pet.get("hp_max", 1) or 1)
         loss = (
@@ -7288,7 +7388,7 @@ class PetParkPlugin(Star):
             if pre_hp is not None and pre_hp > hp
             else ""
         )
-        return f"HP {self._hp_bar(hp, hp_max)} {hp}/{hp_max}{loss}"
+        return f"HP {self._hp_bar(hp, hp_max)} **{hp}/{hp_max}**{loss}"
 
     def _battle_rounds_text(
         self,
@@ -7305,13 +7405,14 @@ class PetParkPlugin(Star):
         （败方战前 HP = loser_pre_hp，逐回合扣到战后真实血量）；
         败方的还击全部被格挡/闪避（实际结算中败方不造成伤害）。
         nullified：败方触发【不死之体】，伤害尽数化解。
+        每回合为独立段落（以 \\n\\n 分隔），避免 QQ Markdown 把单 \\n 当作软换行吞掉。
         """
         wname = winner.get("nickname", "")
         lname = loser.get("nickname", "")
         atk_verbs = ["猛击", "撕咬", "飞扑", "连击", "蓄力重击", "旋风爪击"]
         def_verbs = ["格挡了下来", "闪身躲过", "用护甲弹开", "侧身避开"]
         if flawless:
-            return f"▶ 『{wname}』濒死之际爆发全部潜能，一击命中『{lname}』！"
+            return f"『{wname}』濒死之际爆发全部潜能，一击命中『{lname}』！"
         n = 3 if total_dmg <= 0 else random.randint(3, 5)
         parts: list[int] = []
         if total_dmg > 0:
@@ -7325,23 +7426,16 @@ class PetParkPlugin(Star):
             dmg = parts[i] if i < len(parts) else 0
             verb = random.choice(atk_verbs)
             if nullified:
-                lines.append(
-                    f"▶ 回合{i + 1}：『{wname}』{verb}命中，"
-                    f"却被『{lname}』的【不死之体】尽数化解"
-                )
+                body = f"『{wname}』{verb}命中，却被『{lname}』的【不死之体】尽数化解"
             elif dmg > 0:
                 hp_left = max(0, hp_left - dmg)
-                lines.append(
-                    f"▶ 回合{i + 1}：『{wname}』{verb}命中，"
-                    f"造成 **{dmg}** 伤害（『{lname}』HP 剩 {hp_left}）"
-                )
+                body = f"『{wname}』{verb}命中，造成 **{dmg}** 伤害（『{lname}』HP 剩 **{hp_left}**）"
             else:
-                lines.append(
-                    f"▶ 回合{i + 1}：『{wname}』{verb}，被『{lname}』{random.choice(def_verbs)}"
-                )
+                body = f"『{wname}』{verb}，却被『{lname}』{random.choice(def_verbs)}"
             if i < n - 1:
-                lines.append(f"　　　　『{lname}』还击，被『{wname}』{random.choice(def_verbs)}")
-        return "\n".join(lines)
+                body += f"；『{lname}』还击，被『{wname}』{random.choice(def_verbs)}"
+            lines.append(f"▶ 回合{i + 1}：{body}")
+        return "\n\n".join(lines)
 
     def _battle_win(
         self, attacker, defender, ap_player, dp_player, flawless=False, ap=0, dp=0
@@ -7387,18 +7481,28 @@ class PetParkPlugin(Star):
         )
         # 胜方：普通胜利毫发无伤；蝶逆轮回时只剩 1 点血（战前满血）
         a_line = self._hp_line(attacker, attacker["hp_max"] if flawless else None)
-        a_note = "，濒死爆发" if flawless else "，毫发无伤"
-        d_note = "，重伤倒地" if killed else ("，毫发无损（不死之体）" if nullified else "")
+        a_note = "，濒死爆发。" if flawless else "，毫发无伤。"
+        if killed:
+            d_note = "，重伤倒地。"
+        elif nullified:
+            d_note = "，毫发无损（不死之体）。"
+        else:
+            dpct = defender["hp"] / defender["hp_max"] if defender["hp_max"] else 0
+            d_note = (
+                "，性命垂危！"
+                if dpct <= 0.15
+                else ("，受了重伤。" if dpct <= 0.5 else "，受了点伤。")
+            )
         pw = f"(战力{ap}) " if ap else ""
         pw2 = f"(战力{dp}) " if dp else ""
         return (
-            f"{head}\n"
-            f"━━━━━━ 战况回放 ━━━━━━\n"
-            f"{rounds}\n"
-            f"━━━━━━ 战后状态 ━━━━━━\n"
-            f"『{attacker['nickname']}』{pw}{a_line}{a_note}\n"
-            f"『{defender['nickname']}』{pw2}{self._hp_line(defender, pre_dhp)}{d_note}\n"
-            f"经验 +{exp}{steal}{kill_txt}。"
+            f"**{head}**\n\n"
+            f"**🔁 战况回放**\n\n"
+            f"{rounds}\n\n"
+            f"**📊 战后状态**\n\n"
+            f"『{attacker['nickname']}』{pw}{a_line}{a_note}\n\n"
+            f"『{defender['nickname']}』{pw2}{self._hp_line(defender, pre_dhp)}{d_note}\n\n"
+            f"💠 **经验 +{exp}**{steal}{kill_txt}。"
         )
 
     def _attack(self, player: dict, group_id: str, tokens: list[str]) -> str:
