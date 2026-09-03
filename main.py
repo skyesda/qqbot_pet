@@ -85,6 +85,7 @@ KNOWN_COMMANDS = {
     "宠物指令",
     "宠物帮助",
     "管理菜单",
+    "官方网站",
     "我的信息",
     "个人信息",
     "我的奖品",
@@ -1062,6 +1063,7 @@ class PetParkPlugin(Star):
                 [("💼 查看背包", "查看背包"), ("⚔️ 宠物攻击", "宠物攻击")],
                 [("📜 宠物菜单", "宠物菜单"), ("🎁 每日签到", "签到")],
                 [("💎 我要氪金", "我要氪金")],
+                [("🌐 官方网站", "官方网站")],
             ]
         )
 
@@ -2894,7 +2896,7 @@ class PetParkPlugin(Star):
 
         # 银行逾期冻结检查（放行查看/还款类指令）
         _bank_allow = {"银行信息", "银行还款", "宠物菜单", "宠物指令", "宠物帮助",
-                        "管理菜单", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
+                        "管理菜单", "官方网站", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
                         "授权状态", "授权", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
@@ -3484,7 +3486,7 @@ class PetParkPlugin(Star):
             cur = pool.get("currencies") or {}
             remain = cel.get("pool_remain") or {}
             lines.append("")
-            lines.append("**奖池瓜分**（每次瓜取剩余的一个随机比例，越瓜越少）")
+            lines.append(f"**奖池瓜分**（每日 **{pool.get('start_time') or '07:00'}** 开启，每15~30分钟可瓜一次，每次瓜取剩余的一个随机比例，越瓜越少）")
             if cur:
                 for name in cur:
                     lines.append(f"- {name} 剩余 **{int(remain.get(name, 0)):,}**")
@@ -3520,8 +3522,21 @@ class PetParkPlugin(Star):
                 f"> 约80%中奖，奖品将从剩余库存随机抽取。{big}\n"
                 f"> 开奖后将在群内公布中奖名单，记得留意公告哦～")
 
+    def _pool_start_ts(self, cel: dict) -> int:
+        """瓜分池开启时间（事件当日 HH:MM）的时间戳；基于 start_at 同一天计算。"""
+        pool = cel.get("pool") or {}
+        hm = str(pool.get("start_time") or "07:00")
+        st = int(cel.get("start_at") or 0)
+        if not st:
+            return 0
+        p = hm.split(":")
+        hh = int(p[0]) if p and p[0].isdigit() else 0
+        mm = int(p[1]) if len(p) > 1 and p[1].isdigit() else 0
+        ts = st + hh * 3600 + mm * 60
+        return max(ts, st)   # 池子不能早于活动开启
+
     def _celebrate_pool(self, cel: dict, player: dict, qq: str) -> str:
-        """瓜分货币奖池：每 `cooldown_min` 分钟一次，从剩余池里抽随机份额。"""
+        """瓜分货币奖池：每日 HH:MM 开启，冷却 15~30 分钟随机，每次按剩余比例递减抽取。"""
         pool = cel.get("pool", {})
         if not pool.get("enabled"):
             return "🎂 奖池瓜分暂未开启。"
@@ -3529,11 +3544,17 @@ class PetParkPlugin(Star):
         if not isinstance(cur, dict) or not cur:
             return "🎂 后台还未配置奖池。"
         now = int(time.time())
-        cd = max(1, int(pool.get("cooldown_min") or 30)) * 60
+        # 池子开启时间门槛（例如 07:00）
+        pst = self._pool_start_ts(cel)
+        if pst and now < pst:
+            hm = pool.get("start_time") or "07:00"
+            return f"🎂 瓜分奖池将于 **{hm}** 开启，敬请期待！"
+        cd_min = max(1, int(pool.get("cooldown_min") or 15))
+        cd_max = max(cd_min, int(pool.get("cooldown_max") or 30))
         ppl = cel.setdefault("players", {}).setdefault(qq, {})
-        last = int(ppl.get("pool_ts") or 0)
-        if last and now - last < cd:
-            rem = cd - (now - last)
+        next_ok = int(ppl.get("pool_next") or 0)
+        if next_ok and now < next_ok:
+            rem = next_ok - now
             return f"⏳ 奖池仍在冷却，剩 **约{max(1, (rem + 59) // 60)}分钟** 后可再次瓜分。"
         remain = cel.setdefault("pool_remain", {})
         gained = []
@@ -3549,7 +3570,9 @@ class PetParkPlugin(Star):
             gained.append((name, share))
         if not gained:
             return "🎂 奖池已被瓜分完毕！"
+        cd_sec = random.randint(cd_min, cd_max) * 60   # 冷却 15~30 分钟随机
         ppl["pool_ts"] = now
+        ppl["pool_next"] = now + cd_sec
         lines = ["## 🎂 瓜分成功！你获得："]
         for name, share in gained:
             lines.append(f"- {name} × **{share:,}**")
@@ -4943,6 +4966,8 @@ class PetParkPlugin(Star):
             return self._menu_text()
         if cmd == "管理菜单":
             return self._admin_menu_text()
+        if cmd == "官方网站":
+            return self._official_site_text()
         if cmd == "宠物种类":
             name = self._arg(tokens, 1)
             if name and name in data.SPECIES:
@@ -5923,6 +5948,29 @@ class PetParkPlugin(Star):
             ]
         )
 
+    def _official_site_text(self) -> str:
+        """官方网站介绍：官方主站 + 绑定宠物指引（QQ Markdown，用 \n\n 分隔避免被吞）。"""
+        return "\n".join(
+            [
+                "## 🌐 宠物乐园 · 官方主站",
+                "",
+                "🎉 这里是《宠物乐园》**官方主站**，手机/电脑随时可访问，与群内账号数据完全互通。",
+                "登录注册**随便弄**（无需邀请码、无需繁琐验证），登录即自动同步你的宠物与资产。",
+                "",
+                "▶️ **点击直达**：[🎡 立即进入宠物乐园](https://bot.flyyye.cn/)",
+                "",
+                "**🐾 如何绑定宠物**",
+                "> 1. 打开官方主站并登录注册（随意）。",
+                "> 2. 进入「个人中心 / 绑定」页面。",
+                "> 3. 输入你的**用户ID**（群内发送 `我的信息` 即可查看）。",
+                "> 4. 绑定成功后即可在网页查看、操作你的宠物与资产。",
+                "",
+                "> 💡 记不住用户ID？登录后也可绑定 QQ号（群内发送 `绑定QQ QQ号`）代替，跨群通用。",
+                "",
+                "❓ 更多玩法请发送 `宠物菜单` 查看。",
+            ]
+        )
+
     def _admin_menu_text(self) -> str:
         return "\n".join(
             [
@@ -6054,10 +6102,10 @@ class PetParkPlugin(Star):
         if no_pet:
             # 新手保护：一个宠物都没时，砸蛋必得 1 张宠物卡（召唤第一只宠）
             self.store.add_item(player, "宠物卡", 1)
-            lines.append("🎴 **新手保护：必得 宠物卡 ×1**（使用 `使用 宠物卡 召唤` 获得你的第一只宠物）！")
+            lines.append("🎴 **新手保护：必得 宠物卡 ×1**（使用 `使用 宠物卡` 获得你的第一只宠物）！")
         elif random.random() < data.PET_CARD_DROP_CHANCE:
             self.store.add_item(player, "宠物卡", 1)
-            lines.append("🎴 附带掉落 **宠物卡 ×1**（使用 `使用 宠物卡 召唤` 随机获得一只宠物）！")
+            lines.append("🎴 附带掉落 **宠物卡 ×1**（使用 `使用 宠物卡` 随机获得一只宠物）！")
         lines.append(f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张【{quality}卡】，卡片可召唤宠物或提升品质。")
         self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
         return "\n".join(lines)
@@ -6087,7 +6135,7 @@ class PetParkPlugin(Star):
         for q, n in shard_tot.items():
             lines.append(f"- **{q}碎片 ×{n}**")
         if card_cnt:
-            lines.append(f"- 🎴 **宠物卡 ×{card_cnt}**（使用 `使用 宠物卡 召唤` 随机获得一只宠物）")
+            lines.append(f"- 🎴 **宠物卡 ×{card_cnt}**（使用 `使用 宠物卡` 随机获得一只宠物）")
         lines.extend([
             "",
             f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张品质卡，卡片可召唤宠物或提升品质。",
@@ -6781,8 +6829,8 @@ class PetParkPlugin(Star):
             if not self.store.has_item(player, name):
                 return f"背包里没有『{name}』。"
             sub = tokens[2].strip() if len(tokens) > 2 else ""
-            if sub not in ("召唤", "随机", "随机召唤", "开卡", "开"):
-                return f"『{name}』使用方式：`使用 {name} 召唤`，随机获得一只宠物。"
+            if sub not in ("", "召唤", "随机", "随机召唤", "开卡", "开"):
+                return f"『{name}』使用方式：`使用 {name}`，随机获得一只宠物。"
             slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
             if len(player.get("pets", [])) >= slots:
                 return (

@@ -853,7 +853,9 @@ class WebAdmin:
         pool = cel["pool"]
         pool["enabled"] = bool(pcfg.get("enabled", pool.get("enabled", True)))
         pool["cmd"] = str(pcfg.get("cmd") or pool.get("cmd") or "生日快乐")
-        pool["cooldown_min"] = max(1, int(pcfg.get("cooldown_min") or pool.get("cooldown_min") or 30))
+        pool["start_time"] = str(pcfg.get("start_time") or pool.get("start_time") or "07:00")
+        pool["cooldown_min"] = max(1, int(pcfg.get("cooldown_min") or pool.get("cooldown_min") or 15))
+        pool["cooldown_max"] = max(pool["cooldown_min"], int(pcfg.get("cooldown_max") or pool.get("cooldown_max") or 30))
         old_cur = pool.get("currencies") or {}
         new_cur = {}
         for name, c in (pcfg.get("currencies") or {}).items():
@@ -1904,7 +1906,7 @@ async function loadCelebrate(){
  const r=await api('/api/celebrate/state',{});
  CELEBRATE=(r&&r.ok)?r.data:{};
  if(!CELEBRATE.gacha) CELEBRATE.gacha={cmd:'生日抽奖',menu_cmd:'生辰活动',rounds:[]};
- if(!CELEBRATE.pool) CELEBRATE.pool={cmd:'生日快乐',cooldown_min:30,currencies:{}};
+ if(!CELEBRATE.pool) CELEBRATE.pool={cmd:'生日快乐',start_time:'07:00',cooldown_min:15,cooldown_max:30,currencies:{}};
  // 动态库存：以数组便于增删行
  const st=CELEBRATE.gacha.stock||{};
  CELEBRATE._stock=Object.keys(st).map(n=>({name:n,count:st[n]}));
@@ -1997,10 +1999,15 @@ function renderCelebrate(){
    <div class="row">
     <label class="fld">启用瓜分 <input type="checkbox" id="ce_pon" ${po.enabled===false?'':'checked'}></label>
     <label class="fld">指令 <input id="ce_pcmd" value="${esc(po.cmd||'生辰瓜分')}" style="width:150px"></label>
-    <label class="fld">冷却(分钟) <input type="number" min="1" value="${po.cooldown_min||30}" id="ce_pcd" style="width:90px"></label>
+    <label class="fld">每日开启 <input type="time" value="${po.start_time||'07:00'}" id="ce_pst" style="width:110px"></label>
+   </div>
+   <div class="row">
+    <label class="fld">冷却最小值(分) <input type="number" min="1" value="${po.cooldown_min||15}" id="ce_pcdmin" style="width:90px"></label>
+    <label class="fld">冷却最大值(分) <input type="number" min="1" value="${po.cooldown_max||30}" id="ce_pcdmax" style="width:90px"></label>
+    <span class="muted" style="font-size:12px">每次瓜分后冷却时长在区间内随机。</span>
    </div>
    <table><thead><tr><th>货币</th><th>总量（动态库存）</th></tr></thead><tbody>${curRows||'<tr><td colspan="2" class="muted">未配置</td></tr>'}</tbody></table>
-   <div style="color:#9aa3b8;font-size:12px">每次瓜取剩余池子的一个随机比例（递减动态）：池子越剩越多瓜、越到后面瓜得越少，直到瓜完；无需填单次范围。</div>
+   <div style="color:#9aa3b8;font-size:12px">每日到达开启时间后开放瓜分；每次瓜取剩余池子的一个随机比例（递减动态）：池子越剩越多瓜、越到后面瓜得越少，直到瓜完；无需填单次范围。</div>
    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
     <button class="act" onclick="saveCelebrate()">保存配置</button>
     <button class="act ghost" onclick="resetPool()">重置奖池剩余</button>
@@ -2037,7 +2044,11 @@ async function saveCelebrate(){
          grand_item:g('ce_ggitem').value||'宠物定制卡', grand_count:Math.max(1,Number(g('ce_ggcnt').value)||1),
          grand_used: !!((c.gacha||{}).grand_used),
          stock:{}, stock_remain:{}, rounds:[]},
-  pool:{enabled:g('ce_pon')?g('ce_pon').checked:true, cmd:g('ce_pcmd').value||'生日快乐', cooldown_min:Number(g('ce_pcd').value)||30, currencies:{}}
+  pool:{enabled:g('ce_pon')?g('ce_pon').checked:true, cmd:g('ce_pcmd').value||'生日快乐',
+        start_time:g('ce_pst').value||'07:00',
+        cooldown_min:Math.max(1,Number(g('ce_pcdmin').value)||15),
+        cooldown_max:Math.max(1,Number(g('ce_pcdmax').value)||30),
+        currencies:{}}
  }};
  const nRounds=((c.gacha||{}).rounds||[]).length;
  for(let i=0;i<nRounds;i++){
