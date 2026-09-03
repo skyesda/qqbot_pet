@@ -2104,8 +2104,10 @@ REBIRTH_GEM_COST_DIAMOND = 10000    # 重生宝石钻石价格
 REBIRTH_GEM_COST_JIFEN = 100000     # 重生宝石积分价格
 REBIRTH_SACRIFICE_MIN_JIFEN = 10000 # 祭奠积分最低
 REBIRTH_SACRIFICE_MIN_DIAMOND = 1000# 祭奠钻石最低
-REBIRTH_KEEP_ITEMS = {              # 重生后保留的物品（品质卡+定制卡）
-    "史诗卡", "圣灵卡", "洪荒卡", "创世卡", "混沌卡",
+REBIRTH_KEEP_ITEMS = {              # 重生后保留的物品（长期养成投入，不随重生清零）
+    *(f"{q}卡" for q in QUALITIES),  # 全部品质卡（普通碎片→混沌卡）
+    *(f"{q}碎片" for q in QUALITIES),  # 全部品质碎片
+    "宠物卡", "自动修炼卡", "定制卡",
 }
 
 # 重生属性倍率表：(倍率, 基础权重)，权重越大越容易出

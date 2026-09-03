@@ -2025,7 +2025,7 @@ class PetParkPlugin(Star):
         p["skills"] = []
         # 天赋消失：重生后回到未觉醒状态，需重新天赋觉醒
         p["talent"] = None
-        # 清空背包，只保留品质卡和定制卡
+        # 清空背包，只保留长期养成投入（品质卡/定制卡/宠物卡/品质碎片/自动修炼卡）
         bag = player.get("bag", {})
         kept = {}
         cleared_count = 0
@@ -2067,7 +2067,7 @@ class PetParkPlugin(Star):
         if dropped:
             lines.append(f"**脱落：** {'、'.join(dropped)}（已入背包）")
         if cleared_count > 0:
-            lines.append(f"**清空：** 背包物品 ×{cleared_count}（品质卡/定制卡已保留）")
+            lines.append(f"**清空：** 背包物品 ×{cleared_count}（品质卡/定制卡/宠物卡/碎片/自动修炼卡已保留）")
         lines.append("")
         lines.append(slot_msg)
         lines.append("> 🐣 宠物获得新生，重新踏上成长之路！")
@@ -5515,7 +5515,7 @@ class PetParkPlugin(Star):
                 "> 🔥 祭奠：消耗积分/钻石提升高倍率概率",
                 "> 🎲 属性暴击：2~10×随机（2×最高概率）",
                 "> ⛔ 准备期（Lv800+）：禁止出售/转让/丢弃物品",
-                "> 📦 重生后保留：品质卡、定制卡（其余清空）",
+                "> 📦 重生后保留：品质卡/定制卡/宠物卡/品质碎片/自动修炼卡（其余清空）",
                 "",
                 "**【姻缘】**",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
