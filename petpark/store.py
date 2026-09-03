@@ -700,6 +700,17 @@ class PetStore:
             end = player.get("cooldowns", {}).get(key, 0)
         return max(0, int(end) - int(time.time()))
 
+    @staticmethod
+    def set_player_cooldown(player: dict, key: str, seconds: int) -> None:
+        """设置玩家级冷却（跨宠物共享，切换宠物不清除）。"""
+        player.setdefault("cooldowns", {})[key] = int(time.time()) + int(seconds)
+
+    @staticmethod
+    def player_cooldown_remaining(player: dict, key: str) -> int:
+        """查询玩家级冷却剩余（仅读玩家级，不受所持宠物影响）。"""
+        end = player.get("cooldowns", {}).get(key, 0)
+        return max(0, int(end) - int(time.time()))
+
     # ----------------------------- 活动 -----------------------------
     def events(self) -> dict:
         return self._data.setdefault("events", {})

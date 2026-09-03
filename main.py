@@ -5138,9 +5138,16 @@ class PetParkPlugin(Star):
                 parts.append(f"{k}:{v}")
         return "、".join(parts) if parts else "无"
 
-    def _cooldown_block(self, player: dict, key: str, label: str) -> str | None:
-        """若该行为仍在冷却中，返回提示文本；否则返回 None。"""
-        remain = self.store.cooldown_remaining(player, key)
+    def _cooldown_block(self, player: dict, key: str, label: str, scope: str = "pet") -> str | None:
+        """若该行为仍在冷却中，返回提示文本；否则返回 None。
+
+        scope="pet"（默认）表示宠物级冷却(切换宠物各自独立)；scope="player" 表示玩家级冷却(跨宠物共享)。
+        """
+        remain = (
+            self.store.player_cooldown_remaining(player, key)
+            if scope == "player"
+            else self.store.cooldown_remaining(player, key)
+        )
         if remain > 0:
             return f"⏳ **{label}** 冷却中，还需 `{self._fmt_duration(remain)}`。"
         return None
@@ -6090,7 +6097,7 @@ class PetParkPlugin(Star):
         return random.choices(names, weights=weights, k=1)[0]
 
     def _smash_egg(self, player: dict) -> str:
-        cd = self._cooldown_block(player, "砸蛋", "砸蛋")
+        cd = self._cooldown_block(player, "砸蛋", "砸蛋", scope="player")
         if cd:
             return cd
         quality = self._roll_quality()
@@ -6107,13 +6114,13 @@ class PetParkPlugin(Star):
             self.store.add_item(player, "宠物卡", 1)
             lines.append("🎴 附带掉落 **宠物卡 ×1**（使用 `使用 宠物卡` 随机获得一只宠物）！")
         lines.append(f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张【{quality}卡】，卡片可召唤宠物或提升品质。")
-        self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
+        self.store.set_player_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
         return "\n".join(lines)
 
     def _smash_ten(self, player: dict) -> str:
         """砸蛋十连：一次抽 10 次品质碎片（不再出宠物）。与单发共享同一冷却键「砸蛋」（互斥）。"""
         need = 10
-        cd = self._cooldown_block(player, "砸蛋", "砸蛋")
+        cd = self._cooldown_block(player, "砸蛋", "砸蛋", scope="player")
         if cd:
             return cd
         shard_tot: dict[str, int] = {}
@@ -6130,7 +6137,7 @@ class PetParkPlugin(Star):
         if not (player.get("pets") or player.get("pet")) and card_cnt == 0:
             self.store.add_item(player, "宠物卡", 1)
             card_cnt += 1
-        self.store.set_cooldown(player, "砸蛋", data.EGG_TEN_COOLDOWN)
+        self.store.set_player_cooldown(player, "砸蛋", data.EGG_TEN_COOLDOWN)
         lines = ["💥 **砸蛋十连！**"]
         for q, n in shard_tot.items():
             lines.append(f"- **{q}碎片 ×{n}**")
