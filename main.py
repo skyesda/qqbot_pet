@@ -3560,6 +3560,15 @@ class PetParkPlugin(Star):
             await self._fire_celebrate_broadcast(cel, cel.get("announce_end") or "🎂 生辰盛典收官")
             cel["announced_end"] = True
             changed = True
+        # 每小时推送「如何参与」（窗口内循环，`howto_interval_h` 小时/次，0=关闭）
+        how_h = int(cel.get("howto_interval_h") or 0)
+        if how_h and start <= now <= end:
+            howlast = int(cel.get("howto_last_ts") or 0)
+            how_int = how_h * 3600
+            if now - howlast >= how_int:
+                await self._fire_celebrate_broadcast(cel, cel.get("howto") or "🎂 如何参与【生辰盛典】")
+                cel["howto_last_ts"] = now
+                changed = True
         # 开奖箱：仅在活动窗口内触发已到点的场次
         if start <= now <= end:
             rounds = (cel.get("gacha") or {}).get("rounds")

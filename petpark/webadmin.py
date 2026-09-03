@@ -797,6 +797,8 @@ class WebAdmin:
         cel["announce_end"] = str(cfg.get("announce_end") or "")
         cel["announced_start"] = bool(cfg.get("announced_start", cel.get("announced_start")))
         cel["announced_end"] = bool(cfg.get("announced_end", cel.get("announced_end")))
+        cel["howto"] = str(cfg.get("howto") or "")
+        cel["howto_interval_h"] = max(0, int(cfg.get("howto_interval_h") or 0))
         # 抽奖场次：按 draw_at 匹配旧场次，保留已开奖/参与者等运行时状态
         gcfg = cfg.get("gacha") or {}
         old_rounds = (cel.get("gacha") or {}).get("rounds")
@@ -1939,6 +1941,12 @@ function renderCelebrate(){
    </div>
    <label class="fld">开启公告 <textarea id="ce_ann" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.announce||'')}</textarea></label>
    <label class="fld" style="margin-top:10px">结束公告 <textarea id="ce_ann_end" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.announce_end||'')}</textarea></label>
+   <div class="sec" style="margin-top:16px">📣 每小时推送「如何参与」（盛典窗口内循环提醒）</div>
+   <div class="row">
+    <label class="fld" style="width:auto">间隔(小时) <input type="number" min="0" value="${c.howto_interval_h||0}" id="ce_how_ih" style="width:90px"></label>
+    <label class="fld" style="flex:1;min-width:280px">文案 <textarea id="ce_how" rows="3" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.howto||'')}</textarea></label>
+   </div>
+   <div style="color:#9aa3b8;font-size:12px">填 1 表示开奖期间每 1 小时全群推一次此文案；填 0 关闭。</div>
    <div class="sec" style="margin-top:18px">🎯 抽奖开奖箱（每场到点自动抽 1 位大奖 + N 位普通奖）</div>
    <div class="row">
     <label class="fld">指令 <input id="ce_gcmd" value="${esc(ga.cmd||'生辰抽奖')}" style="width:150px"></label>
@@ -1976,6 +1984,8 @@ async function saveCelebrate(){
   end_at: eventLocalToTs(g('ce_end').value)||0,
   announce: g('ce_ann').value,
   announce_end: g('ce_ann_end').value,
+  howto: g('ce_how').value,
+  howto_interval_h: Number(g('ce_how_ih').value)||0,
   gacha:{enabled:true, cmd:g('ce_gcmd').value||'生辰抽奖', menu_cmd:g('ce_gmenu').value||'生辰活动', rounds:[]},
   pool:{enabled:g('ce_pon')?g('ce_pon').checked:true, cmd:g('ce_pcmd').value||'生辰瓜分', cooldown_min:Number(g('ce_pcd').value)||30, currencies:{}}
  }};
