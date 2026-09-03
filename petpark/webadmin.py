@@ -95,6 +95,10 @@ class WebAdmin:
         app.router.add_post("/api/push/toggle", self._api_push_toggle)
         app.router.add_post("/api/push/fire", self._api_push_fire)
         app.router.add_post("/api/push/delete", self._api_push_delete)
+        app.router.add_post("/api/celebrate/state", self._api_celebrate_state)
+        app.router.add_post("/api/celebrate/save", self._api_celebrate_save)
+        app.router.add_post("/api/celebrate/reset_pool", self._api_celebrate_reset_pool)
+        app.router.add_post("/api/celebrate/broadcast", self._api_celebrate_broadcast)
 
         portal = PlayerPortal(
             self.store,
@@ -772,6 +776,124 @@ class WebAdmin:
         await self.store.save()
         return self._json({"ok": True, "msg": "已删除任务"})
 
+    # --------------------------- 生辰盛典（每日定时开奖箱 + 奖池瓜分） ---------------------------
+    def _celebrate_state(self) -> dict:
+        return self.store._data.setdefault("celebrate", {})
+
+    async def _api_celebrate_state(self, request):
+        self._require(request)
+        return self._json({"ok": True, "data": self._celebrate_state()})
+
+    async def _api_celebrate_save(self, request):
+        self._require(request)
+        body = await request.json()
+        cfg = body.get("celebrate") or {}
+        cel = self._celebrate_state()
+        cel["enabled"] = bool(cfg.get("enabled", cel.get("enabled")))
+        cel["name"] = str(cfg.get("name") or cel.get("name") or "生辰盛典")
+        cel["start_at"] = int(cfg.get("start_at") or 0)
+        cel["end_at"] = int(cfg.get("end_at") or 0)
+        cel["announce"] = str(cfg.get("announce") or "")
+        cel["announce_end"] = str(cfg.get("announce_end") or "")
+        cel["announced_start"] = bool(cfg.get("announced_start", cel.get("announced_start")))
+        cel["announced_end"] = bool(cfg.get("announced_end", cel.get("announced_end")))
+        # 抽奖场次：按 draw_at 匹配旧场次，保留已开奖/参与者等运行时状态
+        gcfg = cfg.get("gacha") or {}
+        old_rounds = (cel.get("gacha") or {}).get("rounds")
+        old_rounds = old_rounds if isinstance(old_rounds, list) else []
+        rounds = []
+        for r in (gcfg.get("rounds") or []):
+            da = int(r.get("draw_at") or 0)
+            entry = {
+                "time": str(r.get("time") or ""),
+                "draw_at": da,
+                "grand": {
+                    "item": str((r.get("grand") or {}).get("item") or ""),
+                    "count": max(1, int((r.get("grand") or {}).get("count") or 1)),
+                },
+                "normal": {
+                    "item": str((r.get("normal") or {}).get("item") or ""),
+                    "count": max(1, int((r.get("normal") or {}).get("count") or 1)),
+                },
+                "normal_winners": max(0, int(r.get("normal_winners") or 0)),
+                "drawn": False,
+                "participants": {},
+                "result": None,
+            }
+            old = next((o for o in old_rounds if int(o.get("draw_at") or 0) == da), None)
+            if old is not None:
+                entry["drawn"] = bool(old.get("drawn"))
+                entry["participants"] = old.get("participants") or {}
+                entry["result"] = old.get("result")
+            rounds.append(entry)
+        cel.setdefault("gacha", {})
+        gacha = cel["gacha"]
+        gacha["enabled"] = bool(gcfg.get("enabled", gacha.get("enabled", True)))
+        gacha["cmd"] = str(gcfg.get("cmd") or gacha.get("cmd") or "生辰抽奖")
+        gacha["menu_cmd"] = str(gcfg.get("menu_cmd") or gacha.get("menu_cmd") or "生辰活动")
+        gacha["rounds"] = rounds
+        # 奖池瓜分
+        pcfg = cfg.get("pool") or {}
+        cel.setdefault("pool", {})
+        pool = cel["pool"]
+        pool["enabled"] = bool(pcfg.get("enabled", pool.get("enabled", True)))
+        pool["cmd"] = str(pcfg.get("cmd") or pool.get("cmd") or "生辰瓜分")
+        pool["cooldown_min"] = max(1, int(pcfg.get("cooldown_min") or pool.get("cooldown_min") or 30))
+        old_cur = pool.get("currencies") or {}
+        new_cur = {}
+        for name, c in (pcfg.get("currencies") or {}).items():
+            if not name:
+                continue
+            new_cur[name] = {
+                "total": max(0, int(c.get("total") or 0)),
+                "min": max(0, int(c.get("min") or 0)),
+                "max": max(0, int(c.get("max") or 0)),
+            }
+        pool["currencies"] = new_cur
+        # 池余额：已有币保留，新增币补齐至 total，删除的币清除
+        remain = cel.setdefault("pool_remain", {})
+        for name in list(remain.keys()):
+            if name not in new_cur:
+                remain.pop(name, None)
+        for name, c in new_cur.items():
+            remain[name] = int(remain.get(name, c["total"])) if name in remain else c["total"]
+        await self.store.save()
+        logger.info(f"[petpark][webadmin] 生辰盛典配置保存 by {request.remote}")
+        return self._json({"ok": True, "msg": "已保存生辰盛典配置"})
+
+    async def _api_celebrate_reset_pool(self, request):
+        self._require(request)
+        cel = self._celebrate_state()
+        cur = (cel.get("pool") or {}).get("currencies") or {}
+        remain = cel.setdefault("pool_remain", {})
+        for name, c in cur.items():
+            remain[name] = int(c.get("total") or 0)
+        await self.store.save()
+        return self._json({"ok": True, "msg": "奖池剩余已重置回配置总额"})
+
+    async def _api_celebrate_broadcast(self, request):
+        self._require(request)
+        body = await request.json()
+        which = str(body.get("which") or "start")
+        cel = self._celebrate_state()
+        text = str(cel.get("announce") or "") if which == "start" else str(cel.get("announce_end") or "")
+        if not text:
+            return self._json({"ok": False, "msg": "公告文案为空"})
+        if not self._broadcast_callback:
+            return self._json({"ok": False, "msg": "广播接口不可用"})
+        task = self._broadcast_callback(text)
+        result = {}
+        if task is not None:
+            try:
+                result = await task
+            except Exception as e:
+                logger.exception("[petpark] 后台生辰盛典广播失败")
+                return self._json({"ok": False, "msg": f"广播异常：{e}"})
+        return self._json({
+            "ok": True,
+            "msg": f"已广播：目标 {result.get('targets', 0)} 群，成功 {result.get('sent', 0)}，失败 {result.get('failed', 0)}",
+        })
+
     async def _api_zhongyuan_config(self, request):
         """中元活动：读取完整配置（供后台「中元活动」页渲染）。API Key 脱敏返回。"""
         self._require(request)
@@ -1089,6 +1211,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="app_release" onclick="tab('app_release')">App 发布</button>
 <button data-t="zhongyuan" onclick="tab('zhongyuan')">中元活动</button>
 <button data-t="push" onclick="tab('push')">群推送</button>
+<button data-t="celebrate" onclick="tab('celebrate')">生辰盛典</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -1410,8 +1533,8 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
@@ -1420,10 +1543,11 @@ function tab(t){
  else if(t==='lottery') loadLottery();
  else if(t==='zhongyuan') loadZhongyuan();
  else if(t==='push') loadPush();
+ else if(t==='celebrate') loadCelebrate();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='push') return loadPush(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='push') return loadPush(); if(cur==='celebrate') return loadCelebrate(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1438,6 +1562,7 @@ function render(){
  else if(cur==='feedbacks')renderFeedbacks();
  else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘 */ }
  else if(cur==='push'){ /* 由 renderPush 自绘 */ }
+ else if(cur==='celebrate'){ /* 由 renderCelebrate 自绘 */ }
  else renderCards();
 }
 // ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
@@ -1748,6 +1873,139 @@ async function pushDelete(id){
  const r=await api('/api/push/delete',{id});
  const m=g('push_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
  if(r.ok) loadPush();
+}
+// --------------------------- 生辰盛典（每日定时开奖箱 + 奖池瓜分）后台 ---------------------------
+let CELEBRATE=null;
+async function loadCelebrate(){
+ const r=await api('/api/celebrate/state',{});
+ CELEBRATE=(r&&r.ok)?r.data:{};
+ if(!CELEBRATE.gacha) CELEBRATE.gacha={cmd:'生辰抽奖',menu_cmd:'生辰活动',rounds:[]};
+ if(!CELEBRATE.pool) CELEBRATE.pool={cmd:'生辰瓜分',cooldown_min:30,currencies:{}};
+ renderCelebrate();
+}
+function ceRoundDrawAt(timeStr){
+ if(!timeStr) return 0;
+ const s=Number((CELEBRATE&&CELEBRATE.start_at)||0);
+ const base=s?new Date(s*1000):new Date();
+ const p=String(timeStr).split(':');
+ base.setHours(Number(p[0])||0, Number(p[1])||0, 0, 0);
+ return Math.floor(base.getTime()/1000);
+}
+function ceRoundRow(r,i){
+ r=r||{};
+ const g0=(r.grand||{}), n0=(r.normal||{});
+ const drawn=r.drawn?`<span style="color:#17a05e">✓已开奖</span>`:'<span class="muted">未开奖</span>';
+ return `<tr>
+  <td class="muted">${drawn}</td>
+  <td><input type="time" value="${esc(r.time||'')}" id="ce_rt${i}" style="width:105px"></td>
+  <td><input value="${esc(g0.item||'')}" id="ce_rg${i}" placeholder="大奖名" style="width:115px"></td>
+  <td><input type="number" min="1" value="${g0.count||1}" id="ce_rgc${i}" style="width:64px"></td>
+  <td><input value="${esc(n0.item||'')}" id="ce_rn${i}" placeholder="普通奖" style="width:115px"></td>
+  <td><input type="number" min="1" value="${n0.count||1}" id="ce_rnc${i}" style="width:64px"></td>
+  <td><input type="number" min="0" value="${r.normal_winners||0}" id="ce_rnw${i}" style="width:64px"></td>
+  <td><button class="act del" onclick="ceDelRound(${i})">删</button></td>
+ </tr>`;
+}
+function renderCelebrate(){
+ document.getElementById('count').textContent='';
+ document.getElementById('extrawrap').innerHTML='';
+ const c=CELEBRATE||{};
+ const ga=c.gacha||{}, po=c.pool||{};
+ const rounds=ga.rounds||[];
+ let rrows='';
+ for(let i=0;i<rounds.length;i++) rrows+=ceRoundRow(rounds[i],i);
+ const cur=po.currencies||{};
+ let curRows='';
+ for(const nm of ['积分','金币','钻石']){
+  const cc=cur[nm]||{};
+  curRows+=`<tr>
+   <td><input value="${esc(nm)}" style="width:80px" readonly></td>
+   <td><input type="number" min="0" value="${cc.total||0}" id="ce_ct_${nm}" style="width:110px"></td>
+   <td><input type="number" min="0" value="${cc.min||0}" id="ce_cmin_${nm}" style="width:90px"></td>
+   <td><input type="number" min="0" value="${cc.max||0}" id="ce_cmax_${nm}" style="width:90px"></td></tr>`;
+ }
+ const st=c.start_at||0, en=c.end_at||0;
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:1000px">
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+   <h3 style="margin:0 0 16px">🎂 ${esc(c.name||'生辰盛典')} 后台配置 <span class="muted" style="font-weight:400">（每日多次定时开奖箱 + 奖池瓜分）</span></h3>
+   <div class="row">
+    <label class="fld">启用 <input type="checkbox" id="ce_on" ${c.enabled?'checked':''}></label>
+    <label class="fld">名称 <input id="ce_name" value="${esc(c.name||'生辰盛典')}" style="width:150px"></label>
+   </div>
+   <div class="row">
+    <label class="fld">开始 <input id="ce_start" type="datetime-local" value="${eventTsToLocal(st)}"></label>
+    <label class="fld">结束 <input id="ce_end" type="datetime-local" value="${eventTsToLocal(en)}"></label>
+   </div>
+   <label class="fld">开启公告 <textarea id="ce_ann" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.announce||'')}</textarea></label>
+   <label class="fld" style="margin-top:10px">结束公告 <textarea id="ce_ann_end" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.announce_end||'')}</textarea></label>
+   <div class="sec" style="margin-top:18px">🎯 抽奖开奖箱（每场到点自动抽 1 位大奖 + N 位普通奖）</div>
+   <div class="row">
+    <label class="fld">指令 <input id="ce_gcmd" value="${esc(ga.cmd||'生辰抽奖')}" style="width:150px"></label>
+    <label class="fld">菜单 <input id="ce_gmenu" value="${esc(ga.menu_cmd||'生辰活动')}" style="width:150px"></label>
+    <button class="act ghost" onclick="ceAddRound()">+ 加一场（共 ${rounds.length} 场）</button>
+   </div>
+   ${rounds.length?`<table><thead><tr><th>状态</th><th>时间</th><th>大奖名</th><th>数</th><th>普通奖</th><th>数</th><th>人数</th><th></th></tr></thead><tbody>${rrows}</tbody></table>`:'<div class="empty">尚未配置开奖场次，点击上方「加一场」。</div>'}
+   <div style="color:#9aa3b8;font-size:12px;margin-top:6px">时间填 HH:MM，开奖日期取「开始」时间的当天；20:00 那场放「宠物定制卡」作为最大奖。</div>
+   <div class="sec" style="margin-top:20px">💰 奖池瓜分（${esc(po.cmd||'生辰瓜分')}）</div>
+   <div class="row">
+    <label class="fld">启用瓜分 <input type="checkbox" id="ce_pon" ${po.enabled===false?'':'checked'}></label>
+    <label class="fld">指令 <input id="ce_pcmd" value="${esc(po.cmd||'生辰瓜分')}" style="width:150px"></label>
+    <label class="fld">冷却(分钟) <input type="number" min="1" value="${po.cooldown_min||30}" id="ce_pcd" style="width:90px"></label>
+   </div>
+   <table><thead><tr><th>货币</th><th>总量</th><th>单次最少</th><th>单次最多</th></tr></thead><tbody>${curRows||'<tr><td colspan="4" class="muted">未配置</td></tr>'}</tbody></table>
+   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
+    <button class="act" onclick="saveCelebrate()">保存配置</button>
+    <button class="act ghost" onclick="resetPool()">重置奖池剩余</button>
+    <button class="act ghost" onclick="broadcastAnnounce('start')">广播开启公告</button>
+    <button class="act ghost" onclick="broadcastAnnounce('end')">广播结束公告</button>
+    <button class="act ghost" onclick="loadCelebrate()">刷新</button>
+   </div>
+   <div class="muted" id="ce_msg" style="margin-top:10px"></div>
+  </div>
+ </div>`;
+}
+function ceAddRound(){ const c=CELEBRATE||{}; c.gacha=c.gacha||{cmd:'生辰抽奖',menu_cmd:'生辰活动',rounds:[]}; c.gacha.rounds.push({time:'',draw_at:0,grand:{item:'',count:1},normal:{item:'',count:1},normal_winners:0}); renderCelebrate(); }
+function ceDelRound(i){ const c=CELEBRATE||{}; if(c.gacha&&c.gacha.rounds){ c.gacha.rounds.splice(i,1); renderCelebrate(); } }
+async function saveCelebrate(){
+ const c=CELEBRATE||{};
+ const body={celebrate:{
+  enabled: g('ce_on')?g('ce_on').checked:false,
+  name: g('ce_name').value,
+  start_at: eventLocalToTs(g('ce_start').value)||0,
+  end_at: eventLocalToTs(g('ce_end').value)||0,
+  announce: g('ce_ann').value,
+  announce_end: g('ce_ann_end').value,
+  gacha:{enabled:true, cmd:g('ce_gcmd').value||'生辰抽奖', menu_cmd:g('ce_gmenu').value||'生辰活动', rounds:[]},
+  pool:{enabled:g('ce_pon')?g('ce_pon').checked:true, cmd:g('ce_pcmd').value||'生辰瓜分', cooldown_min:Number(g('ce_pcd').value)||30, currencies:{}}
+ }};
+ const nRounds=((c.gacha||{}).rounds||[]).length;
+ for(let i=0;i<nRounds;i++){
+  const tEl=document.getElementById('ce_rt'+i); if(!tEl) continue;
+  const time=tEl.value;
+  body.celebrate.gacha.rounds.push({time,
+   draw_at: ceRoundDrawAt(time),
+   grand:{item:g('ce_rg'+i).value, count:Number(g('ce_rgc'+i).value)||1},
+   normal:{item:g('ce_rn'+i).value, count:Number(g('ce_rnc'+i).value)||1},
+   normal_winners:Number(g('ce_rnw'+i).value)||0});
+ }
+ for(const nm of ['积分','金币','钻石']){
+  const tEl=document.getElementById('ce_ct_'+nm); if(!tEl) continue;
+  body.celebrate.pool.currencies[nm]={total:Number(tEl.value)||0, min:Number(g('ce_cmin_'+nm).value)||0, max:Number(g('ce_cmax_'+nm).value)||0};
+ }
+ const r=await api('/api/celebrate/save',body);
+ const m=g('ce_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+ if(r.ok) loadCelebrate();
+}
+async function resetPool(){
+ if(!confirm('确认将奖池剩余重置回配置总额？')) return;
+ const r=await api('/api/celebrate/reset_pool',{});
+ const m=g('ce_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
+async function broadcastAnnounce(which){
+ if(!confirm(which==='start'?'确认向所有已授权群真实广播「开启公告」？':'确认向所有已授权群真实广播「结束公告」？')) return;
+ const r=await api('/api/celebrate/broadcast',{which});
+ alert(r.ok?(r.msg||'已广播'):(r.msg||'广播失败'));
 }
 async function testDeepSeek(){
  const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在测试连接…';

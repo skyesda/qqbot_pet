@@ -95,6 +95,16 @@ class PetStore:
         self._data.setdefault("lottery", None)         # 口令抽奖（单例：一个进行中的口令抽奖）
         self._data.setdefault("prize_wallet", {})      # 全局奖品背包：按 openid 主键，全群共享（不按群隔离）
         self._data.setdefault("custom_push", {"jobs": []})   # 自定义文本群推送任务
+        self._data.setdefault("celebrate", {                  # 生辰盛典：每日 10 次定时开奖箱 + 奖池瓜分（后台可配）
+            "enabled": False, "name": "生辰盛典",
+            "start_at": 0, "end_at": 0,
+            "announce": "🎂 生辰盛典开启！", "announce_end": "🎂 生辰盛典收官",
+            "announced_start": False, "announced_end": False,
+            "gacha": {"enabled": True, "cmd": "生辰抽奖", "menu_cmd": "生辰活动", "rounds": []},
+            "pool": {"enabled": True, "cmd": "生辰瓜分", "cooldown_min": 30, "currencies": {}},
+            "pool_remain": {},          # {"积分": int, "金币": int, "钻石": int}
+            "players": {},              # openid -> {"pool_ts": int}
+        })
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()

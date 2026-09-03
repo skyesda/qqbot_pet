@@ -366,6 +366,9 @@ KNOWN_COMMANDS = {
 # 合并中元活动指令（由独立模块动态提供，避免在 KNOWN_COMMANDS 手写两份清单）
 KNOWN_COMMANDS |= _ZY_COMMANDS
 
+# 生辰盛典（独立庆典活动）：抽奖 / 奖池瓜分 / 活动菜单
+KNOWN_COMMANDS |= {"生辰活动", "生辰抽奖", "生辰瓜分"}
+
 # 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
 WEB_BLOCKED_COMMANDS = {
     # 不可逆 / 资产转移
@@ -481,6 +484,7 @@ class PetParkPlugin(Star):
         "_group_auto_approve_task_ref",
         "_lottery_task_ref",
         "_custom_push_task_ref",
+        "_celebrate_task_ref",
     )
     _sect_war_lock = asyncio.Lock()  # 宗门战操作用锁，防止并发重入
 
@@ -585,6 +589,7 @@ class PetParkPlugin(Star):
         self._group_auto_approve_task_ref = asyncio.create_task(self._group_auto_approve_loop())
         self._lottery_task_ref = asyncio.create_task(self._lottery_loop())
         self._custom_push_task_ref = asyncio.create_task(self._custom_push_loop())
+        self._celebrate_task_ref = asyncio.create_task(self._celebrate_loop())
         if self.zhongyuan is not None:
             self.zhongyuan.start()
 
@@ -2894,7 +2899,8 @@ class PetParkPlugin(Star):
                         "重生", "购买重生宝石", "确认重生", "祭奠",
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
                         "绑定QQ", "验证码", "换绑QQ", "解绑QQ",
-                        "我的奖品", "口令抽奖"}
+                        "我的奖品", "口令抽奖",
+                        "生辰活动", "生辰抽奖", "生辰瓜分"}
         if cmd not in _bank_allow:
             bank_block = self._bank_block_check(player)
             if bank_block:
@@ -3337,6 +3343,11 @@ class PetParkPlugin(Star):
         if event_reply is not None:
             return event_reply
 
+        # ---- 生辰盛典（独立庆典活动：抽奖 + 奖池瓜分）----
+        cel_reply = self._handle_celebrate(player, group_id, qq, cmd, tokens)
+        if cel_reply is not None:
+            return cel_reply
+
         # ---- Boss 全服排行 / 个人 Boss 奖品历史 ----
         if cmd == "Boss伤害排行":
             return self._event_boss_ranking_all(group_id)
@@ -3388,6 +3399,227 @@ class PetParkPlugin(Star):
         if cmd == "活动副本":
             return "当前没有开启的活动副本。"
         return None
+
+    # =====================================================================
+    # 生辰盛典：每日多次定时开奖箱（大奖） + 奖池瓜分（货币，30 分钟冷却）
+    # =====================================================================
+    def _handle_celebrate(self, player, group_id, qq, cmd, tokens):
+        """生辰盛典指令分发入口：`生辰活动`（菜单）/ `生辰抽奖`（报名开奖箱）/ `生辰瓜分`（瓜分奖池）。"""
+        cel = self.store._data.get("celebrate")
+        if not cel:
+            return None
+        gacha = cel.get("gacha", {})
+        pool = cel.get("pool", {})
+        cmds = {gacha.get("cmd"), gacha.get("menu_cmd"), pool.get("cmd")}
+        cmds.discard(None)
+        if cmd not in cmds:
+            return None
+        if not cel.get("enabled"):
+            return "🎂 **生辰盛典** 尚未开启，敬请期待！"
+        now = int(time.time())
+        start = int(cel.get("start_at") or 0)
+        end = int(cel.get("end_at") or 0)
+        if not (start <= now <= end):
+            if now < start:
+                return "🎂 **生辰盛典** 尚未开启，敬请期待！"
+            return "🎂 **生辰盛典** 已收官，感谢参与！"
+        if cmd == gacha.get("menu_cmd"):
+            return self._celebrate_menu(cel, qq)
+        if cmd == gacha.get("cmd"):
+            return self._celebrate_gacha(cel, qq, group_id)
+        if cmd == pool.get("cmd"):
+            return self._celebrate_pool(cel, player, qq)
+        return None
+
+    def _celebrate_menu(self, cel: dict, qq: str) -> str:
+        gacha = cel.get("gacha", {})
+        pool = cel.get("pool", {})
+        lines = [
+            f"## 🎂 {cel.get('name', '生辰盛典')}",
+            f"> `{gacha.get('cmd')}` 报名下一轮开奖箱 ｜ `{pool.get('cmd')}` 瓜分货币池",
+            "",
+            "**今日开奖场次**",
+        ]
+        rounds = gacha.get("rounds")
+        if not isinstance(rounds, list) or not rounds:
+            lines.append("- （后台尚未配置开奖场次）")
+        else:
+            for i, r in enumerate(rounds, 1):
+                grand = (r.get("grand") or {})
+                g_item = grand.get("item") or "—"
+                g_cnt = int(grand.get("count") or 1)
+                status = "🔔已开奖" if r.get("drawn") else "🕓未开奖"
+                mine = "　✅已报名" if qq in (r.get("participants") or {}) else ""
+                lines.append(f"- **第{i}场** `{r.get('time') or '?'}`　{status}　大奖：{g_item}×{g_cnt}{mine}")
+        if pool.get("enabled"):
+            cur = pool.get("currencies") or {}
+            remain = cel.get("pool_remain") or {}
+            lines.append("")
+            lines.append("**奖池瓜分**")
+            if cur:
+                for name in cur:
+                    lines.append(f"- {name} 剩余 **{int(remain.get(name, 0)):,}**")
+            else:
+                lines.append("- （后台尚未配置奖池）")
+        lines.append("")
+        lines.append("> 报名后到点自动开奖：每轮随机抽 1 位大奖 + 若干普通奖；每轮每人仅一次。")
+        return "\n".join(lines)
+
+    def _celebrate_gacha(self, cel: dict, qq: str, group_id: str) -> str:
+        """报名进入下一场开奖箱（每轮每人限一次）。"""
+        gacha = cel.get("gacha", {})
+        rounds = gacha.get("rounds")
+        if not isinstance(rounds, list) or not rounds:
+            return "🎂 后台还未配置开奖场次。"
+        target_i, target = None, None
+        for i, r in enumerate(rounds, 1):
+            if not r.get("drawn"):
+                target_i, target = i, r
+                break
+        if target is None:
+            return "🎂 今日开奖已全部结束，欢迎关注下一场狂欢！"
+        parts = target.setdefault("participants", {})
+        if qq in parts:
+            grand = (target.get("grand") or {}).get("item") or "—"
+            return (f"🎂 你已报名 **第{target_i}场**（`{target.get('time') or '?'}`）开奖箱。\n"
+                    f"> 本场大奖：{grand}，开奖后见分晓～")
+        parts[qq] = group_id
+        grand = (target.get("grand") or {}).get("item") or "—"
+        return (f"🎂 **报名成功！** 你已进入 **第{target_i}场**（`{target.get('time') or '?'}`）开奖箱。\n"
+                f"> 本场大奖：{grand}\n"
+                f"> 开奖后将在群内公布中奖名单，记得留意公告哦～")
+
+    def _celebrate_pool(self, cel: dict, player: dict, qq: str) -> str:
+        """瓜分货币奖池：每 `cooldown_min` 分钟一次，从剩余池里抽随机份额。"""
+        pool = cel.get("pool", {})
+        if not pool.get("enabled"):
+            return "🎂 奖池瓜分暂未开启。"
+        cur = pool.get("currencies")
+        if not isinstance(cur, dict) or not cur:
+            return "🎂 后台还未配置奖池。"
+        now = int(time.time())
+        cd = max(1, int(pool.get("cooldown_min") or 30)) * 60
+        ppl = cel.setdefault("players", {}).setdefault(qq, {})
+        last = int(ppl.get("pool_ts") or 0)
+        if last and now - last < cd:
+            rem = cd - (now - last)
+            return f"⏳ 奖池仍在冷却，剩 **约{max(1, (rem + 59) // 60)}分钟** 后可再次瓜分。"
+        remain = cel.setdefault("pool_remain", {})
+        gained = []
+        for name, cfg in cur.items():
+            r = int(remain.get(name, 0))
+            if r <= 0:
+                continue
+            mn = int(cfg.get("min") or 0)
+            mx = int(cfg.get("max") or 0)
+            share = random.randint(min(mn, mx), max(mn, mx)) if mx >= mn else mn
+            share = max(1, min(share, r))
+            remain[name] = r - share
+            self.store.add_currency(player, name, share)
+            gained.append((name, share))
+        if not gained:
+            return "🎂 奖池已被瓜分完毕！"
+        ppl["pool_ts"] = now
+        lines = ["## 🎂 瓜分成功！你获得："]
+        for name, share in gained:
+            lines.append(f"- {name} × **{share:,}**")
+        remain_lines = [f"{n} {int(remain.get(n, 0)):,}" for n in cur if int(remain.get(n, 0)) > 0]
+        lines.append(f"> 剩余：**{', '.join(remain_lines) or '已空'}**")
+        return "\n".join(lines)
+
+    # --------------------------- 生辰盛典后台循环（开奖箱/公告） ----------------------------
+    CELEBRATE_CHECK_SEC = 20
+
+    async def _celebrate_loop(self) -> None:
+        while True:
+            try:
+                await self._celebrate_tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[petpark] 生辰盛典循环异常")
+            try:
+                await asyncio.sleep(self.CELEBRATE_CHECK_SEC)
+            except asyncio.CancelledError:
+                raise
+
+    async def _celebrate_tick(self) -> None:
+        cel = self.store._data.get("celebrate")
+        if not cel or not cel.get("enabled"):
+            return
+        now = int(time.time())
+        start = int(cel.get("start_at") or 0)
+        end = int(cel.get("end_at") or 0)
+        changed = False
+        # 开启 / 结束公告（各一次）
+        if start and start <= now and not cel.get("announced_start"):
+            await self._fire_celebrate_broadcast(cel, cel.get("announce") or "🎂 生辰盛典开启！")
+            cel["announced_start"] = True
+            changed = True
+        if end and end <= now and not cel.get("announced_end"):
+            await self._fire_celebrate_broadcast(cel, cel.get("announce_end") or "🎂 生辰盛典收官")
+            cel["announced_end"] = True
+            changed = True
+        # 开奖箱：仅在活动窗口内触发已到点的场次
+        if start <= now <= end:
+            rounds = (cel.get("gacha") or {}).get("rounds")
+            if isinstance(rounds, list):
+                for i, r in enumerate(rounds, 1):
+                    if r.get("drawn"):
+                        continue
+                    da = int(r.get("draw_at") or 0)
+                    if da and now >= da:
+                        await self._celebrate_draw_round(cel, i, r)
+                        changed = True
+        if changed:
+            await self.store.save()
+
+    async def _fire_celebrate_broadcast(self, cel: dict, text: str) -> None:
+        task = self._broadcast_to_authorized_groups(text)
+        if task is not None:
+            try:
+                await task
+            except Exception:
+                logger.exception("[petpark] 生辰盛典广播失败")
+
+    async def _celebrate_draw_round(self, cel: dict, idx: int, rnd: dict) -> None:
+        """对某一开奖场次执行抽奖：1 位大奖 + 若干普通奖，并全群公布。"""
+        parts = rnd.get("participants") or {}
+        rnd["drawn"] = True
+        text = f"## 🎂 生辰盛典 **第{idx}场**开奖（`{rnd.get('time') or '?'}`）\n"
+        if not parts:
+            rnd["result"] = {"participants": 0, "note": "本轮无有效参与者"}
+            text += "> 本轮无有效参与者，大奖流流，下轮再会～"
+            rnd["participants"] = {}
+            await self._fire_celebrate_broadcast(cel, text)
+            return
+        openids = list(parts.keys())
+        result = {"participants": len(openids), "grand": None, "normal": []}
+        grand = rnd.get("grand") or {}
+        g_item = grand.get("item")
+        g_cnt = int(grand.get("count") or 1)
+        if g_item and openids:
+            w = random.choice(openids)
+            gid = parts[w]
+            self.store.add_item(self.store.get_player(w, gid), g_item, g_cnt)
+            result["grand"] = {"openid": w, "item": g_item, "count": g_cnt}
+            text += f"- 🌟 **大奖**：{g_item}×{g_cnt} → 恭喜 **{w}**\n"
+            openids.remove(w)
+        normal = rnd.get("normal") or {}
+        n_item = normal.get("item")
+        n_cnt = int(normal.get("count") or 1)
+        n_w = int(rnd.get("normal_winners") or 0)
+        if n_item and n_w > 0 and openids:
+            chosen = random.sample(openids, min(n_w, len(openids)))
+            for w2 in chosen:
+                gid2 = parts[w2]
+                self.store.add_item(self.store.get_player(w2, gid2), n_item, n_cnt)
+                result["normal"].append({"openid": w2, "item": n_item, "count": n_cnt})
+            text += f"- 🎁 **普通奖**：{n_item}×{n_cnt} → {len(chosen)} 名（{', '.join(chosen)}）\n"
+        text += f"> 共 **{result['participants']}** 人参与，恭喜中奖者，奖品已到账！"
+        rnd["result"] = result
+        rnd["participants"] = {}
+        await self._fire_celebrate_broadcast(cel, text)
 
     def _event_menu(self, cfg: dict) -> str:
         token = cfg.get("token", "代币")
@@ -6455,6 +6687,25 @@ class PetParkPlugin(Star):
                 f"🧘 使用『{name}』x{count}：自动修炼权限 +{days} 天！\n"
                 f"> 有效期至 **{when}**\n"
                 f"> 发送『开启自动修炼』即可开始挂机修炼。"
+            )
+        # 宠物定制卡：解锁主宠「定制」权限（自定义名称/图片），晋升混沌并加「定制」标签。
+        if it_check and it_check.get("effect", {}).get("custom_pet"):
+            if not self.store.has_item(player, name):
+                return f"背包里没有『{name}』。"
+            p = self._need_pet(player)
+            if not p:
+                return "你没有宠物，无法使用『宠物定制卡』。"
+            if p.get("custom"):
+                return "该宠物已解锁「定制」权限，无需重复使用。"
+            p["custom"] = True
+            ok, msg = petmod.upgrade_quality(p, "混沌")
+            if not ok:
+                return msg
+            self.store.add_pet_tag(p, "定制")
+            self.store.remove_item(player, name, 1)
+            return (
+                f"🎨 使用『{name}』：主宠已解锁**定制权限**（可自定义名称/图片）！\n"
+                "> 品质已晋升为 **【混沌】**，并附带「定制」专属标签。"
             )
         # 宠物卡：召唤出随机品质+随机物种的宠物。召唤无需已有宠物，故须在 _need_pet 门槛前处理。
         if it_check and it_check.get("effect", {}).get("summon_pet_card"):
