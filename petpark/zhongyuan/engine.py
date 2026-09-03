@@ -289,6 +289,7 @@ class ZhongyuanActivity:
                 "name": str(qq),
                 "activity_id": 0,
                 "gongde": 0,
+                "gongde_earned": 0,
                 "clear_count": 0,
                 "perfect_count": 0,
                 "fail_count": 0,
@@ -398,7 +399,13 @@ class ZhongyuanActivity:
         return d
 
     def _add_gongde(self, ap: dict, amount: int) -> None:
-        ap["gongde"] = int(ap.get("gongde", 0)) + max(0, int(amount))
+        amt = max(0, int(amount))
+        if not amt:
+            return
+        gd = int(ap.get("gongde", 0))
+        ap["gongde"] = gd + amt
+        # 累计获得功德：不随消费降低。老玩家以当前功德为种子（历史花掉的无法追溯），此后只增不减。
+        ap["gongde_earned"] = int(ap.get("gongde_earned", gd)) + amt
 
     def _rand_gongde(self, min_key: str, max_key: str, default_min: int, default_max: int) -> int:
         """在配置的 [min, max] 区间内取随机功德（闭合区间，上下限相等则固定）。"""
@@ -924,7 +931,7 @@ class ZhongyuanActivity:
         ranked = sorted(
             players,
             key=lambda p: (
-                -int(p.get("gongde", 0)),
+                -int(p.get("gongde_earned", p.get("gongde", 0))),
                 -int(p.get("clear_count", 0)),
                 int(p.get("best_time_sec", 0)) or (1 << 30),
             ),
@@ -934,9 +941,9 @@ class ZhongyuanActivity:
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         ngroups = len({str(p.get("group", "")) for p in players if p.get("group")})
         lines = ["🕯️ 中元功德榜（全服 · 前 20）"]
-        lines.append(f"跨所有群汇总：覆盖 {ngroups} 个群 · 共 {len(ranked)} 位玩家")
+        lines.append(f"跨所有群汇总：覆盖 {ngroups} 个群 · 共 {len(ranked)} 位玩家 · 按累计获得功德排名")
         lines.append("")
-        lines.append("| 排名 | 段位 | 活动ID | 玩家 | 功德 | 通关 | 完美 |")
+        lines.append("| 排名 | 段位 | 活动ID | 玩家 | 累计功德 | 通关 | 完美 |")
         lines.append("|:--:|:--:|:--:|:--:|--:|--:|--:|")
         for i, p in enumerate(ranked[:20], start=1):
             tier = tier_name_for_rank(i, self.cfg.get("tiers", [])) or "—"
@@ -944,7 +951,7 @@ class ZhongyuanActivity:
             rk = medals.get(i, str(i))
             lines.append(
                 f"| {rk} | {tier} | #{p['activity_id']:04d} | {name} | "
-                f"{p.get('gongde', 0)} | {p.get('clear_count', 0)} | {p.get('perfect_count', 0)} |"
+                f"{int(p.get('gongde_earned', p.get('gongde', 0)))} | {p.get('clear_count', 0)} | {p.get('perfect_count', 0)} |"
             )
         return "\n".join(lines)
 
@@ -981,7 +988,8 @@ class ZhongyuanActivity:
             f"## 🕯️ 我的中元\n"
             f"> 活动 ID：**#{ap['activity_id']:04d}**\n"
             f"> 玩家：**{ap.get('name', '?')}**\n"
-            f"> 功德：**{ap.get('gongde', 0)}**\n"
+            f"> 功德：**{ap.get('gongde', 0)}**（可用）\n"
+            f"> 累计获得功德：{int(ap.get('gongde_earned', ap.get('gongde', 0)))}\n"
             f"> 暂存功德：{ap.get('escrow', 0)}\n"
             f"> 通关 {ap.get('clear_count', 0)} 次 · 完美 {ap.get('perfect_count', 0)} 次 · 失败 {ap.get('fail_count', 0)} 次\n"
             f"> 状态：{yin}"
@@ -1299,7 +1307,7 @@ class ZhongyuanActivity:
         for gid in list(self._groups().keys()):
             ranked = sorted(
                 self._players_in_group(gid),
-                key=lambda p: (-int(p.get("gongde", 0)), -int(p.get("clear_count", 0))),
+                key=lambda p: (-int(p.get("gongde_earned", p.get("gongde", 0))), -int(p.get("clear_count", 0))),
             )
             for rank, ap in enumerate(ranked[:20], start=1):
                 g = tier_gongde_for_rank(rank, self.cfg.get("tiers", []))
