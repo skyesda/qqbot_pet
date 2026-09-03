@@ -200,6 +200,12 @@ KNOWN_COMMANDS = {
     "碎片转卡",
     "碎片合成",
     "碎片兑换",
+    "一键合成品质碎片",
+    "一键碎片兑换",
+    "一键合成品质卡",
+    "一键卡合成",
+    "批量碎片转卡",
+    "批量卡合成",
     "赠送金币",
     "赠送积分",
     "赠送钻石",
@@ -2995,6 +3001,10 @@ class PetParkPlugin(Star):
             return self._compose_quality_card(player, tokens)
         if cmd in ("碎片转卡", "碎片合成", "碎片兑换"):
             return self._exchange_fragment(player, tokens)
+        if cmd in ("一键合成品质碎片", "一键碎片兑换", "批量碎片转卡"):
+            return self._batch_exchange_fragments(player)
+        if cmd in ("一键合成品质卡", "一键卡合成", "批量卡合成"):
+            return self._batch_compose_cards(player)
         if cmd in ("赠送金币", "赠送积分", "赠送钻石"):
             return self._gift_currency(player, group_id, cmd, tokens)
 
@@ -5453,8 +5463,9 @@ class PetParkPlugin(Star):
                 "**【成长】**",
                 "- 一键升级宠物 · 宠物升级 次数 · 宠物进化",
                 "- 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
-                "- 合成卡 目标卡名",
-                "> 每突破 60 级赠史诗卡；10 张低品质卡可合成为高一级卡",
+                "- 合成卡 目标卡名 · 一键合成品质卡（自动级联升到最高）",
+                "- 一键合成品质碎片（把所有碎片批量转卡）",
+                "> 每突破 60 级赠史诗卡；10 张低品质卡可合成为高一级卡，碎片 10 片兑 1 张同品质卡",
                 "",
                 "**【神器 / 秘技】**",
                 "- 打造神器 名称 · 佩戴神器 名称 · 卸下神器",
@@ -5795,6 +5806,69 @@ class PetParkPlugin(Star):
             f"✅ **合成成功！**\n"
             f"消耗 {src_card} ×{need}，获得 **{target}** ×1。"
         )
+
+    def _batch_exchange_fragments(self, player: dict) -> str:
+        """一键合成品质碎片：把所有品质碎片按 10:1 批量兑换成同品质卡。"""
+        bag = player.get("bag", {})
+        need = data.FRAGMENT_TO_CARD
+        done: list[str] = []
+        for q in data.QUALITIES:
+            frag = f"{q}碎片"
+            card = f"{q}卡"
+            have = bag.get(frag, 0)
+            if have < need:
+                continue
+            n = have // need
+            consume = n * need
+            self.store.remove_item(player, frag, consume)
+            self.store.add_item(player, card, n)
+            note = "" if have % need == 0 else f"（余 {have % need} 片）"
+            done.append(f"**{frag}** ×{consume} → **{card}** ×{n}{note}")
+        if not done:
+            bag_frags = [f"{q}碎片" for q in data.QUALITIES if bag.get(f"{q}碎片", 0) > 0]
+            if not bag_frags:
+                return "你背包里没有任何『品质碎片』，无法合成。"
+            hold = "、".join(f"{k}×{bag.get(k, 0)}" for k in bag_frags)
+            return f"碎片数量不足，无法兑换。每种品质需 {need} 片，当前持有：{hold}。"
+        return "✅ **一键合成品质碎片完成！**\n" + "\n".join(f"- {d}" for d in done)
+
+    def _batch_compose_cards(self, player: dict) -> str:
+        """一键合成品质卡：从低品质卡起贪心向上级联合成，能升多高升多高。"""
+        bag = player.get("bag", {})
+        # 各品质卡当前数量（会在合成中逐步推进）
+        has = {f"{q}卡": bag.get(f"{q}卡", 0) for q in data.QUALITIES}
+        done: list[str] = []
+        for i in range(len(data.QUALITIES) - 1):
+            low_card = f"{data.QUALITIES[i]}卡"
+            high_card = f"{data.QUALITIES[i + 1]}卡"
+            if high_card not in data.QUALITY_CARD_UPGRADE:
+                continue
+            need = data.QUALITY_CARD_UPGRADE[high_card][1]
+            have = has.get(low_card, 0)
+            n = have // need
+            if n <= 0:
+                continue
+            consume = n * need
+            has[low_card] -= consume
+            has[high_card] = has.get(high_card, 0) + n
+            note = f"（余 {has[low_card]} 张）" if has[low_card] else ""
+            done.append(f"**{low_card}** ×{consume} → **{high_card}** ×{n}{note}")
+        if not done:
+            any_cards = [f"{q}卡" for q in data.QUALITIES if has.get(f"{q}卡", 0) > 0]
+            if not any_cards:
+                return "你背包里没有任何『品质卡』，无法合成。"
+            hold = "、".join(f"{c}×{has[c]}" for c in any_cards)
+            return f"品质卡数量不足，无法级联合成（需 10 张低级卡换 1 张高级卡，创世→混沌需 20 张）。当前持有：{hold}。"
+        # 写回背包（按净变化：同一种卡既被消耗又产出时取差值）
+        for q in data.QUALITIES:
+            card = f"{q}卡"
+            orig = bag.get(card, 0)
+            final = has.get(card, 0)
+            if final > orig:
+                self.store.add_item(player, card, final - orig)
+            elif final < orig:
+                self.store.remove_item(player, card, orig - final)
+        return "✅ **一键合成品质卡完成！**\n" + "\n".join(f"- {d}" for d in done)
 
     # =====================================================================
     # 宠物查看 / 管理
