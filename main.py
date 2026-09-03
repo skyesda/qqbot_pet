@@ -5650,63 +5650,41 @@ class PetParkPlugin(Star):
         return random.choices(names, weights=weights, k=1)[0]
 
     def _smash_egg(self, player: dict) -> str:
-        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
-        if len(player.get("pets", [])) >= slots:
-            return (
-                f"宠物席位已满（{len(player['pets'])}/{slots}），无法获取新宠物。\n"
-                "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
-            )
         cd = self._cooldown_block(player, "砸蛋", "砸蛋")
         if cd:
             return cd
-        species = random.choice(data.SPECIES_NAMES)
         quality = self._roll_quality()
-        new_p = petmod.new_pet(species, quality)
-        if not self._add_pet(player, new_p):
-            return "添加宠物失败，席位异常。"
-        # 副产物：本次品质的同名碎片
         shard_name = f"{quality}碎片"
-        shard_n = random.randint(3, 6)
+        shard_n = random.randint(1, 2)
         self.store.add_item(player, shard_name, shard_n)
         self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
         return (
-            f"💥 **砸蛋成功！**\n获得 【{quality}】品质的 **{species}**！\n"
-            f"✨ 额外获得 **{shard_name} ×{shard_n}**\n"
-            "> 发送 `我的宠物` 查看详情。"
+            f"💥 **砸蛋成功！**\n获得 **{shard_name} ×{shard_n}**\n"
+            f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张【{quality}卡】，卡片可召唤宠物或提升品质。"
         )
 
     def _smash_ten(self, player: dict) -> str:
-        """砸蛋十连：一次出 10 只宠物 + 品质碎片。与单发共享同一冷却键「砸蛋」（互斥）。"""
+        """砸蛋十连：一次抽 10 次品质碎片（不再出宠物）。与单发共享同一冷却键「砸蛋」（互斥）。"""
         need = 10
-        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
-        if len(player.get("pets", [])) + need > slots:
-            return (
-                f"宠物席位不足（{len(player['pets'])}/{slots}），砸蛋十连需预留 {need} 个席位。\n"
-                "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
-            )
         cd = self._cooldown_block(player, "砸蛋", "砸蛋")
         if cd:
             return cd
-        picks = []
         shard_tot: dict[str, int] = {}
         for _ in range(need):
-            species = random.choice(data.SPECIES_NAMES)
             quality = self._roll_quality()
-            new_p = petmod.new_pet(species, quality)
-            if not self._add_pet(player, new_p):
-                return "添加宠物失败，席位异常。"
-            picks.append(f"【{quality}】{species}")
-            cnt = random.randint(3, 6)
+            cnt = random.randint(1, 2)
             self.store.add_item(player, f"{quality}碎片", cnt)
             shard_tot[quality] = shard_tot.get(quality, 0) + cnt
         self.store.set_cooldown(player, "砸蛋", data.EGG_TEN_COOLDOWN)
-        shard_str = "、".join(f"{q}碎片×{n}" for q, n in shard_tot.items()) or "无"
-        body = "\n".join(f"{i+1}. {p}" for i, p in enumerate(picks))
-        return (
-            f"💥 **砸蛋十连！**\n{body}\n"
-            f"✨ 额外品质碎片：{shard_str}\n"
-            f"> 十连冷却 25 分钟，与单发砸蛋共享冷却（其一进行中则另一不可用）。"
-        )
+        lines = ["💥 **砸蛋十连！**"]
+        for q, n in shard_tot.items():
+            lines.append(f"- **{q}碎片 ×{n}**")
+        lines.extend([
+            "",
+            f"> {data.FRAGMENT_TO_CARD} 片可兑换 1 张品质卡，卡片可召唤宠物或提升品质。",
+            "> 十连冷却 25 分钟，与单发砸蛋共享冷却（其一进行中则另一不可用）。",
+        ])
+        return "\n".join(lines)
 
     def _exchange_fragment(self, player: dict, tokens: list[str]) -> str:
         """碎片转卡：同品质 10 片兑换 1 张该品质卡。"""
