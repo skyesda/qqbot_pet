@@ -68,7 +68,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "dungeon_limit_min": 20,        # 单场解密时限（分钟）
     "bind_open_hours_before": 24,   # 绑定领号开启（活动开始前 N 小时）
     "bind_close_hours_before": 1,   # 绑定领号截止（活动结束前 N 小时）
-    "redeem_window_hours": 48,      # 活动结束后兑换窗口（小时）
+    "redeem_window_hours": 24,      # 活动结束后兑换窗口（小时，默认 1 天）
     # ---- 抽人 ----
     "max_draw_per_day": 0,          # 每人每日最多被抽入次数（0=不限制）
     "max_dungeon_per_day": 0,       # 副本每日最多开本数（0=不限制）

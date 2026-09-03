@@ -1037,6 +1037,11 @@ class ZhongyuanActivity:
         ap = self._get_player(group_id, qq, create=False)
         if not ap or not ap.get("activity_id"):
             return "❌ 你尚未相约中元，无法使用功德商店。"
+        if not (self._enabled() or self._redeem_open()):
+            return (
+                f"🕯️ 功德商店已关闭：中元活动已结束，超过兑换期。\n"
+                f"> 活动结束后仅 **{self._int_cfg('redeem_window_hours', 24)}** 小时内可兑换，功德在此定格。"
+            )
         arg = (arg or "").strip()
         if not arg:
             return self._shop_list(ap)
@@ -1313,6 +1318,7 @@ class ZhongyuanActivity:
                 g = tier_gongde_for_rank(rank, self.cfg.get("tiers", []))
                 if g:
                     ap["escrow"] = int(ap.get("escrow", 0)) + g
+                    ap["gongde_earned"] = int(ap.get("gongde_earned", ap.get("gongde", 0))) + g
         self._data["settled"] = True
 
     # ------------------------------------------------------------------
