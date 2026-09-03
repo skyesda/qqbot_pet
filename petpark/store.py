@@ -94,6 +94,7 @@ class PetStore:
         self._data.setdefault("email_config", {})      # 邮箱服务配置（SMTP）
         self._data.setdefault("lottery", None)         # 口令抽奖（单例：一个进行中的口令抽奖）
         self._data.setdefault("prize_wallet", {})      # 全局奖品背包：按 openid 主键，全群共享（不按群隔离）
+        self._data.setdefault("custom_push", {"jobs": []})   # 自定义文本群推送任务
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()

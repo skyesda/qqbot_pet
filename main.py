@@ -480,6 +480,7 @@ class PetParkPlugin(Star):
         "_bank_interest_task_ref",
         "_group_auto_approve_task_ref",
         "_lottery_task_ref",
+        "_custom_push_task_ref",
     )
     _sect_war_lock = asyncio.Lock()  # 宗门战操作用锁，防止并发重入
 
@@ -583,6 +584,7 @@ class PetParkPlugin(Star):
         self._bank_interest_task_ref = asyncio.create_task(self._bank_interest_loop())
         self._group_auto_approve_task_ref = asyncio.create_task(self._group_auto_approve_loop())
         self._lottery_task_ref = asyncio.create_task(self._lottery_loop())
+        self._custom_push_task_ref = asyncio.create_task(self._custom_push_loop())
         if self.zhongyuan is not None:
             self.zhongyuan.start()
 
@@ -4364,6 +4366,73 @@ class PetParkPlugin(Star):
             except Exception:
                 logger.exception("[petpark] 口令抽奖后台循环出错")
                 await asyncio.sleep(self.LOTTERY_CHECK_SEC)
+
+    # --------------------------- 自定义文本群推送（后台） ----------------------------
+    CUSTOM_PUSH_CHECK_SEC = 15   # 每隔 15 秒检查一次是否到点
+
+    async def _custom_push_loop(self) -> None:
+        """后台循环：扫描 custom_push.jobs，到点向所有授权且开启宠物乐园的群推送。"""
+        while True:
+            try:
+                await self._custom_push_tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[petpark] 群推送循环异常")
+            try:
+                await asyncio.sleep(self.CUSTOM_PUSH_CHECK_SEC)
+            except asyncio.CancelledError:
+                raise
+
+    async def _custom_push_tick(self) -> None:
+        store = self.store._data.setdefault("custom_push", {})
+        jobs = store.get("jobs")
+        if not isinstance(jobs, list):
+            store["jobs"] = []
+            jobs = store["jobs"]
+        now = int(time.time())
+        changed = False
+        for job in jobs:
+            if not job.get("enabled"):
+                continue
+            if job.get("mode") == "once":
+                target = int(job.get("target_ts") or 0)
+                if target and now >= target:
+                    await self._fire_push_job(job)
+                    job["enabled"] = False
+                    job["done"] = True
+                    changed = True
+            elif job.get("mode") == "recurring":
+                nxt = int(job.get("next_run") or 0)
+                interval_min = max(1, int(job.get("interval_min") or 30))
+                if now >= nxt:
+                    await self._fire_push_job(job)
+                    job["next_run"] = int(time.time()) + interval_min * 60
+                    changed = True
+        if changed:
+            await self.store.save()
+
+    async def _fire_push_job(self, job: dict) -> None:
+        """向所有授权且开启宠物乐园玩法的群推送一次任务文案，并记录最近结果。"""
+        text = str(job.get("text") or "").strip()
+        if not text:
+            job["last_result"] = {"ts": int(time.time()), "sent": 0, "failed": 0,
+                                  "targets": 0, "error": "文案为空"}
+            return
+        result = {"sent": 0, "failed": 0, "targets": 0, "errors": []}
+        task = self._broadcast_to_authorized_groups(text)
+        if task is not None:
+            try:
+                result = await task
+            except Exception as e:
+                result = {"sent": 0, "failed": 0, "targets": 0, "errors": [str(e)]}
+        job["last_result"] = {
+            "ts": int(time.time()),
+            "sent": int(result.get("sent", 0)),
+            "failed": int(result.get("failed", 0)),
+            "targets": int(result.get("targets", 0)),
+            "error": ("; ".join(result.get("errors", [])[:5]) if result.get("errors") else None),
+        }
 
     def _register_lottery_claim(self, qq: str, group_id: str, lottery: dict) -> str:
         """玩家输入口令即登记参与（按 openid 去重，全群共享）。"""

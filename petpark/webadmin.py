@@ -89,6 +89,12 @@ class WebAdmin:
         app.router.add_post("/api/zhongyuan/test_end", self._api_zhongyuan_test_end)
         app.router.add_post("/api/zhongyuan/data", self._api_zhongyuan_data)
         app.router.add_post("/api/zhongyuan/clear_data", self._api_zhongyuan_clear_data)
+        app.router.add_post("/api/push/state", self._api_push_state)
+        app.router.add_post("/api/push/manual", self._api_push_manual)
+        app.router.add_post("/api/push/save", self._api_push_save)
+        app.router.add_post("/api/push/toggle", self._api_push_toggle)
+        app.router.add_post("/api/push/fire", self._api_push_fire)
+        app.router.add_post("/api/push/delete", self._api_push_delete)
 
         portal = PlayerPortal(
             self.store,
@@ -621,6 +627,151 @@ class WebAdmin:
             return self._json({"ok": False, "msg": f"开奖失败：{e}"})
         return self._json({"ok": True, "msg": msg})
 
+    # --------------------------- 自定义文本群推送 ---------------------------
+    def _push_state(self) -> dict:
+        return self.store._data.setdefault("custom_push", {"jobs": []})
+
+    async def _api_push_state(self, request):
+        self._require(request)
+        return self._json({"ok": True, "data": self._push_state()})
+
+    async def _api_push_manual(self, request):
+        self._require(request)
+        body = await request.json()
+        text = str(body.get("text") or "").strip()
+        if not text:
+            return self._json({"ok": False, "msg": "文案不能为空"})
+        if not self._broadcast_callback:
+            return self._json({"ok": False, "msg": "广播接口不可用"})
+        task = self._broadcast_callback(text)
+        result = {}
+        if task is not None:
+            try:
+                result = await task
+            except Exception as e:
+                logger.exception("[petpark] 后台手动群推送失败")
+                return self._json({"ok": False, "msg": f"推送异常：{e}"})
+        return self._json({
+            "ok": True,
+            "msg": f"已推送：目标 {result.get('targets', 0)} 群，成功 {result.get('sent', 0)}，失败 {result.get('failed', 0)}",
+            "result": result,
+        })
+
+    async def _api_push_save(self, request):
+        self._require(request)
+        body = await request.json()
+        mode = str(body.get("mode") or "").strip()
+        text = str(body.get("text") or "").strip()
+        name = str(body.get("name") or "").strip()
+        interval_min = int(body.get("interval_min") or 0)
+        target_ts = int(body.get("target_ts") or 0)
+        jid = str(body.get("id") or "").strip()
+        if mode not in ("once", "recurring"):
+            return self._json({"ok": False, "msg": "模式必须是 once 或 recurring"})
+        if not text:
+            return self._json({"ok": False, "msg": "文案不能为空"})
+        if mode == "recurring" and interval_min <= 0:
+            return self._json({"ok": False, "msg": "循环间隔需大于 0 分钟"})
+        if mode == "once" and target_ts <= int(time.time()):
+            return self._json({"ok": False, "msg": "指定时间需是未来时间"})
+        state = self._push_state()
+        jobs = state.get("jobs")
+        if not isinstance(jobs, list):
+            state["jobs"] = []
+            jobs = state["jobs"]
+        now = int(time.time())
+        if jid:
+            job = next((j for j in jobs if j.get("id") == jid), None)
+            if job is None:
+                return self._json({"ok": False, "msg": "任务不存在"})
+        else:
+            job = {
+                "id": "push_" + secrets.token_hex(6),
+                "name": "未命名任务",
+                "mode": mode,
+                "text": text,
+                "enabled": True,
+                "created_at": now,
+                "done": False,
+                "last_result": None,
+            }
+            jobs.append(job)
+        job["name"] = name or job.get("name") or "未命名任务"
+        job["mode"] = mode
+        job["text"] = text
+        job["created_at"] = job.get("created_at") or now
+        job["enabled"] = True
+        if mode == "recurring":
+            job["interval_min"] = max(1, interval_min)
+            if not job.get("next_run"):
+                job["next_run"] = now  # 创建即开始：首轮很快触发
+        else:
+            job["target_ts"] = target_ts
+            job["done"] = False
+        await self.store.save()
+        logger.info(f"[petpark][webadmin] 群推送任务保存 by {request.remote}")
+        return self._json({"ok": True, "msg": f"已保存任务「{job['name']}」"})
+
+    async def _api_push_toggle(self, request):
+        self._require(request)
+        body = await request.json()
+        jid = str(body.get("id") or "").strip()
+        job = next((j for j in self._push_state().get("jobs", []) if j.get("id") == jid), None)
+        if job is None:
+            return self._json({"ok": False, "msg": "任务不存在"})
+        job["enabled"] = bool(body.get("enabled", not job.get("enabled")))
+        await self.store.save()
+        return self._json({"ok": True, "msg": "已启用" if job["enabled"] else "已停用"})
+
+    async def _api_push_fire(self, request):
+        self._require(request)
+        body = await request.json()
+        jid = str(body.get("id") or "").strip()
+        job = next((j for j in self._push_state().get("jobs", []) if j.get("id") == jid), None)
+        if job is None:
+            return self._json({"ok": False, "msg": "任务不存在"})
+        text = str(job.get("text") or "").strip()
+        if not text:
+            return self._json({"ok": False, "msg": "文案为空"})
+        if not self._broadcast_callback:
+            return self._json({"ok": False, "msg": "广播接口不可用"})
+        task = self._broadcast_callback(text)
+        result = {}
+        if task is not None:
+            try:
+                result = await task
+            except Exception as e:
+                logger.exception("[petpark] 后台手动触发推送失败")
+                return self._json({"ok": False, "msg": f"推送异常：{e}"})
+        job["last_result"] = {
+            "ts": int(time.time()),
+            "sent": int(result.get("sent", 0)),
+            "failed": int(result.get("failed", 0)),
+            "targets": int(result.get("targets", 0)),
+            "error": ("; ".join(result.get("errors", [])[:5]) if result.get("errors") else None),
+        }
+        await self.store.save()
+        return self._json({
+            "ok": True,
+            "msg": f"已触发：目标 {result.get('targets', 0)} 群，成功 {result.get('sent', 0)}，失败 {result.get('failed', 0)}",
+        })
+
+    async def _api_push_delete(self, request):
+        self._require(request)
+        body = await request.json()
+        jid = str(body.get("id") or "").strip()
+        state = self._push_state()
+        jobs = state.get("jobs")
+        if not isinstance(jobs, list):
+            state["jobs"] = []
+            jobs = state["jobs"]
+        new = [j for j in jobs if j.get("id") != jid]
+        if len(new) == len(jobs):
+            return self._json({"ok": False, "msg": "任务不存在"})
+        state["jobs"] = new
+        await self.store.save()
+        return self._json({"ok": True, "msg": "已删除任务"})
+
     async def _api_zhongyuan_config(self, request):
         """中元活动：读取完整配置（供后台「中元活动」页渲染）。API Key 脱敏返回。"""
         self._require(request)
@@ -937,6 +1088,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button>
 <button data-t="app_release" onclick="tab('app_release')">App 发布</button>
 <button data-t="zhongyuan" onclick="tab('zhongyuan')">中元活动</button>
+<button data-t="push" onclick="tab('push')">群推送</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -1258,8 +1410,8 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
@@ -1267,10 +1419,11 @@ function tab(t){
  else if(t==='app_release') loadAppRelease();
  else if(t==='lottery') loadLottery();
  else if(t==='zhongyuan') loadZhongyuan();
+ else if(t==='push') loadPush();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='push') return loadPush(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1284,6 +1437,7 @@ function render(){
  else if(cur==='custom_pets')renderCustomPets();
  else if(cur==='feedbacks')renderFeedbacks();
  else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘 */ }
+ else if(cur==='push'){ /* 由 renderPush 自绘 */ }
  else renderCards();
 }
 // ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
@@ -1480,6 +1634,120 @@ async function saveZhongyuan(){
  if(!r){msg.textContent='❌ 保存失败：无响应';return;}
  msg.textContent=r.ok?('✅ 已保存'+(r.bad&&r.bad.length?'（跳过：'+r.bad.join(', ')+'）':'')):('❌ 保存失败：'+(r.msg||'未知错误'));
  if(r.ok) loadZhongyuan();
+}
+// ---- 自定义文本群推送（手动 / 定时一次性 / 定时循环）----
+let PUSH_DATA=null;
+async function loadPush(){
+ const r=await api('/api/push/state',{});
+ PUSH_DATA=(r&&r.ok)?r.data:{jobs:[]};
+ renderPush();
+}
+function pushModeChange(){
+ const el=g('push_mode'); const m=el?el.value:'once';
+ const once=g('push_once_row'), rec=g('push_recur_row');
+ if(once) once.style.display=(m==='once')?'':'none';
+ if(rec) rec.style.display=(m==='recurring')?'':'none';
+}
+function renderPush(){
+ document.getElementById('count').textContent='';
+ document.getElementById('extrawrap').innerHTML='';
+ const jobs=(PUSH_DATA&&PUSH_DATA.jobs)||[];
+ let rows='';
+ for(const j of jobs){
+  const lr=j.last_result||{};
+  let lrs='（未推送）';
+  if(lr.ts){
+   lrs=`${fdate(lr.ts)} · 目标${lr.targets??'—'}/成功${lr.sent??'—'}/失败${lr.failed??'—'}`+(lr.error?(' · '+esc(lr.error)):'');
+  }
+  let when='';
+  if(j.mode==='once') when=j.done?('已完成 · '+fdate(j.target_ts)):('到点 '+fdate(j.target_ts));
+  else when=('下次 '+fdate(j.next_run)+' · 每'+j.interval_min+'分钟');
+  const stCol=j.enabled?'<b style="color:#17a05e">启用</b>':'<span class="muted">停用</span>';
+  const modeCol=j.mode==='once'?'一次性':'循环';
+  const statusBtn=j.enabled?'停用':'启用';
+  rows+=`<tr>
+   <td class="muted">${esc(j.id.slice(-8))}</td>
+   <td>${modeCol}</td>
+   <td style="max-width:200px;overflow-wrap:anywhere">${esc(j.text)}</td>
+   <td>${when}</td>
+   <td class="muted" style="font-size:12px">${lrs}</td>
+   <td>${stCol}</td>
+   <td>
+    <button class="act ghost" onclick="pushToggle('${escA(j.id)}',${!j.enabled})">${statusBtn}</button>
+    <button class="act ghost" onclick="pushFire('${escA(j.id)}')">触发</button>
+    <button class="act del" onclick="pushDelete('${escA(j.id)}')">删除</button>
+   </td></tr>`;
+ }
+ const tableHtml=rows?`<table><thead><tr><th>ID</th><th>模式</th><th>文案</th><th>排程</th><th>最近结果</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`:'<div class="empty">暂无定时任务</div>';
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:960px">
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+   <h3 style="margin:0 0 16px">📣 自定义文本群推送 <span class="muted" style="font-weight:400">（推送到所有已授权且开启宠物乐园玩法的群）</span></h3>
+   <div class="row">
+    <label class="fld">模式 <select id="push_mode" onchange="pushModeChange()">
+      <option value="once">指定时间发送（一次性）</option>
+      <option value="recurring">定时循环（每隔 N 分钟）</option>
+    </select></label>
+    <label class="fld">任务名称 <input id="push_name" placeholder="可选" style="width:180px"></label>
+   </div>
+   <label class="fld">推送文案 <textarea id="push_text" rows="4" placeholder="推送给所有群的内容，支持 Markdown：用空行/列表分段，勿用单个换行" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical"></textarea></label>
+   <div class="row">
+    <label class="fld" id="push_once_row">指定时间 <input id="push_at" type="datetime-local"></label>
+    <label class="fld" id="push_recur_row" style="display:none">间隔(分钟) <input id="push_interval" type="number" value="30" style="width:100px"></label>
+   </div>
+   <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+    <button class="act" onclick="pushManual()">立即推送到所有授权群</button>
+    <button class="act" onclick="pushSave()">新建定时任务</button>
+    <button class="act ghost" onclick="loadPush()">刷新</button>
+   </div>
+   <div class="muted" id="push_msg" style="margin-top:10px"></div>
+  </div>
+  <div style="margin-top:12px;background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:10px 14px">
+   <div class="sec">定时任务列表</div>
+   ${tableHtml}
+  </div>
+ </div>`;
+ pushModeChange();
+}
+async function pushManual(){
+ const text=g('push_text').value.trim();
+ if(!text){alert('请填写推送文案'); return;}
+ const r=await api('/api/push/manual',{text});
+ const m=g('push_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+}
+async function pushSave(){
+ const mode=g('push_mode').value;
+ const text=g('push_text').value.trim();
+ const name=g('push_name').value.trim();
+ if(!text){alert('请填写推送文案'); return;}
+ const body={mode,text,name};
+ if(mode==='once'){
+  body.target_ts=eventLocalToTs(g('push_at').value)||0;
+  if(!body.target_ts){alert('请选择指定时间'); return;}
+ } else {
+  body.interval_min=Number(g('push_interval').value)||0;
+  if(!body.interval_min){alert('请填写间隔分钟'); return;}
+ }
+ const r=await api('/api/push/save',body);
+ const m=g('push_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+ if(r.ok) loadPush();
+}
+async function pushToggle(id,en){
+ const r=await api('/api/push/toggle',{id,enabled:en});
+ const m=g('push_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+ if(r.ok) loadPush();
+}
+async function pushFire(id){
+ if(!confirm('确认立即触发推送到所有授权群？')) return;
+ const r=await api('/api/push/fire',{id});
+ alert(r.ok?(r.msg||'已触发'):(r.msg||'触发失败'));
+ if(r.ok) loadPush();
+}
+async function pushDelete(id){
+ if(!confirm('确认删除该定时任务？')) return;
+ const r=await api('/api/push/delete',{id});
+ const m=g('push_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+ if(r.ok) loadPush();
 }
 async function testDeepSeek(){
  const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在测试连接…';
