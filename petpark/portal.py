@@ -420,6 +420,7 @@ class PlayerPortal:
         app.router.add_get("/api/portal/me", self._api_me)
         app.router.add_post("/api/portal/bind/query", self._api_bind_query)
         app.router.add_post("/api/portal/bind/auto", self._api_bind_auto)
+        app.router.add_post("/api/portal/bind/reclaim", self._api_bind_reclaim)
         app.router.add_post("/api/portal/bind", self._api_bind)
         app.router.add_get("/api/portal/pet", self._api_pet)
         app.router.add_post("/api/portal/auto_cultivation", self._api_auto_cultivation)
@@ -735,11 +736,11 @@ class PlayerPortal:
         return web.json_response({"ok": True, "pets": pet_list})
 
     async def _api_bind_auto(self, request: web.Request) -> web.Response:
-        """根据登录账号的绑定 QQ，自动列出各群「可绑定」的宠物（含群 ID + 用户 ID）。
+        """根据登录账号的绑定 QQ，自动列出各群名下宠物及其绑定情况（含群 ID + 用户 ID）。
 
         匹配规则：玩家槽位 (group_id, user_id) 属于该账号，当且仅当
         - user_id == 账号绑定 QQ；或 user_id 经 qq_bindings 绑定到该 QQ（平台 openid → QQ号）。
-        仅返回尚未被任意账号绑定的槽位（即可绑定项）。
+        返回每个名下宠物的绑定状态：none=未绑定 / me=已绑到本账号 / other=被其它网页账号绑定（可强要回）。
         """
         self._check_csrf(request)
         sess = self._require_session(request)
@@ -754,6 +755,13 @@ class PlayerPortal:
         for pid, q in self.store.qq_bindings().items():
             if str(q) == account_qq:
                 cand_pids.add(str(pid))
+        # 汇总 (群, 用户ID) -> 已绑定账号ID，用于判断绑定状态与归属。
+        bound_map: dict[tuple[str, str], str] = {}
+        for acc_id, acc in self.store.accounts().items():
+            for bp in acc.get("bound_pets", []):
+                bound_map[(str(bp.get("group")), str(bp.get("qq")))] = acc_id
+        # 记录被其它账号绑定的账号 QQ，便于展示。
+        acc_qq_map = {a_id: str(a.get("qq", "")) for a_id, a in self.store.accounts().items()}
         players = self.store._data.get("players", {})
         groups: dict[str, list[dict]] = {}
         for key, player in players.items():
@@ -768,8 +776,13 @@ class PlayerPortal:
             if not pets:
                 continue
             gid = str(gid)
-            if self.store.account_for_pet(gid, uid) is not None:
-                continue  # 已被某账号绑定，非「可绑定」
+            owner_id = bound_map.get((gid, uid))
+            if owner_id is None:
+                bound = "none"
+            elif owner_id == sess["aid"]:
+                bound = "me"
+            else:
+                bound = "other"
             pet_list = []
             for i, pt in enumerate(pets):
                 if not isinstance(pt, dict):
@@ -784,13 +797,32 @@ class PlayerPortal:
                     "element": pt.get("element", "未知"),
                 })
             if pet_list:
-                groups.setdefault(gid, []).append({
+                entry = {
                     "qq": uid,
                     "pet_count": len(pet_list),
+                    "bound": bound,
                     "pets": pet_list,
-                })
+                }
+                if bound == "other":
+                    entry["bound_qq"] = self._mask_qq(acc_qq_map.get(owner_id, ""))
+                groups.setdefault(gid, []).append(entry)
         ordered = [{"group_id": g, "players": ps} for g, ps in groups.items()]
         return web.json_response({"ok": True, "qq": account_qq, "groups": ordered})
+
+    async def _api_bind_reclaim(self, request: web.Request) -> web.Response:
+        """宠物所有方（其 QQ 绑定了该槽位）强行要回绑定权。"""
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        body = await request.json()
+        group_id = str(body.get("group_id", "")).strip()
+        qq = str(body.get("qq", "")).strip()
+        pet_index = int(body.get("pet_index", 0))
+        if not group_id or not qq:
+            return web.json_response({"ok": False, "msg": "群号和用户 ID 不能为空"})
+        ok, msg = self.store.reclaim_pet_binding(sess["aid"], group_id, qq, pet_index)
+        if ok:
+            await self.store.save()
+        return web.json_response({"ok": ok, "msg": msg})
 
     async def _api_bind(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
@@ -1651,15 +1683,20 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <el-dialog v-model="bind.show" title="＋ 绑定新宠物" width="460px" align-center>
   <div v-if="auto.loading" class="muted" style="padding:4px 2px 8px">🔍 正在自动识别（按登录 QQ {{ auto.qq || '...' }}）…</div>
   <div v-else-if="auto.list && auto.list.length" style="margin-bottom:10px">
-    <div style="color:#8f97ab;font-size:12px;margin:0 0 6px">✅ 已按登录 QQ（{{ auto.qq }}）自动找到可绑定的宠物，点「选择」一键填入：</div>
+    <div style="color:#8f97ab;font-size:12px;margin:0 0 6px">✅ 已按登录 QQ（{{ auto.qq }}）自动列出名下宠物及绑定情况：未绑定点「选择」、被其它账号绑定的可「强要回」。</div>
     <div style="max-height:230px;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:8px">
       <div v-for="grp in auto.list" :key="grp.group_id" style="padding:8px;border-bottom:1px solid rgba(255,255,255,.06)">
         <div style="font-size:12px;color:#cfd6e4;margin-bottom:2px"><b>群 ID</b> <code>{{ grp.group_id }}</code></div>
-        <div v-for="pl in grp.players" :key="grp.group_id + '|' + pl.qq" style="padding-left:10px">
-          <div style="font-size:12px;color:#aeb6c9">用户ID <code>{{ pl.qq }}</code>　共 {{ pl.pet_count }} 只</div>
+        <div v-for="pl in grp.players" :key="grp.group_id + '|' + pl.qq" style="padding:6px 0 6px 10px">
+          <div style="font-size:12px;color:#aeb6c9">用户ID <code>{{ pl.qq }}</code>　共 {{ pl.pet_count }} 只
+            <span v-if="pl.bound==='other'" style="color:#f56c6c">　⚠️ 已被其它账号绑定<span v-if="pl.bound_qq">（{{ pl.bound_qq }}）</span>，可强要回</span>
+            <span v-else-if="pl.bound==='me'" style="color:#67c23a">　✅ 已绑定到本账号</span>
+          </div>
           <div v-for="pt in pl.pets" :key="pt.index" style="display:flex;align-items:center;gap:8px;margin:3px 0 3px 8px">
             <span style="flex:1;font-size:12px;color:#e6e9f0">{{ pt.nickname }}　{{ pt.species }}　{{ pt.quality }}　Lv{{ pt.level }}　{{ pt.stage }}</span>
-            <el-button size="small" round plain type="primary" @click="pickAuto(grp.group_id, pl.qq, pt.index)">选择</el-button>
+            <el-button v-if="pl.bound==='other'" size="small" round plain type="danger" @click="reclaimBind(grp.group_id, pl.qq, pt.index)">强要回</el-button>
+            <el-button v-else-if="pl.bound==='me'" size="small" round plain disabled>已绑定</el-button>
+            <el-button v-else size="small" round plain type="primary" @click="pickAuto(grp.group_id, pl.qq, pt.index)">选择</el-button>
           </div>
         </div>
       </div>
@@ -1907,6 +1944,14 @@ createApp({
       bind.group = g; bind.qq = q; bind.pets = null; bind.petIndex = idx || 0;
       await doBindQuery();
     }
+    async function reclaimBind(g, q, idx){
+      if(!g || !q){ return; }
+      try{ await ElMessageBox.confirm('确定要强行要回该宠物的绑定权吗？这会把该宠物的网页绑定权改到你的账号。','强要确认',{type:'warning'}); }
+      catch(e){ return; }
+      const r = await api('/api/portal/bind/reclaim','POST',{group_id:g, qq:q, pet_index:idx});
+      if(r && r.ok){ ElMessage.success(r.msg || '已强行要回绑定权'); await init(); await doBindAuto(); }
+      else { ElMessage.error((r && r.msg) || '强要失败'); }
+    }
     async function doBindQuery(){
       const g = bind.group.trim(), q = bind.qq.trim();
       if(!g || !q){ ElMessage.warning('群号和用户 ID 不能为空'); return; }
@@ -2126,7 +2171,7 @@ createApp({
       bind, pwd, custom, crop,
       auto,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
-      loadPet, logout, openBind, doBindAuto, pickAuto, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
+      loadPet, logout, openBind, doBindAuto, pickAuto, reclaimBind, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       goFeedback, goChat,
       redeemCustom, openCustomEdit, submitCustom, toggleAutoCultivation,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};

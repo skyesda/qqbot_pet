@@ -1478,6 +1478,46 @@ class PetStore:
         })
         return True, "绑定成功"
 
+    def reclaim_pet_binding(
+        self, account_id: str, group_id: str, qq: str, pet_index: int = 0
+    ) -> tuple[bool, str]:
+        """宠物所有方（其 QQ 绑定了该槽位）强行要回绑定权。
+
+        仅当 `account["qq"]` 是该槽位宠物所有 QQ 时才允许：解除其他账号对该槽位的绑定，
+        并改绑到本账号。返回 (是否成功, 提示)。
+        """
+        account = self.get_account(account_id)
+        if not account:
+            return False, "账号不存在"
+        group_id, qq = str(group_id), str(qq)
+        account_qq = str(account.get("qq", "")).strip()
+        # 所有权校验：该槽位的用户ID属于本账号绑定的 QQ（直连或经 qq_bindings）
+        if not (qq == account_qq or str(self.get_bound_qq(qq)) == account_qq):
+            return False, "只有绑定该宠物所在 QQ 的账号才能强制要回"
+        key = self.make_key(group_id, qq)
+        if key not in self._data.get("players", {}):
+            return False, "该群聊与用户 ID 下不存在宠物"
+        player = self._data["players"][key]
+        pets = player.get("pets", []) or []
+        idx = max(0, min(int(pet_index or 0), len(pets) - 1)) if pets else 0
+        pet = pets[idx] if 0 <= idx < len(pets) else {}
+        # 移除所有账号对该槽位的绑定
+        for acc in self.accounts().values():
+            acc["bound_pets"] = [
+                bp for bp in acc.get("bound_pets", [])
+                if not (str(bp.get("group")) == group_id and str(bp.get("qq")) == qq)
+            ]
+        # 绑定到本账号
+        bound = account.setdefault("bound_pets", [])
+        bound.append({
+            "group": group_id,
+            "qq": qq,
+            "pet_index": idx,
+            "nickname": pet.get("nickname", "未命名"),
+            "species": pet.get("species", "未知"),
+        })
+        return True, "已强行要回绑定权"
+
     # ----------------------------- 宠物定制 -----------------------------
     def custom_reviews(self) -> dict:
         return self._data.setdefault("custom_reviews", {})
