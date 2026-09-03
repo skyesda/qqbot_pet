@@ -161,6 +161,9 @@ KNOWN_COMMANDS = {
     "砸蛋十连",
     "十连砸蛋",
     "购买宠物",
+    "购买市场",
+    "购买品质卡",
+    "购买变种卡",
     # 背包 / 物品
     "查看背包",
     "背包图",
@@ -2995,8 +2998,8 @@ class PetParkPlugin(Star):
             return self._smash_egg(player)
         if cmd in ("砸蛋十连", "十连砸蛋"):
             return self._smash_ten(player)
-        if cmd == "购买宠物":
-            return self._buy_pet(player, tokens)
+        if cmd in ("购买市场", "购买品质卡", "购买变种卡", "购买宠物"):
+            return self._buy_market_item(player, tokens)
         if cmd in ("合成卡", "合成品质卡", "卡合成"):
             return self._compose_quality_card(player, tokens)
         if cmd in ("碎片转卡", "碎片合成", "碎片兑换"):
@@ -4586,7 +4589,7 @@ class PetParkPlugin(Star):
                 text = (
                     f"## 📖 {name}\n"
                     f"- **默认属性**：{element}\n"
-                    f"- 可通过『砸蛋』抽取，部分种类可在『宠物市场』购买"
+                    f"- 可通过『砸蛋』抽取，或用品质卡在『宠物市场』召唤"
                 )
                 return text, images.pet_image_md(name)
             names = " · ".join(data.SPECIES_NAMES)
@@ -5432,7 +5435,7 @@ class PetParkPlugin(Star):
                 "> 指令**无需前缀**，直接发送即可；需指定对方时填 **用户ID** 或直接 **@对方**",
                 "",
                 "**【入门】**",
-                "- 砸蛋 · 购买宠物 · 我的宠物 · 宠物状态",
+                "- 砸蛋 · 宠物市场（品质卡/变种卡）· 我的宠物 · 宠物状态",
                 "- 宠物改名 · 宠物变性 · 赠送宠物 QQ · 放生宠物",
                 "- 锁定宠物 · 解锁宠物（锁定后无法放生/赠送，防误操作）",
                 "- 宠物侦查 用户ID",
@@ -5652,13 +5655,20 @@ class PetParkPlugin(Star):
     def _pet_market_text(self) -> str:
         lines = [
             "## 🐾 宠物市场 / 宠物专域",
-            "> 购买方式：`购买宠物 宠物名 [品质]`",
+            "> 现已改卖 **品质卡** 与 **变种卡**（不再按物种直售宠物）。",
+            "> 购买方式：`购买市场 物品名`（例如：`购买市场 史诗卡`）",
             "",
+            "**【品质卡】**",
+            "> 可 `使用 XXX卡 召唤` 随机召唤同品质宠物，或 `使用 XXX卡 宠物名` 给指定宠物提升品质。",
         ]
-        for n, p in data.PET_MARKET.items():
-            lines.append(f"- **{n}** — {p} 积分")
+        for card, price in data.PET_MARKET_CARDS.items():
+            lines.append(f"- **{card}** — {price} 积分")
+        sc = data.SPECIES_CHANGE_CARD
         lines.append("")
-        lines.append("> 品质可选：" + " / ".join([q for q in data.QUALITIES if q not in data.PET_MARKET_BANNED_QUALITIES]) + "（默认普通，高品质加价；圣灵/洪荒/创世/混沌为活动/定制限定，不可在市场购买）")
+        lines.append("**【变种卡】**")
+        lines.append(f"- **{sc['name']}** — {sc['price']} 积分　`使用 {sc['name']} 宠物名` 随机改变该宠物种类（保留等级/品质/属性）")
+        lines.append("")
+        lines.append("> 注：圣灵/洪荒/创世/混沌为活动/定制限定品质，不在市场出售。")
         return "\n".join(lines)
 
     # =====================================================================
@@ -5753,35 +5763,39 @@ class PetParkPlugin(Star):
                 return pets[idx]
         return None
 
-    def _buy_pet(self, player: dict, tokens: list[str]) -> str:
-        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
-        if len(player.get("pets", [])) >= slots:
-            return (
-                f"宠物席位已满（{len(player['pets'])}/{slots}），无法获取新宠物。\n"
-                "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
-            )
+    def _buy_market_item(self, player: dict, tokens: list[str]) -> str:
+        """宠物市场购买品质卡/变种卡。品质卡可召唤宠物或升品质，变种卡用于换物种。"""
         if len(tokens) < 2:
-            return "用法：购买宠物 宠物名 [品质]"
-        species = tokens[1]
-        if species not in data.PET_MARKET:
-            return f"宠物市场没有『{species}』，发送『宠物市场』查看在售宠物。"
-        quality = (
-            tokens[2] if len(tokens) > 2 and tokens[2] in data.QUALITIES else "普通"
+            return "用法：购买市场 物品名（例如：购买市场 史诗卡 / 购买市场 变种卡）"
+        name = tokens[1]
+        jifen = self.store.get_currency(player, "积分")
+        # 品质卡
+        if name in data.PET_MARKET_CARDS:
+            price = data.PET_MARKET_CARDS[name]
+            if jifen < price:
+                return f"购买『{name}』需 {price} 积分，积分不足（当前 {jifen}）。"
+            self.store.add_currency(player, "积分", -price)
+            self.store.add_item(player, name, 1)
+            return (
+                f"✅ **购买成功！** 花费 {price} 积分，获得 **{name}** ×1。\n"
+                f"> 发送 `使用 {name} 召唤` 召唤同品质宠物，或 `使用 {name} 宠物名` 提升品质。"
+            )
+        # 变种卡
+        sc = data.SPECIES_CHANGE_CARD
+        if name == sc["name"]:
+            price = sc["price"]
+            if jifen < price:
+                return f"购买『{name}』需 {price} 积分，积分不足（当前 {jifen}）。"
+            self.store.add_currency(player, "积分", -price)
+            self.store.add_item(player, name, 1)
+            return (
+                f"✅ **购买成功！** 花费 {price} 积分，获得 **{name}** ×1。\n"
+                f"> 发送 `使用 {name} 宠物名` 随机改变该宠物种类（保留等级/品质/属性）。"
+            )
+        return (
+            f"宠物市场没有『{name}』。当前在售：{'、'.join(data.PET_MARKET_CARDS)}、{sc['name']}。"
+            "发送『宠物市场』查看。"
         )
-        if quality in data.PET_MARKET_BANNED_QUALITIES:
-            return f"【{quality}】为活动/定制限定品质，无法通过宠物市场购买。"
-        price = data.PET_MARKET[species]
-        # 高品质加价
-        mult = 1 + data.QUALITIES.index(quality) * 0.5
-        cost = int(price * mult)
-        if self.store.get_currency(player, "积分") < cost:
-            return f"购买『{species}』（{quality}）需 {cost} 积分，积分不足。"
-        self.store.add_currency(player, "积分", -cost)
-        new_p = petmod.new_pet(species, quality)
-        if not self._add_pet(player, new_p):
-            self.store.add_currency(player, "积分", cost)  # 退款
-            return "添加宠物失败，席位异常，已退款。"
-        return f"✅ **购买成功！** 花费 {cost} 积分获得 【{quality}】品质的 **{species}**。"
 
     def _compose_quality_card(self, player: dict, tokens: list[str]) -> str:
         """品质卡合成：10 张低一级卡合成 1 张高一级卡。"""
@@ -6434,6 +6448,31 @@ class PetParkPlugin(Star):
                 return msg
             self.store.remove_item(player, name, 1)
             return f"使用『{name}』x1：{msg}"
+        # 变种卡：指定宠物，随机改变其种类（保留等级/品质/属性）
+        if it_check and it_check.get("effect", {}).get("species_change"):
+            if not self.store.has_item(player, name):
+                return f"背包里没有『{name}』。"
+            sub = tokens[2].strip() if len(tokens) > 2 else ""
+            p = self._need_pet(player)
+            if sub and not sub.isdigit():
+                tp = self._resolve_pet_target(player, sub)
+                if tp:
+                    p = tp
+                else:
+                    return f"没有找到名为『{sub}』的宠物。发送《我的宠物》查看名字。"
+            if not p:
+                return "你没有宠物，无法使用『变种卡』。发送『砸蛋』获取一只。"
+            if p.get("locked"):
+                return "🔒 宠物已锁定，无法改变种类。请先『解锁宠物』。"
+            old_species = p.get("species", "")
+            choices = [s for s in data.SPECIES_NAMES if s != old_species] or data.SPECIES_NAMES
+            new_species = random.choice(choices)
+            p["species"] = new_species
+            self.store.remove_item(player, name, 1)
+            return (
+                f"🔄 使用『{name}』×1：『{old_species}』变为『{new_species}』！\n"
+                "> 等级/品质/属性均保留。"
+            )
         p = self._need_pet(player)
         if not p:
             return "你没有宠物，无法使用物品。"
