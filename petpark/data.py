@@ -590,6 +590,47 @@ ITEMS = {
         "effect": {},
     },
     # ---- 品质提升卡（宠物每达到 60 级自动赠送史诗卡，其余可通过活动/奖品获得）----
+    # 低阶卡（普通~传说）主要由「品质碎片合成」/ 砸蛋产出，可对指定宠物升品质或召唤随机宠物。
+    "普通卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "可召唤一只【普通】品质随机宠物，或对指定宠物提升该品质。",
+        "effect": {"upgrade_quality": "普通"},
+    },
+    "精品卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【精品】，属性随品质同步飞跃。精品及以上品质无法使用。",
+        "effect": {"upgrade_quality": "精品"},
+    },
+    "稀有卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【稀有】，属性随品质同步飞跃。稀有及以上品质无法使用。",
+        "effect": {"upgrade_quality": "稀有"},
+    },
+    "神级卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【神级】，属性随品质同步飞跃。神级及以上品质无法使用。",
+        "effect": {"upgrade_quality": "神级"},
+    },
+    "传说卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【传说】，属性随品质同步飞跃。传说及以上品质无法使用。",
+        "effect": {"upgrade_quality": "传说"},
+    },
     "史诗卡": {
         "price": 0,
         "currency": CURRENCY_JIFEN,
@@ -641,15 +682,30 @@ ITEMS = {
     },
 }
 
-# 品质卡合成链（10 张低一级卡合成 1 张高一级卡）。
+# 品质碎片（砸蛋副产物）：同品质 10 片兑换 1 张该品质卡。不可直接使用，仅作合成素材。
+FRAGMENT_TO_CARD = 10  # 兑换 1 张卡所需碎片数
+for _q in QUALITIES:
+    ITEMS[f"{_q}碎片"] = {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "材料",
+        "usable": False,
+        "desc": f"【{_q}】品质碎片，{FRAGMENT_TO_CARD} 片可兑换 1 张【{_q}卡】。",
+        "effect": {},
+    }
+
+# 品质卡合成链（10 张低一级卡合成 1 张高一级卡；顶级创世→混沌需 20 张，刻意加码）。
 # 仅对实际存在的品质卡建立映射；缺少低级卡时链从第一个存在的卡开始。
+TOP_CARD_NAME = "混沌卡"
+TOP_CARD_COST = 20  # 创建世→混沌的合成张数专门上调，避免顶级太易得
 QUALITY_CARD_UPGRADE: dict[str, tuple[str, int]] = {}
 for _i, _q in enumerate(QUALITIES):
     _src_card = f"{_q}卡"
     if _i + 1 < len(QUALITIES):
         _dst_card = f"{QUALITIES[_i + 1]}卡"
         if _src_card in ITEMS and _dst_card in ITEMS:
-            QUALITY_CARD_UPGRADE[_dst_card] = (_src_card, 10)
+            _need = TOP_CARD_COST if _dst_card == TOP_CARD_NAME else FRAGMENT_TO_CARD
+            QUALITY_CARD_UPGRADE[_dst_card] = (_src_card, _need)
 
 # 在品质卡说明里追加合成信息
 for _dst_card, (_src_card, _need) in QUALITY_CARD_UPGRADE.items():
@@ -1075,7 +1131,8 @@ ENERGY_REGEN_PER_MIN = 1  # 每分钟恢复 1 点精力
 ATTACK_ENERGY = 10
 
 # 各类行为冷却（秒）。日常活动为 [下限, 上限] 随机区间。
-EGG_COOLDOWN = 60  # 砸蛋冷却 1 分钟
+EGG_COOLDOWN = 180  # 砸蛋单发冷却 3 分钟
+EGG_TEN_COOLDOWN = 1500  # 砸蛋十连冷却 25 分钟（与单发共用同一冷却键，互斥）
 DUNGEON_COOLDOWN = 900  # 进入副本冷却 15 分钟
 DAILY_COOLDOWN_RANGE = (600, 1200)  # 修炼等日常活动冷却 10~20 分钟随机
 TRIBULATION_FAIL_COOLDOWN = 1800  # 渡劫失败后冷却 30 分钟

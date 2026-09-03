@@ -158,6 +158,8 @@ KNOWN_COMMANDS = {
     "宠物专域",
     # 获取宠物
     "砸蛋",
+    "砸蛋十连",
+    "十连砸蛋",
     "购买宠物",
     # 背包 / 物品
     "查看背包",
@@ -194,6 +196,9 @@ KNOWN_COMMANDS = {
     "合成卡",
     "合成品质卡",
     "卡合成",
+    "碎片转卡",
+    "碎片合成",
+    "碎片兑换",
     "赠送金币",
     "赠送积分",
     "赠送钻石",
@@ -365,6 +370,8 @@ WEB_BLOCKED_COMMANDS = {
     "赠送钻石",
     # 获取宠物（应在群内进行）
     "砸蛋",
+    "砸蛋十连",
+    "十连砸蛋",
     "购买宠物",
     # 群管理 / 授权 / 广播类
     "开启宠物乐园",
@@ -2979,10 +2986,14 @@ class PetParkPlugin(Star):
         # ---- 获取宠物 ----
         if cmd == "砸蛋":
             return self._smash_egg(player)
+        if cmd in ("砸蛋十连", "十连砸蛋"):
+            return self._smash_ten(player)
         if cmd == "购买宠物":
             return self._buy_pet(player, tokens)
         if cmd in ("合成卡", "合成品质卡", "卡合成"):
             return self._compose_quality_card(player, tokens)
+        if cmd in ("碎片转卡", "碎片合成", "碎片兑换"):
+            return self._exchange_fragment(player, tokens)
         if cmd in ("赠送金币", "赠送积分", "赠送钻石"):
             return self._gift_currency(player, group_id, cmd, tokens)
 
@@ -5653,11 +5664,87 @@ class PetParkPlugin(Star):
         new_p = petmod.new_pet(species, quality)
         if not self._add_pet(player, new_p):
             return "添加宠物失败，席位异常。"
+        # 副产物：本次品质的同名碎片
+        shard_name = f"{quality}碎片"
+        shard_n = random.randint(3, 6)
+        self.store.add_item(player, shard_name, shard_n)
         self.store.set_cooldown(player, "砸蛋", data.EGG_COOLDOWN)
         return (
             f"💥 **砸蛋成功！**\n获得 【{quality}】品质的 **{species}**！\n"
+            f"✨ 额外获得 **{shard_name} ×{shard_n}**\n"
             "> 发送 `我的宠物` 查看详情。"
         )
+
+    def _smash_ten(self, player: dict) -> str:
+        """砸蛋十连：一次出 10 只宠物 + 品质碎片。与单发共享同一冷却键「砸蛋」（互斥）。"""
+        need = 10
+        slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+        if len(player.get("pets", [])) + need > slots:
+            return (
+                f"宠物席位不足（{len(player['pets'])}/{slots}），砸蛋十连需预留 {need} 个席位。\n"
+                "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
+            )
+        cd = self._cooldown_block(player, "砸蛋", "砸蛋")
+        if cd:
+            return cd
+        picks = []
+        shard_tot: dict[str, int] = {}
+        for _ in range(need):
+            species = random.choice(data.SPECIES_NAMES)
+            quality = self._roll_quality()
+            new_p = petmod.new_pet(species, quality)
+            if not self._add_pet(player, new_p):
+                return "添加宠物失败，席位异常。"
+            picks.append(f"【{quality}】{species}")
+            cnt = random.randint(3, 6)
+            self.store.add_item(player, f"{quality}碎片", cnt)
+            shard_tot[quality] = shard_tot.get(quality, 0) + cnt
+        self.store.set_cooldown(player, "砸蛋", data.EGG_TEN_COOLDOWN)
+        shard_str = "、".join(f"{q}碎片×{n}" for q, n in shard_tot.items()) or "无"
+        body = "\n".join(f"{i+1}. {p}" for i, p in enumerate(picks))
+        return (
+            f"💥 **砸蛋十连！**\n{body}\n"
+            f"✨ 额外品质碎片：{shard_str}\n"
+            f"> 十连冷却 25 分钟，与单发砸蛋共享冷却（其一进行中则另一不可用）。"
+        )
+
+    def _exchange_fragment(self, player: dict, tokens: list[str]) -> str:
+        """碎片转卡：同品质 10 片兑换 1 张该品质卡。"""
+        if len(tokens) < 2:
+            avg = "、".join(data.QUALITIES)
+            return f"用法：碎片转卡 <品质>（例如：碎片转卡 普通）\n当前品质：{avg}"
+        quality = tokens[1]
+        fragment = f"{quality}碎片"
+        card = f"{quality}卡"
+        if quality not in data.QUALITIES or fragment not in data.ITEMS:
+            return f"没有『{fragment}』这种碎片。可用品质：{'、'.join(data.QUALITIES)}。"
+        need = data.FRAGMENT_TO_CARD
+        have = player.get("bag", {}).get(fragment, 0)
+        if have < need:
+            return f"兑换 1 张【{card}】需要 {fragment} ×{need}，你当前只有 {have} 片。"
+        self.store.remove_item(player, fragment, need)
+        self.store.add_item(player, card, 1)
+        return f"✅ 兑换成功！消耗 {fragment} ×{need}，获得 **{card}** ×1。"
+
+    @staticmethod
+    def _resolve_pet_target(player: dict, key: str) -> dict | None:
+        """按宠物名/昵称/物种（或 1-based 序号）解析宠物。找不到返回 None。"""
+        pets = player.get("pets", [])
+        if not pets:
+            return None
+        key = key.strip()
+        for p in pets:
+            name = str(p.get("nickname", "")).strip()
+            if name and (name == key or name.lower() == key.lower()):
+                return p
+        for p in pets:
+            if str(p.get("species", "")).strip() == key:
+                return p
+        if key.isdigit():
+            idx = int(key) - 1
+            if 0 <= idx < len(pets):
+                return pets[idx]
+        return None
 
     def _buy_pet(self, player: dict, tokens: list[str]) -> str:
         slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
@@ -5696,7 +5783,7 @@ class PetParkPlugin(Star):
             return (
                 "用法：`合成卡 目标卡名`（例如：`合成卡 圣灵卡`）\n"
                 f"当前可合成：{available}\n"
-                "规则：10 张低一级品质卡可合成 1 张高一级品质卡。"
+                "规则：通常 10 张低一级品质卡合成 1 张高一级品质卡；顶级【混沌卡】需 20 张【创世卡】。"
             )
         target = tokens[1]
         if target not in data.QUALITY_CARD_UPGRADE:
@@ -6126,6 +6213,44 @@ class PetParkPlugin(Star):
                 f"> 有效期至 **{when}**\n"
                 f"> 发送『开启自动修炼』即可开始挂机修炼。"
             )
+        # 品质卡（普通卡~混沌卡）：双用途 —— ①「召唤」该品质随机宠物；②对指定宠物升品质。
+        # 召唤不需要已有宠物，故必须在此分支处理（在 _need_pet 门槛之前）。
+        if it_check and it_check.get("effect", {}).get("upgrade_quality"):
+            if not self.store.has_item(player, name):
+                return f"背包里没有『{name}』。"
+            target_q = it_check["effect"]["upgrade_quality"]
+            sub = tokens[2].strip() if len(tokens) > 2 else ""
+            if sub in ("召唤", "随机", "随机召唤", "开卡", "开"):
+                slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
+                if len(player.get("pets", [])) >= slots:
+                    return (
+                        f"宠物席位已满（{len(player['pets'])}/{slots}），无法召唤新宠物。\n"
+                        "请先 `放生宠物` 或使用 `宠物席位卡` 扩容。"
+                    )
+                species = random.choice(data.SPECIES_NAMES)
+                new_p = petmod.new_pet(species, target_q)
+                if not self._add_pet(player, new_p):
+                    return "召唤失败，席位异常。"
+                self.store.remove_item(player, name, 1)
+                return (
+                    f"🎴 **召唤成功！** 消耗 {name} ×1，获得 【{target_q}】品质的 **{species}**！\n"
+                    "> 发送 `我的宠物` 查看详情。"
+                )
+            # 指定宠物升品质：未指定 → 当前宠物；指定宠物名/序号 → 按名查找
+            p = self._need_pet(player)
+            if sub and not sub.isdigit():
+                tp = self._resolve_pet_target(player, sub)
+                if tp:
+                    p = tp
+                else:
+                    return f"没有找到名为『{sub}』的宠物。发送《我的宠物》查看名字。"
+            if not p:
+                return "你没有宠物，无法使用品质卡。发送『砸蛋』获取一只。"
+            ok, msg = petmod.upgrade_quality(p, target_q)
+            if not ok:
+                return msg
+            self.store.remove_item(player, name, 1)
+            return f"使用『{name}』x1：{msg}"
         p = self._need_pet(player)
         if not p:
             return "你没有宠物，无法使用物品。"
