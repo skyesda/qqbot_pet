@@ -1686,12 +1686,12 @@ function fieldHtml(){
  if(cur==='events')return `
   <div class="muted">ID 保存后不可修改；活动时间选择本地日期，后台自动转时间戳。</div>
   <div class="row">
-   <div style="flex:2"><label class="fld">活动名称</label><input id="f_name" placeholder="清凉一夏"></div>
-   <div><label class="fld">主题</label><input id="f_theme" placeholder="summer"></div>
+   <div style="flex:2"><label class="fld">活动名称</label><input id="f_name" placeholder="秋收冬藏"></div>
+   <div><label class="fld">主题</label><input id="f_theme" placeholder="autumn"></div>
   </div>
   <div class="row">
-   <div><label class="fld">菜单指令</label><input id="f_menu_cmd" placeholder="夏日活动"></div>
-   <div><label class="fld">代币名</label><input id="f_token" placeholder="贝壳"></div>
+   <div><label class="fld">菜单指令</label><input id="f_menu_cmd" placeholder="秋冬活动"></div>
+   <div><label class="fld">代币名</label><input id="f_token" placeholder="银杏叶"></div>
   </div>
   <div class="row">
    <div><label class="fld">副本列表指令</label><input id="f_dungeon_list_cmd" placeholder="活动副本"></div>
@@ -1714,10 +1714,10 @@ function fieldHtml(){
   <div class="sec">活动抽奖</div>
   <div class="chk"><input id="f_gacha_enabled" type="checkbox"><label for="f_gacha_enabled">启用抽奖</label></div>
   <div class="row">
-   <div><label class="fld">抽奖指令</label><input id="f_gacha_cmd" placeholder="夏日抽奖"></div>
+   <div><label class="fld">抽奖指令</label><input id="f_gacha_cmd" placeholder="秋冬抽奖"></div>
    <div><label class="fld">每日次数</label><input id="f_gacha_limit" type="number" value="5"></div>
   </div>
-  <div class="row"><div style="flex:1"><label class="fld">抽奖价格（如：贝壳 15）</label><input id="f_gacha_cost" placeholder="贝壳 15"></div></div>
+  <div class="row"><div style="flex:1"><label class="fld">抽奖价格（如：贝壳 15）</label><input id="f_gacha_cost" placeholder="银杏叶 15"></div></div>
   <div class="sec" style="margin-top:10px">保底设置</div>
   <div class="chk"><input id="f_pity_enabled" type="checkbox"><label for="f_pity_enabled">启用大奖保底</label></div>
   <div class="row">
@@ -1736,8 +1736,8 @@ function fieldHtml(){
   <div class="sec">世界 Boss</div>
   <div class="chk"><input id="f_boss_enabled" type="checkbox"><label for="f_boss_enabled">启用世界 Boss</label></div>
   <div class="row">
-   <div style="flex:1"><label class="fld">挑战指令</label><input id="f_boss_cmd" placeholder="夏日Boss"></div>
-   <div style="flex:1"><label class="fld">Boss名称</label><input id="f_boss_name" placeholder="深海巨鲸"></div>
+   <div style="flex:1"><label class="fld">挑战指令</label><input id="f_boss_cmd" placeholder="秋冬Boss"></div>
+   <div style="flex:1"><label class="fld">Boss名称</label><input id="f_boss_name" placeholder="丰收巨灵"></div>
    <div style="flex:1"><label class="fld">血量</label><input id="f_boss_hp" type="number" value="100000"></div>
   </div>
   <div class="row">
@@ -2005,49 +2005,54 @@ function openModal(k,v){
   const now=Math.floor(Date.now()/1000);
   v={
    id:'',
-   name:'清凉一夏',
+   name:'秋收冬藏',
    enabled:true,
    start_at:now,
    end_at:now+30*86400,
-   token:'贝壳',
-   theme:'summer',
-   menu_cmd:'夏日活动',
+   token:'银杏叶',
+   theme:'autumn',
+   menu_cmd:'秋冬活动',
    dungeon_list_cmd:'活动副本',
    dungeon_enter_cmd:'进入活动副本',
    actions:{
-    '赶海':{energy:10,cooldown:600,daily_limit:5,rewards:{贝壳:{min:3,max:8,chance:1}},msg:'🌊 你在礁石边翻到 {贝壳} 个贝壳！'},
-    '冲浪':{energy:15,cooldown:900,daily_limit:3,rewards:{贝壳:{min:5,max:12,chance:1},经验:{min:50,max:120,chance:0.3}},msg:'🏄 冲浪收获 {贝壳} 个贝壳！'}
+    '拾穗':{energy:10,cooldown:600,daily_limit:5,rewards:{银杏叶:{min:3,max:8,chance:1}},msg:'🌾 你在田埂拾到 {银杏叶} 片银杏叶！'},
+    '晒秋':{energy:15,cooldown:900,daily_limit:3,rewards:{银杏叶:{min:5,max:12,chance:1},经验:{min:50,max:120,chance:0.3}},msg:'🍁 晒秋收获 {银杏叶} 片银杏叶！'}
    },
    event_items:{
-    '夏日冰饮':{category:'药品',usable:true,desc:'清凉解暑，恢复 200 点精力并回满心情。',effect:{heal_energy:200,mood:5}},
-    '游泳圈':{category:'装饰',usable:false,desc:'夏日活动限定装饰道具，可佩戴在宠物身上（收藏用）。',effect:{}},
-    '遮阳帽':{category:'道具',usable:true,desc:'戴上后永久增加 20 点攻击。',effect:{add_atk:20}}
+    '桂花酿':{category:'药品',usable:true,desc:'暖心润体，恢复 200 点精力并回满心情。',effect:{heal_energy:200,mood:5}},
+    '暖手炉':{category:'装饰',usable:false,desc:'秋冬活动限定装饰道具，可佩戴在宠物身上（收藏用）。',effect:{}},
+    '丰收斗笠':{category:'道具',usable:true,desc:'戴上后永久增加 20 点攻击。',effect:{add_atk:20}}
    },
    shop:{
-    '夏日冰饮':{cost:{贝壳:20},stock:{per_player:5},reward:{item:'夏日冰饮',count:1},desc:'恢复 200 精力并回满心情'},
-    '遮阳帽':{cost:{贝壳:80},stock:{per_player:1},reward:{effect:{add_atk:20}},desc:'永久攻击 +20'}
+    '桂花酿':{cost:{银杏叶:20},stock:{per_player:5},reward:{item:'桂花酿',count:1},desc:'恢复 200 精力并回满心情'},
+    '丰收斗笠':{cost:{银杏叶:80},stock:{per_player:1},reward:{effect:{add_atk:20}},desc:'永久攻击 +20'}
    },
-   gacha:{enabled:true,cmd:'夏日抽奖',cost:{贝壳:15},daily_limit:5,
+   gacha:{enabled:true,cmd:'秋冬抽奖',cost:{银杏叶:15},daily_limit:5,
     pity:{enabled:true,items:[
      {name:'大奖保底',threshold:1000,reward_item:'史诗卡'},
      {name:'小奖保底',threshold:500,reward_item:'金币'}
     ]},
     pool:[
-    {weight:50,reward:{贝壳:5},msg:'安慰奖'},
-    {weight:30,reward:{item:'夏日冰饮',count:1}},
-    {weight:15,reward:{金币:500}},
-    {weight:4,reward:{effect:{add_hp_max:50}}},
-    {weight:1,reward:{item:'史诗卡',count:1},msg:'🎉 大奖！'}
+    {weight:38,reward:{银杏叶:5},msg:'安慰奖，拾得 5 片银杏叶'},
+    {weight:20,reward:{item:'桂花酿',count:1},msg:'来杯桂花酿～'},
+    {weight:12,reward:{金币:500}},
+    {weight:8,reward:{item:'普通碎片',count:3},msg:'普通碎片×3'},
+    {weight:7,reward:{item:'精品碎片',count:2},msg:'精品碎片×2'},
+    {weight:6,reward:{item:'稀有碎片',count:1},msg:'稀有碎片×1'},
+    {weight:5,reward:{effect:{add_hp_max:50}}},
+    {weight:2,reward:{item:'传说碎片',count:1},msg:'传说碎片×1（稀）'},
+    {weight:1,reward:{item:'史诗卡',count:1},msg:'🎉 大奖！史诗卡'}
    ]},
    dungeons:{
-    '珊瑚洞穴':{monster:'巨蟹守卫',level_req:10,energy:15,cooldown:600,power:1500,exp:315,jifen:180,token_reward:10,reward:{item:'夏日冰饮',count:1}},
+    '珊瑚洞穴':{monster:'巨蟹守卫',level_req:10,energy:15,cooldown:600,power:1500,exp:315,jifen:180,token_reward:10,reward:{item:'桂花酿',count:1}},
     '沉船海湾':{monster:'幽灵船长',level_req:30,energy:25,cooldown:900,power:5000,exp:875,jifen:340,token_reward:25,reward:{item:'史诗卡',count:1}}
    },
-   boss:{enabled:true,cmd:'夏日Boss',name:'深海巨鲸',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,random_damage:true,random_damage_min:1,random_damage_max:10000,kill_rewards:[
-    {weight:50,reward:{贝壳:100,贝壳_max:200},msg:'海量贝壳'},
-    {weight:30,reward:{item:'夏日冰饮',count:1,count_max:3}},
+   boss:{enabled:true,cmd:'秋冬Boss',name:'丰收巨灵',hp:100000,level_req:20,energy:30,cooldown:1800,daily_limit:3,damage_factor:0.1,token_per_hit:20,respawn_seconds:3600,boss_damage:200,random_damage:true,random_damage_min:1,random_damage_max:10000,kill_rewards:[
+    {weight:48,reward:{银杏叶:100,银杏叶_max:200},msg:'满仓银杏叶'},
+    {weight:30,reward:{item:'桂花酿',count:1,count_max:3}},
     {weight:15,reward:{effect:{add_atk:50}}},
     {weight:4,reward:{金币:1000,金币_max:5000}},
+    {weight:2,reward:{item:'传说碎片',count:1,count_max:3},msg:'传说碎片×1~3'},
     {weight:1,reward:{item:'混沌卡',count:1},msg:'🎉 混沌品质卡！'}
    ]}
   };
