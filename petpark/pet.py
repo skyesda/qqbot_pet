@@ -99,7 +99,7 @@ def level_cap(pet: dict) -> int:
 
 
 def _is_ascended(pet: dict) -> bool:
-    return data.STAGES.index(pet.get("stage", "")) >= data.STAGES.index("飞升")
+    return data.STAGES.index(pet.get("stage") or data.STAGES[0]) >= data.STAGES.index("飞升")
 
 
 def add_exp(pet: dict, amount: int) -> int:

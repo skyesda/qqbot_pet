@@ -3143,6 +3143,12 @@ class PetParkPlugin(Star):
         if cmd == "我的剧情任务":
             return self._my_quests(player)
         if cmd == "取消剧情任务":
+            if len(tokens) >= 2:
+                name = tokens[1]
+                if name not in player.get("quests", {}):
+                    return f"你尚未领取『{name}』。"
+                player["quests"].pop(name, None)
+                return f"已取消剧情任务『{name}』。"
             player["quests"] = {}
             return "已取消所有已领取的剧情任务。"
         if cmd == "提交任务" or cmd == "领取任务":
@@ -5468,7 +5474,7 @@ class PetParkPlugin(Star):
                 "- 宠物副本 · 进入副本 名称",
                 "- 深渊秘境 · 深渊介绍 · 深渊商店 · 深渊祝福",
                 "- 宠物剧情任务 · 领取任务 名称 · 提交任务 名称",
-                "- 我的剧情任务 · 取消剧情任务",
+                "- 我的剧情任务 · 取消剧情任务（`取消剧情任务 任务名` 只取消单个）",
                 "",
                 "**【宠物摸金】**（独立财富系统）",
                 "- 摸金 · 摸金商店 · 购买摸金道具 名称",
@@ -8259,7 +8265,7 @@ class PetParkPlugin(Star):
             return False
         req = quest.get("req", {})
         stage = req.get("stage")
-        if stage and data.STAGES.index(p.get("stage", "")) < data.STAGES.index(stage):
+        if stage and data.STAGES.index(p.get("stage") or data.STAGES[0]) < data.STAGES.index(stage):
             return False
         level = req.get("level")
         if level and p.get("level", 0) < level:
