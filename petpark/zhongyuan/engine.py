@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,9 @@ from .config import (
 from .deepseek import DeepSeekClient
 
 BJ = ZoneInfo("Asia/Shanghai")
+
+# @提及：兼容 `<@openid>` / `<!@openid>`（主流程已替换为裸 openid，此正则兜底解包）
+_AT_RE = re.compile(r"<@!?([0-9A-Za-z_\-]+)>")
 
 # 解密副本为「全服单局」：全局只有一个会话，存于该固定 Key（替换原先每群一个实例）。
 _DUNGEON_KEY = "__global__"
@@ -910,18 +914,41 @@ class ZhongyuanActivity:
     # ------------------------------------------------------------------
     # 解除阴气
     # ------------------------------------------------------------------
-    def _cmd_clear_yin(self, group_id: str, qq: str) -> str:
-        ap = self._get_player(group_id, qq, create=False)
-        if not ap or not ap.get("activity_id"):
+    def _cmd_clear_yin(self, group_id: str, qq: str, args: list[str] | None = None) -> str:
+        """解除阴气。
+
+        不带 @ 时解除自己（原逻辑，自己付费）。
+        带 `@某人` 时帮他人解除：由调用者代付功德，目标玩家的阴气被清。
+        """
+        joined = _AT_RE.sub(r"\1", " ".join(args or [])).strip()
+        target = joined.split()[0] if joined else qq
+        helper = self._get_player(group_id, qq, create=False)
+        if not helper or not helper.get("activity_id"):
             return "❌ 你尚未相约中元。"
-        until = int(ap.get("yin_until", 0))
+        cost = self._int_cfg("yin_clear_cost", 100)
+        if target != qq:
+            # 帮他人解除：调用者代付功德
+            tgt = self._get_player(group_id, target, create=False)
+            if not tgt or not tgt.get("activity_id"):
+                return f"❌ 找不到玩家「{target}」（未绑定中元活动或不存在）。"
+            if int(tgt.get("yin_until", 0)) <= self._now():
+                return f"✅ 「{tgt.get('name', target)}」当前并无「阴气缠身」，无需解除。"
+            if int(helper.get("gongde", 0)) < cost:
+                return f"❌ 功德不足：帮他人解除需 **{cost}** 功德（当前 {helper['gongde']}）。"
+            helper["gongde"] = int(helper.get("gongde", 0)) - cost
+            tgt["yin_until"] = 0
+            return (
+                f"✅ 「{helper.get('name', qq)}」耗费 **{cost}** 功德，"
+                f"替「{tgt.get('name', target)}」解除了「阴气缠身」，其宠物重归清明。"
+            )
+        # 解除自己
+        until = int(helper.get("yin_until", 0))
         if until <= self._now():
             return "✅ 你当前并无「阴气缠身」。"
-        cost = self._int_cfg("yin_clear_cost", 100)
-        if int(ap.get("gongde", 0)) < cost:
-            return f"❌ 功德不足，快速解除需 {cost} 功德（当前 {ap['gongde']}）；或等剩余时间自然解除。"
-        ap["gongde"] = int(ap.get("gongde", 0)) - cost
-        ap["yin_until"] = 0
+        if int(helper.get("gongde", 0)) < cost:
+            return f"❌ 功德不足，快速解除需 {cost} 功德（当前 {helper['gongde']}）；或等剩余时间自然解除。"
+        helper["gongde"] = int(helper.get("gongde", 0)) - cost
+        helper["yin_until"] = 0
         return f"✅ 已耗费 **{cost}** 功德解除「阴气缠身」，你的宠物重归清明。"
 
     # ------------------------------------------------------------------
@@ -1380,7 +1407,7 @@ class ZhongyuanActivity:
         if cmd in ("焚香", "供灯"):
             return self._cmd_incense(group_id, qq, cmd)
         if cmd == "解除阴气":
-            return self._cmd_clear_yin(group_id, qq)
+            return self._cmd_clear_yin(group_id, qq, tokens[1:])
         if cmd == "功德商店":
             return self._cmd_shop(group_id, qq, text[len(cmd):].strip())
         if cmd == "预定副本":
@@ -1401,7 +1428,7 @@ class ZhongyuanActivity:
             "> 放河灯 / 中元问答 / 供灯焚香 / 中元签到 → 功德\n\n"
             "**指令一览**\n"
             "`相约中元` · `中元状态` · `中元功德榜` · `中元里程碑` · `中元签到`\n"
-            "`放河灯 <寄语>` · `中元问答` · `焚香`/`供灯` · `解除阴气` · `功德商店`\n"
+            "`放河灯 <寄语>` · `中元问答` · `焚香`/`供灯` · `解除阴气 [@对方]` · `功德商店`\n"
             "`预定副本`（下场自动参与）· `取消预定`\n"
             "> 中元不是鬼节，是勾连阴阳两界的思念。"
         )
