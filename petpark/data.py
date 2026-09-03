@@ -1143,7 +1143,7 @@ EGG_COOLDOWN = 180  # 砸蛋单发冷却 3 分钟
 EGG_TEN_COOLDOWN = 1500  # 砸蛋十连冷却 25 分钟（与单发共用同一冷却键，互斥）
 PET_CARD_DROP_CHANCE = 0.15  # 砸蛋每抽独立判定掉落「宠物卡」的概率（碎片仍必定获得）
 # 宠物炼化：将宠物化作对应品质的卡/碎片
-REFINE_COST = 5000           # 每次炼化消耗积分
+REFINE_COST = 1000           # 每次炼化消耗积分
 REFINE_CARD_CHANCE = 0.2     # 20% 概率炼出对应品质的品质卡，80% 出碎片
 REFINE_FRAGMENT_RANGE = (3, 8)  # 出碎片时的数量区间
 DUNGEON_COOLDOWN = 900  # 进入副本冷却 15 分钟
