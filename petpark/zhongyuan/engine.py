@@ -771,6 +771,10 @@ class ZhongyuanActivity:
                 return msg
             cd = self._int_cfg("answer_cooldown_sec", 10)
             s["cooldown_until"] = self._now() + cd
+            self._spawn(self._push_all_groups(
+                f"✅ **#{p['activity_id']:04d} {p.get('name', '?')}** 答对第 {s['index']} 题！"
+                f"全体进度 **{s['index']}/{len(s['puzzles'])}**（{cd} 秒后进入下一题）。"
+            ))
             self._spawn(self._push_puzzle_after(cd))
             return f"✅ #{p['activity_id']:04d} 答对！全体进度 {s['index']}/{len(s['puzzles'])}（{cd} 秒后进入下一题）。"
         p["wrong"] = int(p.get("wrong", 0)) + 1
