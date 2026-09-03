@@ -419,6 +419,7 @@ class PlayerPortal:
         app.router.add_post("/api/portal/logout", self._api_logout)
         app.router.add_get("/api/portal/me", self._api_me)
         app.router.add_post("/api/portal/bind/query", self._api_bind_query)
+        app.router.add_post("/api/portal/bind/auto", self._api_bind_auto)
         app.router.add_post("/api/portal/bind", self._api_bind)
         app.router.add_get("/api/portal/pet", self._api_pet)
         app.router.add_post("/api/portal/auto_cultivation", self._api_auto_cultivation)
@@ -732,6 +733,64 @@ class PlayerPortal:
                 "element": pt.get("element", "未知"),
             })
         return web.json_response({"ok": True, "pets": pet_list})
+
+    async def _api_bind_auto(self, request: web.Request) -> web.Response:
+        """根据登录账号的绑定 QQ，自动列出各群「可绑定」的宠物（含群 ID + 用户 ID）。
+
+        匹配规则：玩家槽位 (group_id, user_id) 属于该账号，当且仅当
+        - user_id == 账号绑定 QQ；或 user_id 经 qq_bindings 绑定到该 QQ（平台 openid → QQ号）。
+        仅返回尚未被任意账号绑定的槽位（即可绑定项）。
+        """
+        self._check_csrf(request)
+        sess = self._require_session(request)
+        account = self.store.get_account(sess["aid"])
+        if not account:
+            raise web.HTTPUnauthorized(text="账号不存在")
+        account_qq = str(account.get("qq", "")).strip()
+        if not account_qq:
+            return web.json_response({"ok": True, "qq": "", "groups": []})
+        # 找出绑定到该账号 QQ 的平台用户ID（一个 QQ 至多绑一个 openid），并加自身 QQ 作为兜底。
+        cand_pids = {account_qq}
+        for pid, q in self.store.qq_bindings().items():
+            if str(q) == account_qq:
+                cand_pids.add(str(pid))
+        players = self.store._data.get("players", {})
+        groups: dict[str, list[dict]] = {}
+        for key, player in players.items():
+            sep = "\x1f"
+            if sep not in key or not isinstance(player, dict):
+                continue
+            gid, uid = key.split(sep, 1)
+            uid = str(uid)
+            if uid not in cand_pids:
+                continue
+            pets = player.get("pets", [])
+            if not pets:
+                continue
+            gid = str(gid)
+            if self.store.account_for_pet(gid, uid) is not None:
+                continue  # 已被某账号绑定，非「可绑定」
+            pet_list = []
+            for i, pt in enumerate(pets):
+                if not isinstance(pt, dict):
+                    continue
+                pet_list.append({
+                    "index": i,
+                    "nickname": pt.get("nickname", "未命名"),
+                    "species": pt.get("species", "未知"),
+                    "quality": pt.get("quality", "普通"),
+                    "level": pt.get("level", 1),
+                    "stage": pt.get("stage", "幼年期"),
+                    "element": pt.get("element", "未知"),
+                })
+            if pet_list:
+                groups.setdefault(gid, []).append({
+                    "qq": uid,
+                    "pet_count": len(pet_list),
+                    "pets": pet_list,
+                })
+        ordered = [{"group_id": g, "players": ps} for g, ps in groups.items()]
+        return web.json_response({"ok": True, "qq": account_qq, "groups": ordered})
 
     async def _api_bind(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
@@ -1423,7 +1482,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
       <span v-if="!pets.length" class="muted" style="padding:0 8px">暂无绑定宠物</span>
     </div>
     <div class="side-btns">
-      <el-button type="primary" plain round @click="bind.show = true">＋ 绑定新宠物</el-button>
+      <el-button type="primary" plain round @click="openBind()">＋ 绑定新宠物</el-button>
       <el-button type="success" round @click="goChat">💬 宠物对话</el-button>
       <el-button type="warning" round @click="goFeedback">📣 问题反馈</el-button>
     </div>
@@ -1589,7 +1648,24 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 </div>
 
 <!-- 绑定新宠物 -->
-<el-dialog v-model="bind.show" title="＋ 绑定新宠物" width="420px" align-center>
+<el-dialog v-model="bind.show" title="＋ 绑定新宠物" width="460px" align-center>
+  <div v-if="auto.loading" class="muted" style="padding:4px 2px 8px">🔍 正在自动识别（按登录 QQ {{ auto.qq || '...' }}）…</div>
+  <div v-else-if="auto.list && auto.list.length" style="margin-bottom:10px">
+    <div style="color:#8f97ab;font-size:12px;margin:0 0 6px">✅ 已按登录 QQ（{{ auto.qq }}）自动找到可绑定的宠物，点「选择」一键填入：</div>
+    <div style="max-height:230px;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:8px">
+      <div v-for="grp in auto.list" :key="grp.group_id" style="padding:8px;border-bottom:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:12px;color:#cfd6e4;margin-bottom:2px"><b>群 ID</b> <code>{{ grp.group_id }}</code></div>
+        <div v-for="pl in grp.players" :key="grp.group_id + '|' + pl.qq" style="padding-left:10px">
+          <div style="font-size:12px;color:#aeb6c9">用户ID <code>{{ pl.qq }}</code>　共 {{ pl.pet_count }} 只</div>
+          <div v-for="pt in pl.pets" :key="pt.index" style="display:flex;align-items:center;gap:8px;margin:3px 0 3px 8px">
+            <span style="flex:1;font-size:12px;color:#e6e9f0">{{ pt.nickname }}　{{ pt.species }}　{{ pt.quality }}　Lv{{ pt.level }}　{{ pt.stage }}</span>
+            <el-button size="small" round plain type="primary" @click="pickAuto(grp.group_id, pl.qq, pt.index)">选择</el-button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div v-else-if="!auto.loading" class="muted" style="padding:4px 2px 8px">未找到可通过登录 QQ（{{ auto.qq || '未绑定QQ' }}）自动匹配的宠物，请在下方手动输入群号与用户 ID。</div>
   <el-form label-position="top" @submit.prevent="doBind">
     <el-form-item label="群号">
       <el-input v-model="bind.group" placeholder="宠物所在的 QQ 群号" clearable></el-input>
@@ -1729,6 +1805,7 @@ createApp({
     const autoCultivating = ref(false);
 
     const bind = reactive({show:false, group:'', qq:'', loading:false, querying:false, pets:null, petIndex:0});
+    const auto = reactive({loading:false, list:null, qq:''});
     const pwd = reactive({show:false, code:'', n1:'', n2:'', loading:false, sending:false, countdown:0});
     let pwdCdTimer = null;
     const custom = reactive({code:'', nickname:'', showQQ:'', redeeming:false,
@@ -1814,6 +1891,22 @@ createApp({
     }
 
     // ---- 绑定 ----
+    async function openBind(){
+      bind.show = true; bind.pets = null; bind.petIndex = 0;
+      await doBindAuto();
+    }
+    async function doBindAuto(){
+      auto.loading = true; auto.list = null; auto.qq = '';
+      try{
+        const r = await api('/api/portal/bind/auto','POST',{});
+        if(r && r.ok){ auto.list = r.groups || []; auto.qq = r.qq || ''; }
+        else { ElMessage.error((r && r.msg) || '自动识别失败'); auto.list = []; }
+      } finally { auto.loading = false; }
+    }
+    async function pickAuto(g, q, idx){
+      bind.group = g; bind.qq = q; bind.pets = null; bind.petIndex = idx || 0;
+      await doBindQuery();
+    }
     async function doBindQuery(){
       const g = bind.group.trim(), q = bind.qq.trim();
       if(!g || !q){ ElMessage.warning('群号和用户 ID 不能为空'); return; }
@@ -2031,8 +2124,9 @@ createApp({
     return {account, pets, current, data, pet, petLoading, blankImg:BLANK_IMG,
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       bind, pwd, custom, crop,
+      auto,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
-      loadPet, logout, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
+      loadPet, logout, openBind, doBindAuto, pickAuto, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       goFeedback, goChat,
       redeemCustom, openCustomEdit, submitCustom, toggleAutoCultivation,
       pickCustomImage, applyZoom, cropDown, cropMove, cropUp, cropTouchStart, cropTouchMove, saveCrop};
