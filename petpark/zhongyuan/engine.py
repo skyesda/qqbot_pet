@@ -1021,7 +1021,6 @@ class ZhongyuanActivity:
             f"> 玩家：**{ap.get('name', '?')}**\n"
             f"> 功德：**{ap.get('gongde', 0)}**（可用）\n"
             f"> 累计获得功德：{int(ap.get('gongde_earned', ap.get('gongde', 0)))}\n"
-            f"> 暂存功德：{ap.get('escrow', 0)}\n"
             f"> 通关 {ap.get('clear_count', 0)} 次 · 完美 {ap.get('perfect_count', 0)} 次 · 失败 {ap.get('fail_count', 0)} 次\n"
             f"> 状态：{yin}"
         )
@@ -1277,8 +1276,8 @@ class ZhongyuanActivity:
             self._settle()
             self._spawn(self._push_all_groups(
                 f"## 🕯️ 中元活动已结束\n"
-                f"《{ACTIVITY_NAME}》已落下帷幕，段位功德已结算完毕。\n"
-                f"> 段位功德已结算，可发送「功德商店」查看奖励。"
+                f"《{ACTIVITY_NAME}》已落下帷幕，段位功德已全部发放到各位功德余额。\n"
+                f"> 段位功德已入账你的可花功德（即「功德商店」可用余额）。"
             ))
             return f"✅ 中元活动已结束并结算，已向全群通报（end_at={self.cfg['end_at']}）。"
         if cmd in ("删除中元活动", "重置中元活动"):
@@ -1335,7 +1334,7 @@ class ZhongyuanActivity:
         self._data.setdefault("meta", {})["activity_id_seq"] = 0
 
     def _settle(self) -> None:
-        """活动结算：按功德榜名次向前 20 名发放段位功德（入暂存）。"""
+        """活动结算：按功德榜名次向前 20 名发放段位功德（直接入可用功德/用户口袋）。"""
         self._data.setdefault("settled", False)
         if self._data.get("settled"):
             return
@@ -1348,8 +1347,10 @@ class ZhongyuanActivity:
             for rank, ap in enumerate(ranked[:20], start=1):
                 g = tier_gongde_for_rank(rank, self.cfg.get("tiers", []))
                 if g:
-                    ap["escrow"] = int(ap.get("escrow", 0)) + g
-                    ap["gongde_earned"] = int(ap.get("gongde_earned", ap.get("gongde", 0))) + g
+                    gd = int(ap.get("gongde", 0))
+                    ap["gongde"] = gd + g  # 发放到可用功德（可花余额），立即入用户口袋
+                    ap["gongde_earned"] = int(ap.get("gongde_earned", gd)) + g
+                    ap["escrow"] = 0  # 不再经暂存中转
         self._data["settled"] = True
 
     # ------------------------------------------------------------------
