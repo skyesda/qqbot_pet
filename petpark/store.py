@@ -369,6 +369,7 @@ class PetStore:
                 "auto_cultivation": {
                     "card_until": 0,
                 },
+                "auto_level": True,
                 "abyss_corruption": 0,
                 "abyss_pity": 0,
                 "abyss_crystal": 0,
@@ -382,6 +383,7 @@ class PetStore:
         pl = players.get(key)
         if pl is not None:
             pl.setdefault("sect", self._default_player_sect())
+            pl.setdefault("auto_level", True)
         return pl
 
     def all_players(self) -> dict[str, dict]:

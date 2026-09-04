@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import random
 import re
@@ -71,7 +72,7 @@ _MENTION_RE = re.compile(r"<@!?([0-9A-Za-z_\-]+)>")
 # 强制绑定QQ模式下，未绑定用户仍可使用的指令（绑定相关 + 菜单/帮助）
 _BIND_ALWAYS_ALLOWED = {
     "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
-    "宠物菜单", "宠物指令", "宠物帮助", "宠物菜单文本", "查看说明",
+    "宠物乐园", "查看说明",
 }
 
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
@@ -89,10 +90,7 @@ KNOWN_COMMANDS = {
     "仙丹",
     "天赋",
     "状态",
-    "宠物菜单",
-    "宠物指令",
-    "宠物帮助",
-    "宠物菜单文本",
+    "宠物乐园",
     "管理菜单",
     "官方网站",
     "我的信息",
@@ -201,6 +199,8 @@ KNOWN_COMMANDS = {
     "喂食",
     # 成长
     "一键升级宠物",
+    "开启自动升级",
+    "关闭自动升级",
     "宠物升级",
     "宠物进化",
     "宠物飞升",
@@ -548,8 +548,6 @@ class PetParkPlugin(Star):
         self.leave_push = bool(self.config.get("leave_push", True))
         # 强制绑定QQ：开启后未绑定用户禁止游玩宠物乐园（安全阀，可在后台关闭）
         self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
-        # 宠物菜单美图化：开启则「宠物菜单」发送图片，关闭或渲染失败自动回退纯文本
-        self.menu_image = bool(self.config.get("menu_image", True))
         self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
             "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
         )
@@ -813,8 +811,9 @@ class PetParkPlugin(Star):
                     petmod.add_exp(p, exp)
                     if action == "双修":
                         self._inc_stat(player, "shuangxiu")
-                    # 自动升级（不发送消息，静默处理）
-                    petmod.auto_level_up(p)
+                    # 自动升级（不发送消息，静默处理；玩家可关闭）
+                    if player.get("auto_level", True):
+                        petmod.auto_level_up(p)
                     # 更新统计
                     ac["total_sessions"] = ac.get("total_sessions", 0) + 1
                     ac["total_exp"] = ac.get("total_exp", 0) + exp
@@ -1077,7 +1076,7 @@ class PetParkPlugin(Star):
             [
                 [("🥚 砸蛋", "砸蛋"), ("🐾 我的宠物", "我的宠物")],
                 [("💼 查看背包", "查看背包"), ("⚔️ 宠物攻击", "宠物攻击")],
-                [("📜 宠物菜单", "宠物菜单"), ("🎁 每日签到", "签到")],
+                [("📜 宠物乐园", "宠物乐园"), ("🎁 每日签到", "签到")],
                 [("💎 我要氪金", "我要氪金")],
                 [("🌐 官方网站", "官方网站")],
             ]
@@ -1115,7 +1114,7 @@ class PetParkPlugin(Star):
 
     def _keyboard_for_cmd(self, text: str) -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。"""
-        if text in {"宠物菜单", "宠物指令", "宠物帮助", "宠物菜单文本", "管理菜单"}:
+        if text in {"宠物乐园", "管理菜单"}:
             return self._main_menu_keyboard()
         if text in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
             return self._ms_menu_keyboard()
@@ -2946,7 +2945,7 @@ class PetParkPlugin(Star):
         self._track_activity(player)
 
         # 银行逾期冻结检查（放行查看/还款类指令）
-        _bank_allow = {"银行信息", "银行还款", "宠物菜单", "宠物指令", "宠物帮助", "宠物菜单文本",
+        _bank_allow = {"银行信息", "银行还款", "宠物乐园",
                         "管理菜单", "官方网站", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
                         "授权状态", "授权", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
@@ -3077,6 +3076,9 @@ class PetParkPlugin(Star):
 
         # ---- 背包 / 商城购买 / 物品 ----
         if cmd in ("查看背包", "背包图"):
+            md = self._render_bag_image(player)
+            if md:
+                return ("我的背包", md)
             return self._bag_text(player)
         if cmd == "清空背包":
             player["bag"] = {}
@@ -3128,6 +3130,8 @@ class PetParkPlugin(Star):
         # ---- 成长 ----
         if cmd == "一键升级宠物":
             return self._auto_level(player)
+        if cmd in ("开启自动升级", "关闭自动升级"):
+            return self._toggle_auto_level(player, cmd == "开启自动升级")
         if cmd == "宠物升级":
             return self._manual_level(player, tokens)
         if cmd == "宠物进化":
@@ -5043,14 +5047,12 @@ class PetParkPlugin(Star):
     # 帮助 / 信息查询
     # =====================================================================
     def _handle_info(self, cmd: str, tokens: list[str]) -> str | tuple | None:
-        if cmd in ("宠物菜单", "宠物指令", "宠物帮助"):
-            if self.menu_image:
-                md = self._render_menu_image()
-                if md:
-                    return ("📖 宠物乐园指令菜单（纯文字版发送「宠物菜单文本」）", md)
-            return self._menu_text()
-        if cmd == "宠物菜单文本":
-            return self._menu_text()
+        if cmd == "宠物乐园":
+            md = self._render_menu_image()
+            if md:
+                return ("宠物乐园 · 指令菜单", md)
+            # 渲染万一失败：给一句提示，不提供文字版菜单
+            return "菜单图片暂时生成失败，请稍后重试。"
         if cmd == "管理菜单":
             return self._admin_menu_text()
         if cmd == "官方网站":
@@ -6007,6 +6009,7 @@ class PetParkPlugin(Star):
             + [
                 "**【成长】**",
                 "- 一键升级宠物 · 宠物升级 次数 · 宠物进化",
+                "- 开启自动升级 · 关闭自动升级（经验满自动升级开关，默认开启）",
                 "- 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
                 "- 合成卡 目标卡名 · 一键合成品质卡（自动级联升到最高）",
                 "- 一键合成品质碎片（把所有碎片批量转卡）",
@@ -6328,11 +6331,12 @@ body{
         x1 = min(img.width, x1 + m); y1 = min(img.height, y1 + m)
         return img.crop((x0, y0, x1, y1))
 
-    def _menu_prune(self, keep: int = 5) -> None:
-        """清理旧的菜单缓存图，只保留最近 keep 张。"""
+    # ---- 通用 HTML -> PNG 渲染管线（菜单 / 宠物卡 / 背包卡共用） ----
+    def _prune_images(self, prefix: str, keep: int = 5) -> None:
+        """清理旧缓存图，只保留最近 keep 张（按前缀分开清理）。"""
         try:
             d = self.store.custom_images_dir
-            rows = sorted(d.glob("menu_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+            rows = sorted(d.glob(f"{prefix}_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
             for p in rows[keep:]:
                 try:
                     p.unlink()
@@ -6341,45 +6345,47 @@ body{
         except OSError:
             pass
 
-    def _menu_img_size(self, path) -> tuple[str, str]:
+    def _image_dims(self, path, disp_w: int) -> tuple[str, str]:
         """返回图片的显示宽高（#W #H），便于 QQ 端缩放。"""
         try:
             with Image.open(path) as im:
                 w, h = im.size
         except OSError:
-            return str(self._MENU_DISP_W), "0"
+            return str(disp_w), "0"
         if not w:
-            return str(self._MENU_DISP_W), "0"
-        return str(self._MENU_DISP_W), str(max(1, round(self._MENU_DISP_W * h / w)))
+            return str(disp_w), "0"
+        return str(disp_w), str(max(1, round(disp_w * h / w)))
 
-    def _menu_png_ok(self, target) -> bool:
+    def _html_png_ok(self, target) -> bool:
         """判断渲染产物是否可接受（存在且非过小）。"""
         try:
             return target.exists() and target.stat().st_size >= 1000
         except OSError:
             return False
 
-    def _write_menu_png(self, html: str, key: str, target) -> bool:
-        """用无头 Chrome 把 HTML 渲染成 PNG 并裁切到羊皮纸内容区；成功返回 True。"""
+    def _write_html_png(self, html: str, key: str, target, crop=None,
+                        win_w: int = 900, win_h: int = 5200) -> bool:
+        """用无头 Chrome 把 HTML 渲染成 PNG，可选 crop 后写回；成功返回 True。"""
         html_file = None
         try:
-            rdir = Path(self.store.custom_images_dir) / ".menu_render"
+            rdir = Path(self.store.custom_images_dir) / ".render_tmp"
             rdir.mkdir(parents=True, exist_ok=True)
-            html_file = rdir / f"menu_{key}.html"
+            html_file = rdir / f"{key}.html"
             html_file.write_text(html, encoding="utf-8")
             subprocess.run(
                 ["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
                  "--disable-dev-shm-usage", "--hide-scrollbars", "--disable-extensions",
-                 "--force-device-scale-factor=1", "--window-size=900,5200",
+                 "--force-device-scale-factor=1", f"--window-size={win_w},{win_h}",
                  f"--screenshot={target}", f"file://{html_file}"],
                 timeout=60, check=False,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             with Image.open(target) as im:
                 rgb = im.convert("RGB")
-            self._crop_menu(rgb).save(target, "PNG")
+            out = crop(rgb) if crop else rgb
+            out.save(target, "PNG")
         except Exception as e:
-            logger.warning(f"[petpark] 菜单图片渲染失败：{e}")
+            logger.warning(f"[petpark] 图片渲染失败：{e}")
             return False
         finally:
             if html_file is not None:
@@ -6389,24 +6395,335 @@ body{
                     pass
         return True
 
+    def _render_html_image(self, html: str, tag: str, disp_w: int, crop=None,
+                           win_w: int = 900, win_h: int = 5200, keep: int = 5) -> str | None:
+        """渲染 HTML 为图片并以 Markdown 返回；内容未变则复用缓存图，失败返回 None。"""
+        key = hashlib.md5(html.encode("utf-8")).hexdigest()[:16]
+        fname = f"{tag}_{key}.png"
+        target = Path(self.store.custom_images_dir) / fname
+        if not target.exists():
+            rendered = self._write_html_png(html, key, target, crop=crop, win_w=win_w, win_h=win_h)
+            if not rendered or not self._html_png_ok(target):
+                logger.warning(f"[petpark] {tag} 图片渲染输出异常")
+                return None
+            self._prune_images(tag, keep)
+        w, h = self._image_dims(target, disp_w)
+        return f"![{tag} #{w} #{h}]({self._tomb_image_url(fname)})"
+
     def _render_menu_image(self) -> str | None:
-        """渲染并返回菜单图片 Markdown；内容未变则复用缓存图，任何失败回退 None。"""
+        """渲染并返回菜单图片 Markdown；任何失败回退 None。"""
         try:
             html = self._menu_html()
         except Exception as e:
             logger.warning(f"[petpark] 菜单图片 HTML 生成失败：{e}")
             return None
-        key = hashlib.md5(html.encode("utf-8")).hexdigest()[:16]
-        fname = f"menu_{key}.png"
-        target = Path(self.store.custom_images_dir) / fname
-        if not target.exists():
-            rendered = self._write_menu_png(html, key, target)
-            if not rendered or not self._menu_png_ok(target):
-                logger.warning("[petpark] 菜单图片渲染输出异常，回退纯文本")
-                return None
-            self._menu_prune()
-        w, h = self._menu_img_size(target)
-        return f"![宠物乐园菜单 #{w} #{h}]({self._tomb_image_url(fname)})"
+        return self._render_html_image(html, "menu", self._MENU_DISP_W, crop=self._crop_menu)
+
+    # ---------------------------------------------------------------------
+    # 宠物信息卡 · 金色游戏风（H5 -> 无头 Chrome PNG，嵌立绘 data-URI，无 emoji）
+    # ---------------------------------------------------------------------
+    _PET_CARD_CSS = """
+:root{
+  --bg0:#2c1a0b; --bg1:#3a2410; --bg2:#59341a;
+  --gold:#f0c46a; --gold2:#c9973a; --gold3:#8a5a12;
+  --cream:#f8eed6; --cream2:#cbb58a;
+  --hp:#c0392b; --en:#e0a63a; --mo:#d9826f;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{height:auto}
+body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid Sans Fallback',sans-serif;
+  -webkit-font-smoothing:antialiased;padding:40px 28px}
+.card{position:relative;max-width:640px;margin:0 auto;border-radius:18px;padding:30px 34px 28px;
+  background:radial-gradient(130% 90% at 50% -12%, rgba(240,196,106,.22), transparent 55%),
+    linear-gradient(168deg, var(--bg2), var(--bg1) 52%, var(--bg0));
+  box-shadow:0 26px 60px rgba(0,0,0,.6), inset 0 0 0 2px rgba(240,196,106,.6),
+    inset 0 0 0 9px rgba(0,0,0,.28), inset 0 0 0 11px rgba(201,151,58,.42),
+    inset 0 0 60px rgba(0,0,0,.5)}
+.card::before,.card::after{content:"";position:absolute;width:34px;height:34px;
+  border:2px solid var(--gold2);pointer-events:none}
+.card::before{left:12px;top:12px;border-right:none;border-bottom:none;border-radius:14px 0 0 0}
+.card::after{right:12px;bottom:12px;border-left:none;border-top:none;border-radius:0 0 14px 0}
+.orn{color:var(--gold3);text-align:center;letter-spacing:6px;font-size:15px;font-weight:700}
+.name{text-align:center;font-size:46px;font-weight:900;letter-spacing:6px;line-height:1.1;margin:2px 0 4px;
+  background:linear-gradient(180deg,#ffe8b0,var(--gold) 52%,var(--gold3));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{text-align:center;color:var(--cream2);font-size:15px;letter-spacing:2px;font-weight:600}
+.badges{display:flex;justify-content:center;gap:9px;flex-wrap:wrap;margin:12px 0 0}
+.badges b{color:var(--gold);font-size:13.5px;font-weight:700;padding:4px 14px;
+  border:1px solid rgba(240,196,106,.5);border-radius:20px;background:rgba(240,196,106,.1)}
+.portrait-wrap{margin:18px auto 6px;width:200px;height:200px}
+.portrait{width:100%;height:100%;object-fit:cover;border-radius:16px;background:#f8eed6;
+  border:3px solid var(--gold);box-shadow:0 0 0 5px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.5)}
+.portrait-ph{width:100%;height:100%;border-radius:16px;border:3px dashed var(--gold3);
+  display:flex;align-items:center;justify-content:center;color:var(--gold3);
+  font-size:16px;letter-spacing:2px;background:rgba(0,0,0,.2)}
+.chips{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin:12px 0 2px}
+.chip{min-width:92px;text-align:center;padding:8px 6px;border-radius:12px;
+  background:rgba(240,196,106,.09);border:1px solid rgba(240,196,106,.32)}
+.chip k{display:block;color:var(--cream2);font-size:12px;letter-spacing:1px;margin-bottom:2px;font-style:normal}
+.chip v{display:block;color:var(--gold);font-size:19px;font-weight:800;font-style:normal}
+.bars{margin:14px 0 4px}
+.bar-row{display:flex;align-items:center;gap:11px;margin:8px 0}
+.bar-k{width:44px;color:var(--cream2);font-size:13px;font-weight:700;letter-spacing:1px}
+.bar{flex:1;height:15px;border-radius:10px;background:rgba(0,0,0,.35);
+  box-shadow:inset 0 0 0 1px rgba(240,196,106,.25);overflow:hidden}
+.fill{height:100%;border-radius:10px}
+.fill.hp{background:linear-gradient(90deg,#a83226,#d24a37)}
+.fill.en{background:linear-gradient(90deg,#b07a17,#f0c45a)}
+.fill.mo{background:linear-gradient(90deg,#c06a5a,#e8a48f)}
+.bar-n{width:96px;color:var(--cream);font-size:12.5px;font-weight:700;text-align:right}
+.grp{margin:16px 0 0;border-top:1px solid rgba(240,196,106,.28);padding-top:13px}
+.grp-h{color:var(--gold);font-size:13px;font-weight:800;letter-spacing:3px;margin:0 0 7px}
+.grp-h::after{content:"";display:inline-block;width:4px;height:4px;background:var(--gold);
+  transform:rotate(45deg);margin:0 0 3px 8px}
+.row{display:flex;justify-content:space-between;gap:12px;color:var(--cream);font-size:14px;margin:4px 0}
+.row k{color:var(--cream2);font-style:normal}
+.row v{color:var(--cream);font-weight:700;text-align:right}
+.tags{display:flex;flex-wrap:wrap;gap:7px}
+.tags i{font-style:normal;color:var(--gold);font-size:12.5px;padding:3px 10px;
+  border:1px solid rgba(240,196,106,.4);border-radius:12px;background:rgba(240,196,106,.08)}
+.warn{margin-top:14px;color:#e88;font-size:13px;line-height:1.5;
+  border:1px solid rgba(200,60,50,.5);border-radius:8px;padding:8px 12px;background:rgba(120,30,25,.2)}
+"""
+
+    @staticmethod
+    def _pct(v, total) -> int:
+        """返回 v/total 的 0..100 百分比。"""
+        try:
+            if total <= 0:
+                return 0
+            return max(0, min(100, round(v * 100 / total)))
+        except (TypeError, ZeroDivisionError):
+            return 0
+
+    def _pet_portrait_uri(self, pet) -> str | None:
+        """返回宠物立绘的 data-URI（优先定制图，其次官方种类图）；无图返回 None。"""
+        try:
+            cf = pet.get("custom_image")
+            if cf:
+                p = Path(self.store.custom_images_dir) / cf
+                if p.exists():
+                    mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+                    return f"data:{mime};base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+        except OSError:
+            pass
+        try:
+            path = images.pet_image_path(pet.get("species"))
+            if path:
+                with open(path, "rb") as f:
+                    return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode("ascii")
+        except OSError:
+            pass
+        return None
+
+    def _card_crop(self, img):
+        """把渲染图裁到金色卡片范围（去掉四周纯黑背景）。"""
+        gray = img.convert("L")
+        mask = gray.point([255 if i > 22 else 0 for i in range(256)])
+        bbox = mask.getbbox()
+        if not bbox:
+            return img
+        x0, y0, x1, y1 = bbox
+        m = 4
+        x0 = max(0, x0 - m); y0 = max(0, y0 - m)
+        x1 = min(img.width, x1 + m); y1 = min(img.height, y1 + m)
+        return img.crop((x0, y0, x1, y1))
+
+    def _pet_card_html(self, pet) -> str:
+        """把宠物数据渲染成金色游戏风信息卡 HTML（含立绘，无 emoji）。"""
+        esc = self._menu_esc
+        petmod.refresh_energy(pet)
+        gender = {"男": "雄", "女": "雌"}.get(pet.get("gender"), pet.get("gender", "—"))
+        love = pet.get("love_state", "单身")
+        mood = max(0, min(5, pet.get("mood", 0)))
+        skills = "、".join(pet.get("skills", [])) or "无"
+        artifact = pet.get("artifact") or "无"
+        talent = pet.get("talent") or "未觉醒"
+        ascended = petmod._is_ascended(pet)
+        if ascended:
+            need = data.ascend_xianyuan_to_next(pet["level"])
+            res_k, res_v = "仙元", f"{pet.get('xianyuan', 0)}/{need}"
+            res_pct = self._pct(pet.get("xianyuan", 0), need)
+            res_extra = f"余 {pet.get('exp', 0)} 经验"
+        else:
+            need = petmod._exp_to_next(pet["level"])
+            res_k, res_v = "经验", f"{pet['exp']}/{need}"
+            res_pct = self._pct(pet["exp"], need)
+            res_extra = ""
+        species_display = pet.get("custom_species_name") or pet.get("species")
+        lc = petmod.level_cap(pet)
+        bp = petmod.battle_power(pet)
+        hp, hp_m = pet.get("hp", 0), pet.get("hp_max", 1)
+        en, en_m = pet.get("energy", 0), pet.get("energy_max", 1)
+        stage = pet.get("stage", ""); quality = pet.get("quality", "")
+        element = pet.get("element", "")
+        uri = self._pet_portrait_uri(pet)
+        portrait = (f'<img class="portrait" src="{uri}" alt="{esc(pet["nickname"])}">'
+                    if uri else '<div class="portrait-ph">暂无立绘</div>')
+        chips = [
+            ("等级", f"Lv{pet['level']}/{lc}"),
+            ("战力", str(bp)),
+            ("攻击", str(pet.get("atk", 0))),
+            ("防御", str(pet.get("def", 0))),
+            ("智力", str(pet.get("intel", 0))),
+        ]
+        chips_html = "".join(
+            f'<div class="chip"><k>{esc(k)}</k><v>{esc(v)}</v></div>' for k, v in chips
+        )
+        bars = "".join([
+            self._bar_row("气血", hp, hp_m, "hp"),
+            self._bar_row("精力", en, en_m, "en"),
+            self._bar_row("心情", mood, 5, "mo"),
+        ])
+        rows = [
+            ("种类", species_display),
+            ("属性", element),
+            ("阶段", stage),
+            ("品质", quality),
+            ("性别", gender),
+            ("羁绊", love),
+            ("状态", pet.get("status", "正常")),
+        ]
+        rows_html = "".join(
+            f'<div class="row"><k>{esc(k)}</k><v>{esc(str(v))}</v></div>' for k, v in rows
+        )
+        tags = pet.get("tags", [])
+        tags_html = f'<div class="tags">{"".join(f"<i>{esc(t)}</i>" for t in tags)}</div>' if tags else ""
+        extra = ""
+        if pet.get("love_target"):
+            extra = self._card_row("伴侣", f"{pet['love_target']}　好感 {pet.get('favor', 0)}")
+        frozen = ""
+        if petmod.is_frozen(pet):
+            frozen = ('<div class="warn">假死/惊魂中，剩余约 '
+                      f'{petmod.frozen_remain_min(pet)} 分钟无法操作</div>')
+        res_bar = (f'<div class="grp"><div class="grp-h">{esc(res_k)}</div>'
+                   f'<div class="bar-row"><div class="bar">'
+                   f'<div class="fill en" style="width:{res_pct}%"></div></div>'
+                   f'<span class="bar-n">{esc(res_v)}</span></div>'
+                   + (f'<div class="row"><k>余量</k><v>{esc(res_extra)}</v></div>' if res_extra else '')
+                   + '</div>')
+        extra_grp = f'<div class="grp">{extra}</div>' if extra else ""
+        tags_grp = (f'<div class="grp"><div class="grp-h">标签</div>{tags_html}</div>'
+                    if tags_html else "")
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<style>{self._PET_CARD_CSS}</style></head><body>"
+            f'<div class="card">'
+            f'<div class="orn">‹ 宠 物 ›</div>'
+            f'<div class="name">{esc(pet["nickname"])}</div>'
+            f'<div class="sub">{esc(species_display)} · {esc(element)}属性 · {esc(stage)}</div>'
+            f'<div class="badges"><b>【{esc(quality)}】</b><b>{esc(love)}</b></div>'
+            f'<div class="portrait-wrap">{portrait}</div>'
+            f'<div class="chips">{chips_html}</div>'
+            f'<div class="bars">{bars}</div>'
+            f'<div class="grp"><div class="grp-h">属性</div>{rows_html}</div>'
+            f'<div class="grp"><div class="grp-h">天赋</div>'
+            f'<div class="row"><k>天赋</k><v>{esc(talent)}</v></div></div>'
+            f'<div class="grp"><div class="grp-h">秘技</div>'
+            f'<div class="row"><k>秘技</k><v>{esc(skills)}</v></div></div>'
+            f'<div class="grp"><div class="grp-h">神器</div>'
+            f'<div class="row"><k>神器</k><v>{esc(artifact)}</v></div></div>'
+            f'{res_bar}{extra_grp}{tags_grp}{frozen}'
+            f'</div></body></html>'
+        )
+
+    def _bar_row(self, label, v, total, cls) -> str:
+        return (f'<div class="bar-row"><span class="bar-k">{self._menu_esc(label)}</span>'
+                f'<div class="bar"><div class="fill {cls}" style="width:{self._pct(v, total)}%"></div></div>'
+                f'<span class="bar-n">{self._menu_esc(str(v))}/{self._menu_esc(str(total))}</span></div>')
+
+    def _card_row(self, k, v) -> str:
+        return f'<div class="row"><k>{self._menu_esc(k)}</k><v>{self._menu_esc(str(v))}</v></div>'
+
+    def _render_pet_image(self, pet) -> str | None:
+        """渲染并返回宠物信息卡 Markdown；任何失败返回 None。"""
+        try:
+            html = self._pet_card_html(pet)
+        except Exception as e:
+            logger.warning(f"[petpark] 宠物卡 HTML 生成失败：{e}")
+            return None
+        return self._render_html_image(html, "petcard", 600, crop=self._card_crop,
+                                       win_w=760, win_h=2600)
+
+    # ---------------------------------------------------------------------
+    # 背包卡 · 金色游戏风（H5 -> PNG，无 emoji）
+    # ---------------------------------------------------------------------
+    _BAG_CARD_CSS = """
+:root{
+  --bg0:#2c1a0b; --bg1:#3a2410; --bg2:#59341a;
+  --gold:#f0c46a; --gold2:#c9973a; --gold3:#8a5a12;
+  --cream:#f8eed6; --cream2:#cbb58a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{height:auto}
+body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid Sans Fallback',sans-serif;
+  -webkit-font-smoothing:antialiased;padding:40px 28px}
+.card{position:relative;max-width:540px;margin:0 auto;border-radius:18px;padding:30px 34px 26px;
+  background:radial-gradient(130% 90% at 50% -12%, rgba(240,196,106,.22), transparent 55%),
+    linear-gradient(168deg, var(--bg2), var(--bg1) 52%, var(--bg0));
+  box-shadow:0 26px 60px rgba(0,0,0,.6), inset 0 0 0 2px rgba(240,196,106,.6),
+    inset 0 0 0 9px rgba(0,0,0,.28), inset 0 0 0 11px rgba(201,151,58,.42),
+    inset 0 0 60px rgba(0,0,0,.5)}
+.card::before,.card::after{content:"";position:absolute;width:34px;height:34px;
+  border:2px solid var(--gold2);pointer-events:none}
+.card::before{left:12px;top:12px;border-right:none;border-bottom:none;border-radius:14px 0 0 0}
+.card::after{right:12px;bottom:12px;border-left:none;border-top:none;border-radius:0 0 14px 0}
+.orn{color:var(--gold3);text-align:center;letter-spacing:6px;font-size:15px;font-weight:700}
+.title{text-align:center;font-size:44px;font-weight:900;letter-spacing:6px;line-height:1.1;margin:2px 0 3px;
+  background:linear-gradient(180deg,#ffe8b0,var(--gold) 52%,var(--gold3));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{text-align:center;color:var(--cream2);font-size:14px;letter-spacing:2px;font-weight:600}
+.rule{height:2px;margin:16px 0 6px;position:relative;
+  background:linear-gradient(90deg,transparent,var(--gold) 22%,var(--gold) 78%,transparent)}
+.rule::after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;
+  background:var(--gold);transform:translate(-50%,-50%) rotate(45deg)}
+.empty{text-align:center;color:var(--cream2);font-size:16px;letter-spacing:1px;padding:28px 0}
+.row{display:flex;align-items:center;padding:12px 4px;border-bottom:1px dashed rgba(240,196,106,.22)}
+.row::before{content:"";width:7px;height:7px;background:var(--gold);transform:rotate(45deg);
+  flex:none;margin-right:13px}
+.rname{flex:1;color:var(--cream);font-size:16px;font-weight:700;letter-spacing:.5px;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.rcount{flex:none;color:var(--gold);font-size:18px;font-weight:800}
+.rcount::before{content:"×";margin-right:2px;color:var(--gold3)}
+.foot{text-align:center;color:var(--cream2);font-size:12.5px;letter-spacing:1px;margin-top:16px}
+"""
+
+    def _bag_card_html(self, player: dict) -> str:
+        """把背包渲染成金色清单卡 HTML（无 emoji）。"""
+        esc = self._menu_esc
+        bag = player.get("bag", {})
+        items = sorted(bag.items(), key=lambda kv: str(kv[0]))
+        total_items = sum(int(c) for c in bag.values())
+        if not items:
+            body = '<div class="empty">空空如也，去商城选购吧</div>'
+        else:
+            body = "".join(
+                f'<div class="row"><span class="rname">{esc(name)}</span>'
+                f'<span class="rcount">{esc(str(count))}</span></div>'
+                for name, count in items
+            )
+        subtitle = "共 %d 种 · 共 %d 件" % (len(items), total_items) if items else "暂无物品"
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<style>{self._BAG_CARD_CSS}</style></head><body>"
+            f'<div class="card">'
+            f'<div class="orn">‹ 背 包 ›</div>'
+            f'<div class="title">我的背包</div>'
+            f'<div class="sub">{esc(subtitle)}</div>'
+            f'<div class="rule"></div>{body}'
+            f'<div class="foot">发送『购买』『使用』即可操作物品</div>'
+            f'</div></body></html>'
+        )
+
+    def _render_bag_image(self, player: dict) -> str | None:
+        """渲染并返回背包卡 Markdown；任何失败返回 None。"""
+        try:
+            html = self._bag_card_html(player)
+        except Exception as e:
+            logger.warning(f"[petpark] 背包卡 HTML 生成失败：{e}")
+            return None
+        return self._render_html_image(html, "bagcard", 520, crop=self._card_crop,
+                                       win_w=640, win_h=2600)
 
     def _official_site_text(self) -> str:
         """官方网站介绍：官方主站 + 绑定宠物指引（QQ Markdown，用 \n\n 分隔避免被吞）。"""
@@ -6427,7 +6744,7 @@ body{
                 "",
                 "> 💡 记不住用户ID？登录后也可绑定 QQ号（群内发送 `绑定QQ QQ号`）代替，跨群通用。",
                 "",
-                "❓ 更多玩法请发送 `宠物菜单` 查看。",
+                "❓ 更多玩法请发送 `宠物乐园` 查看。",
             ]
         )
 
@@ -6851,8 +7168,11 @@ body{
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』或『宠物市场』获取一只吧！"
-        image_md = self._custom_image_md(p) or images.pet_image_md(p.get("species"))
-        return petmod.render_pet(p), image_md
+        md = self._render_pet_image(p)
+        if md:
+            return ("我的宠物", md)
+        # 渲染万一失败：退回文本卡，避免玩家看不到信息
+        return petmod.render_pet(p)
 
     def _inspect(self, group_id: str, tokens: list[str]):
         target = self._arg(tokens, 1)
@@ -6866,8 +7186,10 @@ body{
         pet = tp.get("pet") or (tp.get("pets", [{}])[0] if tp.get("pets") else None)
         if not pet:
             return "对方还没有宠物。"
-        image_md = self._custom_image_md(pet) or images.pet_image_md(pet.get("species"))
-        return petmod.render_pet(pet), image_md
+        md = self._render_pet_image(pet)
+        if md:
+            return ("宠物侦查", md)
+        return petmod.render_pet(pet)
 
     def _gift_pet(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -7097,8 +7419,10 @@ body{
             if idx < 0 or idx >= len(pets):
                 return f"无效序号，请输入 1~{len(pets)}。"
             p = pets[idx]
-        image_md = self._custom_image_md(p) or images.pet_image_md(p.get("species"))
-        return petmod.render_pet(p), image_md
+        md = self._render_pet_image(p)
+        if md:
+            return ("宠物信息", md)
+        return petmod.render_pet(p)
 
     def _pet_release(self, player: dict, tokens: list[str]) -> str:
         """放生指定序号的宠物。"""
@@ -7795,6 +8119,15 @@ body{
             f"⬆ 一键升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}，剩余精力 {p['energy']}。"
             + reward + prep_msg
         )
+
+    def _toggle_auto_level(self, player: dict, enable: bool) -> str:
+        """开启/关闭经验满自动升级（默认开启）。"""
+        if enable:
+            player["auto_level"] = True
+            return "已开启『自动升级』：经验满后自动一键升级。发送『关闭自动升级』可关闭。"
+        player["auto_level"] = False
+        return ("已关闭『自动升级』：经验满后不再自动升级，需发送『一键升级宠物』手动升级。"
+                "发送『开启自动升级』可恢复。")
 
     def _manual_level(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -8719,6 +9052,8 @@ body{
         """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
         if not petmod.exp_enough_to_level(p):
             return ""
+        if not player.get("auto_level", True):
+            return "\n> 经验已满，发送『一键升级宠物』手动升级（当前已关闭自动升级）。"
         before = p.get("level", 1)
         gained = petmod.auto_level_up(p)
         if gained <= 0:
