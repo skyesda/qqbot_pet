@@ -6456,6 +6456,22 @@ class PetParkPlugin(Star):
         return player.get("pet")
 
     @staticmethod
+    def _match_species(sub: str) -> str | None:
+        """匹配宠物品种名：精确 → 前缀唯一 → 包含唯一；找不到返回 None。"""
+        sub = (sub or "").strip()
+        if not sub:
+            return None
+        if sub in data.SPECIES_NAMES:
+            return sub
+        pre = [s for s in data.SPECIES_NAMES if s.startswith(sub)]
+        if len(pre) == 1:
+            return pre[0]
+        cont = [s for s in data.SPECIES_NAMES if sub in s]
+        if len(cont) == 1:
+            return cont[0]
+        return None
+
+    @staticmethod
     def _busy_reason(p: dict) -> str | None:
         """宠物当前是否无法被操作（死亡 / 假死惊魂 / 心情 1 星）。可操作返回 None。"""
         if petmod.is_dead(p):
@@ -7036,29 +7052,33 @@ class PetParkPlugin(Star):
                 return msg
             self.store.remove_item(player, name, 1)
             return f"使用『{name}』x1：{msg}"
-        # 变种卡：指定宠物，随机改变其种类（保留等级/品质/属性）
+        # 变种卡：变更当前宠物为「指定品种」（保留等级/品质/属性）；必须显式填写目标品种，不能随机
         if it_check and it_check.get("effect", {}).get("species_change"):
             if not self.store.has_item(player, name):
                 return f"背包里没有『{name}』。"
             sub = tokens[2].strip() if len(tokens) > 2 else ""
+            if not sub:
+                return (
+                    f"⚠️ 使用『{name}』必须指定目标宠物种类（不能随机）：\n\n"
+                    "用法：`使用 变种卡 <宠物种类>`\n\n"
+                    "例如：`使用 变种卡 绿毛虫`\n\n"
+                    "发送《宠物种类》查看所有可选品种。"
+                )
+            ts = self._match_species(sub)
+            if not ts:
+                return f"没有名为『{sub}』的宠物种类。发送《宠物种类》查看现有品种。"
             p = self._need_pet(player)
-            if sub and not sub.isdigit():
-                tp = self._resolve_pet_target(player, sub)
-                if tp:
-                    p = tp
-                else:
-                    return f"没有找到名为『{sub}』的宠物。发送《我的宠物》查看名字。"
             if not p:
                 return "你没有宠物，无法使用『变种卡』。发送『砸蛋』获取一只。"
             if p.get("locked"):
                 return "🔒 宠物已锁定，无法改变种类。请先『解锁宠物』。"
             old_species = p.get("species", "")
-            choices = [s for s in data.SPECIES_NAMES if s != old_species] or data.SPECIES_NAMES
-            new_species = random.choice(choices)
-            p["species"] = new_species
+            if ts == old_species:
+                return f"『{old_species}』已经是『{ts}』了，换一个品种试试。"
+            p["species"] = ts
             self.store.remove_item(player, name, 1)
             return (
-                f"🔄 使用『{name}』×1：『{old_species}』变为『{new_species}』！\n"
+                f"🔄 使用『{name}』×1：『{old_species}』变为『{ts}』！\n"
                 "> 等级/品质/属性均保留。"
             )
         p = self._need_pet(player)
