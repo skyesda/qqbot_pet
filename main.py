@@ -2941,13 +2941,14 @@ class PetParkPlugin(Star):
         if cmd == "我的奖品":
             return self._handle_my_prizes(player, group_id, tokens)
 
-        # ---- QQ 绑定（邮箱验证码）----
-        if cmd == "绑定QQ":
-            return self._bind_qq(player, tokens)
+        # ---- QQ 绑定（邮箱验证码 / 大管理员代绑）----
+        if cmd in ("绑定QQ", "换绑QQ"):
+            # 大管理员代绑：绑定QQ @目标 目标QQ号 / 换绑QQ 用户ID 目标QQ号（免邮箱验证）
+            if len(tokens) >= 3:
+                return self._admin_qq_bind(event, group_id, cmd, tokens)
+            return self._bind_qq(player, tokens, rebind=(cmd == "换绑QQ"))
         if cmd == "验证码":
             return self._verify_qq_code(player, tokens)
-        if cmd == "换绑QQ":
-            return self._bind_qq(player, tokens, rebind=True)
         if cmd == "解绑QQ":
             return self._unbind_qq(player)
         if cmd == "绑定教程":
@@ -5242,6 +5243,8 @@ class PetParkPlugin(Star):
             "**绑定后**\n"
             "- 跨群通用，其它群无需重复绑定\n"
             "- 换绑：发送「换绑QQ 新QQ号」；解除：发送「解绑QQ」\n\n"
+            "**收不到验证码？**\n"
+            "- 请**大管理员**发送「绑定QQ @对方 你的QQ号」代你绑定（免邮箱验证）\n\n"
             "> 若提示「邮箱服务未配置」，请联系管理员开通邮箱验证。"
         )
 
@@ -5366,6 +5369,29 @@ class PetParkPlugin(Star):
             return "你还没有绑定QQ号。"
         self.store.unbind_qq(pid)
         return "✅ 已解除QQ绑定。"
+
+    def _admin_qq_bind(self, event, group_id: str, cmd: str, tokens: list[str]) -> str:
+        """大管理员代用户绑定QQ：`绑定QQ @目标 目标QQ号` / `绑定QQ 用户ID 目标QQ号`。
+        免邮箱验证（管理员权限直接设置），跨群通用。"""
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可代用户绑定QQ。"
+        target = str(tokens[1]).strip()
+        qq_num = str(tokens[2]).strip()
+        if not target:
+            return "❌ 无法解析目标用户，请使用 @ 对方或填写对方用户ID。"
+        if not (qq_num.isdigit() and 5 <= len(qq_num) <= 11):
+            return "❌ QQ号格式不正确（应为5~11位纯数字）。"
+        # 目标为平台openid（@提及/用户ID）直接绑定；若目标为已绑定QQ号则解析为对应平台ID
+        pid = self._resolve_user_token(target)
+        other = self.store.find_platform_id_by_qq(qq_num)
+        if other and other != pid:
+            return f"❌ QQ号 `{qq_num}` 已被其他用户绑定。"
+        self.store.set_qq_binding(pid, qq_num)
+        return (
+            f"🛠️ 管理员已代绑定成功\n"
+            f"- 用户ID `{pid}` ↔ QQ号 `{qq_num}`\n"
+            f"- 跨群通用，对方无需再自行绑定"
+        )
 
     def _accept_invite(self, player: dict, group_id: str, tokens: list[str]) -> str:
         """被邀请用户发送『受邀 用户ID』，双方均在本群时发放邀请奖励。"""
