@@ -66,6 +66,12 @@ _MS_COORD_RE = re.compile(r"[a-zA-Z]\d{1,2}")
 # QQ 官方群消息中 @成员 的文本形式：<@openid> 或 <@!openid>
 _MENTION_RE = re.compile(r"<@!?([0-9A-Za-z_\-]+)>")
 
+# 强制绑定QQ模式下，未绑定用户仍可使用的指令（绑定相关 + 菜单/帮助）
+_BIND_ALWAYS_ALLOWED = {
+    "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
+    "宠物菜单", "宠物指令", "宠物帮助", "查看说明",
+}
+
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
 KNOWN_COMMANDS = {
     # 管理
@@ -94,6 +100,7 @@ KNOWN_COMMANDS = {
     "验证码",
     "换绑QQ",
     "解绑QQ",
+    "绑定教程",
     "签到",
     "宗门签到",
     "宗门介绍",
@@ -536,6 +543,8 @@ class PetParkPlugin(Star):
         self.auto_approve = bool(self.config.get("auto_approve", True))
         self.welcome_push = bool(self.config.get("welcome_push", True))
         self.leave_push = bool(self.config.get("leave_push", True))
+        # 强制绑定QQ：开启后未绑定用户禁止游玩宠物乐园（安全阀，可在后台关闭）
+        self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
         self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
             "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
         )
@@ -2867,6 +2876,13 @@ class PetParkPlugin(Star):
         if not group.get("enabled", True):
             return None
 
+        # ---- 强制绑定QQ：未绑定用户禁止游玩（含中元），仅放行绑定相关与菜单/帮助 ----
+        # 管理员（配置白名单 / 群主群管）不拦截，避免把运营者锁死在管理功能之外
+        if not self._is_admin(event):
+            bb = self._qq_bind_block(qq, cmd)
+            if bb:
+                return bb
+
         # ---- 中元活动（独立模块）：已授权且宠物乐园开启的群路由给活动引擎 ----
         if self.zhongyuan is not None and cmd in self._zy_commands:
             return self.zhongyuan.dispatch(event, qq, group_id, text)
@@ -2900,7 +2916,7 @@ class PetParkPlugin(Star):
                         "授权状态", "授权", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
-                        "绑定QQ", "验证码", "换绑QQ", "解绑QQ",
+                        "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
                         "我的奖品", "口令抽奖",
                         "生辰活动", "生日抽奖", "生日快乐"}
         if cmd not in _bank_allow:
@@ -2934,6 +2950,8 @@ class PetParkPlugin(Star):
             return self._bind_qq(player, tokens, rebind=True)
         if cmd == "解绑QQ":
             return self._unbind_qq(player)
+        if cmd == "绑定教程":
+            return self._bind_tutorial()
 
         # ---- 邀请 ----
         if cmd == "受邀":
@@ -5159,6 +5177,8 @@ class PetParkPlugin(Star):
             "━━━━━━━━━━━━━━",
             f"🆔 **用户ID**　`{player['qq']}`",
             f"📱 **绑定QQ**　{self._bound_qq_text(player)}",
+            *(["> ⚠️ 未绑定QQ将无法游玩宠物乐园，请先绑定（发送「绑定QQ 你的QQ号」）"]
+              if self.require_qq_bind and not self.store.get_bound_qq(player.get("qq", "")) else []),
             f"👥 **群号**　`{gid}`",
             f"🪙 **金币**　{player.get('coin', 0)}",
             f"💎 **积分**　{player.get('jifen', 0)}",
@@ -5186,6 +5206,41 @@ class PetParkPlugin(Star):
         if qq:
             return f"`{qq}`（✅已绑定）"
         return "未绑定（发送「绑定QQ QQ号」绑定）"
+
+    def _qq_bind_block(self, qq: str, cmd: str) -> str | None:
+        """强制绑定QQ拦截：未绑定用户返回拦截文案，其余返回 None（放行）。"""
+        if not self.require_qq_bind:
+            return None
+        if self.store.get_bound_qq(qq):
+            return None
+        if cmd in _BIND_ALWAYS_ALLOWED:
+            return None
+        return (
+            "🔒 绑定QQ后才能游玩宠物乐园\n"
+            "你还没绑定 QQ号，请先完成绑定：\n"
+            "- 发送「绑定QQ 你的QQ号」（纯数字，如 `绑定QQ 123456789`）\n"
+            "- 系统会向该QQ的 QQ 邮箱发送 6 位验证码\n"
+            "- 收到后发送「验证码 123456」即绑定成功\n\n"
+            "> 绑定一次，跨群通用；完整步骤发送「绑定教程」"
+        )
+
+    def _bind_tutorial(self) -> str:
+        """绑定QQ完整教程（QQ Markdown：多行用 \\n\\n 分隔，避免单换行被吞）。"""
+        return (
+            "## 📱 绑定QQ教程\n"
+            "绑定后你将以**真实QQ号**作为宠物乐园身份，跨群通用，一次绑定全群生效。\n\n"
+            "**为什么要绑定**\n"
+            "- 宠物乐园已开启「强制绑定QQ」，未绑定无法游玩\n"
+            "- 绑定后可用QQ号或「@对方」代替用户ID，赠送/转让/PK/拜访更方便\n\n"
+            "**绑定步骤**\n"
+            "1. 发送「绑定QQ 你的QQ号」（纯数字5~11位，如 `绑定QQ 123456789`）\n"
+            "2. 系统向该QQ的 **QQ邮箱** 发送 6 位验证码\n"
+            "3. 打开邮箱查看验证码，发送「验证码 123456」即绑定成功\n\n"
+            "**绑定后**\n"
+            "- 跨群通用，其它群无需重复绑定\n"
+            "- 换绑：发送「换绑QQ 新QQ号」；解除：发送「解绑QQ」\n\n"
+            "> 若提示「邮箱服务未配置」，请联系管理员开通邮箱验证。"
+        )
 
     def _bind_qq(self, player: dict, tokens: list[str], rebind: bool = False) -> str:
         pid = str(player.get("qq", ""))
@@ -5943,8 +5998,8 @@ class PetParkPlugin(Star):
                 "- 我的信息 · 签到 · 我要氪金",
                 "- 兑换 卡密 · 赠送金币/积分/钻石 用户ID 数量",
                 "- 我的邀请情况 · 受邀 用户ID",
-                "- 绑定QQ QQ号 · 验证码 123456 · 换绑QQ · 解绑QQ",
-                "> 绑定QQ后可用QQ号代替用户ID指定他人，跨群通用",
+                "- 绑定QQ QQ号 · 验证码 123456 · 换绑QQ · 解绑QQ · 绑定教程",
+                "> 必须先绑定QQ才能游玩；绑定后跨群通用、可用QQ号或@对方指定他人",
                 "> 也可直接 @ 对方代替输入 用户ID（赠送/转让/PK/拜访等均支持）",
                 "",
                 "**【图鉴】**",
