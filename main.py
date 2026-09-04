@@ -2428,6 +2428,10 @@ class PetParkPlugin(Star):
         cache[member] = (nick, time.time())
         return nick
 
+    def _display_uid(self, pid: str) -> str:
+        """展示用户：优先已绑定QQ号，未绑定则返回平台用户ID(openid)。"""
+        return self.store.get_bound_qq(pid) or str(pid)
+
     async def _send_group_text(self, group_id: str, text: str) -> None:
         """主动向群推送纯文本（Markdown 优先，失败回退纯文本）。"""
         if not group_id or not text:
@@ -3733,7 +3737,7 @@ class PetParkPlugin(Star):
                 self.store.add_item(self.store.get_player(w, gid), item, 1)
                 remain[item] = int(remain.get(item, stock_cfg[item])) - 1
                 result["winners"].append({"openid": w, "item": item, "count": 1})
-                chunk.append(f"　• {w} → {item}×1")
+                chunk.append(f"　• {self._display_uid(w)} → {item}×1")
             text += "\n".join(chunk) + "\n"
         else:
             text += "> 本轮库存已发光，无库存奖品。\n"
@@ -3743,7 +3747,7 @@ class PetParkPlugin(Star):
             self.store.add_item(self.store.get_player(g, parts[g]), grand_item, grand_count)
             gacha["grand_used"] = True
             result["grand"] = {"openid": g, "item": grand_item, "count": grand_count}
-            text += f"- 🌟 **压轴大奖**：{grand_item}×{grand_count} → 恭喜 **{g}**\n"
+            text += f"- 🌟 **压轴大奖**：{grand_item}×{grand_count} → 恭喜 **{self._display_uid(g)}**\n"
         if result["winners"] or result["grand"]:
             text += f"> 共 **{len(openids)}** 人参与，恭喜中奖者，奖品已到账！"
         else:
@@ -4962,17 +4966,8 @@ class PetParkPlugin(Star):
         lottery["drawn"] = True
         lottery["drawn_at"] = now
         lottery["winners"] = winners
-        # 解析中奖者昵称用于播报（失败则回退 openid）
-        names = []
-        for oid in winners:
-            gid = entries[oid].get("group", "")
-            nick = ""
-            if gid:
-                try:
-                    nick = await self._member_nick(gid, oid)
-                except Exception:
-                    nick = ""
-            names.append(nick or oid)
+        # 解析中奖者展示名用于播报：优先已绑定QQ号，未绑定则回退平台用户ID(openid)
+        names = [self._display_uid(oid) for oid in winners]
         text = self._build_lottery_broadcast(
             lottery, names, len(winners), len(entries)
         )
