@@ -3076,6 +3076,9 @@ class PetParkPlugin(Star):
         if cmd == "宠物变性":
             return self._change_gender(player)
         if cmd == "宠物复活":
+            if len(tokens) > 1:
+                # 宠物复活 @他人 / 用户ID → 复活指定玩家宠物（需『起死回生』天赋，@提及自动转为ID）
+                return self._talent_revive(player, group_id, tokens)
             return self._revive_self(player)
         if cmd == "宠物状态":
             return self._status_text(player)
@@ -5926,6 +5929,7 @@ class PetParkPlugin(Star):
                 "- 宠物觉醒 · 制作天赋符 · 使用天赋符 天赋",
                 "- 炼丹 · 使用仙丹 名称 用户ID 数量",
                 "- 治愈 用户ID · 复活 用户ID · 精力转移 用户ID 值",
+                "- 复活他人宠物：『起死回生』天赋免费，无天赋耗『九转还魂丹』",
                 "",
                 "**【对战 / 排行】**",
                 "- 宠物攻击 用户ID · 跨群挑战宠物 群号 用户ID",
@@ -6746,8 +6750,13 @@ class PetParkPlugin(Star):
             return "你没有宠物。"
         if not petmod.is_dead(p):
             return "宠物还活着，无需复活。"
+        if p.get("talent") == "起死回生":
+            p["status"] = "正常"
+            p["hp"] = p["hp_max"]
+            p["mood"] = max(1, p["mood"])
+            return f"『{p['nickname']}』已满血复活！（天赋·起死回生免费）"
         if not self.store.remove_item(player, "九转还魂丹"):
-            return "复活需要『九转还魂丹』（可在商城购买）。"
+            return "复活需要『九转还魂丹』（可在商城购买），或觉醒『起死回生』天赋免费复活。"
         p["status"] = "正常"
         p["hp"] = p["hp_max"]
         p["mood"] = max(1, p["mood"])
@@ -7889,8 +7898,7 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
-        if p.get("talent") != "起死回生":
-            return "需要觉醒『起死回生』天赋才能复活他人宠物。"
+        has_talent = p.get("talent") == "起死回生"
         target = self._arg(tokens, 1)
         if not target:
             return "用法：复活 用户ID"
@@ -7900,9 +7908,14 @@ class PetParkPlugin(Star):
         if not tp.get("pet"):
             return "目标没有宠物。"
         tpet = tp["pet"]
+        if not petmod.is_dead(tpet):
+            return "目标宠物还活着，无需复活。"
+        if not has_talent and not self.store.remove_item(player, "九转还魂丹"):
+            return "复活需要『九转还魂丹』（可在商城购买），或觉醒『起死回生』天赋免费复活。"
         tpet["status"] = "正常"
         tpet["hp"] = tpet["hp_max"]
-        return f"💫 已复活 `{target}` 的宠物。"
+        cost = "（天赋·起死回生免费）" if has_talent else "消耗『九转还魂丹』x1。"
+        return f"💫 已复活 `{target}` 的宠物。{cost}"
 
     def _energy_transfer(
         self, player: dict, group_id: str, tokens: list[str]
