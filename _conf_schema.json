@@ -199,13 +199,13 @@
   },
   "welcome_template": {
     "description": "新人进群欢迎语模板",
-    "hint": "{{member}} 会被替换为成员的群昵称。支持 Markdown。",
+    "hint": "{{member}} 会被替换为成员群昵称；群昵称需机器人白名单才能拉取，无法获取时退回已绑定QQ号或可读ID。支持 Markdown。",
     "type": "string",
     "default": "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
   },
   "leave_template": {
     "description": "成员退群语模板",
-    "hint": "{{member}} 会被替换为成员的群昵称。支持 Markdown。",
+    "hint": "{{member}} 会被替换为成员群昵称；群昵称需机器人白名单才能拉取，无法获取时退回已绑定QQ号或可读ID。支持 Markdown。",
     "type": "string",
     "default": "## 👋 成员退群\n成员 @{{member}} 已离开本群。"
   }

@@ -553,6 +553,8 @@ class PetParkPlugin(Star):
         )
         # 群昵称缓存：{group_id: {member_openid: 群昵称}}
         self._nick_cache: dict[str, dict[str, str]] = {}
+        # 成员详情接口是否可用：非白名单机器人访问会返回 11253，识别后不再重试
+        self._member_api_ok = True
         # 专属管理网站（卡密生成 + 数据增删改查）
         self._web = None
         # 全服广播任务引用，防止被 GC
@@ -2394,6 +2396,8 @@ class PetParkPlugin(Star):
             nick, ts = hit
             if nick or (time.time() - ts) < 600:
                 return nick
+        if not self._member_api_ok:
+            return ""
         bot = self._get_bot()
         api = getattr(bot, "api", None) if bot else None
         if api is None:
@@ -2412,7 +2416,11 @@ class PetParkPlugin(Star):
                 )
             )
             nick = str((info or {}).get("username", "") or "")
-        except Exception:
+        except Exception as e:
+            # 非白名单机器人访问成员详情接口报 11253（应用无接口访问权限），
+            # 识别后置为不可用并停止重试，避免每来一个新成员都刷一条错误日志。
+            if "11253" in str(e) or "40012010" in str(e):
+                self._member_api_ok = False
             nick = ""
         cache[member] = (nick, time.time())
         return nick
@@ -2624,7 +2632,13 @@ class PetParkPlugin(Star):
         member = str(data.get("member_openid", "") or "")
         if not gid or not member:
             return
-        nick = (await self._member_nick(gid, member)) or member
+        # 群昵称优先级：事件自带 username（个别平台有）-> 缓存 -> 已绑定QQ号 -> openid
+        nick = (
+            str(data.get("username", "") or "")
+            or (await self._member_nick(gid, member))
+            or self.store.get_bound_qq(member)
+            or member
+        )
         text = (self.welcome_template or "").replace("{{member}}", nick)
         if text:
             await self._send_group_text(gid, text)
@@ -2637,7 +2651,13 @@ class PetParkPlugin(Star):
         member = str(data.get("member_openid", "") or "")
         if not gid or not member:
             return
-        nick = (await self._member_nick(gid, member)) or member
+        # 群昵称优先级：事件自带 username（个别平台有）-> 缓存 -> 已绑定QQ号 -> openid
+        nick = (
+            str(data.get("username", "") or "")
+            or (await self._member_nick(gid, member))
+            or self.store.get_bound_qq(member)
+            or member
+        )
         text = (self.leave_template or "").replace("{{member}}", nick)
         if text:
             await self._send_group_text(gid, text)
