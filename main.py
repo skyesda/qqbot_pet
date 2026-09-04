@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import random
 import re
+import subprocess
 import time
 import urllib.parse
 import uuid
@@ -69,7 +71,7 @@ _MENTION_RE = re.compile(r"<@!?([0-9A-Za-z_\-]+)>")
 # 强制绑定QQ模式下，未绑定用户仍可使用的指令（绑定相关 + 菜单/帮助）
 _BIND_ALWAYS_ALLOWED = {
     "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
-    "宠物菜单", "宠物指令", "宠物帮助", "查看说明",
+    "宠物菜单", "宠物指令", "宠物帮助", "宠物菜单文本", "查看说明",
 }
 
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
@@ -90,6 +92,7 @@ KNOWN_COMMANDS = {
     "宠物菜单",
     "宠物指令",
     "宠物帮助",
+    "宠物菜单文本",
     "管理菜单",
     "官方网站",
     "我的信息",
@@ -545,6 +548,8 @@ class PetParkPlugin(Star):
         self.leave_push = bool(self.config.get("leave_push", True))
         # 强制绑定QQ：开启后未绑定用户禁止游玩宠物乐园（安全阀，可在后台关闭）
         self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
+        # 宠物菜单美图化：开启则「宠物菜单」发送图片，关闭或渲染失败自动回退纯文本
+        self.menu_image = bool(self.config.get("menu_image", True))
         self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
             "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
         )
@@ -1110,7 +1115,7 @@ class PetParkPlugin(Star):
 
     def _keyboard_for_cmd(self, text: str) -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。"""
-        if text in {"宠物菜单", "宠物指令", "宠物帮助", "管理菜单"}:
+        if text in {"宠物菜单", "宠物指令", "宠物帮助", "宠物菜单文本", "管理菜单"}:
             return self._main_menu_keyboard()
         if text in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
             return self._ms_menu_keyboard()
@@ -2941,7 +2946,7 @@ class PetParkPlugin(Star):
         self._track_activity(player)
 
         # 银行逾期冻结检查（放行查看/还款类指令）
-        _bank_allow = {"银行信息", "银行还款", "宠物菜单", "宠物指令", "宠物帮助",
+        _bank_allow = {"银行信息", "银行还款", "宠物菜单", "宠物指令", "宠物帮助", "宠物菜单文本",
                         "管理菜单", "官方网站", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
                         "授权状态", "授权", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
@@ -5037,8 +5042,14 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 帮助 / 信息查询
     # =====================================================================
-    def _handle_info(self, cmd: str, tokens: list[str]) -> str | None:
+    def _handle_info(self, cmd: str, tokens: list[str]) -> str | tuple | None:
         if cmd in ("宠物菜单", "宠物指令", "宠物帮助"):
+            if self.menu_image:
+                md = self._render_menu_image()
+                if md:
+                    return ("📖 宠物乐园指令菜单（纯文字版发送「宠物菜单文本」）", md)
+            return self._menu_text()
+        if cmd == "宠物菜单文本":
             return self._menu_text()
         if cmd == "管理菜单":
             return self._admin_menu_text()
@@ -6093,6 +6104,309 @@ class PetParkPlugin(Star):
                 "> 管理员指令请发送 `管理菜单` 查看。",
             ]
         )
+
+    # ---------------------------------------------------------------------
+    # 菜单美图化：把 _menu_text() 渲染成古典羊皮纸图片（HTML -> 无头 Chrome PNG，
+    # 按内容 md5 缓存到 store.custom_images_dir，经 /custom_images 发送）。
+    # 服务器无 emoji 字体，故菜单内容去除 emoji，用纯排版 + 金色装饰呈现。
+    # ---------------------------------------------------------------------
+    _MENU_CSS = """
+:root{
+  --paper-hi:#f8eed6; --paper-mid:#f0e0bb; --paper-lo:#e2ce9d;
+  --ink:#2f2013; --ink2:#4c351d; --muted:#6c5227;
+  --gold:#b98a1c; --gold2:#8a5f0c; --line:rgba(169,120,30,.34);
+  --seal:#b2371f; --red:#c13a28;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{height:auto}
+body{
+  background:#1c1712;
+  font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid Sans Fallback',sans-serif;
+  color:var(--ink);
+  padding:48px 30px;
+  -webkit-font-smoothing:antialiased;
+}
+.scroll{
+  position:relative;max-width:806px;margin:0 auto;
+  background:
+    radial-gradient(120% 82% at 50% -8%, rgba(255,252,242,.62), transparent 54%),
+    linear-gradient(176deg, var(--paper-hi), var(--paper-mid) 46%, var(--paper-lo));
+  box-shadow:0 30px 70px rgba(0,0,0,.55), 0 4px 14px rgba(0,0,0,.35),
+    inset 0 0 0 1px var(--line), inset 0 0 0 7px rgba(226,201,150,.5),
+    inset 0 0 0 8px rgba(169,120,30,.26), inset 0 0 90px rgba(153,108,34,.2);
+  padding:34px 44px 32px;
+}
+.scroll::after{ /* 纸纤维纹理（免 data-URI，避免编码坑） */
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+  mix-blend-mode:multiply;opacity:.55;
+  background-image:
+    repeating-linear-gradient(8deg, rgba(150,105,30,.05) 0 2px, transparent 2px 5px),
+    repeating-linear-gradient(92deg, rgba(150,105,30,.04) 0 2px, transparent 2px 7px);
+}
+.content{position:relative;z-index:1}
+.brand{
+  text-align:center;font-size:56px;font-weight:900;letter-spacing:14px;line-height:1.1;
+  background:linear-gradient(180deg,#f2cb6f,#b98a1c 55%,#784d07);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  text-shadow:0 1px 0 rgba(255,255,255,.4);
+}
+.brand-sub{
+  display:flex;align-items:center;justify-content:center;gap:16px;
+  color:var(--gold2);font-size:15px;font-weight:700;letter-spacing:12px;margin:7px 0 0;
+}
+.brand-sub::before,.brand-sub::after{content:"";height:1px;width:64px;background:var(--line)}
+.rule{
+  height:2px;margin:18px 0 16px;position:relative;
+  background:linear-gradient(90deg,transparent,var(--gold) 22%,var(--gold) 78%,transparent);
+}
+.rule::after{content:"";position:absolute;left:50%;top:50%;width:9px;height:9px;
+  background:var(--gold);transform:translate(-50%,-50%) rotate(45deg)}
+.intro{
+  font-size:13.5px;line-height:1.75;color:var(--ink2);
+  background:rgba(255,255,255,.34);border:1px solid var(--line);border-left:4px solid var(--gold);
+  padding:8px 13px;border-radius:4px;margin:0 0 4px;
+}
+.cols{columns:2;column-gap:30px;margin-top:12px}
+.sect{break-inside:avoid;margin:0 0 16px}
+.sect-h{
+  position:relative;padding-left:19px;font-size:17px;font-weight:800;color:var(--seal);
+  border-bottom:2px solid var(--line);padding-bottom:4px;margin:0 0 2px;letter-spacing:1px;
+}
+.sect-h::before{content:"";position:absolute;left:0;top:6px;width:8px;height:8px;
+  background:var(--gold);transform:rotate(45deg)}
+.sect-s{color:var(--gold2);font-size:11.5px;margin:0 0 6px;font-weight:600;letter-spacing:.4px}
+.item{font-size:13px;line-height:1.62;color:var(--ink);margin:3px 0;padding-left:1px}
+.item .sep{color:var(--gold);font-weight:700;padding:0 1px}
+.item .desc{color:var(--red)}
+.note{font-size:11.5px;line-height:1.55;color:var(--muted);
+  background:rgba(255,255,255,.3);border-left:3px solid var(--gold);
+  padding:4px 9px;margin:5px 0 7px}
+.plain{font-size:13px;color:var(--ink);margin:3px 0}
+.foot{
+  text-align:center;font-size:12.5px;color:var(--muted);margin-top:8px;
+  border-top:1px dashed var(--line);padding-top:10px;
+}
+"""
+
+    _MENU_EMOJI_RE = re.compile(
+        "[\\U0001F000-\\U0001FAFF\\u2300-\\u23FF\\u2500-\\u25FF"
+        "\\u2600-\\u27BF\\u2B00-\\u2BFF\\uFE0F\\u200D\\u20E3]"
+    )
+    _MENU_DISP_W = 720
+
+    @staticmethod
+    def _menu_esc(s: str) -> str:
+        """转义 HTML 特殊字符，避免菜单内容破坏页面结构。"""
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _menu_purify(self, s: str) -> str:
+        """去除 emoji（无字体）与 Markdown 星号/反引号，折叠空白，供图片使用。"""
+        s = self._MENU_EMOJI_RE.sub("", str(s))
+        s = s.replace("`", "").replace("**", "")
+        return re.sub(r"\s+", " ", s).strip()
+
+    def _menu_html(self) -> str:
+        """把 _menu_text() 逐行解析成羊皮纸 HTML——文本与图片永不漂移。"""
+        menu = self._menu_text()
+        title_main, title_sub = "宠物乐园", "指令菜单"
+        intro: list[str] = []
+        sections: list[dict] = []
+        cur = None
+        for raw in menu.split("\n"):
+            s = self._menu_purify(raw)
+            if not s:
+                continue
+            if s.startswith("## "):
+                t = s[3:].strip()
+                if "·" in t:
+                    a, b = t.split("·", 1)
+                    title_main = a.strip() or title_main
+                    title_sub = b.strip() or title_sub
+                else:
+                    title_main = t
+                cur = None
+                continue
+            if s.startswith("> "):
+                body = s[2:].strip()
+                if "管理员指令请发送" in body:  # 底部提示单独放页脚
+                    continue
+                if cur is None:
+                    intro.append(body)
+                else:
+                    cur["body"].append(("note", body))
+                continue
+            if s.startswith("**【"):
+                rest = s[3:]
+                tt, rr = rest.split("】**", 1) if "】**" in rest else (rest, "")
+                cur = {"title": tt.strip(), "sub": "", "body": []}
+                sub = rr.strip()
+                if sub.startswith(("（", "(")) and sub.endswith(("）", ")")):
+                    cur["sub"] = sub[1:-1].strip()
+                elif sub:
+                    cur["sub"] = sub
+                sections.append(cur)
+                continue
+            if s.startswith("【") and "】" in s:
+                cur = {"title": s[1:s.index("】")].strip(), "sub": "", "body": []}
+                sections.append(cur)
+                continue
+            if s.startswith("- "):
+                body = s[2:].strip()
+                if cur is None:
+                    cur = {"title": "", "sub": "", "body": []}
+                    sections.append(cur)
+                cur["body"].append(("item", body))
+                continue
+            if cur is None:
+                intro.append(s)
+            else:
+                cur["body"].append(("text", s))
+
+        esc = self._menu_esc
+
+        def render_item(body: str) -> str:
+            # 把（...）描述染成朱红，指令与「·」分隔保持墨色/金色
+            parts = re.split(r"([（(][^（）()]*[）)])", body)
+            out = []
+            for p in parts:
+                if not p:
+                    continue
+                if p[0] in "（(" and p[-1] in "）)":
+                    out.append(f'<span class="desc">{esc(p)}</span>')
+                else:
+                    out.append(esc(p).replace(" · ", '<span class="sep">·</span>'))
+            return "".join(out)
+
+        def render_body(body_list) -> str:
+            out = []
+            for kind, body in body_list:
+                if kind == "item":
+                    out.append(f'<div class="item">{render_item(body)}</div>')
+                elif kind == "note":
+                    out.append(f'<div class="note">{esc(body)}</div>')
+                else:
+                    out.append(f'<div class="plain">{esc(body)}</div>')
+            return "".join(out)
+
+        sect_html = []
+        for sec in sections:
+            sub_h = f'<div class="sect-s">{esc(sec["sub"])}</div>' if sec["sub"] else ""
+            sect_html.append(
+                f'<div class="sect">'
+                f'<div class="sect-h">{esc(sec["title"])}</div>{sub_h}'
+                f'{render_body(sec["body"])}</div>'
+            )
+
+        intro_html = f'<div class="intro">{esc(intro[0])}</div>' if intro else ""
+
+        foot_lines = [self._menu_purify(r)[2:].strip() for r in menu.split("\n")
+                      if self._menu_purify(r).startswith("> ")
+                      and "管理员指令请发送" in self._menu_purify(r)]
+        foot_html = f'<div class="foot">{esc(" · ".join(foot_lines))}</div>' if foot_lines else ""
+
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<style>{self._MENU_CSS}</style></head><body>"
+            f'<div class="scroll"><div class="content">'
+            f'<div class="brand">{esc(title_main)}</div>'
+            f'<div class="brand-sub">{esc(title_sub)}</div>'
+            f'<div class="rule"></div>{intro_html}'
+            f'<div class="cols">{"".join(sect_html)}</div>{foot_html}'
+            f'</div></div></body></html>'
+        )
+
+    def _crop_menu(self, img):
+        """把渲染图裁到羊皮纸内容区（去掉底部/四周深色桌面背景）。"""
+        gray = img.convert("L")
+        mask = gray.point([255 if i > 110 else 0 for i in range(256)])
+        bbox = mask.getbbox()
+        if not bbox:
+            return img
+        x0, y0, x1, y1 = bbox
+        m = 6
+        x0 = max(0, x0 - m); y0 = max(0, y0 - m)
+        x1 = min(img.width, x1 + m); y1 = min(img.height, y1 + m)
+        return img.crop((x0, y0, x1, y1))
+
+    def _menu_prune(self, keep: int = 5) -> None:
+        """清理旧的菜单缓存图，只保留最近 keep 张。"""
+        try:
+            d = self.store.custom_images_dir
+            rows = sorted(d.glob("menu_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for p in rows[keep:]:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    def _menu_img_size(self, path) -> tuple[str, str]:
+        """返回图片的显示宽高（#W #H），便于 QQ 端缩放。"""
+        try:
+            with Image.open(path) as im:
+                w, h = im.size
+        except OSError:
+            return str(self._MENU_DISP_W), "0"
+        if not w:
+            return str(self._MENU_DISP_W), "0"
+        return str(self._MENU_DISP_W), str(max(1, round(self._MENU_DISP_W * h / w)))
+
+    def _menu_png_ok(self, target) -> bool:
+        """判断渲染产物是否可接受（存在且非过小）。"""
+        try:
+            return target.exists() and target.stat().st_size >= 1000
+        except OSError:
+            return False
+
+    def _write_menu_png(self, html: str, key: str, target) -> bool:
+        """用无头 Chrome 把 HTML 渲染成 PNG 并裁切到羊皮纸内容区；成功返回 True。"""
+        html_file = None
+        try:
+            rdir = Path(self.store.custom_images_dir) / ".menu_render"
+            rdir.mkdir(parents=True, exist_ok=True)
+            html_file = rdir / f"menu_{key}.html"
+            html_file.write_text(html, encoding="utf-8")
+            subprocess.run(
+                ["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
+                 "--disable-dev-shm-usage", "--hide-scrollbars", "--disable-extensions",
+                 "--force-device-scale-factor=1", "--window-size=900,5200",
+                 f"--screenshot={target}", f"file://{html_file}"],
+                timeout=60, check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            with Image.open(target) as im:
+                rgb = im.convert("RGB")
+            self._crop_menu(rgb).save(target, "PNG")
+        except Exception as e:
+            logger.warning(f"[petpark] 菜单图片渲染失败：{e}")
+            return False
+        finally:
+            if html_file is not None:
+                try:
+                    html_file.unlink()
+                except OSError:
+                    pass
+        return True
+
+    def _render_menu_image(self) -> str | None:
+        """渲染并返回菜单图片 Markdown；内容未变则复用缓存图，任何失败回退 None。"""
+        try:
+            html = self._menu_html()
+        except Exception as e:
+            logger.warning(f"[petpark] 菜单图片 HTML 生成失败：{e}")
+            return None
+        key = hashlib.md5(html.encode("utf-8")).hexdigest()[:16]
+        fname = f"menu_{key}.png"
+        target = Path(self.store.custom_images_dir) / fname
+        if not target.exists():
+            rendered = self._write_menu_png(html, key, target)
+            if not rendered or not self._menu_png_ok(target):
+                logger.warning("[petpark] 菜单图片渲染输出异常，回退纯文本")
+                return None
+            self._menu_prune()
+        w, h = self._menu_img_size(target)
+        return f"![宠物乐园菜单 #{w} #{h}]({self._tomb_image_url(fname)})"
 
     def _official_site_text(self) -> str:
         """官方网站介绍：官方主站 + 绑定宠物指引（QQ Markdown，用 \n\n 分隔避免被吞）。"""
