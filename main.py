@@ -1349,7 +1349,7 @@ class PetParkPlugin(Star):
         qq = self._resolve_user_token(qq)
         tp = self.store.get_player(qq, group_id, create=False)
         if not tp:
-            return None, f"❌ 用户 `{qq}` 在本群不存在（对方需先在本群参与宠物乐园）。"
+            return None, f"❌ 用户 `{self._display_uid(qq)}` 在本群不存在（对方需先在本群参与宠物乐园）。"
         return tp, None
 
     def _resolve_user_token(self, token: str) -> str:
@@ -2587,7 +2587,7 @@ class PetParkPlugin(Star):
                         f"不能禁言群主/管理员/机器人）。\n> 接口返回：{last_err}"
                     )
             return (
-                f"## 🔇 群管理\n已禁言成员 **{target}** {seconds // 60} 分钟，"
+                f"## 🔇 群管理\n已禁言成员 **{self._display_uid(target)}** {seconds // 60} 分钟，"
                 f"至 {expire_dt.strftime('%H:%M:%S')} 自动解除。"
             )
         try:
@@ -2599,7 +2599,7 @@ class PetParkPlugin(Star):
                     ]
                 },
             )
-            return f"## 🔇 群管理\n已解除对成员 **{target}** 的禁言。"
+            return f"## 🔇 群管理\n已解除对成员 **{self._display_uid(target)}** 的禁言。"
         except Exception as e:
             logger.warning(f"[petpark] 解除禁言 {target} 失败：{e}")
             return f"❌ 解除禁言失败（机器人需为群管理员）。\n> 接口返回：{e}"
@@ -4371,7 +4371,7 @@ class PetParkPlugin(Star):
                 nick = target["pet"].get("nickname", "未知")
             qq = sk.split("\x1f")[-1] if "\x1f" in sk else sk
             got = "、".join(granted.get(sk, [])) or "无"
-            top3.append(f"| {len(top3)+1} | `{qq}` {nick} | {dmg} | {got} |")
+            top3.append(f"| {len(top3)+1} | `{self._display_uid(qq)}` {nick} | {dmg} | {got} |")
         return (
             "**本轮回伤害榜与奖励分配**\n"
             "| 排名 | 玩家 | 伤害 | 获得奖励 |\n"
@@ -4399,7 +4399,7 @@ class PetParkPlugin(Star):
             pet_name = "-"
             if target and target.get("pet"):
                 pet_name = target["pet"].get("nickname", "-")
-            lines.append(f"| {i} | `{qq}` | {pet_name} | {dmg} |")
+            lines.append(f"| {i} | `{self._display_uid(qq)}` | {pet_name} | {dmg} |")
         return "\n".join(lines)
 
     def _event_boss_ranking_all(self, group_id: str) -> str:
@@ -5460,14 +5460,14 @@ class PetParkPlugin(Star):
             return "❌ 不能邀请自己哦。"
         inviter = self.store.get_player(inviter_qq, group_id, create=False)
         if not inviter:
-            return f"❌ 用户 `{inviter_qq}` 不在本群或未注册。"
+            return f"❌ 用户 `{self._display_uid(inviter_qq)}` 不在本群或未注册。"
         # 杜绝互相邀请/反向接受：自己已经邀请过对方，就不能再变成对方的被邀请人
         if self.store.is_already_invited_by(player, inviter_qq):
             return "❌ 你已经邀请过该用户，不能反向接受邀请。"
         if self.store.invited_by(player):
             return "❌ 你已经接受过他人邀请，无法重复接受。"
         if self.store.is_already_invited_by(inviter, invitee_qq):
-            return f"❌ 用户 `{inviter_qq}` 已经邀请过你啦。"
+            return f"❌ 用户 `{self._display_uid(inviter_qq)}` 已经邀请过你啦。"
         # 记录邀请关系并发放奖励
         self.store.record_invite(inviter, player)
         rewards = [
@@ -5483,7 +5483,7 @@ class PetParkPlugin(Star):
         )
         return (
             f"## 🎉 邀请成功\n"
-            f"你已成功接受 `{inviter_qq}` 的邀请！\n"
+            f"你已成功接受 `{self._display_uid(inviter_qq)}` 的邀请！\n"
             f"双方各获得：**{reward_text}**\n"
             f"> 发送 `我的邀请情况` 可查看自己邀请的好友列表。"
         )
@@ -5501,14 +5501,14 @@ class PetParkPlugin(Star):
             "## 📋 我的邀请情况",
             f"累计邀请：**{len(users)}** 人",
             "",
-            "| 序号 | 用户ID | 邀请时间 |",
+            "| 序号 | 用户 | 邀请时间 |",
             "|---:|---|---|",
         ]
         for i, entry in enumerate(users, 1):
             qq = entry.get("qq", "")
             at = entry.get("at", 0)
             ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(at)) if at else "-"
-            lines.append(f"| {i} | `{qq}` | {ts} |")
+            lines.append(f"| {i} | `{self._display_uid(qq)}` | {ts} |")
         return "\n".join(lines)
 
     def _sign_in(self, player: dict, group_id: str) -> str:
@@ -5672,7 +5672,7 @@ class PetParkPlugin(Star):
             )
         return (
             f"## ⚙️ 管理操作\n"
-            f"已为用户 `{target}` {verb}{icon}**{currency} {amount}**\n"
+            f"已为用户 `{self._display_uid(target)}` {verb}{icon}**{currency} {amount}**\n"
             f"> {currency}：{before} → **{after}**{extra}"
         )
 
@@ -5706,20 +5706,20 @@ class PetParkPlugin(Star):
         appoint = cmd.startswith("任命")
         if appoint:
             if target in subs:
-                return f"用户 `{target}` 已经是本群小管理员。"
+                return f"用户 `{self._display_uid(target)}` 已经是本群小管理员。"
             subs.append(target)
             group["subadmins"] = subs
             return (
-                f"## 🛡️ 小管理员任命\n已任命 `{target}` 为本群小管理员。\n"
+                f"## 🛡️ 小管理员任命\n已任命 `{self._display_uid(target)}` 为本群小管理员。\n"
                 f"> 权限：本群内『加金币/减金币/加积分/减积分』（不可操作钻石）；"
                 f"每日增加金币、积分各上限 {self.subadmin_daily_add_limit}，减少不限。"
             )
         else:
             if target not in subs:
-                return f"用户 `{target}` 不是本群小管理员。"
+                return f"用户 `{self._display_uid(target)}` 不是本群小管理员。"
             subs.remove(target)
             group["subadmins"] = subs
-            return f"## 🛡️ 小管理员撤销\n已撤销 `{target}` 的本群小管理员权限。"
+            return f"## 🛡️ 小管理员撤销\n已撤销 `{self._display_uid(target)}` 的本群小管理员权限。"
 
     def _list_subadmins(self, event) -> str:
         if not self._is_admin(event):
@@ -6587,7 +6587,7 @@ class PetParkPlugin(Star):
         if not self._add_pet(tp, removed):
             self._add_pet(player, removed)  # 回滚
             return "对方接收失败（席位异常），已退还。"
-        return f"🎁 已将『{removed['nickname']}』赠送给 `{target}`。"
+        return f"🎁 已将『{removed['nickname']}』赠送给 `{self._display_uid(target)}`。"
 
     def _release(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -7267,7 +7267,7 @@ class PetParkPlugin(Star):
             tax_info = f"（税 {tax_count} 个，{tax_rate:.0%} ⚠️ 高频同用户）"
         else:
             tax_info = f"（税 {tax_count} 个，{tax_rate:.0%}）"
-        return f"📦 已转让 {name} ×{receive_count} 给 `{target}`{tax_info}。"
+        return f"📦 已转让 {name} ×{receive_count} 给 `{self._display_uid(target)}`{tax_info}。"
 
     def _gift_currency(
         self, player: dict, group_id: str, cmd: str, tokens: list[str]
@@ -7307,7 +7307,7 @@ class PetParkPlugin(Star):
             tax_info = f"（税 {tax_amount}，{tax_rate:.0%} ⚠️ 高频同用户）"
         else:
             tax_info = f"（税 {tax_amount}，{tax_rate:.0%}）"
-        return f"💰 已向 `{target}` 赠送 {currency} ×{receive_amount}{tax_info}。"
+        return f"💰 已向 `{self._display_uid(target)}` 赠送 {currency} ×{receive_amount}{tax_info}。"
 
     def _bag_text(self, player: dict) -> str:
         bag = player.get("bag", {})
@@ -7941,7 +7941,7 @@ class PetParkPlugin(Star):
         for _ in range(count):
             msg = self._apply_elixir(tpet, name)
         self.store.remove_item(player, name, count)
-        return f"对 `{target}` 的宠物使用『{name}』×{count}：{msg}"
+        return f"对 `{self._display_uid(target)}` 的宠物使用『{name}』×{count}：{msg}"
 
     def _apply_elixir(self, p: dict, name: str) -> str:
         eff = data.ELIXIRS[name]["effect"]
@@ -7992,7 +7992,7 @@ class PetParkPlugin(Star):
         if not tp.get("pet"):
             return "目标没有宠物。"
         tp["pet"]["hp"] = tp["pet"]["hp_max"]
-        return f"🌿 已治愈 `{target}` 的宠物，血量回满。"
+        return f"🌿 已治愈 `{self._display_uid(target)}` 的宠物，血量回满。"
 
     def _talent_revive(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -8015,7 +8015,7 @@ class PetParkPlugin(Star):
         tpet["status"] = "正常"
         tpet["hp"] = tpet["hp_max"]
         cost = "（天赋·起死回生免费）" if has_talent else "消耗『九转还魂丹』x1。"
-        return f"💫 已复活 `{target}` 的宠物。{cost}"
+        return f"💫 已复活 `{self._display_uid(target)}` 的宠物。{cost}"
 
     def _energy_transfer(
         self, player: dict, group_id: str, tokens: list[str]
@@ -8039,7 +8039,7 @@ class PetParkPlugin(Star):
         p["energy"] -= amount
         tpet = tp["pet"]
         tpet["energy"] = min(tpet["energy_max"], tpet["energy"] + amount)
-        return f"🔋 已向 `{target}` 的宠物转移 {amount} 点精力。"
+        return f"🔋 已向 `{self._display_uid(target)}` 的宠物转移 {amount} 点精力。"
 
     # =====================================================================
     # 对战 / 排行
@@ -9259,9 +9259,9 @@ class PetParkPlugin(Star):
         if self._tomb_is_in_coop(player):
             return "你已经有队伍了，发送「摸金取消组队」退出当前队伍。"
         if self._tomb_is_in_coop(tp):
-            return f"用户 {target_qq} 已经在另一个队伍中了。"
+            return f"用户 {self._display_uid(target_qq)} 已经在另一个队伍中了。"
         if self._tomb_session_exists(tp):
-            return f"用户 {target_qq} 正在摸金中，无法组队。"
+            return f"用户 {self._display_uid(target_qq)} 正在摸金中，无法组队。"
         coop_key = self._tomb_key(group_id, my_qq)
         if coop_key in self._tomb_coop_teams:
             return "你已经创建了一个队伍，等待对方回应。"
@@ -9277,7 +9277,7 @@ class PetParkPlugin(Star):
         self._tomb_persist()
         return (
             f"## 摸金组队\n"
-            f"队长 {my_qq} 邀请 {target_qq} 组队摸金！\n\n"
+            f"队长 {self._display_uid(my_qq)} 邀请 {self._display_uid(target_qq)} 组队摸金！\n\n"
             f"双方发送「摸金准备」确认，队长发送「摸进 难度」开始。"
         )
 
@@ -9624,7 +9624,7 @@ class PetParkPlugin(Star):
             wep_text = "徒步" if is_coop else "徒手"
             text = (
                 f"## 进入【{cfg['name']}】（双排）\n"
-                f"队长 {my_qq} · 队友 {teammate_qq}\n"
+                f"队长 {self._display_uid(my_qq)} · 队友 {self._display_uid(teammate_qq)}\n"
                 f"需带回 **{shared['required']}** 冥币（合并计算）\n"
                 f"起点：({entrance_pos['x']},{entrance_pos['y']})\n"
                 f"> 上/下/左/右 移动　摸看 探索　摸态 状态"
@@ -10078,7 +10078,7 @@ class PetParkPlugin(Star):
                 power = data.tomb_player_attack(level, pd.get("weapon_attack", 0))
                 label = "我" if qq == my_qq else "队友"
                 lines.append(
-                    f"- {label} `{qq}`：HP {pd.get('hp', 0)}/{pd.get('hp_max', 0)}　"
+                    f"- {label} `{self._display_uid(qq)}`：HP {pd.get('hp', 0)}/{pd.get('hp_max', 0)}　"
                     f"战力 {power}（{wep_text}）\n"
                     f"　位置：({pos.get('x', 0)},{pos.get('y', 0)})　"
                     f"逃跑 {pd.get('escapes', 0)}/{data.TOMB_ESCAPES_PER_RAID}　"
@@ -10816,7 +10816,7 @@ class PetParkPlugin(Star):
         tpdata["status"] = "active"
         return (
             f"## 救援成功\n"
-            f"你将 {tqq} 从绝境中救起！（HP恢复至 {revive_hp}）\n"
+            f"你将 {self._display_uid(tqq)} 从绝境中救起！（HP恢复至 {revive_hp}）\n"
             f"你消耗了 {cost} HP（剩余 {mydata['hp']}）。"
         )
 
@@ -10893,7 +10893,7 @@ class PetParkPlugin(Star):
                 return f"你的冥币不足（当前 {mydata.get('mingbi', 0)}）。"
             mydata["mingbi"] -= count
             tpdata["mingbi"] = tpdata.get("mingbi", 0) + count
-            return f"## 传送完成\n向 {target_qq} 传送 **冥币×{count}**。"
+            return f"## 传送完成\n向 {self._display_uid(target_qq)} 传送 **冥币×{count}**。"
         my_inv = mydata.get("inventory", {})
         if my_inv.get(item_name, 0) < count:
             return f"你的背包中没有足够的「{item_name}」。"
@@ -10902,7 +10902,7 @@ class PetParkPlugin(Star):
             my_inv.pop(item_name, None)
         tp_inv = tpdata.setdefault("inventory", {})
         tp_inv[item_name] = tp_inv.get(item_name, 0) + count
-        return f"## 传送完成\n向 {target_qq} 传送 **{item_name}×{count}**。"
+        return f"## 传送完成\n向 {self._display_uid(target_qq)} 传送 **{item_name}×{count}**。"
     # --------------------------- 双排互动结束 ---------------------------
 
     def _tomb_equip(self, player: dict, tokens: list[str]) -> str:
@@ -10980,10 +10980,10 @@ class PetParkPlugin(Star):
         )
 
     # ---- 摸金排行 / 神榜 ----
-    @staticmethod
-    def _tomb_display_qq(qq: str) -> str:
-        """摸金排行统一显示用户 ID（QQ）。"""
-        return str(qq or "未知").replace("|", "丨")
+    def _tomb_display_qq(self, qq: str) -> str:
+        """摸金/扫雷排行统一显示用户：优先已绑定QQ号，未绑定则返回平台用户ID(openid)。"""
+        qq = str(qq or "")
+        return (self.store.get_bound_qq(qq) or qq or "未知").replace("|", "丨")
 
     def _tomb_rank(self, player: dict, group_id: str) -> str:
         """摸金财富全服排行（按永久冥币）。"""
@@ -11006,7 +11006,7 @@ class PetParkPlugin(Star):
             lines.append(f"> 我的冥币：**{my_mingbi}**（还未获得冥币）")
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines.append("")
-        lines.append("| 排名 | 用户ID | 冥币 |")
+        lines.append("| 排名 | 用户 | 冥币 |")
         lines.append("|:--:|:--:|--:|")
         for i, (_, qq_text, mingbi) in enumerate(entries[: self.rank_size], 1):
             rk = medals.get(i, str(i))
@@ -11039,7 +11039,7 @@ class PetParkPlugin(Star):
             lines.append(f"> 我今日获得：**{my_gain}** 冥币")
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines.append("")
-        lines.append("| 排名 | 用户ID | 今日获得冥币 |")
+        lines.append("| 排名 | 用户 | 今日获得冥币 |")
         lines.append("|:--:|:--:|--:|")
         for i, (_, qq_text, gain) in enumerate(entries[: self.rank_size], 1):
             rk = medals.get(i, str(i))
@@ -11076,7 +11076,7 @@ class PetParkPlugin(Star):
             lines.append(f"> 我昨日获得：**{my_gain}** 冥币")
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines.append("")
-        lines.append("| 排名 | 用户ID | 昨日获得冥币 |")
+        lines.append("| 排名 | 用户 | 昨日获得冥币 |")
         lines.append("|:--:|:--:|--:|")
         for i, (_, qq_text, gain) in enumerate(entries[: self.rank_size], 1):
             rk = medals.get(i, str(i))
@@ -12307,8 +12307,8 @@ class PetParkPlugin(Star):
         sect["master_qq"] = master["qq"]
         return (
             f"🏯 宗主选举完成\n"
-            f"- 原宗主：`{old or '无'}`\n"
-            f"- 新宗主：`{master['qq']}`（战力优先，活跃次之）"
+            f"- 原宗主：`{self._display_uid(old) or '无'}`\n"
+            f"- 新宗主：`{self._display_uid(master['qq'])}`（战力优先，活跃次之）"
         )
 
     def _sect_today_forced(self, group_id: str) -> list[dict]:
@@ -12503,13 +12503,13 @@ class PetParkPlugin(Star):
         enroll = sect["today"]["enroll"]
         new_enroll = [e for e in enroll if e["qq"] != target]
         if len(new_enroll) == len(enroll):
-            return f"用户 `{target}` 不在今日报名列表中。"
+            return f"用户 `{self._display_uid(target)}` 不在今日报名列表中。"
         sect["today"]["enroll"] = new_enroll
         # 如果已确认，也移除
         sect["today"]["confirmed"] = [
             c for c in sect["today"]["confirmed"] if c["qq"] != target
         ]
-        return f"已将 `{target}` 从今日报名列表中踢出。"
+        return f"已将 `{self._display_uid(target)}` 从今日报名列表中踢出。"
 
     def _sect_set_notice(self, player: dict, group_id: str, tokens: list[str]) -> str:
         if not self._sect_is_master_or_deputy(player, group_id):
@@ -12556,14 +12556,14 @@ class PetParkPlugin(Star):
             return "不能任命自己。"
         tp = self.store.get_player(target, group_id, create=False)
         if not tp:
-            return f"用户 `{target}` 不在本群。"
+            return f"用户 `{self._display_uid(target)}` 不在本群。"
         deputies = sect.setdefault("deputy_qqs", [])
         if target in deputies:
             return "该用户已是副宗主。"
         if len(deputies) >= data.SECT_MAX_DEPUTIES:
             return f"副宗主最多 {data.SECT_MAX_DEPUTIES} 人。"
         deputies.append(target)
-        return f"已任命 `{target}` 为副宗主。"
+        return f"已任命 `{self._display_uid(target)}` 为副宗主。"
 
     def _sect_revoke_deputy(self, player: dict, group_id: str, tokens: list[str]) -> str:
         group = self.store.get_group(group_id)
@@ -12578,7 +12578,7 @@ class PetParkPlugin(Star):
         if target not in deputies:
             return "该用户不是副宗主。"
         deputies.remove(target)
-        return f"已撤销 `{target}` 的副宗主职位。"
+        return f"已撤销 `{self._display_uid(target)}` 的副宗主职位。"
 
     def _sect_re_elect(self, player: dict, group_id: str) -> str:
         if not self._sect_is_master_or_deputy(player, group_id):
@@ -12592,8 +12592,8 @@ class PetParkPlugin(Star):
         sect["master_qq"] = master["qq"]
         return (
             f"🏯 宗主重选完成\n"
-            f"- 原宗主：`{old or '无'}`\n"
-            f"- 新宗主：`{master['qq']}`（战力优先，活跃次之）"
+            f"- 原宗主：`{self._display_uid(old) or '无'}`\n"
+            f"- 新宗主：`{self._display_uid(master['qq'])}`（战力优先，活跃次之）"
         )
 
     def _sect_sign(self, player: dict, group_id: str) -> str:
@@ -12668,11 +12668,11 @@ class PetParkPlugin(Star):
 
     def _sect_format_confirmed(self, confirmed: list[dict]) -> str:
         lines = [f"## 🏯 已确认出战名单（{len(confirmed)}/{data.SECT_TEAM_SIZE}）"]
-        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 类型 |")
+        lines.append("| 序号 | 用户 | 宠物 | 战力 | 类型 |")
         lines.append("|---|---|---|---|---|")
         for i, e in enumerate(confirmed, 1):
             lines.append(
-                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname', '-'))} | "
+                f"| {i} | `{self._display_uid(e['qq'])}` | {e.get('pet_name', e.get('nickname', '-'))} | "
                 f"{self._fmt_power(e['bp'])} | {e.get('kind', '-')} |"
             )
         return "\n".join(lines)
@@ -12725,8 +12725,8 @@ class PetParkPlugin(Star):
             f"| 当前可用积分 | {sect.get('points', 0)} |",
             f"| 本赛季积分 | {sect.get('season_points', 0)} |",
             f"| 胜/平/败 | {sect.get('win',0)} / {sect.get('draw',0)} / {sect.get('lose',0)} |",
-            f"| 宗主 | `{sect.get('master_qq','未选举')}` |",
-            f"| 副宗主 | {', '.join(f'`{q}`' for q in sect.get('deputy_qqs',[])) or '无'} |",
+            f"| 宗主 | `{self._display_uid(sect.get('master_qq','未选举'))}` |",
+            f"| 副宗主 | {', '.join(f'`{self._display_uid(q)}`' for q in sect.get('deputy_qqs',[])) or '无'} |",
             f"| 公告 | {sect.get('notice','暂无公告')} |",
             f"| 今日签到 | {'已签到 ✅' if signed else '未签到 ❌'} |",
             f"| 今日出战状态 | {my_status} |",
@@ -12746,36 +12746,36 @@ class PetParkPlugin(Star):
 
         lines = [
             "## 🏯 今日宗门出战名单",
-            f"**宗主**：`{sect.get('master_qq','未选举')}`",
-            f"**副宗主**：{', '.join(f'`{q}`' for q in sect.get('deputy_qqs',[])) or '无'}",
+            f"**宗主**：`{self._display_uid(sect.get('master_qq','未选举'))}`",
+            f"**副宗主**：{', '.join(f'`{self._display_uid(q)}`' for q in sect.get('deputy_qqs',[])) or '无'}",
             f"**宗门公告**：{sect.get('notice','暂无公告')}",
             "",
         ]
         lines.append(f"### 强制出战（{len(forced)}/{data.SECT_FORCED_COUNT}）")
-        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 状态 |")
+        lines.append("| 序号 | 用户 | 宠物 | 战力 | 状态 |")
         lines.append("|---|---|---|---|---|")
         for i, e in enumerate(forced, 1):
             lines.append(
-                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname','-'))} | "
+                f"| {i} | `{self._display_uid(e['qq'])}` | {e.get('pet_name', e.get('nickname','-'))} | "
                 f"{self._fmt_power(e['bp'])} | 强制 |"
             )
 
         lines.append(f"\n### 报名出战（{len(enroll)}/{data.SECT_ENROLL_COUNT}）")
-        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 报名时间 |")
+        lines.append("| 序号 | 用户 | 宠物 | 战力 | 报名时间 |")
         lines.append("|---|---|---|---|---|")
         for i, e in enumerate(enroll, 1):
             t = time.strftime("%H:%M", self._bj_localtime(e.get("enrolled_at", 0)))
             lines.append(
-                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname','-'))} | "
+                f"| {i} | `{self._display_uid(e['qq'])}` | {e.get('pet_name', e.get('nickname','-'))} | "
                 f"{self._fmt_power(e['bp'])} | {t} |"
             )
 
         lines.append(f"\n### 已确认出战（{len(confirmed)}/{data.SECT_TEAM_SIZE}）")
-        lines.append("| 序号 | 用户ID | 宠物 | 战力 | 类型 |")
+        lines.append("| 序号 | 用户 | 宠物 | 战力 | 类型 |")
         lines.append("|---|---|---|---|---|")
         for i, e in enumerate(confirmed, 1):
             lines.append(
-                f"| {i} | `{e['qq']}` | {e.get('pet_name', e.get('nickname','-'))} | "
+                f"| {i} | `{self._display_uid(e['qq'])}` | {e.get('pet_name', e.get('nickname','-'))} | "
                 f"{self._fmt_power(e['bp'])} | {e.get('kind','-')} |"
             )
         return "\n".join(lines)
@@ -12819,7 +12819,7 @@ class PetParkPlugin(Star):
         lines.append(f"| 参战模式 | 全群参与 |")
         if war and war.get("base_power"):
             lines.append(f"| 初始战力 | {self._fmt_power(war['base_power'])}（随机分配） |")
-        lines.append(f"| 当前宗主 | `{sect.get('master_qq','未选举')}` |")
+        lines.append(f"| 当前宗主 | `{self._display_uid(sect.get('master_qq','未选举'))}` |")
 
         if war:
             opp = war.get("opponent_name") or war.get("opponent") or ""
@@ -12964,7 +12964,7 @@ class PetParkPlugin(Star):
         ]
         for i, c in enumerate(last.get("top_contributors", []), 1):
             lines.append(
-                f"| {i} | `{c['qq']}` | {c.get('pet_name','-')} | "
+                f"| {i} | `{self._display_uid(c['qq'])}` | {c.get('pet_name','-')} | "
                 f"{self._fmt_power(c.get('bp',0))} | {c.get('contrib',0)} |"
             )
         return "\n".join(lines)
@@ -13021,7 +13021,7 @@ class PetParkPlugin(Star):
                 f"| {medals.get(i, i)} | {name} | Lv{sect.get('level',1)} | "
                 f"{sect.get('total_points',0)} | "
                 f"{sect.get('win',0)}/{sect.get('draw',0)}/{sect.get('lose',0)} | "
-                f"`{sect.get('master_qq','-')}` |"
+                f"`{self._display_uid(sect.get('master_qq','-'))}` |"
             )
 
         if my_rank is not None:
@@ -13861,7 +13861,7 @@ class PetParkPlugin(Star):
             if p["gender"] == tpet["gender"]:
                 return "只有异性宠物才能互相追求。"
             tp.setdefault("pending", {})["pursue"] = player["qq"]
-            return f"💌 已向 {target} 的宠物发起追求，等待对方『同意追求 {player['qq']}』。"
+            return f"💌 已向 {self._display_uid(target)} 的宠物发起追求，等待对方『同意追求 {self._display_uid(player['qq'])}』。"
         if cmd == "同意追求":
             pend = player.get("pending", {}).get("pursue")
             if pend != target:
@@ -13881,7 +13881,7 @@ class PetParkPlugin(Star):
             if not self.store.remove_item(player, "永恒钻戒"):
                 return "你没有『永恒钻戒』。"
             tp.setdefault("pending", {})["marry"] = player["qq"]
-            return f"💍 已向 {target} 求婚，消耗『永恒钻戒』x1，等待对方『同意求婚 {player['qq']}』。"
+            return f"💍 已向 {self._display_uid(target)} 求婚，消耗『永恒钻戒』x1，等待对方『同意求婚 {self._display_uid(player['qq'])}』。"
         if cmd == "同意求婚":
             pend = player.get("pending", {}).get("marry")
             if pend != target:
@@ -14033,7 +14033,7 @@ class PetParkPlugin(Star):
                 if disp_info:
                     disp_qq = disp_info.get("qq", "")
                     mult_str = f"×{data.homestead_dispatch_multiplier(disp_info, name)}"
-                    parts.append(f"🐾 {disp_qq}({mult_str})")
+                    parts.append(f"🐾 {self._display_uid(disp_qq)}({mult_str})")
                 else:
                     next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
                     parts.append(f"⬆️{next_cost}金")
@@ -14360,7 +14360,7 @@ class PetParkPlugin(Star):
                 lines.append(f"　产量：{prod_text}")
                 if disp_info:
                     mult = data.homestead_dispatch_multiplier(disp_info, name)
-                    lines.append(f"　🐾 派遣：{disp_info.get('qq','?')} ×{mult}")
+                    lines.append(f"　🐾 派遣：{self._display_uid(disp_info.get('qq','?'))} ×{mult}")
                 lines.append(f"　⬆️ 升级 Lv{lv + 1} 需 {next_cost} 金币")
             else:
                 req_lv = cfg.get("unlock_pet_level", 0)
@@ -14388,7 +14388,7 @@ class PetParkPlugin(Star):
         target_qq = tokens[1]
         tp = self.store.get_player(target_qq, group_id, create=False)
         if not tp:
-            return f"本群不存在用户 {target_qq}。"
+            return f"本群不存在用户 {self._display_uid(target_qq)}。"
         ths = self.store.homestead_state(tp)
         tbuildings = ths.get("buildings", {})
         tdispatch = ths.get("dispatch", {})
@@ -14397,7 +14397,7 @@ class PetParkPlugin(Star):
         tp["coin"] = tp.get("coin", 0) + data.HOMESTEAD_VISITED_REWARD_COIN
         tdefense = data.homestead_defense(ths)
         lines = [
-            f"## 🏡 拜访 {target_qq} 的家园",
+            f"## 🏡 拜访 {self._display_uid(target_qq)} 的家园",
             f"🏡 Lv{ths['level']} · {len(tbuildings)}/{data.homestead_slots(ths['level'])} 建筑位 · 🛡️ 防御 {tdefense}",
             "",
         ]
@@ -14416,7 +14416,7 @@ class PetParkPlugin(Star):
         lines.append("")
         lines.append(f"🤝 拜访成功！你 +{data.HOMESTEAD_VISIT_REWARD_COIN} 金，对方 +{data.HOMESTEAD_VISITED_REWARD_COIN} 金。")
         remain = data.HOMESTEAD_VISIT_MAX_PER_DAY - hs["visit_today"]
-        lines.append(f"📅 剩余拜访 {remain} 次 · 💀 也可「顺手牵羊 {target_qq}」偷菜！")
+        lines.append(f"📅 剩余拜访 {remain} 次 · 💀 也可「顺手牵羊 {self._display_uid(target_qq)}」偷菜！")
         return "\n".join(lines)
 
     # =====================================================================
@@ -14523,7 +14523,7 @@ class PetParkPlugin(Star):
                         pn = pets[pet_idx].get("nickname", "")
                         if pn:
                             pet_name = f"『{pn}』{pet_name}"
-            lines.append(f"{icon} **{name}** ← {owner_qq} {pet_name}")
+            lines.append(f"{icon} **{name}** ← {self._display_uid(owner_qq)} {pet_name}")
             lines.append(f"　倍率 ×{mult} · 已派遣 {time_str}")
         return "\n".join(lines)
 
@@ -14546,7 +14546,7 @@ class PetParkPlugin(Star):
             return "不能偷自己的家园！"
         tp = self.store.get_player(target_qq, group_id, create=False)
         if not tp:
-            return f"本群不存在用户 {target_qq}。"
+            return f"本群不存在用户 {self._display_uid(target_qq)}。"
         ths = self.store.homestead_state(tp)
         # 检查护院符
         if ths.get("shield_until", 0) > int(time.time()):
@@ -14559,7 +14559,7 @@ class PetParkPlugin(Star):
         if int(time.time()) - last_steal < data.HOMESTEAD_STEAL_COOLDOWN_SAME:
             remain = data.HOMESTEAD_STEAL_COOLDOWN_SAME - (int(time.time()) - last_steal)
             m = remain // 60
-            return f"刚偷过 {target_qq} 的家园，请 {m} 分钟后再来。"
+            return f"刚偷过 {self._display_uid(target_qq)} 的家园，请 {m} 分钟后再来。"
         # 检查目标被偷次数
         if ths.get("be_stolen_date") != today:
             ths["be_stolen_date"] = today
@@ -14603,7 +14603,7 @@ class PetParkPlugin(Star):
             ths["be_stolen_today"] = ths.get("be_stolen_today", 0) + 1
             return (
                 f"💀 **偷菜成功！**（成功率 {success_rate:.0%}）\n"
-                f"- 偷得 {target_qq} 的 💰{stolen_coin} 金币 + 💎{stolen_jifen} 积分\n"
+                f"- 偷得 {self._display_uid(target_qq)} 的 💰{stolen_coin} 金币 + 💎{stolen_jifen} 积分\n"
                 f"- 目标防御力：{target_defense}　今日剩余偷取：{data.HOMESTEAD_STEAL_MAX_PER_DAY - hs['steal_today']} 次"
             )
         else:
@@ -14611,7 +14611,7 @@ class PetParkPlugin(Star):
             tp["coin"] = tp.get("coin", 0) + data.HOMESTEAD_STEAL_FAIL_PENALTY
             return (
                 f"🚨 **偷菜被抓！**（成功率 {success_rate:.0%}）\n"
-                f"- 被 {target_qq} 的哨塔发现了！赔偿 {data.HOMESTEAD_STEAL_FAIL_PENALTY} 金币\n"
+                f"- 被 {self._display_uid(target_qq)} 的哨塔发现了！赔偿 {data.HOMESTEAD_STEAL_FAIL_PENALTY} 金币\n"
                 f"- 目标防御力：{target_defense}"
             )
 
@@ -14682,6 +14682,25 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 家园排行
     # =====================================================================
+    def _homestead_dispatch_pet_names(self, hs: dict, group_id: str) -> list[str]:
+        """收集该家园当前派遣中的宠物昵称（同园多只按序收集）。"""
+        names: list[str] = []
+        seen: set = set()
+        for bname, dp in hs.get("dispatch", {}).items():
+            owner = dp.get("qq", "")
+            idx = dp.get("pet_index", -1)
+            key = (owner, idx)
+            if owner and idx >= 0 and key not in seen:
+                seen.add(key)
+                op = self.store.get_player(owner, group_id, create=False)
+                if op:
+                    pets = op.get("pets", [])
+                    if 0 <= idx < len(pets):
+                        n = pets[idx].get("nickname", "")
+                        if n:
+                            names.append(n)
+        return names
+
     def _homestead_rank(self, player: dict) -> str:
         """家园排行 —— 本周金币产出排行。"""
         all_players = self.store._data.get("homestead_players", {})
@@ -14691,16 +14710,19 @@ class PetParkPlugin(Star):
             weekly = hs.get("weekly_coin", 0)
             level = hs.get("level", 1)
             if weekly > 0:
-                entries.append({"qq": qq, "weekly": weekly, "level": level, "total": hs.get("total_coin_earned", 0)})
+                entries.append({"qq": qq, "weekly": weekly, "level": level, "total": hs.get("total_coin_earned", 0), "hs": hs})
         entries.sort(key=lambda x: x["weekly"], reverse=True)
         top = entries[:data.HOMESTEAD_RANK_SIZE]
+        group_id = str(player.get("group", ""))
         lines = ["## 🏆 家园排行（本周金币产出）", ""]
         my_qq = str(player.get("qq", ""))
         for i, e in enumerate(top):
             medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
-            lines.append(f"{medal} {e['qq']} — 💰 {e['weekly']} 金（Lv{e['level']}）")
+            pnames = self._homestead_dispatch_pet_names(e["hs"], group_id)
+            suffix = f"（{'、'.join(pnames)}）" if pnames else ""
+            lines.append(f"{medal} {self._display_uid(e['qq'])}{suffix} — 💰 {e['weekly']} 金（Lv{e['level']}）")
         # 我的排名
-        my_weekly = hs.get("weekly_coin", 0)
+        my_weekly = self.store.homestead_state(player).get("weekly_coin", 0)
         my_rank = next((i + 1 for i, e in enumerate(entries) if e["qq"] == my_qq), None)
         lines.append("")
         if my_rank:
@@ -14719,15 +14741,18 @@ class PetParkPlugin(Star):
             total = hs.get("total_coin_earned", 0)
             level = hs.get("level", 1)
             if total > 0:
-                entries.append({"qq": qq, "total": total, "level": level})
+                entries.append({"qq": qq, "total": total, "level": level, "hs": hs})
         entries.sort(key=lambda x: x["total"], reverse=True)
         top = entries[:data.HOMESTEAD_RANK_SIZE]
+        group_id = str(player.get("group", ""))
         lines = ["## 🏆 家园总排行（累计金币产出）", ""]
         for i, e in enumerate(top):
             medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
-            lines.append(f"{medal} {e['qq']} — 💰 {e['total']} 金（Lv{e['level']}）")
+            pnames = self._homestead_dispatch_pet_names(e["hs"], group_id)
+            suffix = f"（{'、'.join(pnames)}）" if pnames else ""
+            lines.append(f"{medal} {self._display_uid(e['qq'])}{suffix} — 💰 {e['total']} 金（Lv{e['level']}）")
         my_qq = str(player.get("qq", ""))
-        my_total = hs.get("total_coin_earned", 0)
+        my_total = self.store.homestead_state(player).get("total_coin_earned", 0)
         my_rank = next((i + 1 for i, e in enumerate(entries) if e["qq"] == my_qq), None)
         lines.append("")
         if my_rank:
