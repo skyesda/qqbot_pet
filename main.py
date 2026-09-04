@@ -3599,7 +3599,7 @@ class PetParkPlugin(Star):
         return max(ts, st)   # 池子不能早于活动开启
 
     def _celebrate_pool(self, cel: dict, player: dict, qq: str) -> str:
-        """瓜分货币奖池：每日 HH:MM 开启，冷却 15~30 分钟随机，每次按剩余比例递减抽取。"""
+        """瓜分货币奖池：每日 HH:MM 开启，默认无冷却；每次按「等额固定若干」抽取（per_grab，积分/金币/钻石各同额）。"""
         pool = cel.get("pool", {})
         if not pool.get("enabled"):
             return "🎂 奖池瓜分暂未开启。"
@@ -3613,28 +3613,33 @@ class PetParkPlugin(Star):
             hm = pool.get("start_time") or "07:00"
             return f"🎂 瓜分奖池将于 **{hm}** 开启，敬请期待！"
         carnival = self._in_carnival(cel, now)
-        if carnival:
-            cd_sec = int(cel.get("carnival_cooldown_sec") or self.CARNIVAL_COOLDOWN_SEC)
-        else:
-            cd_min = max(1, int(pool.get("cooldown_min") or 15))
-            cd_max = max(cd_min, int(pool.get("cooldown_max") or 30))
-            cd_sec = random.randint(cd_min, cd_max) * 60   # 冷却 15~30 分钟随机
+        # 无冷却开关（后台 pool 可配，默认开启）：开启时每次瓜分不设冷却，可连续点击
+        no_cd = bool(pool.get("no_cd", True))
         ppl = cel.setdefault("players", {}).setdefault(qq, {})
-        next_ok = int(ppl.get("pool_next") or 0)
-        if next_ok and now < next_ok:
-            rem = next_ok - now
+        if not no_cd:
             if carnival:
-                return f"⏳ 奖池冷却中，剩 {rem} 秒后可再次瓜分。"
-            return f"⏳ 奖池仍在冷却，剩 **约{max(1, (rem + 59) // 60)}分钟** 后可再次瓜分。"
+                cd_sec = int(cel.get("carnival_cooldown_sec") or self.CARNIVAL_COOLDOWN_SEC)
+            else:
+                cd_min = max(1, int(pool.get("cooldown_min") or 15))
+                cd_max = max(cd_min, int(pool.get("cooldown_max") or 30))
+                cd_sec = random.randint(cd_min, cd_max) * 60   # 冷却 15~30 分钟随机
+            next_ok = int(ppl.get("pool_next") or 0)
+            if next_ok and now < next_ok:
+                rem = next_ok - now
+                if carnival:
+                    return f"⏳ 奖池冷却中，剩 {rem} 秒后可再次瓜分。"
+                return f"⏳ 奖池仍在冷却，剩 **约{max(1, (rem + 59) // 60)}分钟** 后可再次瓜分。"
+        # 等额固定额度：每次从剩余奖池抽「固定若干」（积分/金币/钻石各取同额），而非随机比例。
+        per_grab = max(0, int(pool.get("per_grab") or 5000))
         remain = cel.setdefault("pool_remain", {})
         gained = []
-        for name, cfg in cur.items():
+        for name in cur:
             r = int(remain.get(name, 0))
             if r <= 0:
                 continue
-            # 递减动态：每次瓜「剩余池子的一个随机比例」，越到后面瓜得越少，直到瓜完。
-            frac = random.uniform(self.POOL_DECAY_LO, self.POOL_DECAY_HI)
-            share = max(1, min(int(r * frac), r))
+            share = min(per_grab, r) if per_grab else 0   # 等额若干，最多取到该币剩余
+            if share <= 0:
+                continue
             remain[name] = r - share
             self.store.add_currency(player, name, share)
             gained.append((name, share))
@@ -3644,7 +3649,7 @@ class PetParkPlugin(Star):
         if carnival:
             (cel.setdefault("carnival", {}).setdefault("participants", {}))[qq] = player.get("group") or ""
         ppl["pool_ts"] = now
-        ppl["pool_next"] = now + cd_sec
+        ppl["pool_next"] = now if no_cd else now + cd_sec
         lines = ["## 🎂 瓜分成功！你获得："]
         for name, share in gained:
             lines.append(f"- {name} × **{share:,}**")

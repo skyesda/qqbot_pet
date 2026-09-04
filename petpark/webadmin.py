@@ -856,6 +856,9 @@ class WebAdmin:
         pool["start_time"] = str(pcfg.get("start_time") or pool.get("start_time") or "07:00")
         pool["cooldown_min"] = max(1, int(pcfg.get("cooldown_min") or pool.get("cooldown_min") or 15))
         pool["cooldown_max"] = max(pool["cooldown_min"], int(pcfg.get("cooldown_max") or pool.get("cooldown_max") or 30))
+        # 等额固定额度 + 无冷却开关（后台可配；见 main._celebrate_pool）
+        pool["per_grab"] = max(0, int(pcfg.get("per_grab") or pool.get("per_grab") or 5000))
+        pool["no_cd"] = bool(pcfg.get("no_cd", pool.get("no_cd", True)))
         old_cur = pool.get("currencies") or {}
         new_cur = {}
         for name, c in (pcfg.get("currencies") or {}).items():
@@ -2004,10 +2007,15 @@ function renderCelebrate(){
    <div class="row">
     <label class="fld">冷却最小值(分) <input type="number" min="1" value="${po.cooldown_min||15}" id="ce_pcdmin" style="width:90px"></label>
     <label class="fld">冷却最大值(分) <input type="number" min="1" value="${po.cooldown_max||30}" id="ce_pcdmax" style="width:90px"></label>
-    <span class="muted" style="font-size:12px">每次瓜分后冷却时长在区间内随机。</span>
+    <span class="muted" style="font-size:12px">每次瓜分后冷却时长在区间内随机（仅未勾选无冷却时生效）。</span>
+   </div>
+   <div class="row">
+    <label class="fld">每次瓜分额度 <input type="number" min="0" value="${po.per_grab||5000}" id="ce_pgrab" style="width:100px"></label>
+    <label class="fld">无冷却 <input type="checkbox" id="ce_pnocd" ${po.no_cd===false?'':'checked'}></label>
+    <span class="muted" style="font-size:12px">三个货币各等额拿该值（上限=该币剩余）；勾选则关闭冷却、可连续点击。</span>
    </div>
    <table><thead><tr><th>货币</th><th>总量（动态库存）</th></tr></thead><tbody>${curRows||'<tr><td colspan="2" class="muted">未配置</td></tr>'}</tbody></table>
-   <div style="color:#9aa3b8;font-size:12px">每日到达开启时间后开放瓜分；每次瓜取剩余池子的一个随机比例（递减动态）：池子越剩越多瓜、越到后面瓜得越少，直到瓜完；无需填单次范围。</div>
+   <div style="color:#9aa3b8;font-size:12px">每日到达开启时间后开放瓜分；每次按等额固定额度抽取（三币各取 per_grab），而非随机比例；勾选无冷却可连续瓜分。</div>
    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
     <button class="act" onclick="saveCelebrate()">保存配置</button>
     <button class="act ghost" onclick="resetPool()">重置奖池剩余</button>
@@ -2048,6 +2056,8 @@ async function saveCelebrate(){
         start_time:g('ce_pst').value||'07:00',
         cooldown_min:Math.max(1,Number(g('ce_pcdmin').value)||15),
         cooldown_max:Math.max(1,Number(g('ce_pcdmax').value)||30),
+        per_grab:Math.max(0,Number(g('ce_pgrab').value)||5000),
+        no_cd:g('ce_pnocd')?g('ce_pnocd').checked:true,
         currencies:{}}
  }};
  const nRounds=((c.gacha||{}).rounds||[]).length;
