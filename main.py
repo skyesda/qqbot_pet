@@ -3612,12 +3612,19 @@ class PetParkPlugin(Star):
         if pst and now < pst:
             hm = pool.get("start_time") or "07:00"
             return f"🎂 瓜分奖池将于 **{hm}** 开启，敬请期待！"
-        cd_min = max(1, int(pool.get("cooldown_min") or 15))
-        cd_max = max(cd_min, int(pool.get("cooldown_max") or 30))
+        carnival = self._in_carnival(cel, now)
+        if carnival:
+            cd_sec = int(cel.get("carnival_cooldown_sec") or self.CARNIVAL_COOLDOWN_SEC)
+        else:
+            cd_min = max(1, int(pool.get("cooldown_min") or 15))
+            cd_max = max(cd_min, int(pool.get("cooldown_max") or 30))
+            cd_sec = random.randint(cd_min, cd_max) * 60   # 冷却 15~30 分钟随机
         ppl = cel.setdefault("players", {}).setdefault(qq, {})
         next_ok = int(ppl.get("pool_next") or 0)
         if next_ok and now < next_ok:
             rem = next_ok - now
+            if carnival:
+                return f"⏳ 奖池冷却中，剩 {rem} 秒后可再次瓜分。"
             return f"⏳ 奖池仍在冷却，剩 **约{max(1, (rem + 59) // 60)}分钟** 后可再次瓜分。"
         remain = cel.setdefault("pool_remain", {})
         gained = []
@@ -3633,7 +3640,9 @@ class PetParkPlugin(Star):
             gained.append((name, share))
         if not gained:
             return "🎂 奖池已被瓜分完毕！"
-        cd_sec = random.randint(cd_min, cd_max) * 60   # 冷却 15~30 分钟随机
+        # 狂欢时刻参与者：整个最后 1 小时窗口内至少瓜过一次的人，用于收官平分
+        if carnival:
+            (cel.setdefault("carnival", {}).setdefault("participants", {}))[qq] = player.get("group") or ""
         ppl["pool_ts"] = now
         ppl["pool_next"] = now + cd_sec
         lines = ["## 🎂 瓜分成功！你获得："]
@@ -3643,11 +3652,124 @@ class PetParkPlugin(Star):
         lines.append(f"> 剩余：**{', '.join(remain_lines) or '已空'}**")
         return "\n".join(lines)
 
+    def _in_carnival(self, cel: dict, now: int | None = None) -> bool:
+        """是否处于「狂欢时刻」总活动最后 1 小时窗口内。"""
+        if now is None:
+            now = int(time.time())
+        end = int(cel.get("end_at") or 0)
+        if not end:
+            return False
+        car_sec = int(cel.get("carnival_window_sec") or self.CARNIVAL_WINDOW_SEC)
+        return end - car_sec <= now <= end
+
+    def _pool_multiply(self, cel: dict) -> int:
+        """把当前剩余奖池按随机 10~100 倍放大（仅对仍有余量的币种），返回倍率。"""
+        lo = int(cel.get("carnival_mult_lo") or self.CARNIVAL_DOUBLE_LO)
+        hi = int(cel.get("carnival_mult_hi") or self.CARNIVAL_DOUBLE_HI)
+        mult = random.randint(lo, hi)
+        cur = (cel.get("pool") or {}).get("currencies") or {}
+        remain = cel.setdefault("pool_remain", {})
+        for name in cur:
+            r = int(remain.get(name, 0))
+            if r > 0:
+                remain[name] = r * mult
+        return mult
+
+    def _distribute_remaining(self, cel: dict) -> str:
+        """结束前 5 分钟：把剩余奖池平分给所有参与过狂欢瓜分的玩家（余数随机补发）。"""
+        cur = (cel.get("pool") or {}).get("currencies") or {}
+        remain = cel.setdefault("pool_remain", {})
+        parts = (cel.get("carnival") or {}).get("participants") or {}
+        ids = list(parts.keys())
+        if not ids:
+            return "🎉 **狂欢时刻收官**：本轮无人参与瓜分，剩余奖池无人领取。"
+        lines = [f"🎉 **狂欢时刻收官**！剩余奖池平分给 **{len(ids)}** 位狂欢玩家："]
+        for name in cur:
+            r = int(remain.get(name, 0))
+            if r <= 0:
+                continue
+            n = len(ids)
+            each, extra = divmod(r, n)
+            extra_ids = set(random.sample(ids, extra)) if extra else set()
+            for uid in ids:
+                amt = each + (1 if uid in extra_ids else 0)
+                if amt <= 0:
+                    continue
+                self.store.add_currency(
+                    self.store.get_player(uid, parts[uid]), name, amt
+                )
+            remain[name] = 0
+            lines.append(
+                f"• **{name}** 剩余 {r:,}：每人 {each:,} 份"
+                + ("，余数随机补发若干活跃玩家" if extra else "（平均瓜分）")
+            )
+        return "\n".join(lines)
+
+    async def _celebrate_carnival(self, cel: dict, now: int) -> bool:
+        """狂欢时刻调度：开场公告+冷却10s+首次翻倍、每10分钟翻倍共3次、结束前5分钟平分。返回是否有变动。"""
+        end = int(cel.get("end_at") or 0)
+        if not end:
+            return False
+        car_sec = int(cel.get("carnival_window_sec") or self.CARNIVAL_WINDOW_SEC)
+        car_start = end - car_sec
+        if not (car_start <= now <= end):
+            return False
+        carn = cel.setdefault("carnival", {})
+        # end_at 变更（后台重新配置新一场活动）时，自动清空狂欢时刻的现场状态
+        if carn.get("for_end") != end:
+            carn = cel["carnival"] = {
+                "for_end": end, "announced": False, "double_step": 0,
+                "last_double_ts": 0, "participants": {}, "distributed": False,
+            }
+        changed = False
+        # 开场：公告 + 冷却 10s + 第①次翻倍（与窗口开启同一时刻）
+        if not carn.get("announced"):
+            mult = self._pool_multiply(cel)
+            carn["announced"] = True
+            carn["double_step"] = 1
+            carn["last_double_ts"] = now
+            cd = int(cel.get("carnival_cooldown_sec") or self.CARNIVAL_COOLDOWN_SEC)
+            await self._fire_celebrate_broadcast(
+                cel,
+                f"🎉 **狂欢时刻**！最后 {car_sec // 60} 分钟，奖池瓜分冷却降至 **{cd} 秒**，抢到就是赚到！\n"
+                f"🎁 奖池翻倍 ×{mult}，速来瓜分！",
+            )
+            changed = True
+        # 第②③次翻倍：每 10 分钟一次，共 3 次
+        else:
+            done = int(carn.get("double_step") or 1)
+            gap = int(cel.get("carnival_double_gap_sec") or self.CARNIVAL_DOUBLE_GAP_SEC)
+            maxx = int(cel.get("carnival_double_max") or self.CARNIVAL_DOUBLE_MAX)
+            if done < maxx and now - int(carn.get("last_double_ts") or 0) >= gap:
+                mult = self._pool_multiply(cel)
+                carn["double_step"] = done + 1
+                carn["last_double_ts"] = now
+                await self._fire_celebrate_broadcast(
+                    cel, f"🎁 **奖池再次翻倍 ×{mult}**！第 {done + 1}/{maxx} 次，冲！"
+                )
+                changed = True
+        # 结束前 5 分钟：平分剩余
+        dist_sec = int(cel.get("carnival_final_dist_sec") or self.CARNIVAL_FINAL_DIST_SEC)
+        if now >= end - dist_sec and not carn.get("distributed"):
+            carn["distributed"] = True
+            await self._fire_celebrate_broadcast(cel, self._distribute_remaining(cel))
+            changed = True
+        return changed
+
     # --------------------------- 生辰盛典后台循环（开奖箱/公告） ----------------------------
     CELEBRATE_CHECK_SEC = 20
     # 瓜分「递减动态」：每次瓜取剩余池子的一个随机比例（下限/上限），池子越瓜越少。
     POOL_DECAY_LO = 0.03
     POOL_DECAY_HI = 0.12
+    # 「狂欢时刻」：总活动最后 1 小时，冷却 10s；每 10 分钟奖池翻倍 10~100 倍，共 3 次；
+    # 结束前 5 分钟把剩余奖池平分给参与过狂欢瓜分的玩家。均可被 cel 配置覆盖。
+    CARNIVAL_WINDOW_SEC = 3600
+    CARNIVAL_COOLDOWN_SEC = 10
+    CARNIVAL_DOUBLE_GAP_SEC = 600
+    CARNIVAL_DOUBLE_MAX = 3
+    CARNIVAL_DOUBLE_LO = 10
+    CARNIVAL_DOUBLE_HI = 100
+    CARNIVAL_FINAL_DIST_SEC = 300
 
     async def _celebrate_loop(self) -> None:
         while True:
@@ -3699,6 +3821,9 @@ class PetParkPlugin(Star):
                     if da and now >= da:
                         await self._celebrate_draw_round(cel, i, r)
                         changed = True
+            # 狂欢时刻：最后 1 小时 冷却10s + 每10分钟翻倍(共3次) + 结束前5分钟平分剩余
+            if await self._celebrate_carnival(cel, now):
+                changed = True
         if changed:
             await self.store.save()
 
