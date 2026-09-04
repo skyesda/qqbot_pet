@@ -1131,6 +1131,9 @@ class PetParkPlugin(Star):
         # （dispatch 内也会再做一次同样处理，此处提前替换是为让 AI 意图路由
         #  拿到干净文本；对禁言/撤回指令无影响——它们解析的是 raw.mentions）
         text = _MENTION_RE.sub(lambda m: f" {m.group(1)} ", text).strip()
+        # 兼容 QQ 官方指令面板：点击面板项时客户端会自动补 `/` 前缀（如 `/签到`），
+        # 剥掉开头的斜杠使 `/签到` 等价于 `签到`，面板指令才能被识别；同时兼容用户手输的 `/指令 参数`。
+        text = text.lstrip("/")
         if not text:
             return
         qq = str(event.get_sender_id())
@@ -2811,6 +2814,9 @@ class PetParkPlugin(Star):
         # （赠送/转让/PK/拜访/加金币/任命小管理等）都支持直接 @ 对方。
         # 替换时两侧补空格，兼容「赠送<@!xx>100」这类@与文字粘连的写法。
         text = _MENTION_RE.sub(lambda m: f" {m.group(1)} ", text)
+        # 兼容 QQ 官方指令面板：点击面板项客户端会自动补 `/` 前缀（如 `/签到`），
+        # 剥掉开头的斜杠使 `/签到` 等价于 `签到`。
+        text = text.lstrip("/")
         tokens = text.split()
         cmd = tokens[0]
         # 扫雷紧凑指令归一化：扫a1b2 → 扫 a1b2；插旗a1 → 插旗 a1；开始扫雷2 → 开始扫雷 2
