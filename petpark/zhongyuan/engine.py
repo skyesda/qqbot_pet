@@ -1379,6 +1379,15 @@ class ZhongyuanActivity:
         # 大管理员：自定义中元副本主题（母题）
         if cmd == "中元副本主题":
             return self._cmd_dungeon_theme(event, qq, tokens[1:])
+        # 活动未在进行中（未开始 / 已结束 / 被关闭）：仅「功德商店」与只读信息可用，其余玩法全部关闭
+        if cmd and not self._enabled() and cmd not in (
+            "功德商店", "中元活动", "中元活动介绍", "中元状态", "我的中元",
+            "副本进度", "我的副本", "中元功德榜", "中元排行", "中元里程碑", "功德里程碑",
+        ):
+            return (
+                "🌙 中元活动当前未在开放中。\n"
+                f"> 仅「功德商店」兑换期内可用，其它中元玩法已全部关闭。"
+            )
         # 解密作答（仅被勾中玩家）
         if cmd in ("答", "中元答"):
             answer = text[len(cmd):].strip()
@@ -1450,10 +1459,14 @@ class ZhongyuanActivity:
 
     async def _tick(self) -> None:
         now = self._now()
-        # 1. 解密时限 / 周期播报（全服唯一全局会话）
+        # 1. 解密时限 / 周期播报（全服唯一全局会话；活动不在进行中则终止副本）
         s = self._session()
         if s:
-            if now > s.get("deadline", 0):
+            if not self._enabled():
+                # 活动关闭/未开始/已结束：终止进行中的副本，不再播报/接受作答
+                self._data["sessions"] = {}
+                await self._push_all_groups("🕯️ 中元活动已关闭，进行中的副本已终止。")
+            elif now > s.get("deadline", 0):
                 reply = self._fail_dungeon("超时")
                 await self._push_all_groups(reply)
             elif now - s.get("last_status_ts", 0) >= self._int_cfg("dungeon_status_interval_sec", 120):
