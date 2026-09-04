@@ -3496,6 +3496,8 @@ class PetParkPlugin(Star):
         ga.setdefault("grand_item", "宠物定制卡")
         ga.setdefault("grand_count", 1)
         ga.setdefault("grand_used", False)
+        ga.setdefault("per_win_min", 2)
+        ga.setdefault("per_win_max", 10)
         ga.setdefault("stock", {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动修炼卡": 94})
         ga.setdefault("stock_remain", dict(ga["stock"]))
         ga.setdefault("rounds", [])
@@ -3545,7 +3547,7 @@ class PetParkPlugin(Star):
             else:
                 lines.append("- （后台尚未配置奖池）")
         lines.append("")
-        lines.append("> 报名后到点自动开奖：约{0}%中奖者从剩余库存随机得1份；每人每轮仅一次。".format(int(float(gacha.get('win_rate') or 0.8) * 100)))
+        lines.append("> 报名后到点自动开奖：约{0}%中奖者从剩余库存动态抽奖，每人随机得{1}~{2}份；每人每轮仅一次，最后一轮清空剩余库存并保发定制卡大奖。".format(int(float(gacha.get('win_rate') or 0.8) * 100), max(1, int(gacha.get('per_win_min', 2))), max(1, int(gacha.get('per_win_max', 10)))))
         return "\n".join(lines)
 
     def _celebrate_gacha(self, cel: dict, qq: str, group_id: str) -> str:
@@ -3700,7 +3702,7 @@ class PetParkPlugin(Star):
                 logger.exception("[petpark] 生辰盛典广播失败")
 
     async def _celebrate_draw_round(self, cel: dict, idx: int, rnd: dict) -> None:
-        """对某一开奖场次执行抽奖：每轮约 win_rate 中奖，从共享库存按剩余份数加权动态抽取；最后一轮额外保发定制卡大奖。"""
+        """对某一开奖场次执行抽奖：每轮约 win_rate 中奖，从共享库存按剩余份数加权动态抽取，每人随机得 per_win_min~per_win_max 份；最后一轮清空剩余库存并保发定制卡大奖。"""
         gacha = self._ga_norm(cel)
         stock_cfg = gacha.get("stock") or {}
         remain = gacha.setdefault("stock_remain", dict(stock_cfg))
@@ -3719,26 +3721,57 @@ class PetParkPlugin(Star):
             await self._fire_celebrate_broadcast(cel, text)
             return
         openids = list(parts.keys())
-        avail_total = sum(int(remain.get(it, stock_cfg[it])) for it in stock_cfg if int(remain.get(it, stock_cfg[it])) > 0)
-        # 中奖人数：参与×win_rate（至少1），上限=参与人数/剩余库存
+
+        def _left(it):
+            return int(remain.get(it, stock_cfg[it]))
+
+        avail_total = sum(_left(it) for it in stock_cfg if _left(it) > 0)
+        # 每名中奖者随机派发数量（加大：默认 2~10，可在 gacha 配置里用 per_win_min/per_win_max 调整）
+        per_win_min = max(1, int(gacha.get("per_win_min", 2)))
+        per_win_max = max(per_win_min, int(gacha.get("per_win_max", 10)))
+        # 中奖人数：参与×win_rate（至少1），上限=参与人数/剩余库存（保证每名中奖者至少能拿到1件）
         want = max(1, int(len(openids) * win_rate))
         n_winners = min(want, len(openids), avail_total)
         result = {"participants": len(openids), "winners": [], "grand": None}
         if n_winners > 0:
             chosen = random.sample(openids, n_winners)
-            chunk = [f"- 🎁 **中奖**（约{int(win_rate * 100)}%，剩余库存动态抽取）："]
+            chunk = [f"- 🎁 **中奖**（约{int(win_rate * 100)}%，剩余库存动态抽取，每人随机×{per_win_min}~{per_win_max}）："]
             for w in chosen:
-                items = [it for it in stock_cfg if int(remain.get(it, stock_cfg[it])) > 0]
+                items = [it for it in stock_cfg if _left(it) > 0]
                 if not items:
                     break
-                weights = [int(remain.get(it, stock_cfg[it])) for it in items]
+                weights = [_left(it) for it in items]
                 item = random.choices(items, weights=weights)[0]
+                qty = random.randint(per_win_min, per_win_max)
+                if qty > _left(item):
+                    qty = _left(item)
+                if qty <= 0:
+                    continue
                 gid = parts[w]
-                self.store.add_item(self.store.get_player(w, gid), item, 1)
-                remain[item] = int(remain.get(item, stock_cfg[item])) - 1
-                result["winners"].append({"openid": w, "item": item, "count": 1})
-                chunk.append(f"　• {self._display_uid(w)} → {item}×1")
+                self.store.add_item(self.store.get_player(w, gid), item, qty)
+                remain[item] = _left(item) - qty
+                result["winners"].append({"openid": w, "item": item, "count": qty})
+                chunk.append(f"　• {self._display_uid(w)} → {item}×{qty}")
             text += "\n".join(chunk) + "\n"
+            # 最后一场：无论如何把剩余库存全部随机派发给当轮参与者，确保奖池清空
+            if is_last and any(_left(it) > 0 for it in stock_cfg):
+                flush = {}
+                for it in list(stock_cfg.keys()):
+                    cnt = _left(it)
+                    if cnt <= 0:
+                        continue
+                    for w in random.choices(openids, k=cnt):
+                        gid = parts[w]
+                        self.store.add_item(self.store.get_player(w, gid), it, 1)
+                        b = flush.setdefault(w, {})
+                        b[it] = b.get(it, 0) + 1
+                    remain[it] = 0
+                if flush:
+                    lines = ["- 🌊 **收官清空剩余库存**："]
+                    for w, m in flush.items():
+                        s = "、".join(f"{it}×{c}" for it, c in m.items())
+                        lines.append(f"　• {self._display_uid(w)} → {s}")
+                    text += "\n".join(lines) + "\n"
         else:
             text += "> 本轮库存已发光，无库存奖品。\n"
         # 最后一轮：保发定制卡大奖（仅一次）
