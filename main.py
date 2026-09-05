@@ -6586,6 +6586,14 @@ class PetParkPlugin(Star):
     # ---------------------------------------------------------------------
 
     @staticmethod
+    @staticmethod
+    def _short_num(n) -> str:
+        """数值缩写：>=1亿 显示 x.xx亿，>=1万 显示 x.xx万，否则原值。
+
+        委托 petpark.pet.short_num，与 render_pet 文本兜底保持完全一致。
+        """
+        return petmod.short_num(n)
+
     def _pct(v, total) -> int:
         """返回 v/total 的 0..100 百分比。"""
         try:
@@ -6651,7 +6659,7 @@ class PetParkPlugin(Star):
         portrait = (f'<img class="portrait" src="{uri}" alt="{esc(pet["nickname"])}">'
                     if uri else '<div class="portrait-ph">暂无立绘</div>')
         stats_html = "".join(
-            f'<div class="stat"><span>{esc(label)}</span><strong>{esc(str(pet.get(key, 0)))}</strong></div>'
+            f'<div class="stat"><span>{esc(label)}</span><strong>{esc(self._short_num(pet.get(key, 0)))}</strong></div>'
             for label, key in [("攻击", "atk"), ("防御", "def"), ("智力", "intel")]
         )
         bars = "".join([
@@ -6699,7 +6707,7 @@ class PetParkPlugin(Star):
             '<div class="pet-layout"><div>'
             f'<div class="portrait-wrap">{portrait}<div class="portrait-label">Lv.{pet["level"]} / {lc}</div></div>'
             f'{res_bar}<div class="vitals panel">{bars}</div></div><div>'
-            f'<div class="power"><span>综合战力</span><strong>{bp}</strong></div>'
+            f'<div class="power"><span>综合战力</span><strong>{self._short_num(bp)}</strong></div>'
             f'<div class="attributes panel">{rows_html}</div>'
             f'<div class="stats">{stats_html}</div>'
             f'<div class="abilities panel">{abilities}{extra}</div></div></div>{tags_html}{frozen}'
@@ -6710,7 +6718,7 @@ class PetParkPlugin(Star):
     def _bar_row(self, label, v, total, cls) -> str:
         return (f'<div class="bar-row"><span class="bar-k">{self._menu_esc(label)}</span>'
                 f'<div class="bar"><div class="fill {cls}" style="width:{self._pct(v, total)}%"></div></div>'
-                f'<span class="bar-n">{self._menu_esc(str(v))}/{self._menu_esc(str(total))}</span></div>')
+                f'<span class="bar-n">{self._menu_esc(self._short_num(v))}/{self._menu_esc(self._short_num(total))}</span></div>')
 
     def _card_row(self, k, v) -> str:
         return f'<div class="row"><k>{self._menu_esc(k)}</k><v>{self._menu_esc(str(v))}</v></div>'
@@ -7870,13 +7878,13 @@ class PetParkPlugin(Star):
             return f"精力上限 +{eff['add_energy_max']} 并回满，当前上限 {p['energy_max']}。"
         if "add_atk" in eff:
             p["atk"] += eff["add_atk"]
-            return f"攻击 +{eff['add_atk']}，当前攻击 {p['atk']}。"
+            return f"攻击 +{eff['add_atk']}，当前攻击 {self._short_num(p['atk'])}。"
         if "add_def" in eff:
             p["def"] += eff["add_def"]
-            return f"防御 +{eff['add_def']}，当前防御 {p['def']}。"
+            return f"防御 +{eff['add_def']}，当前防御 {self._short_num(p['def'])}。"
         if "add_intel" in eff:
             p["intel"] += eff["add_intel"]
-            return f"智力 +{eff['add_intel']}，当前智力 {p['intel']}。"
+            return f"智力 +{eff['add_intel']}，当前智力 {self._short_num(p['intel'])}。"
         if "mood" in eff:
             p["mood"] = max(1, min(5, eff["mood"]))
             return f"心情已恢复到 {p['mood']} 颗星！"
@@ -9002,10 +9010,8 @@ class PetParkPlugin(Star):
 
     @staticmethod
     def _fmt_power(bp: int) -> str:
-        """战力显示：≥1万用『X.XX万』，否则原值。"""
-        if bp >= 10000:
-            return f"{bp / 10000:.2f}万"
-        return str(bp)
+        """战力显示：≥1亿用『X.XX亿』，≥1万用『X.XX万』，否则原值。"""
+        return PetParkPlugin._short_num(bp)
 
     def _rank(self, player: dict, group_id: str, local: bool) -> str:
         # 本群排行只统计本群玩家；神榜为全服（跨群）。

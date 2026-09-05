@@ -310,6 +310,23 @@ def skill_power(pet: dict) -> int:
     return sum(data.SKILLS.get(s, {}).get("power", 0) for s in pet.get("skills", []))
 
 
+def short_num(n) -> str:
+    """数值缩写：>=1亿 显示 x.xx亿，>=1万 显示 x.xx万，否则原值。
+
+    用于攻击/防御/智力/生命/战力等大数值展示，避免长数字撑破布局。
+    为模块级工具，供 render_pet 与插件层（PetParkPlugin）共同复用。
+    """
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return str(n)
+    if abs(n) >= 1_0000_0000:
+        return f"{n / 1_0000_0000:.2f}亿"
+    if abs(n) >= 1_0000:
+        return f"{n / 1_0000:.2f}万"
+    return f"{int(n)}"
+
+
 def battle_power(pet: dict) -> int:
     """战力 = (攻击+防御)*2 + 智力*1 + (生命上限*心情) + 武器加成 + 秘技加成"""
     bp = (
@@ -357,13 +374,13 @@ def render_pet(pet: dict) -> str:
     lines = [
         f"## 🐾 {pet['nickname']}",
         f"> {species_display} · {pet['element']}属性 · {pet['stage']} · **{pet['quality']}**",
-        f"> {gender} · {love} · Lv{pet['level']}/{level_cap(pet)} · ⚔️ 战力 {battle_power(pet)}",
+        f"> {gender} · {love} · Lv{pet['level']}/{level_cap(pet)} · ⚔️ 战力 {short_num(battle_power(pet))}",
         "",
-        f"- ❤️ **血量**　{pet['hp']}/{pet['hp_max']}",
-        f"- ⚡ **精力**　{pet['energy']}/{pet['energy_max']}",
+        f"- ❤️ **血量**　{short_num(pet['hp'])}/{short_num(pet['hp_max'])}",
+        f"- ⚡ **精力**　{short_num(pet['energy'])}/{short_num(pet['energy_max'])}",
         f"- 😊 **心情**　{stars}",
         f"- 🩹 **状态**　{pet['status']}",
-        f"- 💪 **攻击** {pet['atk']} · 🛡️ **防御** {pet['def']} · 🧠 **智力** {pet['intel']}",
+        f"- 💪 **攻击** {short_num(pet['atk'])} · 🛡️ **防御** {short_num(pet['def'])} · 🧠 **智力** {short_num(pet['intel'])}",
         f"- 🎓 **天赋**　{talent}",
         f"- ✨ **秘技**　{skills}",
         f"- 🗡️ **神器**　{artifact}",
