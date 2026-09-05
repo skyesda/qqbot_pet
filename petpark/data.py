@@ -448,7 +448,7 @@ ITEMS = {
         "currency": CURRENCY_JIFEN,
         "category": "道具",
         "usable": True,
-        "desc": "宗门贡献兑换的神秘宝箱，使用后随机开出金币/积分/道具。",
+        "desc": "使用后随机开出金币/积分/道具。",
         "effect": {"mystery_box": True},
     },
     # ---- 属性符（永久增加属性，钻石计价）----
@@ -1756,92 +1756,6 @@ MS_NUMBER_COLORS = {
 }
 
 
-# ----------------------------------------------------------------------------
-# 宗门战 / 跨群联赛
-# ----------------------------------------------------------------------------
-SECT_BATTLE_TIME = 21  # 每天开打小时（24 小时制）
-SECT_ENROLL_DEADLINE_HOUR = 20
-SECT_ENROLL_DEADLINE_MIN = 30
-SECT_FORCED_COUNT = 3   # 强制出战人数
-SECT_ENROLL_COUNT = 7   # 报名出战人数
-SECT_TEAM_SIZE = SECT_FORCED_COUNT + SECT_ENROLL_COUNT  # 总出战 10 人
-SECT_MIN_BATTLE_MEMBERS = 5  # 最少几人才能参战
-SECT_MAX_DEPUTIES = 3   # 副宗主人数上限
-SECT_SIGN_POINTS = 5    # 宗门签到获得宗门积分
-SECT_WIN_POINTS = 50    # 宗门战胜利获得宗门积分
-SECT_LOSE_POINTS = 10   # 宗门战失败获得宗门积分
-SECT_DRAW_POINTS = 20   # 平局宗门积分
-SECT_BYE_POINTS = 5     # 轮空宗门积分
-SECT_WIN_JIFEN = 100    # 胜利个人积分奖励
-SECT_WIN_COIN = 500     # 胜利个人金币奖励
-SECT_LOSE_JIFEN = 30    # 失败个人积分奖励
-SECT_LOSE_COIN = 100    # 失败个人金币奖励
-SECT_DRAW_JIFEN = 50    # 平局个人积分奖励
-SECT_DRAW_COIN = 250    # 平局个人金币奖励
-
-# 宗门商店：宗门积分 / 宗门贡献 兑换商品
-#   cost_type: 消耗类型
-#     - "sect_points": 宗门积分（全宗共享，仅宗主/副宗主可花）
-#     - "contribution": 宗门贡献（个人资产，任何人可花）
-#   points: 消耗宗门积分（cost_type=sect_points 时）
-#   contribution: 消耗宗门贡献（cost_type=contribution 时）
-#   item + count: 发放道具
-#   currency + amount: 发放货币
-SECT_SHOP = {
-    "经验丹": {"cost_type": "sect_points", "points": 50, "item": "经验丹", "count": 1, "desc": "使用后宠物获得经验。"},
-    "进化神石": {"cost_type": "sect_points", "points": 300, "item": "进化神石", "count": 1, "desc": "宠物进化所需道具。"},
-    "史诗卡": {"cost_type": "sect_points", "points": 1500, "item": "史诗卡", "count": 1, "desc": "可将宠物品质提升至史诗。"},
-    "金币袋": {"cost_type": "sect_points", "points": 100, "currency": "金币", "amount": 1000, "desc": "打开获得 1000 金币。"},
-    "积分袋": {"cost_type": "sect_points", "points": 100, "currency": "积分", "amount": 200, "desc": "打开获得 200 积分。"},
-    "神秘宝箱": {"cost_type": "contribution", "contribution": 100, "item": "神秘宝箱", "count": 1, "desc": "宗门贡献兑换的神秘宝箱，可开出随机道具。"},
-}
-
-# 宗门贡献获取配置
-SECT_CONTRIBUTION_SIGN = 1       # 宗门签到获得贡献
-SECT_CONTRIBUTION_BATTLE = 5     # 宗门战每场胜利获得贡献（参战者）
-SECT_CONTRIBUTION_BATTLE_LOSE = 2  # 宗门战失败获得贡献
-
-# 宗门等级经验表：历史累计宗门积分达到一定值升级
-SECT_LEVEL_EXP = {
-    1: 0,
-    2: 500,
-    3: 1500,
-    4: 3000,
-    5: 5000,
-    6: 8000,
-    7: 12000,
-    8: 17000,
-    9: 23000,
-    10: 30000,
-}
-
-# ----------------------------------------------------------------------------
-# 宗门战新流程时间轴（每日）
-#   20:30 自动匹配并定向广播  20:40 第1回合开始
-#   20:50 第1回合结束  21:00 第2回合结束  21:10 第3回合结束（决赛）
-# ----------------------------------------------------------------------------
-SECT_WAR_MATCH_HOUR = 20
-SECT_WAR_MATCH_MIN = 30
-SECT_WAR_START_HOUR = 20
-SECT_WAR_START_MIN = 40
-SECT_WAR_ROUNDS = 3            # 总回合数
-SECT_WAR_ROUND_MINUTES = 10    # 每回合时长（分钟）
-
-# 加油机制
-SECT_CHEER_MIN = 1000          # 单次加油最小战力
-SECT_CHEER_MAX = 20000         # 单次加油最大战力
-SECT_CHEER_CD_MIN = 30         # 加油冷却最小秒数
-SECT_CHEER_CD_MAX = 120        # 加油冷却最大秒数
-
-# 回合结束扣血（占最大血量百分比）
-SECT_WAR_HP_LOSS_MIN_PCT = 5
-SECT_WAR_HP_LOSS_MAX_PCT = 15
-
-# 宗门战基础战力差距上限（防止一方碾压）
-SECT_WAR_POWER_GAP_CAP = 100000
-
-# 新版宗门战：全群参与，初始随机战力上限
-SECT_WAR_BASE_POWER_MAX = 50000
 
 # ============================================================================
 # 宠物家园（放置建造 · 纯金币升级 · 数据隔离 · 宠物派遣 · 偷菜护院）

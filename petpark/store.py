@@ -84,7 +84,6 @@ class PetStore:
         self._data.setdefault("portal_secret", "".join(random.choices("abcdef0123456789", k=32)))
         self._data.setdefault("tomb_players", {})
         self._data.setdefault("ms_players", {})
-        self._data.setdefault("sect_season", self._default_sect_season())
         self._data.setdefault("tomb_active_sessions", {})
         self._data.setdefault("tomb_active_coops", {})
         self._data.setdefault("tomb_active_coop_index", {})
@@ -155,59 +154,6 @@ class PetStore:
         if changed:
             self._data["players"] = migrated
 
-    @staticmethod
-    def _default_sect_season() -> dict:
-        """宗门战赛季全局状态默认值。"""
-        return {
-            "season_id": "",
-            "started_at": 0,
-            "ended_at": 0,
-            "matches": [],
-            "rankings": {},
-        }
-
-    @staticmethod
-    def _default_group_sect() -> dict:
-        """单个群的宗门数据默认值。"""
-        return {
-            "enabled": True,
-            "name": "",
-            "level": 1,
-            "exp": 0,
-            "points": 0,          # 当前可用宗门积分（可消耗）
-            "total_points": 0,    # 历史累计宗门积分（用于升级）
-            "season_points": 0,
-            "win": 0,
-            "lose": 0,
-            "draw": 0,
-            "battles": 0,
-            "honor": 0,
-            "notice": "",
-            "master_qq": "",
-            "deputy_qqs": [],
-            "today": {
-                "date": "",
-                "enroll": [],
-                "forced": [],
-                "confirmed": [],
-                "signed": [],
-            },
-            "history": [],
-        }
-
-    @staticmethod
-    def _default_player_sect() -> dict:
-        """玩家宗门相关数据默认值。"""
-        return {
-            "contribution": 0,          # 当前可用宗门贡献（可消耗）
-            "total_contribution": 0,    # 历史累计宗门贡献
-            "season_contribution": 0,   # 本赛季累计宗门贡献
-            "wins": 0,
-            "battles": 0,
-            "last_battle": 0,
-            "active_score": 0,
-            "last_active_at": 0,
-        }
 
     @staticmethod
     def _default_tomb_state() -> dict:
@@ -375,14 +321,11 @@ class PetStore:
                 "abyss_crystal": 0,
                 "abyss_last_decay": 0,
                 "abyss_last_reset": "",
-                "sect": self._default_player_sect(),
             }
             qq = str(qq)
             players[key]["tomb"] = self._ensure_global_tomb(qq)
-        # 老玩家兼容：补充 sect 字段
         pl = players.get(key)
         if pl is not None:
-            pl.setdefault("sect", self._default_player_sect())
             pl.setdefault("auto_level", True)
         return pl
 
@@ -410,29 +353,6 @@ class PetStore:
         group = groups[group_id]
         group.setdefault("enabled", self.default_enabled)
         group.setdefault("cross", self.default_cross)
-        group.setdefault("sect", self._default_group_sect())
-        sect = group["sect"]
-        # 补充今日数据默认值并检查日期重置
-        today = time.strftime("%Y-%m-%d")
-        sect.setdefault("today", {
-            "date": "",
-            "enroll": [],
-            "forced": [],
-            "confirmed": [],
-            "signed": [],
-            "war": None,
-        })
-        if sect["today"].get("date") != today:
-            sect["today"] = {
-                "date": today,
-                "enroll": [],
-                "forced": [],
-                "confirmed": [],
-                "signed": [],
-                "war": None,
-            }
-        sect.setdefault("history", [])
-        sect.setdefault("deputy_qqs", [])
         return group
 
     # ----------------------------- 群映射（跨机器人群身份统一） -----------------------------
@@ -441,7 +361,7 @@ class PetStore:
 
         QQ 官方机器人的 group_openid 按 appid 隔离：同一物理群在不同机器人处
         openid 不同。通过 ``group_map`` 把「其他机器人视角的 openid」映射到
-        「主机器人视角的 openid」，使授权/宗门/群设置/跨群等按同一逻辑群共享。
+        「主机器人视角的 openid」，使授权/群设置/跨群等按同一逻辑群共享。
         无映射时原样返回；带环保护（至多跟随若干次）。
         """
         group_id = str(group_id)

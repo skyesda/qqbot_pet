@@ -2168,16 +2168,12 @@ function renderPlayers(){
 function renderGroups(){
  let rows='';
  for(const k of Object.keys(cache)){const v=cache[k];if(!match(k,v))continue;
-  const sect=v.sect||{};
   rows+=`<tr><td class="k">${esc(k)}</td>
    <td><span class="tag ${v.enabled?'on':'off'}">${v.enabled?'已开启':'已关闭'}</span></td>
    <td><span class="tag ${v.cross?'on':'off'}">${v.cross?'允许':'禁止'}</span></td>
-   <td>${esc(sect.name||'—')}</td>
-   <td class="num">${sect.level||1}</td>
-   <td class="num">${sect.points||0}</td>
    <td class="num">${v.sign_count||0}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
- shell('<th>群号</th><th>宠物乐园</th><th>跨群挑战</th><th>宗门名</th><th>宗门等级</th><th>宗门积分</th><th>今日签到数</th><th>操作</th>',rows);
+ shell('<th>群号</th><th>宠物乐园</th><th>跨群挑战</th><th>今日签到数</th><th>操作</th>',rows);
 }
 const CUR_CLS={'金币':'coin','积分':'jifen','钻石':'diamond'};
 function cardRewards(v){
@@ -2280,23 +2276,7 @@ function fieldHtml(){
  if(cur==='groups')return `
   <div class="sec">基础设置</div>
   <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启宠物乐园</label></div>
-  <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>
-  <div class="chk"><input id="f_sect_enabled" type="checkbox"><label for="f_sect_enabled">参加宗门战</label></div>
-  <div class="sec">宗门信息</div>
-  <div class="row">
-   <div style="flex:2"><label class="fld">宗门名</label><input id="f_sect_name" placeholder="宗门展示名"></div>
-   <div><label class="fld">宗门等级</label><input id="f_sect_level" type="number" placeholder="1"></div>
-  </div>
-  <div class="row">
-   <div><label class="fld">宗门积分</label><input id="f_sect_points" type="number" placeholder="0"></div>
-   <div><label class="fld">本赛季积分</label><input id="f_sect_season_points" type="number" placeholder="0"></div>
-   <div><label class="fld">宗门经验</label><input id="f_sect_exp" type="number" placeholder="0"></div>
-  </div>
-  <div class="row">
-   <div><label class="fld">宗主QQ</label><input id="f_sect_master" placeholder="用户ID"></div>
-   <div style="flex:2"><label class="fld">副宗主QQ（逗号分隔）</label><input id="f_sect_deputies" placeholder="a,b,c"></div>
-  </div>
-  <div><label class="fld">宗门公告</label><input id="f_sect_notice" placeholder="宗门公告"></div>`;
+  <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>`;
  if(cur==='events')return `
   <div class="muted">ID 保存后不可修改；活动时间选择本地日期，后台自动转时间戳。</div>
   <div class="row">
@@ -2414,16 +2394,6 @@ function fillFields(v){
  }
  else if(cur==='groups'){
   g('f_enabled').checked=!!v.enabled;g('f_cross').checked=!!v.cross;
-  const sect=v.sect||{};
-  g('f_sect_enabled').checked=sect.enabled!==false;
-  g('f_sect_name').value=sect.name||'';
-  g('f_sect_level').value=sect.level||1;
-  g('f_sect_points').value=sect.points||0;
-  g('f_sect_season_points').value=sect.season_points||0;
-  g('f_sect_exp').value=sect.exp||0;
-  g('f_sect_master').value=sect.master_qq||'';
-  g('f_sect_deputies').value=(sect.deputy_qqs||[]).join(',');
-  g('f_sect_notice').value=sect.notice||'';
  }
  else if(cur==='events'){
   g('f_name').value=v.name||'';
@@ -2508,18 +2478,6 @@ function applyFields(v){
  }
  else if(cur==='groups'){
   v.enabled=g('f_enabled').checked;v.cross=g('f_cross').checked;
-  v.sect=v.sect||{};
-  const sect=v.sect;
-  sect.enabled=g('f_sect_enabled').checked;
-  sect.name=g('f_sect_name').value.trim();
-  sect.level=+g('f_sect_level').value||1;
-  sect.points=+g('f_sect_points').value||0;
-  sect.season_points=+g('f_sect_season_points').value||0;
-  sect.exp=+g('f_sect_exp').value||0;
-  sect.master_qq=g('f_sect_master').value.trim();
-  const dep=g('f_sect_deputies').value.trim();
-  sect.deputy_qqs=dep?dep.split(',').map(s=>s.trim()).filter(Boolean):[];
-  sect.notice=g('f_sect_notice').value.trim();
  }
  else if(cur==='events'){
   v.name=g('f_name').value.trim();
