@@ -418,6 +418,8 @@ WEB_BLOCKED_COMMANDS = {
     "我的管理额度",
     "授权",
     "授权本群",
+    "设为无限服",
+    "设为官方服",
     "绑定群",
     "解绑群",
     "群映射",
@@ -3038,6 +3040,8 @@ class PetParkPlugin(Star):
             return self._redeem_auth_card(event, group_id, qq, tokens)
         if cmd == "授权本群":
             return self._grant_auth(event, group_id, tokens)
+        if cmd in ("设为无限服", "设为官方服"):
+            return self._set_server_type(event, group_id, cmd)
 
         # ---- 群绑定（跨机器人数据互通）----
         if cmd == "绑定群":
@@ -3098,7 +3102,7 @@ class PetParkPlugin(Star):
         # 银行逾期冻结检查（放行查看/还款类指令）
         _bank_allow = {"银行信息", "银行还款", "宠物乐园",
                         "管理菜单", "官方网站", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
-                        "授权状态", "授权", "查看说明", "银行信息",
+                        "授权状态", "授权", "设为无限服", "设为官方服", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
                         "坐骑系统", "坐骑市场", "坐骑图鉴", "我的坐骑", "坐骑列表",
@@ -5906,10 +5910,12 @@ class PetParkPlugin(Star):
         if amount <= 0:
             return f"用法：{cmd} QQ号/ID 数量（数量需为正整数）"
         # 小管理员：仅限本群、仅金币/积分、加币有每日额度、减币不限
+        # 无限服：小管理员加币/积分无每日上限（仍不得增减钻石）
+        no_sub_limit = self._group_is_infinite(group_id)
         if not is_super:
             if currency == "钻石":
                 return "❌ 小管理员无权增减钻石（仅大管理员可操作钻石）。"
-            if sign > 0:
+            if sign > 0 and not no_sub_limit:
                 actor = self.store.get_player(qq, group_id)
                 quota = self._subadmin_quota(actor)
                 key = "coin" if currency == "金币" else "jifen"
@@ -5927,8 +5933,8 @@ class PetParkPlugin(Star):
         before = self.store.get_currency(tp, currency)
         self.store.add_currency(tp, currency, sign * amount)
         after = self.store.get_currency(tp, currency)
-        # 记录小管理员当日已用加币额度
-        if not is_super and sign > 0:
+        # 记录小管理员当日已用加币额度（无限服无上限，跳过记录）
+        if not is_super and sign > 0 and not no_sub_limit:
             actor = self.store.get_player(qq, group_id)
             quota = self._subadmin_quota(actor)
             key = "coin" if currency == "金币" else "jifen"
@@ -5937,12 +5943,17 @@ class PetParkPlugin(Star):
         icon = "🪙" if currency == "金币" else ("💠" if currency == "钻石" else "💎")
         extra = ""
         if not is_super and sign > 0:
-            key = "coin" if currency == "金币" else "jifen"
-            used = self._subadmin_quota(self.store.get_player(qq, group_id)).get(key, 0)
-            extra = (
-                f"\n> 🛡️ 小管理今日{currency}已增加 {used}/"
-                f"{self.subadmin_daily_add_limit}"
-            )
+            if no_sub_limit:
+                extra = (
+                    f"\n> 🛡️ 小管理{currency}无每日上限（无限服）"
+                )
+            else:
+                key = "coin" if currency == "金币" else "jifen"
+                used = self._subadmin_quota(self.store.get_player(qq, group_id)).get(key, 0)
+                extra = (
+                    f"\n> 🛡️ 小管理今日{currency}已增加 {used}/"
+                    f"{self.subadmin_daily_add_limit}"
+                )
         return (
             f"## ⚙️ 管理操作\n"
             f"已为用户 `{self._display_uid(target)}` {verb}{icon}**{currency} {amount}**\n"
@@ -6021,6 +6032,13 @@ class PetParkPlugin(Star):
             )
         if not is_sub:
             return "你不是本群管理员。"
+        if self._group_is_infinite(group_id):
+            return (
+                "## 🛡️ 我的管理额度（本群 · 今日）\n"
+                "━━━━━━━━━━━━━━\n"
+                "♂️ 本群为 **无限服**：**无每日上限**\n"
+                "> 加金币/积分不限量、减金币/积分不限；不可增减钻石。"
+            )
         actor = self.store.get_player(qq, group_id)
         quota = self._subadmin_quota(actor)
         limit = self.subadmin_daily_add_limit
@@ -6035,6 +6053,32 @@ class PetParkPlugin(Star):
         )
 
     # --------------------------- 群授权 ---------------------------
+    def _group_is_infinite(self, group_id: str) -> bool:
+        """该群是否为无限服（跨群挑战/宠物神榜对其关闭，小管理员加币/积分无上限）。"""
+        if not self._is_group(group_id):
+            return False  # 私聊不属于任何服
+        group = self.store.get_group(self.store.resolve_group(group_id))
+        return str(group.get("server_type", "official")) == "infinite"
+
+    def _parse_server_type(self, token: str | None) -> str | None:
+        """把『官方服/无限服』词解析成 server_type 值；无效或空返回 None（表示不变更）。"""
+        if not token:
+            return None
+        t = str(token).strip()
+        if t in ("无限服", "infinite"):
+            return "infinite"
+        if t in ("官方服", "official"):
+            return "official"
+        return None
+
+    def _infinite_group_ids(self) -> set[str]:
+        """全服所有无限服群的规范群 openid 集合，用于从跨群共享层剔除。"""
+        out: set[str] = set()
+        for gid, g in self.store._data.get("groups", {}).items():
+            if str(g.get("server_type", "official")) == "infinite":
+                out.add(self.store.resolve_group(str(gid)))
+        return out
+
     def _is_group_authorized(self, group_id: str) -> bool:
         if not self._is_group(group_id):
             return True  # 私聊不受群授权限制
@@ -6096,26 +6140,32 @@ class PetParkPlugin(Star):
             return "用法：授权 卡密"
         code = tokens[1].strip()
         used_by = self.store.make_key(group_id, qq)
-        days, err = self.store.redeem_auth_card(code, used_by)
+        days, server_type, err = self.store.redeem_auth_card(code, used_by)
         if days is None:
             return f"❌ 授权失败：{err}"
+        group = self.store.get_group(group_id)
+        group["server_type"] = server_type
         until = self._extend_group_auth(group_id, days)
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
         # 非大管理员激活本群者，自动升级为本群小管理员（随本群授权失效而失效）
         promoted = ""
         if not self._is_admin(event):
-            group = self.store.get_group(group_id)
             subs = [str(x) for x in group.get("subadmins", [])]
             if str(qq) not in subs:
                 subs.append(str(qq))
                 group["subadmins"] = subs
+            if server_type == "infinite":
+                limit_txt = "无限服：加积分/金币无每日上限"
+            else:
+                limit_txt = f"每日加币积分各上限 {self.subadmin_daily_add_limit}"
             promoted = (
-                f"\n> 🛡️ 你已成为**本群小管理员**（可加减本群金币/积分，"
-                f"每日加币各上限 {self.subadmin_daily_add_limit}）；该身份随本群授权失效而消失。"
+                f"\n> 🛡️ 你已成为**本群小管理员**（可加减本群金币/积分，{limit_txt}）；"
+                f"该身份随本群授权失效而消失。"
             )
+        st_label = "无限服（跨群/神榜关闭）" if server_type == "infinite" else "官方服"
         return (
             "## 🔓 群授权成功\n"
-            f"本群授权 **+{days} 天**！\n到期时间：{when}\n"
+            f"本群授权 **+{days} 天**！服类型：**{st_label}**。\n到期时间：{when}\n"
             f"剩余：**{self._fmt_remain(until)}**" + promoted
         )
 
@@ -6125,17 +6175,43 @@ class PetParkPlugin(Star):
         if not self._is_group(group_id):
             return "请在群聊内使用本指令。"
         if len(tokens) < 2 or not tokens[1].lstrip("-").isdigit():
-            return "用法：授权本群 天数（正数延长，负数缩短）"
+            return "用法：授权本群 天数 [官方服|无限服]（天数正数延长，负数缩短；服类型省略则维持现状）"
         days = int(tokens[1])
         if days == 0:
             return "用法：授权本群 天数（不能为 0）"
+        server_type = self._parse_server_type(self._arg(tokens, 2))
+        group = self.store.get_group(group_id)
+        if server_type:
+            group["server_type"] = server_type
         until = self._extend_group_auth(group_id, days)
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
         verb = "延长" if days > 0 else "缩短"
+        st_label = "无限服（跨群/神榜关闭，小管理员加币积分无上限）" if group["server_type"] == "infinite" else "官方服"
         return (
             "## 🔐 大管理员授权\n"
             f"已为本群{verb} **{abs(days)} 天**。\n到期时间：{when}\n"
-            f"剩余：**{self._fmt_remain(until)}**"
+            f"剩余：**{self._fmt_remain(until)}**\n当前服：**{st_label}**"
+        )
+
+    def _set_server_type(self, event, group_id: str, cmd: str) -> str:
+        """设为无限服 / 设为官方服（仅大管理员）。"""
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可设置服类型。"
+        if not self._is_group(group_id):
+            return "请在群聊内使用本指令。"
+        st = "infinite" if cmd.startswith("设为无限服") else "official"
+        group = self.store.get_group(group_id)
+        group["server_type"] = st
+        if st == "infinite":
+            return (
+                "## 🌐 已设为无限服\n"
+                "本群已退出跨群共享层：宠物神榜/跨群挑战对群关闭，数据完全群独立；"
+                "群内小管理员加积分/金币**无每日上限**。"
+            )
+        return (
+            "## 🌐 已设为官方服\n"
+            "本群已回到跨群共享层：参与宠物神榜、可/可被跨群挑战；"
+            "小管理员加币积分按每日上限执行。"
         )
 
     # --------------------------- 群绑定（跨机器人互通） ---------------------------
@@ -7081,6 +7157,8 @@ class PetParkPlugin(Star):
                 "**【群开关】**",
                 "- 开启宠物乐园 · 关闭宠物乐园",
                 "- 开启宠物跨群 · 关闭宠物跨群",
+                "- 设为无限服 · 设为官方服（大管理员设定本群服类型）",
+                "> 无限服：宠物神榜/跨群挑战关闭、数据完全群独立、小管理员加币积分无每日上限",
                 "",
                 "**【货币管理】**（大/小管理员）",
                 "- 加金币 用户ID 数量 · 减金币 用户ID 数量",
@@ -7095,8 +7173,8 @@ class PetParkPlugin(Star):
                 "",
                 "**【群授权】**",
                 "- 授权状态（查看本群授权状态）",
-                "- 授权 卡密（用授权卡激活/续期本群）",
-                "- 授权本群 天数（大管理员直接续期）",
+                "- 授权 卡密（用授权卡激活/续期本群，卡密自带服类型）",
+                "- 授权本群 天数 [官方服|无限服]（大管理员直接续期+设定服类型）",
                 "",
                 "**【群管理】**（群主/群管理员）",
                 "- 禁言 @成员 时长（如 10分钟 / 1小时 / 1天，默认 10 分钟）",
@@ -9562,6 +9640,8 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
+        if self._group_is_infinite(player.get("group", "")):
+            return "⚠️ 本群为无限服，不支持跨群挑战。"
         if not group.get("cross", True):
             return "⚠️ 本群未开启宠物跨群功能。"
         busy = self._busy_reason(p)
@@ -9570,17 +9650,24 @@ class PetParkPlugin(Star):
         # 跨群挑战宠物 [群号 用户ID]，或随机
         target_player = None
         if len(tokens) >= 3:
+            target_group = str(tokens[1])
+            if self._group_is_infinite(target_group):
+                return f"⚠️ 群 `{target_group}` 是无限服，无法被跨群挑战。"
             target_player = self.store.get_player(
                 tokens[2], tokens[1], create=False
             )
             if not target_player:
                 return f"❌ 群 `{tokens[1]}` 内用户 `{tokens[2]}` 不存在。"
         if not target_player:
+            inf = self._infinite_group_ids()
             self_key = self.store.make_key(player.get("group", ""), player["qq"])
             candidates = [
                 pl
                 for k, pl in self.store.all_players().items()
-                if pl.get("pet") and k != self_key and not petmod.is_dead(pl["pet"])
+                if pl.get("pet")
+                and k != self_key
+                and self.store.resolve_group(str(pl.get("group", ""))) not in inf
+                and not petmod.is_dead(pl["pet"])
             ]
             if not candidates:
                 return "暂时找不到可挑战的跨群宠物。"
@@ -9605,12 +9692,17 @@ class PetParkPlugin(Star):
         return PetParkPlugin._short_num(bp)
 
     def _rank(self, player: dict, group_id: str, local: bool) -> str:
-        # 本群排行只统计本群玩家；神榜为全服（跨群）。
-        source = (
-            self.store.players_in_group(group_id)
-            if local
-            else self.store.all_players()
-        )
+        if not local and self._group_is_infinite(group_id):
+            return "⚠️ 本群为无限服，不参与宠物神榜（跨群共享功能已关闭）。"
+        # 本群排行只统计本群玩家；神榜为全服（跨群），但排除无限服群。
+        source = self.store.players_in_group(group_id) if local else self.store.all_players()
+        if not local:
+            inf = self._infinite_group_ids()
+            source = {
+                k: v
+                for k, v in source.items()
+                if self.store.resolve_group(str(v.get("group", ""))) not in inf
+            }
         entries = []
         for pl in source.values():
             pet = pl.get("pet")
@@ -9651,10 +9743,11 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:
-        # 神榜为全服跨群排行，以「群ID+用户ID」为唯一身份。
+        # 神榜为官方服跨群排行，以「群ID+用户ID」为唯一身份；无限服群不参与。
+        inf = self._infinite_group_ids()
         entries = []
         for k, pl in self.store.all_players().items():
-            if pl.get("pet"):
+            if pl.get("pet") and self.store.resolve_group(str(pl.get("group", ""))) not in inf:
                 entries.append((k, petmod.battle_power(pl["pet"])))
         entries.sort(key=lambda x: x[1], reverse=True)
         top = [k for k, _ in entries[:3]]

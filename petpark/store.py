@@ -397,6 +397,7 @@ class PetStore:
         group.setdefault("enabled", self.default_enabled)
         group.setdefault("cross", self.default_cross)
         group.setdefault("mount_enabled", True)
+        group.setdefault("server_type", "official")
         return group
 
     # ----------------------------- 群映射（跨机器人群身份统一） -----------------------------
@@ -599,12 +600,14 @@ class PetStore:
         return rewards, items, None
 
     def create_auth_cards(
-        self, days: int, count: int = 1, prefix: str = ""
+        self, days: int, count: int = 1, prefix: str = "", server_type: str = "official"
     ) -> list[str]:
-        """批量生成群授权卡：兑换后为所在群延长 days 天授权时长。"""
+        """批量生成群授权卡：兑换后为所在群延长 days 天授权时长，并设定服类型。
+        server_type: official（官方服，默认）/ infinite（无限服）。"""
         days = int(days)
         if days <= 0:
             raise ValueError("授权天数必须为正整数")
+        server_type = "infinite" if str(server_type) == "infinite" else "official"
         count = max(1, int(count))
         cards = self.cards()
         created: list[str] = []
@@ -613,6 +616,7 @@ class PetStore:
             code = self.gen_card_code(prefix)
             cards[code] = {
                 "auth_days": days,
+                "server_type": server_type,
                 "used": False,
                 "used_by": None,
                 "used_at": None,
@@ -622,21 +626,22 @@ class PetStore:
         return created
 
     def redeem_auth_card(self, code: str, used_by: str):
-        """兑换群授权卡：成功返回 (天数, None)，失败返回 (None, 原因)。"""
+        """兑换群授权卡：成功返回 (天数, 服类型, None)，失败返回 (None, None, 原因)。"""
         code = str(code).strip().upper()
         cards = self.cards()
         card = cards.get(code)
         if card is None:
-            return None, "卡密不存在或输入有误"
+            return None, None, "卡密不存在或输入有误"
         days = int(card.get("auth_days", 0) or 0)
         if days <= 0:
-            return None, "这不是群授权卡（货币卡请用『兑换 卡密』）"
+            return None, None, "这不是群授权卡（货币卡请用『兑换 卡密』）"
         if card.get("used"):
-            return None, "该授权卡已被使用"
+            return None, None, "该授权卡已被使用"
         card["used"] = True
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
-        return days, None
+        server_type = "infinite" if str(card.get("server_type", "official")) == "infinite" else "official"
+        return days, server_type, None
 
     # ----------------------------- 冷却 -----------------------------
     @staticmethod

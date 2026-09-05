@@ -346,10 +346,12 @@ class WebAdmin:
                     prefix=body.get("prefix", ""),
                 )
             elif auth_days > 0:
+                st = str(body.get("server_type", "official")).strip()
                 codes = self.store.create_auth_cards(
                     days=auth_days,
                     count=int(body.get("count", 1)),
                     prefix=body.get("prefix", ""),
+                    server_type=st,
                 )
             else:
                 rewards = body.get("rewards")
@@ -1260,6 +1262,10 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <select id="amt_item" style="width:140px"></select>
 <input id="amt_item_count" type="number" placeholder="数量" value="1" style="width:80px">
 <input id="amt_authdays" type="number" placeholder="授权天数(群授权卡)" style="width:160px">
+<select id="amt_server_type" title="群授权卡服类型" style="width:90px">
+ <option value="official">官方服</option>
+ <option value="infinite">无限服</option>
+</select>
 <input id="cnt" type="number" placeholder="数量" value="10" style="width:80px">
 <input id="pre" placeholder="前缀(可选,如VIP)" style="width:130px">
 <button class="act" onclick="genCards()">批量生成</button>
@@ -2203,7 +2209,7 @@ function cardContentHtml(v){
  const acDays=+(v.auto_cultivation_days||0);
  if(acDays>0)return `<span class="diamond">🧘 自动修炼 ${acDays} 天</span>`;
  const days=+(v.auth_days||0);
- if(days>0)return `<span class="diamond">🔐 群授权 ${days} 天</span>`;
+ if(days>0)return `<span class="diamond">🔐 群授权 ${days} 天·${(v.server_type==='infinite'?'无限服':'官方服')}</span>`;
  return packageHtml(v);
 }
 function renderCards(){
@@ -2656,7 +2662,7 @@ async function genCards(){
  }else{
   const authdays=+g('amt_authdays').value||0;
   if(authdays>0){
-   payload={auth_days:authdays,count:+g('cnt').value,prefix:g('pre').value};
+   payload={auth_days:authdays,server_type:g('amt_server_type').value||'official',count:+g('cnt').value,prefix:g('pre').value};
   }else{
    const rewards={};const c=+g('amt_coin').value||0,j=+g('amt_jifen').value||0,d=+g('amt_diamond').value||0;
    if(c>0)rewards['金币']=c;if(j>0)rewards['积分']=j;if(d>0)rewards['钻石']=d;
@@ -2676,10 +2682,10 @@ async function genCards(){
 function cardTypeChange(){
  const t=g('card_type').value;
  const hideRewards=(t==='custom_pet'||t==='auto_cultivation');
- ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays'].forEach(id=>{const el=g(id);if(el)el.style.display=hideRewards?'none':'';});
+ ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays','amt_server_type'].forEach(id=>{const el=g(id);if(el)el.style.display=hideRewards?'none':'';});
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天';}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(c+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(c+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }
