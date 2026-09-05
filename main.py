@@ -2726,9 +2726,15 @@ class PetParkPlugin(Star):
             )
         except Exception as e:
             logger.warning(f"[petpark] 踢出成员 {targets} 失败：{e}")
+            err = str(e)
+            if "11253" in err or "40012010" in err:
+                return (
+                    "❌ 踢出失败：当前机器人（appid）尚未开通「群成员批量移除」能力。\n"
+                    "> 请到 QQ 开放平台为该机器人的「群管理」权限点申请开通，审核通过后即可使用。"
+                )
             return (
                 "❌ 踢出失败（机器人需为群管理员，且只能移出普通成员，"
-                "不能移出群主/管理员/机器人）。\n> 接口返回：{e}"
+                f"不能移出群主/管理员/机器人）。\n> 接口返回：{err}"
             )
         fail = ((resp or {}).get("add_to_member_blacklist_fail_openids") or [])
         shown = "、".join(self._display_uid(t) for t in targets)
