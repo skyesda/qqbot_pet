@@ -1094,12 +1094,20 @@ class PetParkPlugin(Star):
         if not text:
             return
         qq = str(event.get_sender_id())
-        group_id = self._group_id(event)
+        raw_group_id = self._group_id(event)
         # 跨机器人数据互通：把本机器人视角的群 openid 解析为规范群 ID，
         # 使授权/群设置等按同一逻辑群共享（绑定群后生效）。
-        group_id = self.store.resolve_group(group_id)
+        group_id = self.store.resolve_group(raw_group_id)
         # 记录群聊统一消息来源，便于 Boss 击杀/复活时向授权群主动推送
         if self._is_group(group_id):
+            # 趁成员还在时缓存群昵称：退群/进群推送要 @昵称，但成员离群后
+            # 成员详情接口常常取不到 username，只能靠消息时代提前缓存兜底。
+            # 同时缓存原始 openid 与解析后群 ID 两种键，兼配绑定群场景。
+            sender_nick = self._sender_name(event)
+            if sender_nick:
+                now = time.time()
+                self._nick_cache.setdefault(raw_group_id, {})[qq] = (sender_nick, now)
+                self._nick_cache.setdefault(group_id, {})[qq] = (sender_nick, now)
             umo = getattr(event, "unified_msg_origin", None)
             if umo:
                 self.store.get_group(group_id)["umo"] = umo
@@ -1181,13 +1189,38 @@ class PetParkPlugin(Star):
 
     @staticmethod
     def _sender_name(event) -> str:
-        for attr in ("get_sender_name",):
-            fn = getattr(event, attr, None)
-            if callable(fn):
-                try:
-                    return str(fn() or "")
-                except Exception:
-                    return ""
+        """取发送者显示名（退群/进群推送 @昵称 用）。
+
+        优先框架标准 get_sender_name()；再探测常见属性/嵌套容器，尽可能是组名片或昵称。
+        拿不到时返回空串（调用方忽略，绝不抛异常）。
+        """
+        getter = getattr(event, "get_sender_name", None)
+        if callable(getter):
+            try:
+                v = getter()
+                if v:
+                    return str(v)
+            except Exception:
+                pass
+        # 探测 event / event.message / event.message_obj 上的常见名字字段
+        for container in (event, getattr(event, "message", None), getattr(event, "message_obj", None)):
+            if container is None:
+                continue
+            if isinstance(container, dict):
+                for attr in ("sender_name", "nickname", "member_name", "username"):
+                    v = container.get(attr)
+                    if v:
+                        return str(v)
+                continue
+            for attr in ("sender_name", "nickname", "member_name"):
+                v = getattr(container, attr, None)
+                if callable(v):
+                    try:
+                        v = v()
+                    except Exception:
+                        continue
+                if v:
+                    return str(v)
         return ""
 
     @staticmethod
@@ -9720,33 +9753,39 @@ class PetParkPlugin(Star):
             "## 📜 可领取剧情任务",
             "> `领取任务 任务名` 领取，完成后 `提交任务 任务名`",
             "",
+            "| 任务 | 前提 | 目标 | 奖励 |",
+            "|:--:|:--:|:--:|:--:|",
         ]
         for n, q in data.QUESTS.items():
             locked = not self._quest_req_met(player, q)
-            need = "、".join(f"{k}×{v}" for k, v in q["need"].items()) or "直接领取"
+            need = "、".join(
+                f"{data.QUEST_NEED_LABELS.get(k, k)}×{v}" for k, v in q["need"].items()
+            ) or "直接领取"
             rwd = self._quest_reward_text(q.get("reward", {}))
             req = self._quest_req_text(q)
             lock_mark = "🔒 " if locked else ""
-            lines.append(
-                f"- **{lock_mark}{n}**\n"
-                f"　　🔒 前提：{req}　🎯 {need}　🎁 {rwd}"
-            )
+            lines.append(f"| {lock_mark}{n} | {req} | {need} | {rwd} |")
         return "\n".join(lines)
 
     def _my_quests(self, player: dict) -> str:
         qs = player.get("quests", {})
         if not qs:
             return "📜 你还没有领取剧情任务，发送『宠物剧情任务』查看。"
-        lines = ["## 📜 我的剧情任务", "━━━━━━━━━━━━━━"]
+        lines = [
+            "## 📜 我的剧情任务",
+            "",
+            "| 任务 | 进度 |",
+            "|:--:|:--:|",
+        ]
         stats = player.get("stats", {})
         for n, base in qs.items():
             need = data.QUESTS.get(n, {}).get("need", {})
             base = base if isinstance(base, dict) else {}
             prog = "、".join(
-                f"{k} **{max(0, stats.get(k, 0) - base.get(k, 0))}**/{v}"
+                f"{data.QUEST_NEED_LABELS.get(k, k)} **{max(0, stats.get(k, 0) - base.get(k, 0))}**/{v}"
                 for k, v in need.items()
             ) or "已完成前置，可直接提交"
-            lines.append(f"- **{n}**：{prog}")
+            lines.append(f"| {n} | {prog} |")
         return "\n".join(lines)
 
     def _handle_quest(self, player: dict, tokens: list[str], cmd: str) -> str:

@@ -1098,6 +1098,20 @@ QUESTS = {
     },
 }
 
+# 剧情任务目标（need 的 key）→ 中文标签。need 的 key 是统计字段（英文），
+# 给玩家展示时统一翻译成中文，避免直接暴露 battle_win / ascended_* 等内部字段。
+QUEST_NEED_LABELS = {
+    "battle_win": "战斗胜利",
+    "explore": "探险",
+    "ascended_fantasy_treasure": "幻境寻宝",
+    "ascended_immortal_calamity": "神仙劫",
+    "ascended_battle_win": "飞升战斗胜利",
+    "ascended_dungeon_clear": "副本通关",
+    "ascended_abyss": "深渊挑战",
+    "forge_artifact": "打造神器",
+    "shuangxiu": "双修",
+}
+
 # 飞升后资源换算：1 仙元 = 100000 经验
 ASCEND_XIANYUAN_PER_EXP = 100000
 
