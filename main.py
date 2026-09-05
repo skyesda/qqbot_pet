@@ -6011,10 +6011,14 @@ class PetParkPlugin(Star):
                 return f"用户 `{self._display_uid(target)}` 已经是本群小管理员。"
             subs.append(target)
             group["subadmins"] = subs
+            if self._group_is_infinite(group_id):
+                limit_line = "加金币/积分**无每日上限**（无限服）。"
+            else:
+                limit_line = f"每日增加金币、积分各上限 {self.subadmin_daily_add_limit}，减少不限。"
             return (
                 f"## 🛡️ 小管理员任命\n已任命 `{self._display_uid(target)}` 为本群小管理员。\n"
                 f"> 权限：本群内『加金币/减金币/加积分/减积分』（不可操作钻石）；"
-                f"每日增加金币、积分各上限 {self.subadmin_daily_add_limit}，减少不限。"
+                f"{limit_line}"
             )
         else:
             if target not in subs:
@@ -6027,16 +6031,20 @@ class PetParkPlugin(Star):
         if not self._is_admin(event):
             return "❌ 仅大管理员可查看小管理员列表。"
         groups = self.store._data.get("groups", {})
-        lines = ["## 🛡️ 小管理员一览（全服）", "━━━━━━━━━━━━━━"]
+        lines = [
+            "## 🛡️ 小管理员一览（全服）",
+            "| 群 | 服类型 | 小管理员 |",
+            "|---|---|---|",
+        ]
         found = False
         for gid, g in groups.items():
             subs = [str(x) for x in g.get("subadmins", [])]
             if not subs:
                 continue
             found = True
-            lines.append(f"**群 `{gid}`**")
-            for u in subs:
-                lines.append(f"　• `{u}`")
+            st = self._server_label(str(gid))
+            users = "<br>".join(f"`{u}`" for u in subs)
+            lines.append(f"| `{gid}` | {st} | {users} |")
         if not found:
             return "目前没有任何群任命了小管理员。"
         return "\n".join(lines)
