@@ -17,3 +17,13 @@
 最终提示词：
 
 > Use case: stylized-concept. Asset type: production background base for a polished Minesweeper chat game. A square perfectly flat top-down game tray in a refined botanical expedition aesthetic, deep midnight teal outer surface, subtle fine-grained matte texture, thin brushed antique brass double-line border inset at 3 percent of the canvas. Only the outermost corners have tiny tasteful fern engravings and brass rivets; interior 90 percent is plain dark teal with extremely subtle ambient gradient so a precise software-drawn grid and status cards can be composited clearly. Modern premium board game product illustration, soft even lighting, restrained jewel green and warm gold. No lettering, no numbers, no grid, no tiles, no bombs, no flags, no perspective, no watermark. One square bitmap.
+
+## 军棋底座 · junqi-base.png
+
+2026-09-05 使用内置 GPT Image（image_gen）生成，已保存到项目并用于正式军棋渲染。棋线、棋子、文字由程序绘制。成品预览位于 `board-previews/board_junqi_1.png`。
+
+最终提示词：
+
+> Use case: stylized-concept. Asset type: production background texture for a Chinese Junqi military chess chat game, matching warm traditional wooden Gomoku and Xiangqi boards. Create a portrait 2:3 perfectly top-down flat wooden board base, warm pale honey wood center with subtle fine grain, elegant dark walnut narrow frame around all four edges, small traditional Chinese carved corner accents confined to outermost 5 percent. Center 88 percent blank even wood for precise program-drawn railway grid and rectangular army pieces. Soft even lighting, premium tactile board game look, no perspective, no chess pieces, no grid lines, no text, no symbols, no watermark. Output one portrait image.
+
+`JunqiGlyphs.otf`：Noto Sans CJK SC 的军棋文字子集，重命名为 JunqiGlyphs。来源 https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/SimplifiedChinese ，沿用本目录 FONT-LICENSE.txt 的 SIL OFL 1.1 授权。
