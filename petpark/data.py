@@ -911,9 +911,10 @@ SKILLS = {
 SKILL_NAMES = list(SKILLS.keys())
 
 # 将各秘技也作为可掉落、可交易的背包物品（由 _use_item 特殊处理学习）
+# 商城定价：最低 2 万（20000）积分起步，往上按 等级×1000 递增，最高 22 万。
 for _sk_name, _sk_info in SKILLS.items():
     ITEMS.setdefault(_sk_name, {
-        "price": _sk_info["level_req"] * 1000,
+        "price": max(20_000, _sk_info["level_req"] * 1000),
         "currency": CURRENCY_JIFEN,
         "category": "秘技书",
         "usable": False,
@@ -960,6 +961,19 @@ ARTIFACTS = {
 }
 
 ARTIFACT_NAMES = list(ARTIFACTS.keys())
+
+# 神器也作为可购买、可佩戴的背包物品（由「购买」入包，「佩戴神器」穿戴）。
+# 商城定价：最低 2 万（20000）积分起步，往上按 等级×1000 递增，最高 22 万。
+for _art_name, _art_info in ARTIFACTS.items():
+    ITEMS.setdefault(_art_name, {
+        "price": max(20_000, _art_info["level_req"] * 1000),
+        "currency": CURRENCY_JIFEN,
+        "category": "神器",
+        "usable": False,
+        "desc": _art_info["desc"],
+        "effect": {},
+    })
+
 # 打造神器消耗
 ARTIFACT_FORGE_COST = {
     "jifen": 100_000,

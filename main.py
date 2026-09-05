@@ -166,6 +166,9 @@ KNOWN_COMMANDS = {
     "宠物商城",
     "道具商城",
     "积分商城",
+    "钻石商城",
+    "秘技商城",
+    "神器商城",
     "宠物市场",
     "宠物专域",
     # 获取宠物
@@ -3055,8 +3058,14 @@ class PetParkPlugin(Star):
         # ---- 商城（无需宠物）----
         if cmd == "宠物商城":
             return self._shop_text("宠物商城")
-        if cmd == "道具商城" or cmd == "积分商城":
+        if cmd in ("道具商城", "积分商城"):
             return self._shop_text("道具商城")
+        if cmd == "钻石商城":
+            return self._shop_text("钻石商城")
+        if cmd == "秘技商城":
+            return self._shop_text("秘技商城")
+        if cmd == "神器商城":
+            return self._shop_text("神器商城")
         if cmd in ("宠物市场", "宠物专域"):
             return self._pet_market_text()
 
@@ -6259,7 +6268,8 @@ class PetParkPlugin(Star):
                 "- 炼化宠物（消耗 1000 积分，将宠物化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化宠物 宠物卡` 可炼化神秘宠物卡）",
                 "",
                 "**【商城 / 背包】**",
-                "- 宠物商城 · 道具商城 · 宠物市场",
+                "- 宠物商城（总览）· 道具商城 · 钻石商城",
+                "- 秘技商城 · 神器商城 · 宠物市场",
                 "- 查看背包 · 购买 物品 数量 · 使用 物品",
                 "- 出售 物品 数量 · 丢弃 物品 数量",
                 "- 转让 用户ID 物品 数量 · 清空背包",
@@ -6868,57 +6878,80 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 商城
     # =====================================================================
+    _CATEGORY_ORDER = ["药品", "道具", "宝石", "材料", "仙丹", "符箓", "其他"]
+
     def _shop_text(self, which: str) -> str:
         if which == "宠物商城":
-            wanted = [
-                "红药水",
-                "蓝药水",
-                "九转还魂丹",
-                "变性药水",
-                "永恒钻戒",
-                "改名卡",
+            return self._shop_index_text()
+        if which == "秘技商城":
+            lines = [
+                "## 📜 秘技商城",
+                "> 购买后发送『使用 秘技名』参悟（需满足等级/智力）",
+                "",
             ]
-            title = "## 🛒 宠物商城"
+            for n, v in data.SKILLS.items():
+                lines.append(
+                    f"- **{n}** — {data.ITEMS[n]['price']} 积分　"
+                    f"（Lv{v['level_req']}/智力{v['intel_req']}·战力+{v['power']}）"
+                )
+            return "\n".join(lines)
+        if which == "神器商城":
+            lines = [
+                "## 🗡️ 神器商城",
+                "> 购买后发送『佩戴神器 名称』穿戴（需满足等级，飞升可跨级佩戴）",
+                "",
+            ]
+            for n, v in data.ARTIFACTS.items():
+                lines.append(
+                    f"- **{n}** — {data.ITEMS[n]['price']} 积分　"
+                    f"（Lv{v['level_req']}·战力+{v['power']}）"
+                )
+            return "\n".join(lines)
+
+        # 道具商城（金币 + 积分）/ 钻石商城（钻石）：按币种自动归类
+        if which == "钻石商城":
+            accepted = (data.CURRENCY_DIAMOND,)
+            title = "## 💎 钻石商城"
         else:
-            wanted = [
-                "永恒钻戒",
-                "三明治",
-                "大补丸",
-                "镇定剂",
-                "疏筋丸",
-                "清醒剂",
-                "解毒剂",
-                "九转还魂丹",
-                "进化神石",
-                "万能宝石",
-                "小精力瓶",
-                "中精力瓶",
-                "大精力瓶",
-                "普通经验书",
-                "五色药",
-                "净化药水",
-                "智力宝符",
-                "智力仙符",
-                "智力神符",
-                "精力宝符",
-                "精力仙符",
-                "精力神符",
-                "攻击宝符",
-                "攻击仙符",
-                "攻击神符",
-                "防御宝符",
-                "防御仙符",
-                "防御神符",
-                "生命宝符",
-                "生命仙符",
-                "生命神符",
-            ]
+            accepted = (data.CURRENCY_COIN, data.CURRENCY_JIFEN)
             title = "## 🏪 道具商城"
-        lines = [title, "> 购买方式：`购买 物品名 数量`", ""]
-        for n in wanted:
-            it = data.ITEMS[n]
-            lines.append(f"- **{n}** — {it['price']} {it['currency']}")
-        return "\n".join(lines)
+        lines = [title, "> 购买方式：`购买 物品名 [数量]`", ""]
+        groups: dict[str, list[tuple[str, dict]]] = {}
+        for n, it in data.ITEMS.items():
+            if it.get("price", 0) <= 0:
+                continue
+            if it.get("category") in ("秘技书", "神器"):
+                continue  # 由秘技/神器商城专属展示
+            if n == "变种卡":
+                continue  # 宠物市场专属（品质卡/变种卡）
+            if it.get("currency") not in accepted:
+                continue
+            groups.setdefault(it.get("category", "其他"), []).append((n, it))
+        for cat in sorted(
+            groups,
+            key=lambda c: (
+                self._CATEGORY_ORDER.index(c) if c in self._CATEGORY_ORDER else 99
+            ),
+        ):
+            lines.append(f"**【{cat}】**")
+            for n, it in sorted(groups[cat], key=lambda kv: kv[1]["price"]):
+                lines.append(f"- **{n}** — {it['price']} {it['currency']}")
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    def _shop_index_text(self) -> str:
+        return "\n".join([
+            "## 🛒 宠物商城",
+            "> 发送对应指令进入商城：",
+            "- **宠物商城** — 商城总览（当前）",
+            "- **道具商城** — 金币/积分道具",
+            "- **钻石商城** — 钻石道具（精力瓶·五系属性符）",
+            "- **秘技商城** — 秘技书（最低 2 万积分起）",
+            "- **神器商城** — 神器（最低 2 万积分起）",
+            "- **宠物市场** — 品质卡 / 变种卡",
+            "",
+            "> 购买：`购买 物品名 [数量]` · 市场：`购买市场 物品名`",
+        ])
 
     def _pet_market_text(self) -> str:
         lines = [
@@ -7635,7 +7668,7 @@ class PetParkPlugin(Star):
             if name in cfg.get("shop", {}):
                 return self._event_buy(player, eid, cfg, name, count) or "购买失败。"
         if name not in data.ITEMS:
-            return f"商城没有『{name}』。发送『宠物商城』或『道具商城』查看。"
+            return f"商城没有『{name}』。发送『宠物商城』查看商城总览。"
         it = data.ITEMS[name]
         if it["price"] <= 0:
             return f"『{name}』无法直接购买。"
