@@ -6243,86 +6243,40 @@ class PetParkPlugin(Star):
         )
 
     # ---------------------------------------------------------------------
-    # 菜单美图化：把 _menu_text() 渲染成古典羊皮纸图片（HTML -> 无头 Chrome PNG，
+    # 菜单美图化：把 _menu_text() 渲染成蓝绿分区菜单图片（HTML -> 无头 Chrome PNG，
     # 按内容 md5 缓存到 store.custom_images_dir，经 /custom_images 发送）。
     # 服务器无 emoji 字体，故菜单内容去除 emoji，用纯排版 + 金色装饰呈现。
     # ---------------------------------------------------------------------
     _MENU_CSS = """
-:root{
-  --paper-hi:#f8eed6; --paper-mid:#f0e0bb; --paper-lo:#e2ce9d;
-  --ink:#2f2013; --ink2:#4c351d; --muted:#6c5227;
-  --gold:#b98a1c; --gold2:#8a5f0c; --line:rgba(169,120,30,.34);
-  --seal:#b2371f; --red:#c13a28;
-}
 *{box-sizing:border-box;margin:0;padding:0}
 html{height:auto}
-body{
-  background:#1c1712;
-  font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid Sans Fallback',sans-serif;
-  color:var(--ink);
-  padding:48px 30px;
-  -webkit-font-smoothing:antialiased;
-}
-.scroll{
-  position:relative;max-width:806px;margin:0 auto;
-  background:
-    radial-gradient(120% 82% at 50% -8%, rgba(255,252,242,.62), transparent 54%),
-    linear-gradient(176deg, var(--paper-hi), var(--paper-mid) 46%, var(--paper-lo));
-  box-shadow:0 30px 70px rgba(0,0,0,.55), 0 4px 14px rgba(0,0,0,.35),
-    inset 0 0 0 1px var(--line), inset 0 0 0 7px rgba(226,201,150,.5),
-    inset 0 0 0 8px rgba(169,120,30,.26), inset 0 0 90px rgba(153,108,34,.2);
-  padding:34px 44px 32px;
-}
-.scroll::after{ /* 纸纤维纹理（免 data-URI，避免编码坑） */
-  content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
-  mix-blend-mode:multiply;opacity:.55;
-  background-image:
-    repeating-linear-gradient(8deg, rgba(150,105,30,.05) 0 2px, transparent 2px 5px),
-    repeating-linear-gradient(92deg, rgba(150,105,30,.04) 0 2px, transparent 2px 7px);
-}
-.content{position:relative;z-index:1}
-.brand{
-  text-align:center;font-size:56px;font-weight:900;letter-spacing:14px;line-height:1.1;
-  background:linear-gradient(180deg,#f2cb6f,#b98a1c 55%,#784d07);
-  -webkit-background-clip:text;background-clip:text;color:transparent;
-  text-shadow:0 1px 0 rgba(255,255,255,.4);
-}
-.brand-sub{
-  display:flex;align-items:center;justify-content:center;gap:16px;
-  color:var(--gold2);font-size:15px;font-weight:700;letter-spacing:12px;margin:7px 0 0;
-}
-.brand-sub::before,.brand-sub::after{content:"";height:1px;width:64px;background:var(--line)}
-.rule{
-  height:2px;margin:18px 0 16px;position:relative;
-  background:linear-gradient(90deg,transparent,var(--gold) 22%,var(--gold) 78%,transparent);
-}
-.rule::after{content:"";position:absolute;left:50%;top:50%;width:9px;height:9px;
-  background:var(--gold);transform:translate(-50%,-50%) rotate(45deg)}
-.intro{
-  font-size:13.5px;line-height:1.75;color:var(--ink2);
-  background:rgba(255,255,255,.34);border:1px solid var(--line);border-left:4px solid var(--gold);
-  padding:8px 13px;border-radius:4px;margin:0 0 4px;
-}
-.cols{columns:2;column-gap:30px;margin-top:12px}
-.sect{break-inside:avoid;margin:0 0 16px}
-.sect-h{
-  position:relative;padding-left:19px;font-size:17px;font-weight:800;color:var(--seal);
-  border-bottom:2px solid var(--line);padding-bottom:4px;margin:0 0 2px;letter-spacing:1px;
-}
-.sect-h::before{content:"";position:absolute;left:0;top:6px;width:8px;height:8px;
-  background:var(--gold);transform:rotate(45deg)}
-.sect-s{color:var(--gold2);font-size:11.5px;margin:0 0 6px;font-weight:600;letter-spacing:.4px}
-.item{font-size:13px;line-height:1.62;color:var(--ink);margin:3px 0;padding-left:1px}
-.item .sep{color:var(--gold);font-weight:700;padding:0 1px}
-.item .desc{color:var(--red)}
-.note{font-size:11.5px;line-height:1.55;color:var(--muted);
-  background:rgba(255,255,255,.3);border-left:3px solid var(--gold);
-  padding:4px 9px;margin:5px 0 7px}
-.plain{font-size:13px;color:var(--ink);margin:3px 0}
-.foot{
-  text-align:center;font-size:12.5px;color:var(--muted);margin-top:8px;
-  border-top:1px dashed var(--line);padding-top:10px;
-}
+body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK SC','WenQuanYi Zen Hei',sans-serif;color:#193746;-webkit-font-smoothing:antialiased}
+.card,.scroll{position:relative;margin:0 auto;padding:32px;border:1px solid #b8d7dc;border-radius:24px;background:radial-gradient(ellipse at 100% 0,#b6e6df 0,transparent 35%),radial-gradient(ellipse at 0 0,#cee1ff 0,transparent 42%),#edf5f8;overflow:hidden}
+.card:before,.scroll:before{content:'';position:absolute;right:-48px;top:-70px;width:220px;height:220px;border:30px solid #ffffff45;border-radius:50%;pointer-events:none}
+.orn{font-size:15px;letter-spacing:4px;color:#426c7c;font-weight:700;margin-bottom:10px}
+.name,.title,.brand{font-size:38px;line-height:1.3;font-weight:900;color:#173d50;overflow-wrap:anywhere;position:relative}
+.sub,.brand-sub{font-size:17px;line-height:1.7;color:#456777;margin-top:8px;overflow-wrap:anywhere}
+.foot{font-size:16px;line-height:1.7;color:#426474;margin-top:22px;border-top:1px solid #bfd6df;padding-top:16px;overflow-wrap:anywhere}
+
+.scroll{max-width:840px;padding:32px}
+.brand{font-size:46px}
+.brand-sub{letter-spacing:3px}
+.rule{height:1px;background:#accdd7;margin:20px 0}
+.intro{font-size:17px;line-height:1.7;padding:14px 18px;background:#ffffffbf;border-radius:12px;margin-bottom:18px;color:#3d6071}
+.cols{columns:2;column-gap:16px}
+.sect{break-inside:avoid;margin-bottom:16px;padding:18px;background:#fff;border:1px solid #d1e3e9;border-radius:14px;overflow-wrap:anywhere}
+.sect-h{font-size:23px;color:#1b5d70;font-weight:800;border-bottom:1px solid #dce8ed;padding-bottom:10px;margin-bottom:10px}
+.sect:nth-child(3n+2){border-top:4px solid #74bbb1}
+.sect:nth-child(3n+1){border-top:4px solid #7ca5d0}
+.sect:nth-child(3n){border-top:4px solid #c8ad71}
+.sect-s{font-size:16px;color:#617780;line-height:1.6;margin-bottom:10px}
+.item{font-size:18px;line-height:1.85;padding:8px 0;border-bottom:1px solid #edf2f5;color:#203f50}
+.item:last-child{border-bottom:0}
+.sep{color:#91acb5;padding:0 5px}
+.desc{color:#5a7480;font-size:16px}
+.note{font-size:16px;line-height:1.75;color:#426873;background:#edf7f6;border-radius:8px;padding:10px;margin-top:10px}
+.plain{font-size:17px;line-height:1.8}
+.content{position:relative}
 """
 
     _MENU_EMOJI_RE = re.compile(
@@ -6334,7 +6288,7 @@ body{
     @staticmethod
     def _menu_esc(s: str) -> str:
         """转义 HTML 特殊字符，避免菜单内容破坏页面结构。"""
-        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D\u20E3]", "", str(s)).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
 
     def _menu_purify(self, s: str) -> str:
         """去除 emoji（无字体）与 Markdown 星号/反引号，折叠空白，供图片使用。"""
@@ -6343,7 +6297,7 @@ body{
         return re.sub(r"\s+", " ", s).strip()
 
     def _menu_html(self) -> str:
-        """把 _menu_text() 逐行解析成羊皮纸 HTML——文本与图片永不漂移。"""
+        """把 _menu_text() 逐行解析成分区菜单 HTML——文本与图片永不漂移。"""
         menu = self._menu_text()
         title_main, title_sub = "宠物乐园", "指令菜单"
         intro: list[str] = []
@@ -6453,7 +6407,7 @@ body{
         )
 
     def _crop_menu(self, img):
-        """把渲染图裁到羊皮纸内容区（去掉底部/四周深色桌面背景）。"""
+        """把渲染图裁到菜单内容区（去掉底部/四周深色桌面背景）。"""
         gray = img.convert("L")
         mask = gray.point([255 if i > 110 else 0 for i in range(256)])
         bbox = mask.getbbox()
@@ -6551,73 +6505,55 @@ body{
         except Exception as e:
             logger.warning(f"[petpark] 菜单图片 HTML 生成失败：{e}")
             return None
-        return self._render_html_image(html, "menu", self._MENU_DISP_W, crop=self._crop_menu)
+        # Full command menu grows with active events; leave room for every section.
+        return self._render_html_image(html, "menu", self._MENU_DISP_W, crop=self._crop_menu,
+                                       win_h=max(5200, 900 + html.count('class="item"') * 150
+                                                 + html.count('class="note"') * 100))
 
     # ---------------------------------------------------------------------
-    # 宠物信息卡 · 金色游戏风（H5 -> 无头 Chrome PNG，嵌立绘 data-URI，无 emoji）
+    # 宠物信息卡 · 蓝绿游戏面板（H5 -> 无头 Chrome PNG，嵌立绘 data-URI，无 emoji）
     # ---------------------------------------------------------------------
     _PET_CARD_CSS = """
-:root{
-  --bg0:#2c1a0b; --bg1:#3a2410; --bg2:#59341a;
-  --gold:#f0c46a; --gold2:#c9973a; --gold3:#8a5a12;
-  --cream:#f8eed6; --cream2:#cbb58a;
-  --hp:#c0392b; --en:#e0a63a; --mo:#d9826f;
-}
 *{box-sizing:border-box;margin:0;padding:0}
 html{height:auto}
-body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid Sans Fallback',sans-serif;
-  -webkit-font-smoothing:antialiased;padding:40px 28px}
-.card{position:relative;max-width:640px;margin:0 auto;border-radius:18px;padding:30px 34px 28px;
-  background:radial-gradient(130% 90% at 50% -12%, rgba(240,196,106,.22), transparent 55%),
-    linear-gradient(168deg, var(--bg2), var(--bg1) 52%, var(--bg0));
-  box-shadow:0 26px 60px rgba(0,0,0,.6), inset 0 0 0 2px rgba(240,196,106,.6),
-    inset 0 0 0 9px rgba(0,0,0,.28), inset 0 0 0 11px rgba(201,151,58,.42),
-    inset 0 0 60px rgba(0,0,0,.5)}
-.card::before,.card::after{content:"";position:absolute;width:34px;height:34px;
-  border:2px solid var(--gold2);pointer-events:none}
-.card::before{left:12px;top:12px;border-right:none;border-bottom:none;border-radius:14px 0 0 0}
-.card::after{right:12px;bottom:12px;border-left:none;border-top:none;border-radius:0 0 14px 0}
-.orn{color:var(--gold3);text-align:center;letter-spacing:6px;font-size:15px;font-weight:700}
-.name{text-align:center;font-size:46px;font-weight:900;letter-spacing:6px;line-height:1.1;margin:2px 0 4px;
-  background:linear-gradient(180deg,#ffe8b0,var(--gold) 52%,var(--gold3));
-  -webkit-background-clip:text;background-clip:text;color:transparent}
-.sub{text-align:center;color:var(--cream2);font-size:15px;letter-spacing:2px;font-weight:600}
-.badges{display:flex;justify-content:center;gap:9px;flex-wrap:wrap;margin:12px 0 0}
-.badges b{color:var(--gold);font-size:13.5px;font-weight:700;padding:4px 14px;
-  border:1px solid rgba(240,196,106,.5);border-radius:20px;background:rgba(240,196,106,.1)}
-.portrait-wrap{margin:18px auto 6px;width:200px;height:200px}
-.portrait{width:100%;height:100%;object-fit:cover;border-radius:16px;background:#f8eed6;
-  border:3px solid var(--gold);box-shadow:0 0 0 5px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.5)}
-.portrait-ph{width:100%;height:100%;border-radius:16px;border:3px dashed var(--gold3);
-  display:flex;align-items:center;justify-content:center;color:var(--gold3);
-  font-size:16px;letter-spacing:2px;background:rgba(0,0,0,.2)}
-.chips{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin:12px 0 2px}
-.chip{min-width:92px;text-align:center;padding:8px 6px;border-radius:12px;
-  background:rgba(240,196,106,.09);border:1px solid rgba(240,196,106,.32)}
-.chip k{display:block;color:var(--cream2);font-size:12px;letter-spacing:1px;margin-bottom:2px;font-style:normal}
-.chip v{display:block;color:var(--gold);font-size:19px;font-weight:800;font-style:normal}
-.bars{margin:14px 0 4px}
-.bar-row{display:flex;align-items:center;gap:11px;margin:8px 0}
-.bar-k{width:44px;color:var(--cream2);font-size:13px;font-weight:700;letter-spacing:1px}
-.bar{flex:1;height:15px;border-radius:10px;background:rgba(0,0,0,.35);
-  box-shadow:inset 0 0 0 1px rgba(240,196,106,.25);overflow:hidden}
-.fill{height:100%;border-radius:10px}
-.fill.hp{background:linear-gradient(90deg,#a83226,#d24a37)}
-.fill.en{background:linear-gradient(90deg,#b07a17,#f0c45a)}
-.fill.mo{background:linear-gradient(90deg,#c06a5a,#e8a48f)}
-.bar-n{width:96px;color:var(--cream);font-size:12.5px;font-weight:700;text-align:right}
-.grp{margin:16px 0 0;border-top:1px solid rgba(240,196,106,.28);padding-top:13px}
-.grp-h{color:var(--gold);font-size:13px;font-weight:800;letter-spacing:3px;margin:0 0 7px}
-.grp-h::after{content:"";display:inline-block;width:4px;height:4px;background:var(--gold);
-  transform:rotate(45deg);margin:0 0 3px 8px}
-.row{display:flex;justify-content:space-between;gap:12px;color:var(--cream);font-size:14px;margin:4px 0}
-.row k{color:var(--cream2);font-style:normal}
-.row v{color:var(--cream);font-weight:700;text-align:right}
-.tags{display:flex;flex-wrap:wrap;gap:7px}
-.tags i{font-style:normal;color:var(--gold);font-size:12.5px;padding:3px 10px;
-  border:1px solid rgba(240,196,106,.4);border-radius:12px;background:rgba(240,196,106,.08)}
-.warn{margin-top:14px;color:#e88;font-size:13px;line-height:1.5;
-  border:1px solid rgba(200,60,50,.5);border-radius:8px;padding:8px 12px;background:rgba(120,30,25,.2)}
+body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK SC','WenQuanYi Zen Hei',sans-serif;color:#193746;-webkit-font-smoothing:antialiased}
+.card,.scroll{position:relative;margin:0 auto;padding:32px;border:1px solid #b8d7dc;border-radius:24px;background:radial-gradient(ellipse at 100% 0,#b6e6df 0,transparent 35%),radial-gradient(ellipse at 0 0,#cee1ff 0,transparent 42%),#edf5f8;overflow:hidden}
+.card:before,.scroll:before{content:'';position:absolute;right:-48px;top:-70px;width:220px;height:220px;border:30px solid #ffffff45;border-radius:50%;pointer-events:none}
+.orn{font-size:15px;letter-spacing:4px;color:#426c7c;font-weight:700;margin-bottom:10px}
+.name,.title,.brand{font-size:38px;line-height:1.3;font-weight:900;color:#173d50;overflow-wrap:anywhere;position:relative}
+.sub,.brand-sub{font-size:17px;line-height:1.7;color:#456777;margin-top:8px;overflow-wrap:anywhere}
+.foot{font-size:16px;line-height:1.7;color:#426474;margin-top:22px;border-top:1px solid #bfd6df;padding-top:16px;overflow-wrap:anywhere}
+
+.card{max-width:700px}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:22px;align-items:center;margin-bottom:24px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.badges b,.tags i{font-size:15px;padding:5px 12px;border-radius:8px;background:#fff;color:#216d73;border:1px solid #bad9d8;font-style:normal}
+.portrait-wrap{width:210px;height:230px}
+.portrait{width:100%;height:100%;object-fit:contain;border-radius:20px;background:#fff;border:6px solid #fff;box-shadow:0 8px 24px #20495b18}
+.portrait-ph{height:100%;display:flex;align-items:center;justify-content:center;border:2px dashed #9cbfc8;border-radius:20px;color:#456777;background:#ffffff80}
+.chips{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.chip{padding:14px 12px;background:#fff;border:1px solid #d5e3eb;border-radius:12px}
+.chip:first-child{grid-column:span 2}
+.chip:nth-child(2){background:#214f67}
+.chip k{display:block;font-size:15px;color:#516d7c}
+.chip v{display:block;font-size:24px;font-weight:800;color:#18465f;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.chip:nth-child(2) k{color:#d0e4ed}
+.chip:nth-child(2) v{color:#fff}
+.bars,.grp{background:#fff;border:1px solid #d5e3eb;border-radius:14px;padding:16px;margin-top:14px}
+.bar-row{display:flex;align-items:center;gap:12px;margin:10px 0}
+.bar-k{width:40px;font-size:16px;color:#476573}
+.bar{flex:1;min-width:30px;height:12px;border-radius:8px;background:#e8eff4;overflow:hidden}
+.fill{height:100%;border-radius:8px}
+.fill.hp{background:linear-gradient(90deg,#d16a79,#eb98a1)}
+.fill.en{background:linear-gradient(90deg,#3182aa,#69bada)}
+.fill.mo{background:linear-gradient(90deg,#26958b,#65cbb3)}
+.bar-n{min-width:95px;max-width:60%;font-size:16px;color:#25485c;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.grp-h{font-size:17px;font-weight:800;color:#176d73;margin-bottom:10px;border-left:4px solid #54b3aa;padding-left:10px}
+.row{display:flex;justify-content:space-between;gap:20px;font-size:17px;line-height:1.7;margin:5px 0}
+.row k{color:#56707e;flex-shrink:0}
+.row v{font-weight:600;text-align:right;overflow-wrap:anywhere;min-width:0}
+.tags{display:flex;flex-wrap:wrap;gap:8px}
+.warn{color:#943f47;background:#fff0ef;border:1px solid #ebbbc0;border-radius:12px;padding:16px;margin-top:14px;font-size:17px;line-height:1.7}
 """
 
     @staticmethod
@@ -6651,7 +6587,7 @@ body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid S
         return None
 
     def _card_crop(self, img):
-        """把渲染图裁到金色卡片范围（去掉四周纯黑背景）。"""
+        """把渲染图裁到卡片范围（去掉四周纯黑背景）。"""
         gray = img.convert("L")
         mask = gray.point([255 if i > 22 else 0 for i in range(256)])
         bbox = mask.getbbox()
@@ -6664,7 +6600,7 @@ body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid S
         return img.crop((x0, y0, x1, y1))
 
     def _pet_card_html(self, pet) -> str:
-        """把宠物数据渲染成金色游戏风信息卡 HTML（含立绘，无 emoji）。"""
+        """把宠物数据渲染成蓝绿游戏面板信息卡 HTML（含立绘，无 emoji）。"""
         esc = self._menu_esc
         petmod.refresh_energy(pet)
         gender = {"男": "雄", "女": "雌"}.get(pet.get("gender"), pet.get("gender", "—"))
@@ -6743,11 +6679,11 @@ body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid S
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>{self._PET_CARD_CSS}</style></head><body>"
             f'<div class="card">'
-            f'<div class="orn">‹ 宠 物 ›</div>'
+            f'<div class="hero"><div><div class="orn">宠物档案</div>'
             f'<div class="name">{esc(pet["nickname"])}</div>'
             f'<div class="sub">{esc(species_display)} · {esc(element)}属性 · {esc(stage)}</div>'
             f'<div class="badges"><b>【{esc(quality)}】</b><b>{esc(love)}</b></div>'
-            f'<div class="portrait-wrap">{portrait}</div>'
+            f'</div><div class="portrait-wrap">{portrait}</div></div>'
             f'<div class="chips">{chips_html}</div>'
             f'<div class="bars">{bars}</div>'
             f'<div class="grp"><div class="grp-h">属性</div>{rows_html}</div>'
@@ -6777,53 +6713,35 @@ body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid S
             logger.warning(f"[petpark] 宠物卡 HTML 生成失败：{e}")
             return None
         return self._render_html_image(html, "petcard", 600, crop=self._card_crop,
-                                       win_w=760, win_h=2600)
+                                       win_w=760, win_h=4200)
 
     # ---------------------------------------------------------------------
-    # 背包卡 · 金色游戏风（H5 -> PNG，无 emoji）
+    # 背包卡 · 蓝绿游戏面板（H5 -> PNG，无 emoji）
     # ---------------------------------------------------------------------
     _BAG_CARD_CSS = """
-:root{
-  --bg0:#2c1a0b; --bg1:#3a2410; --bg2:#59341a;
-  --gold:#f0c46a; --gold2:#c9973a; --gold3:#8a5a12;
-  --cream:#f8eed6; --cream2:#cbb58a;
-}
 *{box-sizing:border-box;margin:0;padding:0}
 html{height:auto}
-body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid Sans Fallback',sans-serif;
-  -webkit-font-smoothing:antialiased;padding:40px 28px}
-.card{position:relative;max-width:540px;margin:0 auto;border-radius:18px;padding:30px 34px 26px;
-  background:radial-gradient(130% 90% at 50% -12%, rgba(240,196,106,.22), transparent 55%),
-    linear-gradient(168deg, var(--bg2), var(--bg1) 52%, var(--bg0));
-  box-shadow:0 26px 60px rgba(0,0,0,.6), inset 0 0 0 2px rgba(240,196,106,.6),
-    inset 0 0 0 9px rgba(0,0,0,.28), inset 0 0 0 11px rgba(201,151,58,.42),
-    inset 0 0 60px rgba(0,0,0,.5)}
-.card::before,.card::after{content:"";position:absolute;width:34px;height:34px;
-  border:2px solid var(--gold2);pointer-events:none}
-.card::before{left:12px;top:12px;border-right:none;border-bottom:none;border-radius:14px 0 0 0}
-.card::after{right:12px;bottom:12px;border-left:none;border-top:none;border-radius:0 0 14px 0}
-.orn{color:var(--gold3);text-align:center;letter-spacing:6px;font-size:15px;font-weight:700}
-.title{text-align:center;font-size:44px;font-weight:900;letter-spacing:6px;line-height:1.1;margin:2px 0 3px;
-  background:linear-gradient(180deg,#ffe8b0,var(--gold) 52%,var(--gold3));
-  -webkit-background-clip:text;background-clip:text;color:transparent}
-.sub{text-align:center;color:var(--cream2);font-size:14px;letter-spacing:2px;font-weight:600}
-.rule{height:2px;margin:16px 0 6px;position:relative;
-  background:linear-gradient(90deg,transparent,var(--gold) 22%,var(--gold) 78%,transparent)}
-.rule::after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;
-  background:var(--gold);transform:translate(-50%,-50%) rotate(45deg)}
-.empty{text-align:center;color:var(--cream2);font-size:16px;letter-spacing:1px;padding:28px 0}
-.row{display:flex;align-items:center;padding:12px 4px;border-bottom:1px dashed rgba(240,196,106,.22)}
-.row::before{content:"";width:7px;height:7px;background:var(--gold);transform:rotate(45deg);
-  flex:none;margin-right:13px}
-.rname{flex:1;color:var(--cream);font-size:16px;font-weight:700;letter-spacing:.5px;
-  overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.rcount{flex:none;color:var(--gold);font-size:18px;font-weight:800}
-.rcount::before{content:"×";margin-right:2px;color:var(--gold3)}
-.foot{text-align:center;color:var(--cream2);font-size:12.5px;letter-spacing:1px;margin-top:16px}
+body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK SC','WenQuanYi Zen Hei',sans-serif;color:#193746;-webkit-font-smoothing:antialiased}
+.card,.scroll{position:relative;margin:0 auto;padding:32px;border:1px solid #b8d7dc;border-radius:24px;background:radial-gradient(ellipse at 100% 0,#b6e6df 0,transparent 35%),radial-gradient(ellipse at 0 0,#cee1ff 0,transparent 42%),#edf5f8;overflow:hidden}
+.card:before,.scroll:before{content:'';position:absolute;right:-48px;top:-70px;width:220px;height:220px;border:30px solid #ffffff45;border-radius:50%;pointer-events:none}
+.orn{font-size:15px;letter-spacing:4px;color:#426c7c;font-weight:700;margin-bottom:10px}
+.name,.title,.brand{font-size:38px;line-height:1.3;font-weight:900;color:#173d50;overflow-wrap:anywhere;position:relative}
+.sub,.brand-sub{font-size:17px;line-height:1.7;color:#456777;margin-top:8px;overflow-wrap:anywhere}
+.foot{font-size:16px;line-height:1.7;color:#426474;margin-top:22px;border-top:1px solid #bfd6df;padding-top:16px;overflow-wrap:anywhere}
+
+.card{max-width:600px}
+.title{font-size:38px}
+.rule{height:1px;background:#b8d3de;margin:24px 0 16px}
+.inventory{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.row{display:flex;flex-direction:column;justify-content:space-between;gap:12px;padding:16px;border:1px solid #d0e1e9;background:#fff;border-radius:12px;min-height:102px}
+.rname{font-size:18px;line-height:1.55;color:#21495b;font-weight:700;overflow-wrap:anywhere}
+.rcount{align-self:flex-end;font-size:19px;font-weight:800;color:#16706f;font-variant-numeric:tabular-nums}
+.rcount:before{content:'数量 ';font-size:14px;font-weight:400;color:#597680}
+.empty{grid-column:1/-1;text-align:center;padding:42px 20px;background:#fff;border:1px dashed #aac8d4;border-radius:16px;color:#4a6c7c;font-size:19px}
 """
 
     def _bag_card_html(self, player: dict) -> str:
-        """把背包渲染成金色清单卡 HTML（无 emoji）。"""
+        """把背包渲染成双列物品卡 HTML（无 emoji）。"""
         esc = self._menu_esc
         bag = player.get("bag", {})
         items = sorted(bag.items(), key=lambda kv: str(kv[0]))
@@ -6841,11 +6759,11 @@ body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid S
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>{self._BAG_CARD_CSS}</style></head><body>"
             f'<div class="card">'
-            f'<div class="orn">‹ 背 包 ›</div>'
+            f'<div class="orn">随行物资</div>'
             f'<div class="title">我的背包</div>'
             f'<div class="sub">{esc(subtitle)}</div>'
-            f'<div class="rule"></div>{body}'
-            f'<div class="foot">发送『购买』『使用』即可操作物品</div>'
+            f'<div class="rule"></div><div class="inventory">{body}</div>'
+            f'<div class="foot">使用物品：发送「使用 物品名」 · 选购物品：发送「商城」</div>'
             f'</div></body></html>'
         )
 
@@ -6857,7 +6775,7 @@ body{background:#000;font-family:'WenQuanYi Zen Hei','Noto Sans CJK SC','Droid S
             logger.warning(f"[petpark] 背包卡 HTML 生成失败：{e}")
             return None
         return self._render_html_image(html, "bagcard", 520, crop=self._card_crop,
-                                       win_w=640, win_h=2600)
+                                       win_w=660, win_h=max(1800, 480 + sum(140 + 26 * (len(str(name)) // 10) for name in player.get("bag", {}))))
 
     def _official_site_text(self) -> str:
         """官方网站介绍：官方主站 + 绑定宠物指引（QQ Markdown，用 \n\n 分隔避免被吞）。"""
