@@ -106,7 +106,7 @@ AstrBot 群聊宠物养成 / 对战插件。指令全部为**无前缀中文指�
 ### 点歌（QQ官方语音）
 - `点歌 歌名` — 搜索歌曲并列出结果（每 10 个一页，可 `下一页` / `上一页` 翻页）
 - `选歌 序号` — 按列表左侧序号用 QQ 官方语音接口发送语音条
-- 依赖：需配置 `alapi_token`（ALAPI 密钥，默认已填）；服务器需预装 `ffmpeg` + `silk_v3_encoder` 并配置 `silk_url_base`（公网可拉取 silk 地址）。
+- 依赖：需配置 `alapi_token`（ALAPI 密钥，默认已填）；服务器 venv 需安装 `graiax-silkcoder`（自带 ffmpeg 转码，无需外部二进制）并配置 `silk_url_base`（公网可拉取 silk 地址）。
 - 说明：ALAPI 搜索为单窗口（默认取 50 首本地翻 5 页）；部分 VIP 曲目无试听资源会提示换一首。
 
 ## 核心数值

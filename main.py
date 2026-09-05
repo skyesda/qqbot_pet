@@ -4572,31 +4572,57 @@ class PetParkPlugin(Star):
     async def _song_make_silk(self, play_url: str) -> str | None:
         """下载 mp3 → 转码 silk v3 → 放入临时目录，返回 QQ 可拉取的公网 URL。
 
-        仅清理 mp3 / pcm / wav；silk 文件保留给 webadmin 对外供 QQ 拉取（由 TTL 清理）。
+        优先用 graiax-silkcoder 在内存中转码（自带 ffmpeg，无需外部二进制）；
+        库不可用时回退到外部二进制（需配置 silk_encoder_path）。
+        silk 文件保留给 webadmin 对外供 QQ 拉取（由 TTL 清理）。
         """
+        name = uuid.uuid4().hex
+        silk = self.song_silk_dir / f"{name}.silk"
+        try:
+            # 1) 下载 mp3（读入内存）
+            req = urllib.request.Request(play_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                mp3_bytes = resp.read()
+            if not mp3_bytes:
+                raise RuntimeError("mp3 下载为空")
+            # 2) mp3 → silk v3
+            silk_bytes = None
+            try:
+                import graiax.silkcoder as _sc  # 延迟导入，未安装时优雅降级
+                silk_bytes = _sc.encode(mp3_bytes, codec=_sc.Codec.ffmpeg, tencent=True,
+                                        audio_format="mp3", ffmpeg_para=["-ar", "24000"])
+            except ImportError:
+                silk_bytes = None
+            if not silk_bytes:
+                silk_bytes = self._song_encode_binary(mp3_bytes)
+                if not silk_bytes:
+                    raise RuntimeError("silk 转码失败（graiax-silkcoder 不可用且无外部编码器）")
+            silk.write_bytes(silk_bytes)
+            if not self.silk_url_base:
+                raise RuntimeError("未配置 silk_url_base")
+            return f"{self.silk_url_base}/api/song_silk/{name}.silk"
+        except Exception as e:
+            logger.warning(f"[petpark] 点歌制作 silk 失败：{e}")
+            return None
+
+    def _song_encode_binary(self, mp3_bytes: bytes) -> bytes | None:
+        """graiax-silkcoder 不可用时的兜底：ffmpeg→pcm→silk_v3_encoder（二进制需另行提供）。"""
+        ff = "ffmpeg"
+        enc = self.silk_encoder_path
+        if not enc:
+            return None
         name = uuid.uuid4().hex
         mp3 = self.song_silk_dir / f"{name}.mp3"
         pcm = self.song_silk_dir / f"{name}.pcm"
         wav = self.song_silk_dir / f"{name}.wav"
         silk = self.song_silk_dir / f"{name}.silk"
         try:
-            # 1) 下载 mp3
-            req = urllib.request.Request(play_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as resp, open(mp3, "wb") as fh:
-                shutil.copyfileobj(resp, fh)
-            if mp3.stat().st_size == 0:
-                raise RuntimeError("mp3 下载为空")
-            # 2) mp3 → pcm(16bit/24k/mono)
-            ff = "ffmpeg"
+            mp3.write_bytes(mp3_bytes)
             r = subprocess.run([ff, "-y", "-i", str(mp3), "-ar", "24000", "-ac", "1",
                                 "-f", "s16le", str(pcm)],
                                timeout=120, check=False, capture_output=True)
             if r.returncode != 0 or not pcm.exists() or pcm.stat().st_size == 0:
                 raise RuntimeError("ffmpeg 转 mp3→pcm 失败")
-            # 3) pcm → silk（失败时回退用 wav 输入）
-            enc = self.silk_encoder_path
-            if not enc:
-                raise RuntimeError("未配置 silk 编码器路径")
             r = subprocess.run([enc, str(pcm), str(silk), "24000"],
                                timeout=120, check=False, capture_output=True)
             if r.returncode != 0 or not silk.exists() or silk.stat().st_size == 0:
@@ -4606,15 +4632,13 @@ class PetParkPlugin(Star):
                     r = subprocess.run([enc, str(wav), str(silk), "24000"],
                                        timeout=120, check=False, capture_output=True)
                 if r.returncode != 0 or not silk.exists() or silk.stat().st_size == 0:
-                    raise RuntimeError("silk_v3_encoder 编码失败")
-            if not self.silk_url_base:
-                raise RuntimeError("未配置 silk_url_base")
-            return f"{self.silk_url_base}/api/song_silk/{name}.silk"
+                    raise RuntimeError("外部 silk_v3_encoder 编码失败")
+            return silk.read_bytes()
         except Exception as e:
-            logger.warning(f"[petpark] 点歌制作 silk 失败：{e}")
+            logger.warning(f"[petpark] 点歌二进制兜底转码失败：{e}")
             return None
         finally:
-            for f in (mp3, pcm, wav):
+            for f in (mp3, pcm, wav, silk):
                 try:
                     if f.exists():
                         f.unlink()
