@@ -14582,7 +14582,7 @@ class PetParkPlugin(Star):
             return f"💌 已向 {self._display_uid(target)} 的宠物发起追求，等待对方『同意追求 {self._display_uid(player['qq'])}』。"
         if cmd == "同意追求":
             pend = player.get("pending", {}).get("pursue")
-            if pend != target:
+            if self._display_uid(pend) != self._display_uid(target):
                 return "没有来自该 QQ 的追求请求。"
             p["love_state"] = tpet["love_state"] = "恋爱"
             p["love_target"], tpet["love_target"] = target, player["qq"]
@@ -14602,7 +14602,7 @@ class PetParkPlugin(Star):
             return f"💍 已向 {self._display_uid(target)} 求婚，消耗『永恒钻戒』x1，等待对方『同意求婚 {self._display_uid(player['qq'])}』。"
         if cmd == "同意求婚":
             pend = player.get("pending", {}).get("marry")
-            if pend != target:
+            if self._display_uid(pend) != self._display_uid(target):
                 return "没有来自该 QQ 的求婚请求。"
             p["love_state"] = tpet["love_state"] = "已婚"
             player.get("pending", {}).pop("marry", None)
