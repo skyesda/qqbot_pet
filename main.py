@@ -5516,10 +5516,10 @@ class PetParkPlugin(Star):
             f"👥 **群号**　`{gid}`",
             f"🌐 **所处分服**　{self._server_label(group_id)}",
             f"👤 **群身份**　{'—' if gid == '私聊' else self._role_label_text(event)}",
-            f"🪙 **金币**　{player.get('coin', 0)}",
-            f"💎 **积分**　{player.get('jifen', 0)}",
-            f"💠 **钻石**　{player.get('diamond', 0)}",
-            f"🌀 **深渊结晶**　{self.store.get_abyss_crystal(player)}",
+            f"🪙 **金币**　{self._short_num(player.get('coin', 0))}",
+            f"💎 **积分**　{self._short_num(player.get('jifen', 0))}",
+            f"💠 **钻石**　{self._short_num(player.get('diamond', 0))}",
+            f"🌀 **深渊结晶**　{self._short_num(self.store.get_abyss_crystal(player))}",
         ]
         streak = player.get("active_streak", 0)
         if self._group_is_infinite(group_id):
@@ -5923,6 +5923,9 @@ class PetParkPlugin(Star):
         amount = int(tokens[2])
         if amount <= 0:
             return f"用法：{cmd} QQ号/ID 数量（数量需为正整数）"
+        # 单次加币上限 1000亿（金/积/钻统一，含大、小管理员；减币不限）
+        if sign > 0 and amount > 100_000_000_000:
+            return f"❌ 单次增加{currency}上限 1000亿，本次 {amount} 超出。"
         # 小管理员：仅限本群、仅金币/积分、加币有每日额度、减币不限
         # 无限服：小管理员加币/积分无每日上限（仍不得增减钻石）
         no_sub_limit = self._group_is_infinite(group_id)
@@ -5970,8 +5973,8 @@ class PetParkPlugin(Star):
                 )
         return (
             f"## ⚙️ 管理操作\n"
-            f"已为用户 `{self._display_uid(target)}` {verb}{icon}**{currency} {amount}**\n"
-            f"> {currency}：{before} → **{after}**{extra}"
+            f"已为用户 `{self._display_uid(target)}` {verb}{icon}**{currency} {self._short_num(amount)}**\n"
+            f"> {currency}：{self._short_num(before)} → **{self._short_num(after)}**{extra}"
         )
 
     # --------------------------- 小管理员 ---------------------------
@@ -6739,19 +6742,27 @@ class PetParkPlugin(Star):
     @staticmethod
     @staticmethod
     def _short_num(n) -> str:
-        """数值缩写：>=1亿 显示 x.xx亿，>=1万 显示 x.xx万，否则原值。
+        """数值缩写：万→亿→兆→京→…→古戈尔（10^100），用于大数值展示。
 
-        用于攻击/防御/智力/生命/战力等大数值展示，避免长数字撑破布局。
+        用于攻击/防御/智力/生命/战力/货币等大数值，避免长数字撑破布局。
+        每个中文单位 = 前一个 × 1万（1e4 递增），直到古戈尔 1e100。
         内联实现（不依赖子模块），保证 hot-reload 重载 main 即可生效。
         """
         try:
             n = float(n)
         except (TypeError, ValueError):
             return str(n)
-        if abs(n) >= 1_0000_0000:
-            return f"{n / 1_0000_0000:.2f}亿"
-        if abs(n) >= 1_0000:
-            return f"{n / 1_0000:.2f}万"
+        abs_n = abs(n)
+        units = [
+            (1e100, "古戈尔"), (1e72, "大数"), (1e68, "无量"), (1e64, "不可思议"),
+            (1e60, "那由他"), (1e56, "阿僧祇"), (1e52, "恒河沙"), (1e48, "极"),
+            (1e44, "载"), (1e40, "正"), (1e36, "涧"), (1e32, "沟"),
+            (1e28, "穰"), (1e24, "秭"), (1e20, "垓"), (1e16, "京"), (1e12, "兆"),
+            (1e8, "亿"), (1e4, "万"),
+        ]
+        for threshold, unit in units:
+            if abs_n >= threshold:
+                return f"{n / threshold:.2f}{unit}"
         return f"{int(n)}"
 
     @staticmethod
@@ -8844,7 +8855,7 @@ class PetParkPlugin(Star):
             petmod.add_exp(p, g)
             return f"🧭 探险顿悟，经验 +{g}！"
         if kind == "道具":
-            item = random.choice(["红药水", "蓝药水", "三明治", "相思豆", "万能宝石"])
+            item = random.choice(["红药水", "蓝药水", "三明治", "相思豆", "万能宝石", "五色药"])
             self.store.add_item(player, item, 1)
             return f"🧭 探险拾得『{item}』x1！"
         if kind == "材料":

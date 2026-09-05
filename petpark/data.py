@@ -420,11 +420,11 @@ ITEMS = {
         "effect": {"add_exp": 200},
     },
     "五色药": {
-        "price": 10400,
+        "price": 0,  # 药店下架：仅探险可获，不可直接购买
         "currency": CURRENCY_JIFEN,
         "category": "药品",
         "usable": True,
-        "desc": "血量上限 +300 并回满血量。",
+        "desc": "血量上限 +300 并回满血量。（仅探险可得）",
         "effect": {"add_hp_max": 300},
     },
     "聚灵丹": {
