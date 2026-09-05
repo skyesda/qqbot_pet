@@ -578,7 +578,11 @@ class PetParkPlugin(Star):
             self.alapi_token = self.SONG_DEFAULT_ALAPI_TOKEN
             logger.warning("[petpark] 点歌 alapi_token 未配置，使用默认密钥")
         self.silk_encoder_path = str(self.config.get("silk_encoder_path", "") or "").strip()
-        self.silk_url_base = str(self.config.get("silk_url_base", "") or "").strip().rstrip("/")
+        self.silk_url_base = str(self.config.get("silk_url_base") or "").strip().rstrip("/")
+        if not self.silk_url_base:
+            # 同 alapi_token：运行时配置不合并 schema 默认值，兜底用公网 webadmin 地址
+            self.silk_url_base = self.SONG_DEFAULT_SILK_URL_BASE
+            logger.warning("[petpark] 点歌 silk_url_base 未配置，使用默认公网地址")
         # 点歌会话：{group_id: {"keyword", "songs", "page", "ts"}}（15 分钟过期）
         self._song_sessions: dict[str, dict] = {}
         # silk 临时目录：webadmin 从这里对外提供 QQ 可拉取的 silk 文件
@@ -4394,6 +4398,7 @@ class PetParkPlugin(Star):
     # =====================================================================
     SONG_SESSION_TTL = 15 * 60  # 会话过期：秒
     SONG_DEFAULT_ALAPI_TOKEN = "oq7yomxswpvx1k3lcitguvcdzztc0i"  # schema 默认；运行时配置未合并默认值时的兜底
+    SONG_DEFAULT_SILK_URL_BASE = "http://103.38.83.146:7799"  # 同上：webadmin 公网地址，供 QQ 拉取 silk
 
     # ---- 会话 ----
     def _song_session(self, group_id: str) -> dict | None:
