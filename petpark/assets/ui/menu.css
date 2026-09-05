@@ -1,0 +1,27 @@
+/* 宣纸双栏指令图；尺寸由实际内容撑开。 */
+.scroll{padding:36px 38px 26px;background-color:#f5f0e4;background-blend-mode:normal;background-size:100% 100%;background-position:center;box-shadow:inset 0 0 0 5px #f5efdf,inset 0 0 0 6px #d8c9a8}
+.scroll:after{border-color:#c7b68e66;inset:15px}
+.content{position:relative}
+.brand{text-align:center;font-family:'STKaiti','KaiTi','Noto Serif CJK SC','SimSun',serif;font-size:66px;line-height:1.3;letter-spacing:14px;color:#252a28;text-shadow:1px 2px 0 #d9c79e;margin:0;padding-left:14px}
+.brand-sub{text-align:center;color:#89744e;font-size:14px;letter-spacing:7px;margin-top:9px}
+.rule{height:1px;margin:22px 0 16px;background:linear-gradient(90deg,transparent,#b99b60,transparent)}
+.intro{font-size:15px;line-height:1.8;color:#605b50;text-align:center;padding:0 12px 17px;margin-bottom:20px;border-bottom:1px solid #d4c8ad}
+.cols{columns:2;column-gap:42px;column-rule:1px solid #c3ad7a}
+.sect{break-inside:avoid;margin-bottom:22px;overflow-wrap:anywhere}
+.sect-h{display:flex;align-items:center;gap:10px;font-size:21px;line-height:1.5;font-weight:700;letter-spacing:2px;color:#292f2c;padding:0 0 7px;margin-bottom:8px;border-bottom:1px solid #c8b78e}
+.sect-no{font-family:Georgia,serif;font-size:13px;letter-spacing:0;color:#9b7c42;font-weight:400}
+.sect-s{font-size:14px;line-height:1.65;color:#81745b;margin-bottom:7px}
+.item{font-size:16px;line-height:1.85;padding:4px 0;color:#b23b32;border-bottom:1px dotted #d3c7b280}
+.item:last-child{border:0}
+.sep{color:#b9a47c;padding:0 5px}
+.desc{font-size:14px;color:#585b51}
+.note{font-size:14px;line-height:1.8;color:#556b70;border-left:2px solid #b9a47c;padding:5px 9px;margin:7px 0;background:#e6e3d74d}
+.plain{font-size:15px;line-height:1.8;color:#454c44}
+.foot{font-size:14px;line-height:1.8;text-align:center;color:#766449;margin-top:8px;padding:14px 0 0;background:transparent;border-top:1px solid #c8b78e}
+/* 保留用户指定的青金山门原图，浅色文字区保持双栏可读性。 */
+.scroll{background-color:#214d54;background-size:100% auto;background-position:center top;box-shadow:inset 0 0 0 3px #203b3c,inset 0 0 0 5px #dbbd7b;padding-top:250px}
+.brand{color:#ffe8aa;text-shadow:0 2px 5px #0c2b32}
+.brand-sub{color:#f2dcad}
+.intro{color:#f8ebc9;background:#163f43e6;padding:12px 16px;border:1px solid #b99b60}
+.cols{background:#faf5e9ed;padding:22px 20px 4px;column-gap:38px;column-rule:1px solid #c3ad7a;border:1px solid #c8b78e}
+.foot{color:#f8ebc9;background:#163f43e6;padding:12px 16px;margin-top:16px}

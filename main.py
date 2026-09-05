@@ -30,7 +30,7 @@ from astrbot.api import message_components as Comp
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
-from .petpark import data, images, pet as petmod
+from .petpark import card_theme, data, images, pet as petmod
 from .petpark.ai_router import AIRouter
 from .petpark.store import PetStore
 
@@ -141,10 +141,13 @@ KNOWN_COMMANDS = {
     "解绑群",
     "群映射",
     "群ID",
-    # 群管理（禁言 / 全体禁言，仅群主/管理员或插件管理员可用）
+    # 群管理（禁言 / 全体禁言 / 踢人，仅群主/管理员或插件管理员可用）
     "禁言",
     "解除禁言",
     "全体禁言",
+    "踢出",
+    "移除成员",
+    "踢人",
     # 管理员：增减货币
     "加金币",
     "减金币",
@@ -556,6 +559,8 @@ class PetParkPlugin(Star):
         )
         # 群昵称缓存：{group_id: {member_openid: 群昵称}}
         self._nick_cache: dict[str, dict[str, str]] = {}
+        # 群成员角色缓存：{group_id: {member_openid: (角色, 时间戳)}}
+        self._role_cache: dict[str, dict[str, tuple]] = {}
         # 成员详情接口是否可用：非白名单机器人访问会返回 11253，识别后不再重试
         self._member_api_ok = True
         # 专属管理网站（卡密生成 + 数据增删改查）
@@ -1162,6 +1167,8 @@ class PetParkPlugin(Star):
                 reply = await self._cmd_recall_member(event, qq, group_id, text)
             elif re.match(r"^(禁言|解除禁言|全体禁言)(\s|<@|$)", text):
                 reply = await self._cmd_mute(event, qq, group_id, text)
+            elif re.match(r"^(踢出|移除成员|踢人)(\s|<@|$)", text):
+                reply = await self._cmd_kick(event, qq, group_id, text)
             else:
                 reply = self.dispatch(event, qq, group_id, text)
         except Exception as e:  # 保证插件不因单条消息崩溃
@@ -1206,18 +1213,11 @@ class PetParkPlugin(Star):
         keyboard = self._keyboard_for_cmd(effective_text)
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
         if self._is_group(group_id):
-            # QQ 官方机器人(qq_official)适配器会忽略 At 组件，故同时以纯文本
-            # 形式前置 @昵称，确保任何平台都能看出这条消息@的是谁。
-            # 群昵称优先级：消息事件自带的 author.username（QQ 群消息 payload 直接给）
-            # -> 成员详情接口 -> 绑定的QQ号 -> openid
-            name = self._sender_name(event)
-            if not name or name == qq:
-                nick = await self._member_nick(group_id, qq)
-                name = nick or self.store.get_bound_qq(qq) or qq
-            head = Comp.Plain(f"@{name}\n")
-            at = self._safe_at(qq)
-            chain = ([at] if at else []) + [head, Comp.Plain(reply)]
-            res = event.chain_result(chain)
+            # 真正的艾特：QQ 官方消息内嵌 <qqbot-at-user id="openid" />，客户端
+            # 会渲染为可点击的@成员（旧 <@openid> 已弃用；Comp.At 组件在 QQ 官方
+            # 适配器下被忽略）。用 \n\n 分隔，避免 Markdown 吞掉单个换行。
+            reply = f'<qqbot-at-user id="{qq}" />\n\n{reply}'
+            res = event.plain_result(reply)
             if keyboard:
                 res.qq_keyboard = keyboard
             yield res
@@ -2316,22 +2316,9 @@ class PetParkPlugin(Star):
                 count = max(1, min(10, int(tok)))
                 break
         # 权限：插件管理员白名单直接放行，否则查询群成员角色
-        if qq not in self.admins:
-            try:
-                info = await api._http.request(
-                    Route(
-                        "GET",
-                        "/v2/groups/{group_openid}/members/{member_openid}",
-                        group_openid=group_id,
-                        member_openid=qq,
-                    )
-                )
-                role = str((info or {}).get("member_role", "member"))
-            except Exception as e:
-                logger.warning(f"[petpark] 查询群成员角色失败：{e}")
-                return "❌ 无法校验你的群身份（查询群成员接口失败），已拒绝撤回。"
-            if role not in ("owner", "admin"):
-                return "❌ 仅群主或管理员可以撤回成员消息。"
+        ok, why = await self._is_group_staff(event, qq, group_id, api)
+        if not ok:
+            return why
         target = targets[0]
         key = f"{group_id}\x1f{target}"
         log = self._group_msg_log.get(key) or deque()
@@ -2432,6 +2419,68 @@ class PetParkPlugin(Star):
         cache[member] = (nick, time.time())
         return nick
 
+    async def _member_role(self, api, group_id: str, member: str) -> str:
+        """查询成员在群内的身份角色（owner/admin/member），带缓存。
+
+        这是「真正的群主/管理员/群友身份识别」的统一入口：优先返回 QQ 官方
+        成员详情接口的 member_role；接口不可用或失败时返回空串（调用方据此
+        拒绝或放行）。缓存规则同 _member_nick：非空长期有效，空值 10 分钟不重试。
+        """
+        member = str(member or "")
+        group_id = str(group_id or "")
+        if not member or not group_id or api is None:
+            return ""
+        cache = self._role_cache.setdefault(group_id, {})
+        hit = cache.get(member)
+        if isinstance(hit, tuple):
+            role, ts = hit
+            if role or (time.time() - ts) < 600:
+                return role
+        if not self._member_api_ok:
+            return ""
+        try:
+            from botpy.http import Route
+        except Exception:
+            return ""
+        try:
+            info = await api._http.request(
+                Route(
+                    "GET",
+                    "/v2/groups/{group_openid}/members/{member_openid}",
+                    group_openid=group_id,
+                    member_openid=member,
+                )
+            )
+            role = str((info or {}).get("member_role", "") or "")
+        except Exception as e:
+            if "11253" in str(e) or "40012010" in str(e):
+                self._member_api_ok = False
+            role = ""
+        cache[member] = (role, time.time())
+        return role
+
+    async def _is_group_staff(self, event, qq: str, group_id: str, api) -> tuple[bool, str]:
+        """判断发送者是否为群主/管理员（含插件管理员白名单）。
+
+        返回 (是否通过, 未通过原因文本)。通过优先级：插件管理员白名单 >
+        QQ 官方 member_role（owner/admin）。这是群管理类指令（撤回/禁言/踢人）
+        的统一权限门禁。
+        """
+        if str(qq) in self.admins:
+            return True, ""
+        if api is None:
+            return False, "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
+        role = await self._member_role(api, group_id, qq)
+        if role in ("owner", "admin"):
+            return True, ""
+        if role == "":
+            return (
+                False,
+                "❌ 无法校验你的群身份：查询群成员接口失败。\n"
+                "> 可能原因：机器人未在 QQ 开放平台开通「查询群成员信息」接口权限。",
+            )
+        return False, "❌ 仅群主或管理员可以执行该操作。"
+
     def _display_uid(self, pid: str) -> str:
         """展示用户：优先已绑定QQ号，未绑定则返回平台用户ID(openid)。"""
         return self.store.get_bound_qq(pid) or str(pid)
@@ -2476,25 +2525,9 @@ class PetParkPlugin(Star):
         except Exception:
             pass
         # 权限：插件管理员白名单直接放行，否则查询群成员角色
-        if qq not in self.admins:
-            try:
-                info = await api._http.request(
-                    Route(
-                        "GET",
-                        "/v2/groups/{group_openid}/members/{member_openid}",
-                        group_openid=group_id,
-                        member_openid=qq,
-                    )
-                )
-                role = str((info or {}).get("member_role", "member"))
-            except Exception as e:
-                logger.warning(f"[petpark] 查询群成员角色失败：{e}")
-                return (
-                    "❌ 无法校验你的群身份：查询群成员接口失败。\n"
-                    "> 可能原因：机器人未在 QQ 开放平台开通「查询群成员信息」接口权限。"
-                )
-            if role not in ("owner", "admin"):
-                return "❌ 仅群主或管理员可以使用群管理指令。"
+        ok, why = await self._is_group_staff(event, qq, group_id, api)
+        if not ok:
+            return why
 
         # 解析被 @ 的目标成员
         body = re.sub(r"^(禁言|解除禁言|全体禁言)", "", text, count=1).strip()
@@ -2634,6 +2667,77 @@ class PetParkPlugin(Star):
             f"当前状态：**{label}**\n"
             "QQ 官方机器人接口仅支持查询，需群主在 QQ 客户端手动开启/关闭全体禁言。"
         )
+
+    async def _cmd_kick(self, event, qq: str, group_id: str, text: str) -> str | None:
+        """「踢出 @成员」：把被 @ 的成员移出本群（群主/管理员可用）。
+
+        走 QQ 官方批量移除成员接口 POST /v2/groups/{group_openid}/batch_remove_members；
+        仅群主/管理员（含插件管理员白名单）可用；机器人需为群管理员且目标为普通成员。
+        """
+        if not self._is_group(group_id):
+            return "🚫 该指令仅支持在群聊内使用。"
+        api = getattr(getattr(event, "bot", None), "api", None)
+        if api is None:
+            api = getattr(self._get_bot(), "api", None)
+        if api is None:
+            return "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
+        try:
+            from botpy.http import Route
+        except Exception:
+            return "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
+        try:
+            if not self.store.get_group(group_id).get("enabled", False):
+                return "❌ 本群未开启宠物乐园，无法使用群管理指令。"
+        except Exception:
+            pass
+        # 解析被 @ 的目标成员
+        body = re.sub(r"^(踢出|移除成员|踢人)", "", text, count=1).strip()
+        targets: list[str] = []
+        raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        for m in getattr(raw, "mentions", None) or []:
+            mid = str(getattr(m, "id", "") or "")
+            if mid and not getattr(m, "is_you", False) and mid not in targets:
+                targets.append(mid)
+        for mid in _MENTION_RE.findall(body):
+            if mid not in targets:
+                targets.append(mid)
+        if not targets:
+            return (
+                "## 👢 踢出成员\n"
+                "用法：`踢出 @成员`（可一次 @ 多名，最多 20 名）\n"
+                "仅群主/管理员可用；机器人需为群管理员，且只能移出普通成员。"
+            )
+        # 权限：插件管理员白名单直接放行，否则查询群成员角色
+        ok, why = await self._is_group_staff(event, qq, group_id, api)
+        if not ok:
+            return why
+        targets = targets[:20]
+        try:
+            resp = await api._http.request(
+                Route(
+                    "POST",
+                    "/v2/groups/{group_openid}/batch_remove_members",
+                    group_openid=group_id,
+                ),
+                json={
+                    "member_openids": targets,
+                    "add_to_member_blacklist": False,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"[petpark] 踢出成员 {targets} 失败：{e}")
+            return (
+                "❌ 踢出失败（机器人需为群管理员，且只能移出普通成员，"
+                "不能移出群主/管理员/机器人）。\n> 接口返回：{e}"
+            )
+        fail = ((resp or {}).get("add_to_member_blacklist_fail_openids") or [])
+        shown = "、".join(self._display_uid(t) for t in targets)
+        result = f"## 👢 群管理\n已移出成员 **{shown}**"
+        if fail:
+            result += f"\n（其中 {len(fail)} 名加入黑名单失败，不影响移出）"
+        result += "。"
+        logger.info(f"[petpark] 群 {group_id} 内 {qq} 踢出成员 {targets}")
+        return result
 
     async def on_group_member_add(self, data: dict) -> None:
         """群成员加入事件：按配置推送欢迎语（@群昵称）。"""
@@ -6247,37 +6351,6 @@ class PetParkPlugin(Star):
     # 按内容 md5 缓存到 store.custom_images_dir，经 /custom_images 发送）。
     # 服务器无 emoji 字体，故菜单内容去除 emoji，用纯排版 + 金色装饰呈现。
     # ---------------------------------------------------------------------
-    _MENU_CSS = """
-*{box-sizing:border-box;margin:0;padding:0}
-html{height:auto}
-body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK SC','WenQuanYi Zen Hei',sans-serif;color:#193746;-webkit-font-smoothing:antialiased}
-.card,.scroll{position:relative;margin:0 auto;padding:32px;border:1px solid #b8d7dc;border-radius:24px;background:radial-gradient(ellipse at 100% 0,#b6e6df 0,transparent 35%),radial-gradient(ellipse at 0 0,#cee1ff 0,transparent 42%),#edf5f8;overflow:hidden}
-.card:before,.scroll:before{content:'';position:absolute;right:-48px;top:-70px;width:220px;height:220px;border:30px solid #ffffff45;border-radius:50%;pointer-events:none}
-.orn{font-size:15px;letter-spacing:4px;color:#426c7c;font-weight:700;margin-bottom:10px}
-.name,.title,.brand{font-size:38px;line-height:1.3;font-weight:900;color:#173d50;overflow-wrap:anywhere;position:relative}
-.sub,.brand-sub{font-size:17px;line-height:1.7;color:#456777;margin-top:8px;overflow-wrap:anywhere}
-.foot{font-size:16px;line-height:1.7;color:#426474;margin-top:22px;border-top:1px solid #bfd6df;padding-top:16px;overflow-wrap:anywhere}
-
-.scroll{max-width:840px;padding:32px}
-.brand{font-size:46px}
-.brand-sub{letter-spacing:3px}
-.rule{height:1px;background:#accdd7;margin:20px 0}
-.intro{font-size:17px;line-height:1.7;padding:14px 18px;background:#ffffffbf;border-radius:12px;margin-bottom:18px;color:#3d6071}
-.cols{columns:2;column-gap:16px}
-.sect{break-inside:avoid;margin-bottom:16px;padding:18px;background:#fff;border:1px solid #d1e3e9;border-radius:14px;overflow-wrap:anywhere}
-.sect-h{font-size:23px;color:#1b5d70;font-weight:800;border-bottom:1px solid #dce8ed;padding-bottom:10px;margin-bottom:10px}
-.sect:nth-child(3n+2){border-top:4px solid #74bbb1}
-.sect:nth-child(3n+1){border-top:4px solid #7ca5d0}
-.sect:nth-child(3n){border-top:4px solid #c8ad71}
-.sect-s{font-size:16px;color:#617780;line-height:1.6;margin-bottom:10px}
-.item{font-size:18px;line-height:1.85;padding:8px 0;border-bottom:1px solid #edf2f5;color:#203f50}
-.item:last-child{border-bottom:0}
-.sep{color:#91acb5;padding:0 5px}
-.desc{color:#5a7480;font-size:16px}
-.note{font-size:16px;line-height:1.75;color:#426873;background:#edf7f6;border-radius:8px;padding:10px;margin-top:10px}
-.plain{font-size:17px;line-height:1.8}
-.content{position:relative}
-"""
 
     _MENU_EMOJI_RE = re.compile(
         "[\\U0001F000-\\U0001FAFF\\u2300-\\u23FF\\u2500-\\u25FF"
@@ -6380,11 +6453,11 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
             return "".join(out)
 
         sect_html = []
-        for sec in sections:
+        for section_no, sec in enumerate(sections, 1):
             sub_h = f'<div class="sect-s">{esc(sec["sub"])}</div>' if sec["sub"] else ""
             sect_html.append(
                 f'<div class="sect">'
-                f'<div class="sect-h">{esc(sec["title"])}</div>{sub_h}'
+                f'<div class="sect-h"><span class="sect-no">{section_no:02}</span>{esc(sec["title"])}</div>{sub_h}'
                 f'{render_body(sec["body"])}</div>'
             )
 
@@ -6397,7 +6470,7 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
 
         return (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<style>{self._MENU_CSS}</style></head><body>"
+            f"<style>{card_theme.stylesheet('menu')}</style></head><body>"
             f'<div class="scroll"><div class="content">'
             f'<div class="brand">{esc(title_main)}</div>'
             f'<div class="brand-sub">{esc(title_sub)}</div>'
@@ -6407,17 +6480,8 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
         )
 
     def _crop_menu(self, img):
-        """把渲染图裁到菜单内容区（去掉底部/四周深色桌面背景）。"""
-        gray = img.convert("L")
-        mask = gray.point([255 if i > 110 else 0 for i in range(256)])
-        bbox = mask.getbbox()
-        if not bbox:
-            return img
-        x0, y0, x1, y1 = bbox
-        m = 6
-        x0 = max(0, x0 - m); y0 = max(0, y0 - m)
-        x1 = min(img.width, x1 + m); y1 = min(img.height, y1 + m)
-        return img.crop((x0, y0, x1, y1))
+        """Trim the exact artwork rectangle without canvas margins."""
+        return card_theme.crop_canvas(img)
 
     # ---- 通用 HTML -> PNG 渲染管线（菜单 / 宠物卡 / 背包卡共用） ----
     def _prune_images(self, prefix: str, keep: int = 5) -> None:
@@ -6464,7 +6528,7 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
                 ["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
                  "--disable-dev-shm-usage", "--hide-scrollbars", "--disable-extensions",
                  "--force-device-scale-factor=1", f"--window-size={win_w},{win_h}",
-                 f"--screenshot={target}", f"file://{html_file}"],
+                 f"--screenshot={target}", html_file.resolve().as_uri()],
                 timeout=60, check=False,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
@@ -6486,6 +6550,7 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
     def _render_html_image(self, html: str, tag: str, disp_w: int, crop=None,
                            win_w: int = 900, win_h: int = 5200, keep: int = 5) -> str | None:
         """渲染 HTML 为图片并以 Markdown 返回；内容未变则复用缓存图，失败返回 None。"""
+        html = card_theme.finish_html(html)
         key = hashlib.md5(html.encode("utf-8")).hexdigest()[:16]
         fname = f"{tag}_{key}.png"
         target = Path(self.store.custom_images_dir) / fname
@@ -6513,48 +6578,6 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
     # ---------------------------------------------------------------------
     # 宠物信息卡 · 蓝绿游戏面板（H5 -> 无头 Chrome PNG，嵌立绘 data-URI，无 emoji）
     # ---------------------------------------------------------------------
-    _PET_CARD_CSS = """
-*{box-sizing:border-box;margin:0;padding:0}
-html{height:auto}
-body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK SC','WenQuanYi Zen Hei',sans-serif;color:#193746;-webkit-font-smoothing:antialiased}
-.card,.scroll{position:relative;margin:0 auto;padding:32px;border:1px solid #b8d7dc;border-radius:24px;background:radial-gradient(ellipse at 100% 0,#b6e6df 0,transparent 35%),radial-gradient(ellipse at 0 0,#cee1ff 0,transparent 42%),#edf5f8;overflow:hidden}
-.card:before,.scroll:before{content:'';position:absolute;right:-48px;top:-70px;width:220px;height:220px;border:30px solid #ffffff45;border-radius:50%;pointer-events:none}
-.orn{font-size:15px;letter-spacing:4px;color:#426c7c;font-weight:700;margin-bottom:10px}
-.name,.title,.brand{font-size:38px;line-height:1.3;font-weight:900;color:#173d50;overflow-wrap:anywhere;position:relative}
-.sub,.brand-sub{font-size:17px;line-height:1.7;color:#456777;margin-top:8px;overflow-wrap:anywhere}
-.foot{font-size:16px;line-height:1.7;color:#426474;margin-top:22px;border-top:1px solid #bfd6df;padding-top:16px;overflow-wrap:anywhere}
-
-.card{max-width:700px}
-.hero{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:22px;align-items:center;margin-bottom:24px}
-.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-.badges b,.tags i{font-size:15px;padding:5px 12px;border-radius:8px;background:#fff;color:#216d73;border:1px solid #bad9d8;font-style:normal}
-.portrait-wrap{width:210px;height:230px}
-.portrait{width:100%;height:100%;object-fit:contain;border-radius:20px;background:#fff;border:6px solid #fff;box-shadow:0 8px 24px #20495b18}
-.portrait-ph{height:100%;display:flex;align-items:center;justify-content:center;border:2px dashed #9cbfc8;border-radius:20px;color:#456777;background:#ffffff80}
-.chips{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-.chip{padding:14px 12px;background:#fff;border:1px solid #d5e3eb;border-radius:12px}
-.chip:first-child{grid-column:span 2}
-.chip:nth-child(2){background:#214f67}
-.chip k{display:block;font-size:15px;color:#516d7c}
-.chip v{display:block;font-size:24px;font-weight:800;color:#18465f;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-.chip:nth-child(2) k{color:#d0e4ed}
-.chip:nth-child(2) v{color:#fff}
-.bars,.grp{background:#fff;border:1px solid #d5e3eb;border-radius:14px;padding:16px;margin-top:14px}
-.bar-row{display:flex;align-items:center;gap:12px;margin:10px 0}
-.bar-k{width:40px;font-size:16px;color:#476573}
-.bar{flex:1;min-width:30px;height:12px;border-radius:8px;background:#e8eff4;overflow:hidden}
-.fill{height:100%;border-radius:8px}
-.fill.hp{background:linear-gradient(90deg,#d16a79,#eb98a1)}
-.fill.en{background:linear-gradient(90deg,#3182aa,#69bada)}
-.fill.mo{background:linear-gradient(90deg,#26958b,#65cbb3)}
-.bar-n{min-width:95px;max-width:60%;font-size:16px;color:#25485c;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-.grp-h{font-size:17px;font-weight:800;color:#176d73;margin-bottom:10px;border-left:4px solid #54b3aa;padding-left:10px}
-.row{display:flex;justify-content:space-between;gap:20px;font-size:17px;line-height:1.7;margin:5px 0}
-.row k{color:#56707e;flex-shrink:0}
-.row v{font-weight:600;text-align:right;overflow-wrap:anywhere;min-width:0}
-.tags{display:flex;flex-wrap:wrap;gap:8px}
-.warn{color:#943f47;background:#fff0ef;border:1px solid #ebbbc0;border-radius:12px;padding:16px;margin-top:14px;font-size:17px;line-height:1.7}
-"""
 
     @staticmethod
     def _pct(v, total) -> int:
@@ -6587,17 +6610,8 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
         return None
 
     def _card_crop(self, img):
-        """把渲染图裁到卡片范围（去掉四周纯黑背景）。"""
-        gray = img.convert("L")
-        mask = gray.point([255 if i > 22 else 0 for i in range(256)])
-        bbox = mask.getbbox()
-        if not bbox:
-            return img
-        x0, y0, x1, y1 = bbox
-        m = 4
-        x0 = max(0, x0 - m); y0 = max(0, y0 - m)
-        x1 = min(img.width, x1 + m); y1 = min(img.height, y1 + m)
-        return img.crop((x0, y0, x1, y1))
+        """Trim the exact artwork rectangle without canvas margins."""
+        return card_theme.crop_canvas(img)
 
     def _pet_card_html(self, pet) -> str:
         """把宠物数据渲染成蓝绿游戏面板信息卡 HTML（含立绘，无 emoji）。"""
@@ -6630,15 +6644,9 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
         uri = self._pet_portrait_uri(pet)
         portrait = (f'<img class="portrait" src="{uri}" alt="{esc(pet["nickname"])}">'
                     if uri else '<div class="portrait-ph">暂无立绘</div>')
-        chips = [
-            ("等级", f"Lv{pet['level']}/{lc}"),
-            ("战力", str(bp)),
-            ("攻击", str(pet.get("atk", 0))),
-            ("防御", str(pet.get("def", 0))),
-            ("智力", str(pet.get("intel", 0))),
-        ]
-        chips_html = "".join(
-            f'<div class="chip"><k>{esc(k)}</k><v>{esc(v)}</v></div>' for k, v in chips
+        stats_html = "".join(
+            f'<div class="stat"><span>{esc(label)}</span><strong>{esc(str(pet.get(key, 0)))}</strong></div>'
+            for label, key in [("攻击", "atk"), ("防御", "def"), ("智力", "intel")]
         )
         bars = "".join([
             self._bar_row("气血", hp, hp_m, "hp"),
@@ -6666,35 +6674,31 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
         if petmod.is_frozen(pet):
             frozen = ('<div class="warn">假死/惊魂中，剩余约 '
                       f'{petmod.frozen_remain_min(pet)} 分钟无法操作</div>')
-        res_bar = (f'<div class="grp"><div class="grp-h">{esc(res_k)}</div>'
-                   f'<div class="bar-row"><div class="bar">'
-                   f'<div class="fill en" style="width:{res_pct}%"></div></div>'
-                   f'<span class="bar-n">{esc(res_v)}</span></div>'
-                   + (f'<div class="row"><k>余量</k><v>{esc(res_extra)}</v></div>' if res_extra else '')
-                   + '</div>')
-        extra_grp = f'<div class="grp">{extra}</div>' if extra else ""
-        tags_grp = (f'<div class="grp"><div class="grp-h">标签</div>{tags_html}</div>'
-                    if tags_html else "")
+        res_bar = (
+            f'<div class="resource panel"><div class="res-head"><strong>{esc(res_k)}</strong>'
+            f'<span>{esc(res_v)}</span></div><div class="bar">'
+            f'<div class="fill mo" style="width:{res_pct}%"></div></div>'
+            + (self._card_row("余量", res_extra) if res_extra else '') + '</div>'
+        )
+        abilities = ''.join(self._card_row(k, v) for k, v in
+                            [("天赋", talent), ("秘技", skills), ("神器", artifact)])
         return (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<style>{self._PET_CARD_CSS}</style></head><body>"
-            f'<div class="card">'
-            f'<div class="hero"><div><div class="orn">宠物档案</div>'
-            f'<div class="name">{esc(pet["nickname"])}</div>'
-            f'<div class="sub">{esc(species_display)} · {esc(element)}属性 · {esc(stage)}</div>'
-            f'<div class="badges"><b>【{esc(quality)}】</b><b>{esc(love)}</b></div>'
-            f'</div><div class="portrait-wrap">{portrait}</div></div>'
-            f'<div class="chips">{chips_html}</div>'
-            f'<div class="bars">{bars}</div>'
-            f'<div class="grp"><div class="grp-h">属性</div>{rows_html}</div>'
-            f'<div class="grp"><div class="grp-h">天赋</div>'
-            f'<div class="row"><k>天赋</k><v>{esc(talent)}</v></div></div>'
-            f'<div class="grp"><div class="grp-h">秘技</div>'
-            f'<div class="row"><k>秘技</k><v>{esc(skills)}</v></div></div>'
-            f'<div class="grp"><div class="grp-h">神器</div>'
-            f'<div class="row"><k>神器</k><v>{esc(artifact)}</v></div></div>'
-            f'{res_bar}{extra_grp}{tags_grp}{frozen}'
-            f'</div></body></html>'
+            f"<style>{card_theme.stylesheet('pet')}</style></head><body>"
+            '<div class="card"><div class="masthead"><div><div class="mast-title">宠物灵鉴</div>'
+            '<div class="mast-caption">宠物乐园 · 伙伴档案</div></div></div>'
+            f'<div class="pet-heading"><div><div class="name">{esc(pet["nickname"])}</div>'
+            f'<div class="identity">{esc(species_display)} / {esc(element)}属性 / {esc(stage)}</div>'
+            f'</div><div class="rank">{esc(quality)}</div></div>'
+            '<div class="pet-layout"><div>'
+            f'<div class="portrait-wrap">{portrait}<div class="portrait-label">Lv.{pet["level"]} / {lc}</div></div>'
+            f'{res_bar}<div class="vitals panel">{bars}</div></div><div>'
+            f'<div class="power"><span>综合战力</span><strong>{bp}</strong></div>'
+            f'<div class="attributes panel">{rows_html}</div>'
+            f'<div class="stats">{stats_html}</div>'
+            f'<div class="abilities panel">{abilities}{extra}</div></div></div>{tags_html}{frozen}'
+            '<div class="foot"><span>查看宠物：我的宠物</span><span>养成指引：宠物乐园</span></div>'
+            '</div></body></html>'
         )
 
     def _bar_row(self, label, v, total, cls) -> str:
@@ -6712,33 +6716,12 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
         except Exception as e:
             logger.warning(f"[petpark] 宠物卡 HTML 生成失败：{e}")
             return None
-        return self._render_html_image(html, "petcard", 600, crop=self._card_crop,
+        return self._render_html_image(html, "petcard", 720, crop=self._card_crop,
                                        win_w=760, win_h=4200)
 
     # ---------------------------------------------------------------------
     # 背包卡 · 蓝绿游戏面板（H5 -> PNG，无 emoji）
     # ---------------------------------------------------------------------
-    _BAG_CARD_CSS = """
-*{box-sizing:border-box;margin:0;padding:0}
-html{height:auto}
-body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK SC','WenQuanYi Zen Hei',sans-serif;color:#193746;-webkit-font-smoothing:antialiased}
-.card,.scroll{position:relative;margin:0 auto;padding:32px;border:1px solid #b8d7dc;border-radius:24px;background:radial-gradient(ellipse at 100% 0,#b6e6df 0,transparent 35%),radial-gradient(ellipse at 0 0,#cee1ff 0,transparent 42%),#edf5f8;overflow:hidden}
-.card:before,.scroll:before{content:'';position:absolute;right:-48px;top:-70px;width:220px;height:220px;border:30px solid #ffffff45;border-radius:50%;pointer-events:none}
-.orn{font-size:15px;letter-spacing:4px;color:#426c7c;font-weight:700;margin-bottom:10px}
-.name,.title,.brand{font-size:38px;line-height:1.3;font-weight:900;color:#173d50;overflow-wrap:anywhere;position:relative}
-.sub,.brand-sub{font-size:17px;line-height:1.7;color:#456777;margin-top:8px;overflow-wrap:anywhere}
-.foot{font-size:16px;line-height:1.7;color:#426474;margin-top:22px;border-top:1px solid #bfd6df;padding-top:16px;overflow-wrap:anywhere}
-
-.card{max-width:600px}
-.title{font-size:38px}
-.rule{height:1px;background:#b8d3de;margin:24px 0 16px}
-.inventory{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.row{display:flex;flex-direction:column;justify-content:space-between;gap:12px;padding:16px;border:1px solid #d0e1e9;background:#fff;border-radius:12px;min-height:102px}
-.rname{font-size:18px;line-height:1.55;color:#21495b;font-weight:700;overflow-wrap:anywhere}
-.rcount{align-self:flex-end;font-size:19px;font-weight:800;color:#16706f;font-variant-numeric:tabular-nums}
-.rcount:before{content:'数量 ';font-size:14px;font-weight:400;color:#597680}
-.empty{grid-column:1/-1;text-align:center;padding:42px 20px;background:#fff;border:1px dashed #aac8d4;border-radius:16px;color:#4a6c7c;font-size:19px}
-"""
 
     def _bag_card_html(self, player: dict) -> str:
         """把背包渲染成双列物品卡 HTML（无 emoji）。"""
@@ -6750,19 +6733,20 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
             body = '<div class="empty">空空如也，去商城选购吧</div>'
         else:
             body = "".join(
-                f'<div class="row"><span class="rname">{esc(name)}</span>'
+                f'<div class="item-slot"><div class="item-icon">{card_theme.item_icon(str(name))}</div><span class="rname">{esc(name)}</span>'
                 f'<span class="rcount">{esc(str(count))}</span></div>'
                 for name, count in items
             )
         subtitle = "共 %d 种 · 共 %d 件" % (len(items), total_items) if items else "暂无物品"
         return (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<style>{self._BAG_CARD_CSS}</style></head><body>"
+            f"<style>{card_theme.stylesheet('bag')}</style></head><body>"
             f'<div class="card">'
-            f'<div class="orn">随行物资</div>'
-            f'<div class="title">我的背包</div>'
-            f'<div class="sub">{esc(subtitle)}</div>'
-            f'<div class="rule"></div><div class="inventory">{body}</div>'
+            '<div class="masthead"><div><div class="mast-title">随行百宝</div>'
+            '<div class="mast-caption">宠物乐园 · 我的背包</div></div></div>'
+            f'<div class="bag-summary"><span>物品种类 <strong>{len(items)}</strong></span>'
+            f'<span>持有总数 <strong>{total_items}</strong></span></div>'
+            f'<div class="inventory">{body}</div>'
             f'<div class="foot">使用物品：发送「使用 物品名」 · 选购物品：发送「商城」</div>'
             f'</div></body></html>'
         )
@@ -6774,8 +6758,8 @@ body{background:#000;padding:24px;font-family:'Microsoft YaHei','Noto Sans CJK S
         except Exception as e:
             logger.warning(f"[petpark] 背包卡 HTML 生成失败：{e}")
             return None
-        return self._render_html_image(html, "bagcard", 520, crop=self._card_crop,
-                                       win_w=660, win_h=max(1800, 480 + sum(140 + 26 * (len(str(name)) // 10) for name in player.get("bag", {}))))
+        return self._render_html_image(html, "bagcard", 720, crop=self._card_crop,
+                                       win_w=760, win_h=max(1800, 480 + sum(140 + 26 * (len(str(name)) // 10) for name in player.get("bag", {}))))
 
     def _official_site_text(self) -> str:
         """官方网站介绍：官方主站 + 绑定宠物指引（QQ Markdown，用 \n\n 分隔避免被吞）。"""
