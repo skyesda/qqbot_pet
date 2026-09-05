@@ -7199,7 +7199,45 @@ class PetParkPlugin(Star):
     # =====================================================================
     @staticmethod
     def _need_pet(player: dict) -> dict | None:
-        return player.get("pet")
+        p = player.get("pet")
+        if p is not None:
+            self._cap_skills(player, p)
+        return p
+
+    def _cap_skills(self, player: dict, p: dict) -> list[str]:
+        """把宠物秘技限定为战力最高的 data.SKILLS_MAX 个，超出的秘技书退回背包。
+
+        返回被退回（移出）的秘技名列表。幂等：已达标则返回空列表。
+        """
+        skills = list(p.get("skills", []))
+        if len(skills) <= data.SKILLS_MAX:
+            return []
+        skills.sort(key=lambda s: data.SKILLS.get(s, {}).get("power", 0), reverse=True)
+        kept = skills[: data.SKILLS_MAX]
+        removed = skills[data.SKILLS_MAX:]
+        p["skills"] = kept
+        for sk in removed:
+            self.store.add_item(player, sk, 1)
+        return removed
+
+    def _skills_cap_check(self, player: dict, p: dict, name: str, power: int) -> str | None:
+        """参悟前检查秘技上限：宠物已满且新秘技不优于当前最低者时返回拒绝文案，否则返回 None。
+
+        会先归一化历史超过上限的秘技（多出的秘技书退回背包），再做判断。
+        """
+        self._cap_skills(player, p)
+        skills = p.get("skills", [])
+        if len(skills) < data.SKILLS_MAX:
+            return None
+        worst = min(skills, key=lambda k: data.SKILLS.get(k, {}).get("power", 0))
+        worst_power = data.SKILLS.get(worst, {}).get("power", 0)
+        if power <= worst_power:
+            return (
+                f"你的宠物已佩戴 {data.SKILLS_MAX} 个秘技，『{name}』(战力 +{power}) "
+                f"未超过当前最低的『{worst}』(战力 +{worst_power})，秘技书保留在背包；"
+                f"可先『遗忘秘技』腾出位置。"
+            )
+        return None
 
     @staticmethod
     def _match_species(sub: str) -> str | None:
@@ -7852,10 +7890,17 @@ class PetParkPlugin(Star):
                     return f"参悟『{name}』需要等级 Lv{s['level_req']}。"
                 if p["intel"] < s["intel_req"]:
                     return f"参悟『{name}』需要智力 {s['intel_req']}。"
+                block = self._skills_cap_check(player, p, name, s["power"])
+                if block:
+                    return block
                 p.setdefault("skills", []).append(name)
                 self.store.remove_item(player, name, 1)
                 petmod.refresh_energy(p)
-                return f"📜 参悟成功！消耗秘技书『{name}』x1，习得秘技『{name}』，战力 +{s['power']}。"
+                msg = f"📜 参悟成功！消耗秘技书『{name}』x1，习得秘技『{name}』，战力 +{s['power']}。"
+                removed = self._cap_skills(player, p)
+                if removed:
+                    msg += f"\n> 已达秘技上限（{data.SKILLS_MAX}），顶替并退回最低秘技书：{'、'.join(removed)}。"
+                return msg
             return f"『{name}』不能直接使用。"
         count = self._parse_count(tokens, 2)
         if not self.store.has_item(player, name, count):
@@ -8476,9 +8521,16 @@ class PetParkPlugin(Star):
             return f"参悟『{name}』需要等级 Lv{s['level_req']}。"
         if p["intel"] < s["intel_req"]:
             return f"参悟『{name}』需要智力 {s['intel_req']}（当前 {p['intel']}）。"
+        block = self._skills_cap_check(player, p, name, s["power"])
+        if block:
+            return block
         self.store.remove_item(player, name, 1)
         p.setdefault("skills", []).append(name)
-        return f"📜 参悟成功！习得秘技『{name}』，战力 +{s['power']}。"
+        msg = f"📜 参悟成功！习得秘技『{name}』，战力 +{s['power']}。"
+        removed = self._cap_skills(player, p)
+        if removed:
+            msg += f"\n> 已达秘技上限（{data.SKILLS_MAX}），顶替并退回最低秘技书：{'、'.join(removed)}。"
+        return msg
 
     def _forget_skill(self, player: dict) -> str:
         p = self._need_pet(player)

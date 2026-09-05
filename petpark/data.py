@@ -910,6 +910,9 @@ SKILLS = {
 
 SKILL_NAMES = list(SKILLS.keys())
 
+# 每只宠物最多能佩戴/习得的秘技数量；超出时保留战力最高的 N 个，其余秘技书退回背包。
+SKILLS_MAX = 3
+
 # 将各秘技也作为可掉落、可交易的背包物品（由 _use_item 特殊处理学习）
 # 商城定价：最低 2 万（20000）积分起步，往上按 等级×1000 递增，最高 22 万。
 for _sk_name, _sk_info in SKILLS.items():
