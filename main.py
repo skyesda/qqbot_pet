@@ -1136,12 +1136,12 @@ class PetParkPlugin(Star):
         if text in {"宠物乐园", "管理菜单"}:
             return self._main_menu_keyboard()
         if text.split() and text.split()[0] in BOARD_COMMANDS:
-            board_kind = "军棋" if "军棋" in text else "象棋" if "象棋" in text else "五子棋"
+            board_kind = "围棋" if "围棋" in text else "军棋" if "军棋" in text else "象棋" if "象棋" in text else "五子棋"
             return self._build_qq_keyboard([
-                [("⚫ 五子棋", "五子棋"), ("🎴 中国象棋", "中国象棋"), ("🚩 军棋", "军棋")],
+                [("⚫ 五子棋", "五子棋"), ("🎴 中国象棋", "中国象棋"), ("🚩 军棋", "军棋"), ("⚪ 围棋", "围棋")],
                 [(f"{board_kind}·简单", f"{board_kind}单人 1"), (f"{board_kind}·普通", f"{board_kind}单人 2")],
                 [(f"{board_kind}·困难", f"{board_kind}单人 3"), (f"{board_kind}·地狱", f"{board_kind}单人 4")],
-                [("查看棋局", "棋局"), ("接受邀请", "接受棋局")],
+                [("查看棋局", "棋局"), ("接受邀请", "接受棋局")] + ([("停一手", "围棋停一手")] if board_kind == "围棋" else []),
                 [("玩法帮助", "棋类帮助"), ("棋局统计", "棋局统计")],
             ])
         if text in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
@@ -3043,7 +3043,7 @@ class PetParkPlugin(Star):
         text = text.lstrip("/")
         tokens = text.split()
         cmd = tokens[0]
-        board_start = re.fullmatch(r"(开始(?:五子棋|中国象棋|象棋|军棋)|(?:五子棋|中国象棋|象棋|军棋)单人)([1-4])", cmd)
+        board_start = re.fullmatch(r"(开始(?:五子棋|中国象棋|象棋|军棋|围棋)|(?:五子棋|中国象棋|象棋|军棋|围棋)单人)([1-4])", cmd)
         if board_start:
             tokens = [board_start.group(1), board_start.group(2)] + tokens[1:]
             cmd = tokens[0]
@@ -6788,9 +6788,9 @@ class PetParkPlugin(Star):
                 "- 摸金组队 用户ID · 摸金准备 · 摸金队伍 · 摸金取消组队（双排）",
                 "- 摸金救援 · 摸金捡取 · 摸金传送（双排互动）",
                 "",
-                "**【棋类对弈】** 五子棋 · 中国象棋 · 军棋",
-                "- 五子棋单人 1~4 · 象棋单人 1~4 · 军棋单人 1~4",
-                "- 五子棋双人 @对方 · 象棋双人 @对方 · 军棋双人 @对方 · 接受棋局",
+                "**【棋类对弈】** 五子棋 · 中国象棋 · 军棋 · 围棋",
+                "- 五子棋单人 1~4 · 象棋单人 1~4 · 军棋单人 1~4 · 围棋单人 1~4",
+                "- 五子棋双人 @对方 · 象棋双人 @对方 · 军棋双人 @对方 · 围棋双人 @对方 · 接受棋局",
                 "- 棋类帮助 · 棋局 · 棋局统计（每步10分钟，超时判放弃）",
                 "**【宠物扫雷】**（全服积分排行）",
                 "- 扫雷介绍 · 开始扫雷 难度(1~4)",

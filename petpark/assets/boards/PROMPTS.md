@@ -27,3 +27,9 @@
 > Use case: stylized-concept. Asset type: production background texture for a Chinese Junqi military chess chat game, matching warm traditional wooden Gomoku and Xiangqi boards. Create a portrait 2:3 perfectly top-down flat wooden board base, warm pale honey wood center with subtle fine grain, elegant dark walnut narrow frame around all four edges, small traditional Chinese carved corner accents confined to outermost 5 percent. Center 88 percent blank even wood for precise program-drawn railway grid and rectangular army pieces. Soft even lighting, premium tactile board game look, no perspective, no chess pieces, no grid lines, no text, no symbols, no watermark. Output one portrait image.
 
 `JunqiGlyphs.otf`：Noto Sans CJK SC 的军棋文字子集，重命名为 JunqiGlyphs。来源 https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/SimplifiedChinese ，沿用本目录 FONT-LICENSE.txt 的 SIL OFL 1.1 授权。
+
+## 围棋棋盘
+
+围棋沿用上面的内置 GPT Image 木质底座 `wood-base.png`，本次未重复生图。19 路棋线、九个星位、黑白棋子与文字由 `petpark/go.py` 精确绘制。成品预览 `board-previews/board_go_21.png`。
+
+`GoGlyphs.otf` 为 Noto Sans CJK SC 的围棋字符子集，重命名为 GoGlyphs；沿用同目录 SIL OFL 1.1 字体授权。上游 https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/SimplifiedChinese 。
