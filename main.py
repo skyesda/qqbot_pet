@@ -3087,7 +3087,7 @@ class PetParkPlugin(Star):
 
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
-            return self._my_info(player, group_id)
+            return self._my_info(player, group_id, event)
 
         # ---- 口令抽奖 / 我的奖品（全群共享，以用户 id 为主键）----
         if cmd == "口令抽奖":
@@ -5495,7 +5495,7 @@ class PetParkPlugin(Star):
             return f"⏳ **{label}** 冷却中，还需 `{self._fmt_duration(remain)}`。"
         return None
 
-    def _my_info(self, player: dict, group_id: str) -> str:
+    def _my_info(self, player: dict, group_id: str, event=None) -> str:
         gid = group_id if group_id and group_id != "private" else "私聊"
         lines = [
             "## 📇 我的信息",
@@ -5505,6 +5505,7 @@ class PetParkPlugin(Star):
             *(["> ⚠️ 未绑定QQ将无法游玩宠物乐园，请先绑定（发送「绑定QQ 你的QQ号」）"]
               if self.require_qq_bind and not self.store.get_bound_qq(player.get("qq", "")) else []),
             f"👥 **群号**　`{gid}`",
+            f"👤 **群身份**　{'—' if gid == '私聊' else self._role_label_text(event)}",
             f"🪙 **金币**　{player.get('coin', 0)}",
             f"💎 **积分**　{player.get('jifen', 0)}",
             f"💠 **钻石**　{player.get('diamond', 0)}",
@@ -5526,6 +5527,16 @@ class PetParkPlugin(Star):
     # =====================================================================
     # QQ 绑定（邮箱验证码 · 跨群通用 · 可用QQ号代替用户ID指定他人）
     # =====================================================================
+    @staticmethod
+    def _role_label_text(event) -> str:
+        """当前群身份中文标签：优先群消息事件携带的 member_role。
+
+        与 _is_group_staff 一致——先取事件身份（零额外 API），
+        事件未携带时显示「未知」而非臆断。
+        """
+        role = str(getattr(event, "sender_role", "") or "") if event is not None else ""
+        return {"owner": "群主", "admin": "管理员", "member": "群成员"}.get(role, "未知")
+
     def _bound_qq_text(self, player: dict) -> str:
         qq = self.store.get_bound_qq(player.get("qq", ""))
         if qq:
