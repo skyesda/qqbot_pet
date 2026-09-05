@@ -2278,21 +2278,17 @@ class PetParkPlugin(Star):
         player.setdefault("stats", {})[key] = player["stats"].get(key, 0) + n
 
     def _is_admin(self, event: AstrMessageEvent) -> bool:
-        # 配置里的管理员白名单优先
-        if str(event.get_sender_id()) in self.admins:
+        """大管理员 = 仅配置白名单「admins」中的身份（super admin）。
+
+        绝不因 QQ 官方群的群主/群管理员（author.member_role）等群身份授予超级管理权限，
+        否则群里任一被设为管理员的人都能无上限铸造钻石/金币（并间接无限加币），属权限漏洞。
+        QQ 群主/群管理的「群管理」操作（如撤回消息）走 _is_group_staff，与本判定无关。
+        """
+        sender_id = str(event.get_sender_id())
+        if sender_id in self.admins:
             return True
-        # 群消息事件透传的成员身份（owner/admin/member）：非群消息无该字段则跳过。
-        role = str(getattr(event, "sender_role", "") or "").lower()
-        if role in ("owner", "admin", "member"):
-            return role in ("owner", "admin")
-        for attr in ("is_admin",):
-            fn = getattr(event, attr, None)
-            if callable(fn):
-                try:
-                    return bool(fn())
-                except Exception:
-                    pass
-        return str(getattr(event, "role", "")).lower() in ("admin", "owner")
+        # 白名单内可能是绑定QQ号，用绑定QQ兜底反查（与 _check_transfer_limit 同一口径）
+        return str(self.store.get_bound_qq(sender_id)) in self.admins
 
     # =====================================================================
     # 群主/管理员撤回群成员消息（QQ 官方 v2 API）
