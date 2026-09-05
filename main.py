@@ -7108,8 +7108,7 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 宠物查看 / 管理
     # =====================================================================
-    @staticmethod
-    def _need_pet(player: dict) -> dict | None:
+    def _need_pet(self, player: dict) -> dict | None:
         p = player.get("pet")
         if p is not None:
             self._cap_skills(player, p)
