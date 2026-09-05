@@ -5504,6 +5504,7 @@ class PetParkPlugin(Star):
             *(["> ⚠️ 未绑定QQ将无法游玩宠物乐园，请先绑定（发送「绑定QQ 你的QQ号」）"]
               if self.require_qq_bind and not self.store.get_bound_qq(player.get("qq", "")) else []),
             f"👥 **群号**　`{gid}`",
+            f"🌐 **所处分服**　{self._server_label(group_id)}",
             f"👤 **群身份**　{'—' if gid == '私聊' else self._role_label_text(event)}",
             f"🪙 **金币**　{player.get('coin', 0)}",
             f"💎 **积分**　{player.get('jifen', 0)}",
@@ -6060,6 +6061,14 @@ class PetParkPlugin(Star):
         group = self.store.get_group(self.store.resolve_group(group_id))
         return str(group.get("server_type", "official")) == "infinite"
 
+    def _server_label(self, group_id: str) -> str:
+        """群/私聊当前所处分服的中文标签：无限服 / 官方服 / 私聊（不属于服）。"""
+        if not self._is_group(group_id):
+            return "私聊（不属任何服）"
+        if self._group_is_infinite(group_id):
+            return "无限服 🌐"
+        return "官方服"
+
     def _parse_server_type(self, token: str | None) -> str | None:
         """把『官方服/无限服』词解析成 server_type 值；无效或空返回 None（表示不变更）。"""
         if not token:
@@ -6128,9 +6137,10 @@ class PetParkPlugin(Star):
         return (
             "## 🔐 本群授权状态\n"
             f"状态：{'**有效** ✅' if ok else '**已过期** ❌'}\n"
+            f"当前服：**{self._server_label(group_id)}**\n"
             f"到期时间：{when}\n"
             f"剩余：**{self._fmt_remain(until)}**"
-            + ("" if ok else "\n> 请发送『授权 卡密』续期。")
+            + ("" if ok else "\n> 请发送『授权 卡密』续期；切换服类型建议用『授权本群』。")
         )
 
     def _redeem_auth_card(self, event, group_id: str, qq: str, tokens: list[str]) -> str:
