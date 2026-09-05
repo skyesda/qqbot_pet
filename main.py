@@ -1360,9 +1360,8 @@ class PetParkPlugin(Star):
         player["active_streak"] = streak
         player["last_active_date"] = today
 
-    @staticmethod
     def _check_transfer_limit(
-        sender: dict, target: dict, group_id: str, count: int,
+        self, sender: dict, target: dict, group_id: str, count: int,
         transfer_type: str = "item",
     ) -> tuple[str | None, float]:
         """检查转让/赠送限制，返回 (错误提示, 税率)。
@@ -1374,7 +1373,15 @@ class PetParkPlugin(Star):
         3. 道具类单次 ≤ 10 个
         4. 货币税 20%，道具税 10%
         5. 7天内向同一人转让 ≥ TRANSFER_WEEKLY_SAME_LIMIT 次 → 双倍税
+        6. 大管理员（admins 白名单）豁免以上所有限制与税费
         """
+        # 大管理员豁免：不限次数、不交税、不计次数（普通玩家不受影响）
+        sender_id = str(sender.get("qq", ""))
+        if (
+            sender_id in self.admins
+            or str(self.store.get_bound_qq(sender_id)) in self.admins
+        ):
+            return None, 0.0
         qq1 = str(sender.get("qq", ""))
         qq2 = str(target.get("qq", ""))
         if qq1 == qq2:
