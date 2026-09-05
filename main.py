@@ -2144,11 +2144,13 @@ class PetParkPlugin(Star):
         bound_qq = self.store.get_bound_qq(pid)
         who = f"QQ `{bound_qq}`" if bound_qq else f"`{pid}`"
         nickname = p.get("nickname", "?")
-        self._broadcast_to_authorized_groups(
-            f"## 🎉 恭贺重生！\n"
-            f"玩家 {who} 的『{nickname}』渡劫圆满，重获新生！\n"
-            f"获得 **×{multiplier}** 属性暴击，荣耀加身！"
-        )
+        # 无限服：退出跨群共享层，重生不公布到其它群（本群玩家仍会收到上面完整结果）
+        if not self._group_is_infinite(str(player.get("group", ""))):
+            self._broadcast_to_authorized_groups(
+                f"## 🎉 恭贺重生！\n"
+                f"玩家 {who} 的『{nickname}』渡劫圆满，重获新生！\n"
+                f"获得 **×{multiplier}** 属性暴击，荣耀加身！"
+            )
         return "\n".join(lines)
 
     def _rebirth_review(self, player: dict, pet: dict) -> str:
