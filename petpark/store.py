@@ -328,6 +328,8 @@ class PetStore:
                 "last_actions": {},
                 "stats": {"battle_win": 0, "explore": 0},
                 "quests": {},
+                # 已完成的剧情任务名（每个只能完成一次，重生后清空可重做）
+                "quest_done": [],
                 "auto_cultivation": {
                     "card_until": 0,
                 },
@@ -343,6 +345,9 @@ class PetStore:
         pl = players.get(key)
         if pl is not None:
             pl.setdefault("auto_level", True)
+            pl.setdefault("quest_done", [])
+            if not isinstance(pl["quest_done"], list):
+                pl["quest_done"] = []
         return pl
 
     def all_players(self) -> dict[str, dict]:

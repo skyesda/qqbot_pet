@@ -2058,6 +2058,10 @@ class PetParkPlugin(Star):
         # 清除重生相关标记
         p.pop("rebirth_gem", None)
         p.pop("rebirth_sacrifice", None)
+        # 重生后清空剧情任务记录（已完成 + 进行中），任务可重新完成
+        quest_cleared = len(player.get("quest_done", [])) + len(player.get("quests", {}))
+        player.pop("quest_done", None)
+        player.pop("quests", None)
         # 重生奖励：永久 +1 宠物席位
         old_slots = player.get("pet_slots", data.PET_SLOTS_DEFAULT)
         slot_msg = ""
@@ -2082,6 +2086,8 @@ class PetParkPlugin(Star):
         lines.append(_summarize(old_hp, p["hp_max"], "生命"))
         lines.append("")
         lines.append(f"**重置：** 阶段→幼年期 Lv1 | 精力→100")
+        if quest_cleared:
+            lines.append(f"**任务重置：** 剧情任务 ×{quest_cleared} 已清空，重生后可重新完成")
         if dropped:
             lines.append(f"**脱落：** {'、'.join(dropped)}（已入背包）")
         if cleared_count > 0:
@@ -9748,22 +9754,31 @@ class PetParkPlugin(Star):
         return "、".join(parts) if parts else "无"
 
     def _quest_list(self, player: dict) -> str:
+        done = set(player.get("quest_done", []))
+        claimed = player.get("quests", {})
         lines = [
             "## 📜 可领取剧情任务",
             "> `领取任务 任务名` 领取，完成后 `提交任务 任务名`",
+            "> 每个任务只能完成一次，宠物重生后清空记录、可重新完成。",
             "",
-            "| 任务 | 前提 | 目标 | 奖励 |",
-            "|:--:|:--:|:--:|:--:|",
+            "| 任务 | 状态 | 前提 | 目标 | 奖励 |",
+            "|:--:|:--:|:--:|:--:|:--:|",
         ]
         for n, q in data.QUESTS.items():
-            locked = not self._quest_req_met(player, q)
             need = "、".join(
                 f"{data.QUEST_NEED_LABELS.get(k, k)}×{v}" for k, v in q["need"].items()
             ) or "直接领取"
             rwd = self._quest_reward_text(q.get("reward", {}))
             req = self._quest_req_text(q)
-            lock_mark = "🔒 " if locked else ""
-            lines.append(f"| {lock_mark}{n} | {req} | {need} | {rwd} |")
+            if n in done:
+                st = "✅ 已完成"
+            elif n in claimed:
+                st = "📥 进行中"
+            elif not self._quest_req_met(player, q):
+                st = "🔒 未达成"
+            else:
+                st = "🟢 可领取"
+            lines.append(f"| {n} | {st} | {req} | {need} | {rwd} |")
         return "\n".join(lines)
 
     def _my_quests(self, player: dict) -> str:
@@ -9800,12 +9815,16 @@ class PetParkPlugin(Star):
             if not self._quest_req_met(player, quest):
                 req = self._quest_req_text(quest)
                 return f"❌ 你尚未满足领取条件：{req}。"
+            if name in player.get("quest_done", []):
+                return f"❌ 『{name}』已完成，重生后重置才能重新领取。"
             if name in player.get("quests", {}):
                 return f"『{name}』已在进行中。"
             # 记录领取时的进度快照，任务进度从领取时刻起算
             player.setdefault("quests", {})[name] = {k: stats.get(k, 0) for k in need}
             return f"已领取剧情任务『{name}』。"
         # 提交任务
+        if name in player.get("quest_done", []):
+            return f"『{name}』已完成，无法重复提交。"
         if name not in player.get("quests", {}):
             return f"你尚未领取『{name}』。"
         if not self._quest_req_met(player, quest):
@@ -9826,6 +9845,8 @@ class PetParkPlugin(Star):
             elif k == "item":
                 self.store.add_item(player, v, reward.get("item_count", 1))
         player["quests"].pop(name, None)
+        # 记为已完成：每个剧情任务只能完成一次，重生后才可重做
+        player.setdefault("quest_done", []).append(name)
         return f"✅ 提交『{name}』成功！获得奖励：{self._quest_reward_text(reward)}。"
 
     # =====================================================================
