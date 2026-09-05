@@ -572,7 +572,11 @@ class PetParkPlugin(Star):
         self.song_enabled = bool(self.config.get("song_enabled", True))
         self.song_max_results = max(1, int(self.config.get("song_max_results", 50)))
         self.song_page_size = max(1, int(self.config.get("song_page_size", 10)))
-        self.alapi_token = str(self.config.get("alapi_token", "") or "").strip()
+        self.alapi_token = str(self.config.get("alapi_token") or "").strip()
+        if not self.alapi_token:
+            # SkyeBot 运行时配置不合并 schema 默认值：新字段在已保存配置中缺失时兜底用默认密钥
+            self.alapi_token = self.SONG_DEFAULT_ALAPI_TOKEN
+            logger.warning("[petpark] 点歌 alapi_token 未配置，使用默认密钥")
         self.silk_encoder_path = str(self.config.get("silk_encoder_path", "") or "").strip()
         self.silk_url_base = str(self.config.get("silk_url_base", "") or "").strip().rstrip("/")
         # 点歌会话：{group_id: {"keyword", "songs", "page", "ts"}}（15 分钟过期）
@@ -4389,6 +4393,7 @@ class PetParkPlugin(Star):
     #   ALAPI 搜索/播放 + 本地 mp3→silk 转码 + botpy 群语音发送
     # =====================================================================
     SONG_SESSION_TTL = 15 * 60  # 会话过期：秒
+    SONG_DEFAULT_ALAPI_TOKEN = "oq7yomxswpvx1k3lcitguvcdzztc0i"  # schema 默认；运行时配置未合并默认值时的兜底
 
     # ---- 会话 ----
     def _song_session(self, group_id: str) -> dict | None:
@@ -4529,6 +4534,13 @@ class PetParkPlugin(Star):
     async def _song_search_async(self, group_id: str, keyword: str) -> None:
         try:
             data = await asyncio.to_thread(self._song_api_search, keyword)
+            code = data.get("code") if isinstance(data, dict) else None
+            if code is not None and code != 200:  # ALAPI 错误（token 缺失/无效/频率限制等）
+                msg = str(data.get("msg") or code or "未知错误")
+                logger.warning(f"[petpark] 点歌 ALAPI 搜索错误 code={code} msg={msg} "
+                               f"token={'已配置' if self.alapi_token else '为空'}")
+                await self._song_send(group_id, f"❌ 点歌查询失败（{msg}），请稍后再试或联系管理员检查 alapi_token。")
+                return
             songs = (data.get("data") or {}).get("songs") or []
             if not songs:
                 await self._song_send(group_id, f"❌ 没找到「{keyword}」相关歌曲，换个关键词试试。")
