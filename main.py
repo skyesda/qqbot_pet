@@ -6590,10 +6590,20 @@ class PetParkPlugin(Star):
     def _short_num(n) -> str:
         """数值缩写：>=1亿 显示 x.xx亿，>=1万 显示 x.xx万，否则原值。
 
-        委托 petpark.pet.short_num，与 render_pet 文本兜底保持完全一致。
+        用于攻击/防御/智力/生命/战力等大数值展示，避免长数字撑破布局。
+        内联实现（不依赖子模块），保证 hot-reload 重载 main 即可生效。
         """
-        return petmod.short_num(n)
+        try:
+            n = float(n)
+        except (TypeError, ValueError):
+            return str(n)
+        if abs(n) >= 1_0000_0000:
+            return f"{n / 1_0000_0000:.2f}亿"
+        if abs(n) >= 1_0000:
+            return f"{n / 1_0000:.2f}万"
+        return f"{int(n)}"
 
+    @staticmethod
     def _pct(v, total) -> int:
         """返回 v/total 的 0..100 百分比。"""
         try:
