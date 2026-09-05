@@ -6675,7 +6675,7 @@ class PetParkPlugin(Star):
         tags_html = f'<div class="tags">{"".join(f"<i>{esc(t)}</i>" for t in tags)}</div>' if tags else ""
         extra = ""
         if pet.get("love_target"):
-            extra = self._card_row("伴侣", f"{pet['love_target']}　好感 {pet.get('favor', 0)}")
+            extra = self._card_row("伴侣", f"{self._display_uid(pet['love_target'])}　好感 {pet.get('favor', 0)}")
         frozen = ""
         if petmod.is_frozen(pet):
             frozen = ('<div class="warn">假死/惊魂中，剩余约 '
@@ -7573,7 +7573,7 @@ class PetParkPlugin(Star):
                     tp["pet"]["favor"] = min(
                         data.FAVOR_MAX, tp["pet"]["favor"] + 50
                     )
-                    extra = f"\n伴侣 {p['love_target']} 的好感度也 +50。"
+                    extra = f"\n伴侣 {self._display_uid(p['love_target'])} 的好感度也 +50。"
             return f"喂食相思豆，好感度 +50，当前 {p['favor']}。" + extra
         return self._use_item(player, ["使用", name, "1"])
 
@@ -8042,7 +8042,7 @@ class PetParkPlugin(Star):
                     tp["pet"]["favor"] = min(
                         data.FAVOR_MAX, tp["pet"]["favor"] + gain
                     )
-                    extra = f"\n💕 伴侣 `{p['love_target']}` 的好感度也 +{gain}。"
+                    extra = f"\n💕 伴侣 `{self._display_uid(p['love_target'])}` 的好感度也 +{gain}。"
             return f"💕 约会愉快，好感度 +{gain}，当前 {p['favor']}。" + extra
         if action in ("修炼", "双修"):
             base = random.randint(50, 120) + p["level"] * 15
@@ -10004,7 +10004,7 @@ class PetParkPlugin(Star):
         coop_key = self._tomb_key(gid, coop.get("leader", ""))
         self._tomb_coop_teams.pop(coop_key, None)
         self._tomb_persist()
-        return f"## 队伍已解散\n{player.get('qq', '')} 取消了组队。"
+        return f"## 队伍已解散\n{self._display_uid(player.get('qq', ''))} 取消了组队。"
 
     def _tomb_team_status(self, player: dict) -> str:
         """摸金队伍 —— 查看当前队伍状态。"""
@@ -14529,7 +14529,7 @@ class PetParkPlugin(Star):
             return f"💔 『{p['nickname']}』当前**单身**。"
         return (
             f"💕 『{p['nickname']}』**{p['love_state']}** 中\n"
-            f"> 伴侣：`{p['love_target']}`　好感度：{p['favor']}"
+            f"> 伴侣：`{self._display_uid(p['love_target'])}`　好感度：{p['favor']}"
         )
 
     def _love_action(
@@ -15103,7 +15103,7 @@ class PetParkPlugin(Star):
                 prod_text = self._homestead_prod_text(name, lv)
                 disp_tag = ""
                 if name in tdispatch:
-                    disp_tag = f" [🐾{tdispatch[name].get('qq','?')}]"
+                    disp_tag = f" [🐾{self._display_uid(str(tdispatch[name].get('qq','?')))}]"
                 lines.append(f"{icon} **{name}** Lv{lv}{disp_tag}　{prod_text}")
         lines.append("")
         lines.append(f"🤝 拜访成功！你 +{data.HOMESTEAD_VISIT_REWARD_COIN} 金，对方 +{data.HOMESTEAD_VISITED_REWARD_COIN} 金。")
