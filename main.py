@@ -6742,30 +6742,54 @@ class PetParkPlugin(Star):
     # ---------------------------------------------------------------------
 
     @staticmethod
-    @staticmethod
     def _short_num(n) -> str:
         """数值缩写：万→亿→兆→京→…→古戈尔（10^100），用于大数值展示。
 
-        用于攻击/防御/智力/生命/战力/货币等大数值，避免长数字撑破布局。
-        每个中文单位 = 前一个 × 1万（1e4 递增），直到古戈尔 1e100。
-        内联实现（不依赖子模块），保证 hot-reload 重载 main 即可生效。
+        全程整数运算，不依赖 float（超大整数转 float 会报
+        “int too large to convert to float”），支持任意大值；结果最多保留
+        2 位小数，整数部分上万（如超古戈尔级巨值）时用 x.xxeN 压缩，绝不
+        撑破布局。内联实现（不依赖子模块），保证 hot-reload 重载 main 即生效。
         """
         try:
-            n = float(n)
-        except (TypeError, ValueError):
-            return str(n)
-        abs_n = abs(n)
+            iv = int(n)
+        except (TypeError, ValueError, OverflowError):
+            try:
+                n = float(n)
+            except (TypeError, ValueError, OverflowError):
+                return str(n)
+            if n != n:  # NaN
+                return "0"
+            iv = int(n)
+        neg = iv < 0
+        a = -iv if neg else iv
+        if a < 10_000:
+            return ("-" + str(a)) if neg else str(a)
+        sign = "-" if neg else ""
         units = [
-            (1e100, "古戈尔"), (1e72, "大数"), (1e68, "无量"), (1e64, "不可思议"),
-            (1e60, "那由他"), (1e56, "阿僧祇"), (1e52, "恒河沙"), (1e48, "极"),
-            (1e44, "载"), (1e40, "正"), (1e36, "涧"), (1e32, "沟"),
-            (1e28, "穰"), (1e24, "秭"), (1e20, "垓"), (1e16, "京"), (1e12, "兆"),
-            (1e8, "亿"), (1e4, "万"),
+            (10 ** 100, "古戈尔"), (10 ** 72, "大数"), (10 ** 68, "无量"),
+            (10 ** 64, "不可思议"), (10 ** 60, "那由他"), (10 ** 56, "阿僧祇"),
+            (10 ** 52, "恒河沙"), (10 ** 48, "极"), (10 ** 44, "载"),
+            (10 ** 40, "正"), (10 ** 36, "涧"), (10 ** 32, "沟"),
+            (10 ** 28, "穰"), (10 ** 24, "秭"), (10 ** 20, "垓"), (10 ** 16, "京"),
+            (10 ** 12, "兆"), (10 ** 8, "亿"), (10 ** 4, "万"),
         ]
         for threshold, unit in units:
-            if abs_n >= threshold:
-                return f"{n / threshold:.2f}{unit}"
-        return f"{int(n)}"
+            if a >= threshold:
+                whole = a // threshold
+                wstr = str(whole)
+                if len(wstr) >= 5:
+                    head = wstr[:3]
+                    return f"{sign}{head[0]}.{head[1:]}e{len(wstr) - 1}{unit}"
+                # 保留到 1% 分辨率并四舍五入
+                scaled = (a % threshold) * 100
+                dec_q, dec_r = divmod(scaled, threshold)
+                if dec_r * 2 >= threshold:
+                    dec_q += 1
+                if dec_q >= 100:  # 四舍五入进位
+                    whole += 1
+                    dec_q = 0
+                return f"{sign}{whole}.{dec_q:02d}{unit}"
+        return f"{sign}{a}"
 
     @staticmethod
     def _pct(v, total) -> int:
