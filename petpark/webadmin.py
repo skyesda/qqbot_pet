@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import re
 import secrets
 import time
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
@@ -36,6 +39,7 @@ class WebAdmin:
         broadcast_callback=None,
         command_gateway=None,
         zhongyuan=None,
+        silk_dir=None,
     ):
         self.store = store
         self.host = host
@@ -47,6 +51,10 @@ class WebAdmin:
         self.zhongyuan = zhongyuan  # 中元活动引擎（可为 None = 模块未加载）
         self._tokens: set[str] = set()
         self._runner = None
+        # 点歌 silk 临时目录：供 QQ 外部拉取语音文件；文件名走白名单，仅临时存在。
+        self.silk_dir = Path(silk_dir) if silk_dir else None
+        if self.silk_dir is not None:
+            self.silk_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------------- 生命周期 ---------------------------
     async def start(self) -> None:
@@ -100,6 +108,7 @@ class WebAdmin:
         app.router.add_post("/api/celebrate/reset_pool", self._api_celebrate_reset_pool)
         app.router.add_post("/api/celebrate/reset_stock", self._api_celebrate_reset_stock)
         app.router.add_post("/api/celebrate/broadcast", self._api_celebrate_broadcast)
+        app.router.add_get("/api/song_silk/{name}", self._api_song_silk)
 
         portal = PlayerPortal(
             self.store,
@@ -117,6 +126,45 @@ class WebAdmin:
             f"[petpark] 管理网站已启动: http://{self.host}:{self.port} "
             f"(账号 {self.user})"
         )
+
+    # ---- 点歌 silk 临时文件下载（供 QQ 拉取；无鉴权，仅服务白名单临时目录）----
+    async def _api_song_silk(self, request) -> Any:
+        from aiohttp import web
+
+        if self.silk_dir is None:
+            return web.Response(status=404)
+        name = request.match_info.get("name", "")
+        # 文件名白名单：32 位十六进制 + .silk，杜绝路径穿越
+        if not re.fullmatch(r"[0-9a-f]{32}\.silk", name):
+            return web.Response(status=404)
+        self._purge_expired_silk()
+        path = self.silk_dir / name
+        if not path.is_file():
+            return web.Response(status=404)
+        if time.time() - path.stat().st_mtime > 300:
+            try:
+                path.unlink()
+            except Exception:
+                pass
+            return web.Response(status=404)
+        return web.FileResponse(
+            path, headers={"Content-Type": "application/octet-stream"}
+        )
+
+    def _purge_expired_silk(self) -> None:
+        """清理 silk 目录里超过 5 分钟未访问的临时文件。"""
+        if self.silk_dir is None:
+            return
+        cutoff = time.time() - 300
+        try:
+            for f in self.silk_dir.glob("*.silk"):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     async def stop(self) -> None:
         if self._runner is not None:

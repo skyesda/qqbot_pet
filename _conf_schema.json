@@ -208,5 +208,41 @@
     "hint": "{{member}} 会被替换为成员群昵称；群昵称需机器人白名单才能拉取，无法获取时退回已绑定QQ号或可读ID。支持 Markdown。",
     "type": "string",
     "default": "## 👋 成员退群\n成员 @{{member}} 已离开本群。"
+  },
+  "alapi_token": {
+    "description": "点歌 ALAPI 密钥 token",
+    "hint": "用于『点歌』搜索/播放的 ALAPI token。申请地址 https://alapi.cn 。",
+    "type": "string",
+    "default": "oq7yomxswpvx1k3lcitguvcdzztc0i"
+  },
+  "song_enabled": {
+    "description": "启用点歌",
+    "hint": "开启后，群内可发送『点歌 歌名』搜索歌曲、『下一页/上一页』翻页、『选歌 序号』发送官方语音条。关闭则所有点歌指令不响应。",
+    "type": "bool",
+    "default": true
+  },
+  "song_max_results": {
+    "description": "点歌单次搜索取回条数",
+    "hint": "ALAPI 搜索接口为单次窗口（无法真正 offset 翻页），此值为一次取回总数，用于本地翻页。默认 50（够翻 5 页，每页 10）。",
+    "type": "int",
+    "default": 50
+  },
+  "song_page_size": {
+    "description": "点歌每页条数",
+    "hint": "显示列表每页条数。默认 10。",
+    "type": "int",
+    "default": 10
+  },
+  "silk_encoder_path": {
+    "description": "silk 编码器绝对路径",
+    "hint": "mp3→silk 的 silk_v3_encoder 二进制路径（服务器需预装 ffmpeg 与 silk_v3_encoder）。留空则自动回退为插件目录 bin/silk_v3_encoder。",
+    "type": "string",
+    "default": "/root/petbot_framework/plugins/astrbot_plugin_petpark/bin/silk_v3_encoder"
+  },
+  "silk_url_base": {
+    "description": "silk 文件公网拉取前缀",
+    "hint": "QQ 服务器拉取语音 silk 文件的 URL 前缀，指向管理网站公网地址（需外网可达）。若 QQ 拒绝 http，可改成 https 临时图床地址兜底。",
+    "type": "string",
+    "default": "http://103.38.83.146:7799"
   }
 }

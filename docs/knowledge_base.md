@@ -1068,3 +1068,29 @@
 ---
 
 > 本知识库基于 `main.py`、`petpark/data.py`、`petpark/store.py`、`petpark/pet.py`、`petpark/webadmin.py`、`README.md`、`docs/深渊秘境.md` 整理完成。
+
+## 二十八、点歌系统
+
+群内发送「点歌 歌名」调用 ALAPI 网易云搜索，列出歌曲（每 10 个一页）。
+
+- `点歌 歌名` — 搜索；结果按连续序号展示（第 1 页 1–10、第 2 页 11–20…）。
+- `下一页` / `上一页` — 本地翻页（一次取回 `song_max_results` 条，默认 50 = 5 页）。
+- `选歌 序号` — 取该曲播放链接，下载 mp3 → 本地转码为 silk v3 → 用 QQ 官方语音接口（`post_group_file(file_type=3)` + `post_group_message(msg_type=7)`）发出语音条。
+
+**数据与来源**
+- 搜索：`https://v2.alapi.cn/api/music/search?token=&keyword=&limit=`，`data.songs[]` 含 `name`/`artists[].name`/`id`/`duration`，顶层 `data.hasMore`、`data.songCount`。
+- **单窗口限制**：`limit` 可增大返回条数；`page/offset/count` 均无效 → 无真正 offset 分页，因此前端本地翻页。
+- 播放：`https://v2.alapi.cn/api/music/url?token=&id=` → `data.url`（网易直链 mp3）。部分 VIP（`fee>0`）无 url，需提示换一首。
+
+**配置项**（`_conf_schema.json`）
+- `alapi_token`（必填，默认已填）；`song_enabled`（总开关）；`song_max_results`（默认 50）、`song_page_size`（默认 10）。
+- `silk_encoder_path`：silk_v3_encoder 二进制路径；`silk_url_base`：QQ 拉取 silk 的公网前缀（默认指向 7799 管理网站，需公网可达）。
+
+**运维要点**
+- 官方语音必须 silk v3：服务器需预装 `ffmpeg`（mp3→pcm）+ 编译 `silk_v3_encoder`（pcm→silk）。
+- 生成的 silk 放插件数据目录 `song_silk/`，由管理网站 `/api/song_silk/<name>.silk` 对外提供（无鉴权、白名单文件名 `^[0-9a-f]{32}\.silk$`、5 分钟 TTL），供 QQ 服务器拉取。
+- 转码串行多步（下载+ffmpeg+编码）几秒完成；每一步失败均有兜底文案，不抛出。
+
+**限制**
+- 搜索取回上限受 ALAPI 单窗口限制（默认 50 首），超出 `songCount` 无法续页。
+- QQ 官方语音只收 silk；若 QQ 拒绝 `http://IP:7799` 拉取，可将 `silk_url_base` 指向 https 临时图床兜底。

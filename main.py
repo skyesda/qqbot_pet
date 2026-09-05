@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import random
 import re
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import uuid
 from collections import deque
 from datetime import datetime
@@ -34,6 +37,7 @@ from astrbot.api.star import Context, Star, register
 from .petpark import card_theme, data, images, pet as petmod
 from .petpark.ai_router import AIRouter
 from .petpark.store import PetStore
+from .petpark.boardgames import BoardGames, COMMANDS as BOARD_COMMANDS
 
 # 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响宠物乐园主程序。
 try:
@@ -78,6 +82,7 @@ _BIND_ALWAYS_ALLOWED = {
 
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
 KNOWN_COMMANDS = {
+    *BOARD_COMMANDS,
     # 管理
     "开启宠物乐园",
     "关闭宠物乐园",
@@ -374,6 +379,11 @@ KNOWN_COMMANDS = {
     "定制坐骑",
     "坐骑升级",
     "升级坐骑",
+    # 点歌（QQ官方语音）
+    "点歌",
+    "下一页",
+    "上一页",
+    "选歌",
 }
 
 # 合并中元活动指令（由独立模块动态提供，避免在 KNOWN_COMMANDS 手写两份清单）
@@ -491,6 +501,7 @@ class PetParkPlugin(Star):
     # 不用类属性：热重载（importlib.reload 重建类）后类级引用会丢成 None，
     # 导致 __init__ 的取消判断拿不到旧任务 → 旧任务泄漏，与新任务并存重复触发。
     _BG_TASK_REFS = (
+        "_board_clock_task_ref",
         "_auto_cultivation_task_ref",
         "_bank_interest_task_ref",
         "_group_auto_approve_task_ref",
@@ -557,6 +568,21 @@ class PetParkPlugin(Star):
         self.leave_template = str(self.config.get("leave_template", "") or "") or (
             "## 👋 成员退群\n成员 @{{member}} 已离开本群。"
         )
+        # ===== 点歌（QQ官方语音）=====
+        self.song_enabled = bool(self.config.get("song_enabled", True))
+        self.song_max_results = max(1, int(self.config.get("song_max_results", 50)))
+        self.song_page_size = max(1, int(self.config.get("song_page_size", 10)))
+        self.alapi_token = str(self.config.get("alapi_token", "") or "").strip()
+        self.silk_encoder_path = str(self.config.get("silk_encoder_path", "") or "").strip()
+        self.silk_url_base = str(self.config.get("silk_url_base", "") or "").strip().rstrip("/")
+        # 点歌会话：{group_id: {"keyword", "songs", "page", "ts"}}（15 分钟过期）
+        self._song_sessions: dict[str, dict] = {}
+        # silk 临时目录：webadmin 从这里对外提供 QQ 可拉取的 silk 文件
+        self.song_silk_dir = data_dir / "song_silk"
+        self.song_silk_dir.mkdir(parents=True, exist_ok=True)
+        if not self.silk_encoder_path:
+            _silk_bin = Path(__file__).parent / "bin" / "silk_v3_encoder"
+            self.silk_encoder_path = str(_silk_bin) if _silk_bin.exists() else ""
         # 群昵称缓存：{group_id: {member_openid: 群昵称}}
         self._nick_cache: dict[str, dict[str, str]] = {}
         # 群成员角色缓存：{group_id: {member_openid: (角色, 时间戳)}}
@@ -571,6 +597,11 @@ class PetParkPlugin(Star):
         self._tomb_sessions: dict[str, dict] = self.store.load_tomb_sessions()
         # 扫雷当局运行时状态（内存中，不持久化，按 QQ 一人一局）
         self._ms_sessions: dict[str, dict] = {}
+        self._board_games = BoardGames(
+            data_dir / "boardgames.json", self.store.custom_images_dir,
+            self._tomb_image_url, self._display_uid, self._find_board_target,
+        )
+        self._board_clock_task_ref = asyncio.create_task(self._board_clock_loop())
         # 群消息滚动缓存：群ID\x1f发送者 → deque[(message_id, 时间戳)]，供撤回指令用
         self._group_msg_log: dict[str, deque] = {}
         # 摸金双排组队状态（持久化到 store，插件重载后自动恢复）
@@ -694,6 +725,7 @@ class PetParkPlugin(Star):
             broadcast_callback=self._broadcast_to_authorized_groups,
             command_gateway=self,
             zhongyuan=getattr(self, "zhongyuan", None),
+            silk_dir=self.song_silk_dir,
         )
 
         async def _boot():
@@ -1095,6 +1127,15 @@ class PetParkPlugin(Star):
         """根据用户发送的指令决定要不要附带快捷按钮。"""
         if text in {"宠物乐园", "管理菜单"}:
             return self._main_menu_keyboard()
+        if text.split() and text.split()[0] in BOARD_COMMANDS:
+            board_kind = "象棋" if "象棋" in text else "五子棋"
+            return self._build_qq_keyboard([
+                [("⚫ 五子棋", "五子棋"), ("🎴 中国象棋", "中国象棋")],
+                [(f"{board_kind}·简单", f"{board_kind}单人 1"), (f"{board_kind}·普通", f"{board_kind}单人 2")],
+                [(f"{board_kind}·困难", f"{board_kind}单人 3"), (f"{board_kind}·地狱", f"{board_kind}单人 4")],
+                [("查看棋局", "棋局"), ("接受邀请", "接受棋局")],
+                [("玩法帮助", "棋类帮助"), ("棋局统计", "棋局统计")],
+            ])
         if text in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
             return self._ms_menu_keyboard()
         for cfg in self.store.active_events().values():
@@ -1336,6 +1377,16 @@ class PetParkPlugin(Star):
         if self._web is not None:
             await self._web.stop()
 
+    async def _board_clock_loop(self):
+        while True:
+            try:
+                await asyncio.sleep(5)
+                self._board_games.expire()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[petpark] 棋局超时结算失败")
+
     # =====================================================================
     # 工具函数
     # =====================================================================
@@ -1369,6 +1420,14 @@ class PetParkPlugin(Star):
         if not tp:
             return None, f"❌ 用户 `{self._display_uid(qq)}` 在本群不存在（对方需先在本群参与宠物乐园）。"
         return tp, None
+
+    def _find_board_target(self, group_id: str, token: str):
+        """Chess identities and invitations span all groups."""
+        user = self._resolve_user_token(token)
+        target = next((p for p in self.store.all_players().values() if str(p.get("qq", "")) == user), None)
+        if target is None:
+            return None, "找不到该玩家，请对方先在任意群参与宠物乐园。"
+        return target, None
 
     def _resolve_user_token(self, token: str) -> str:
         """把用户输入的标识解析为平台用户ID：若为已绑定的QQ号则返回对应平台ID，否则原样返回。"""
@@ -2976,6 +3035,10 @@ class PetParkPlugin(Star):
         text = text.lstrip("/")
         tokens = text.split()
         cmd = tokens[0]
+        board_start = re.fullmatch(r"(开始(?:五子棋|中国象棋|象棋)|(?:五子棋|中国象棋|象棋)单人)([1-4])", cmd)
+        if board_start:
+            tokens = [board_start.group(1), board_start.group(2)] + tokens[1:]
+            cmd = tokens[0]
         # 扫雷紧凑指令归一化：扫a1b2 → 扫 a1b2；插旗a1 → 插旗 a1；开始扫雷2 → 开始扫雷 2
         m = _MS_COMPACT_RE.match(cmd)
         if m:
@@ -3007,6 +3070,11 @@ class PetParkPlugin(Star):
             and text not in event_cmds
         ):
             return None
+
+        # ---- 点歌（QQ官方语音）：搜索 / 翻页 / 按序号选歌（后台异步处理）----
+        if cmd in ("点歌", "下一页", "上一页", "选歌"):
+            return self._song_dispatch(qq, group_id, cmd, tokens)
+
         group = self.store.get_group(group_id)
 
         # ---- 管理开关（管理员） ----
@@ -3452,6 +3520,9 @@ class PetParkPlugin(Star):
             return self._tomb_redeem_exp(player, tokens)
 
         # ---- 宠物扫雷 ----
+        if cmd in BOARD_COMMANDS:
+            return self._board_games.handle(group_id, str(player.get("qq", qq)), tokens)
+
         if cmd in ("扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏"):
             return self._ms_intro()
         if cmd == "开始扫雷":
@@ -4312,6 +4383,243 @@ class PetParkPlugin(Star):
             "> 💔 战败没有奖励！"
         )
         return f"{head}\n{desc}\n{body}"
+
+    # =====================================================================
+    # 点歌系统（QQ官方语音）
+    #   ALAPI 搜索/播放 + 本地 mp3→silk 转码 + botpy 群语音发送
+    # =====================================================================
+    SONG_SESSION_TTL = 15 * 60  # 会话过期：秒
+
+    # ---- 会话 ----
+    def _song_session(self, group_id: str) -> dict | None:
+        """取有效点歌会话；过期或缺失返回 None。"""
+        s = self._song_sessions.get(str(group_id))
+        if not s:
+            return None
+        if time.time() - s.get("ts", 0) > self.SONG_SESSION_TTL:
+            self._song_sessions.pop(str(group_id), None)
+            return None
+        return s
+
+    def _song_dispatch(self, qq, group_id, cmd, tokens):
+        """点歌同步入口：搜索/选歌交给后台任务，翻页即时返回。"""
+        if not self.song_enabled:
+            return "❌ 点歌功能当前已关闭。"
+        if cmd == "点歌":
+            keyword = " ".join(tokens[1:]).strip()
+            if not keyword:
+                return ("## 🎵 点歌\n"
+                        "发送「点歌 歌名」搜索歌曲；「下一页 / 上一页」翻页；\n"
+                        "「选歌 序号」用官方语音发送。")
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return "⚠️ 点歌暂时不可用。"
+            loop.create_task(self._song_search_async(group_id, keyword))
+            return "⏳ 正在搜索，请稍候…"
+        if cmd in ("下一页", "上一页"):
+            delta = 1 if cmd == "下一页" else -1
+            return self._song_page(group_id, delta)
+        if cmd == "选歌":
+            if len(tokens) >= 2 and tokens[1].isdigit():
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    return "⚠️ 点歌暂时不可用。"
+                loop.create_task(self._song_select_async(group_id, int(tokens[1])))
+                return "⏳ 正在制作语音，请稍候…"
+            return "❌ 用法：选歌 <序号>（序号见点歌列表左侧数字）。"
+        return None
+
+    # ---- API（同步，跑在 executor 线程）----
+    def _song_api_get_json(self, url: str) -> dict:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _song_api_search(self, keyword: str) -> dict:
+        u = ("https://v2.alapi.cn/api/music/search?token=%s&keyword=%s&limit=%d"
+             % (self.alapi_token, urllib.parse.quote(keyword), self.song_max_results))
+        return self._song_api_get_json(u)
+
+    def _song_play_url(self, song_id) -> str:
+        u = ("https://v2.alapi.cn/api/music/url?token=%s&id=%s"
+             % (self.alapi_token, urllib.parse.quote(str(song_id))))
+        d = self._song_api_get_json(u)
+        return str((d.get("data") or {}).get("url") or "").strip()
+
+    @staticmethod
+    def _song_dur(ms) -> str:
+        try:
+            s = max(0, int(ms) // 1000)
+        except (TypeError, ValueError):
+            return "--:--"
+        m, ss = divmod(s, 60)
+        return f"{m:02d}:{ss:02d}"
+
+    # ---- 渲染 ----
+    def _song_render(self, group_id: str) -> str:
+        s = self._song_session(group_id)
+        if not s:
+            return "❌ 请先发送「点歌 歌名」搜索。"
+        keyword = s["keyword"]
+        songs = s["songs"]
+        size = self.song_page_size
+        total = len(songs)
+        pages = max(1, (total + size - 1) // size)
+        page = max(1, min(pages, s["page"]))
+        start = (page - 1) * size
+        chunk = songs[start:start + size]
+        lines = []
+        for idx, song in enumerate(chunk, start=start + 1):
+            name = str(song.get("name", ""))
+            artists = " / ".join(str(a.get("name", "")) for a in song.get("artists", []) if a.get("name"))
+            lines.append(f"- **{idx}** {name} - {artists} ({self._song_dur(song.get('duration', 0))})")
+        body = "\n".join(lines)
+        return (f"## 🎵 点歌搜索『{keyword}』 第 {page}/{pages} 页\n{body}\n\n"
+                "发送「选歌 序号」用官方语音；「下一页 / 上一页」翻页。")
+
+    def _song_page(self, group_id: str, delta: int) -> str:
+        """本地翻一页并即时返回文本（无网络请求）。"""
+        s = self._song_session(group_id)
+        if not s:
+            return "❌ 请先发送「点歌 歌名」搜索后再翻页。"
+        size = self.song_page_size
+        total = len(s["songs"])
+        pages = max(1, (total + size - 1) // size)
+        pos = max(1, min(pages, s["page"] + delta))
+        if pos == s["page"]:
+            return ("✅ 已经是边界了。\n\n" if (delta > 0 and pos == pages) or (delta < 0 and pos == 1)
+                    else "") + self._song_render(group_id)
+        s["page"] = pos
+        s["ts"] = time.time()
+        return self._song_render(group_id)
+
+    # ---- 发送 ----
+    async def _song_send(self, group_id: str, text: str, markdown: bool = True) -> None:
+        bot = self.context.get_bot()
+        if bot is None:
+            logger.warning("[petpark] 点歌文本发送失败：get_bot() 为空")
+            return
+        try:
+            await bot.send_group(group_openid=str(group_id), text=text, markdown=markdown)
+        except Exception as e:
+            logger.warning(f"[petpark] 点歌文本发送失败：{e}")
+            try:
+                await bot.send_group(group_openid=str(group_id), text=text, markdown=False)
+            except Exception as e2:
+                logger.warning(f"[petpark] 点歌纯文本降级失败：{e2}")
+
+    async def _song_send_voice(self, group_id: str, silk_url: str) -> None:
+        bot = self.context.get_bot()
+        if bot is None:
+            raise RuntimeError("bot_client 为空")
+        gid = str(group_id)
+        # file_type=3 = 语音(silk)；QQ 会主动拉取 url 并返回 media 信息
+        media = await bot.api.post_group_file(group_openid=gid, file_type=3, url=silk_url)
+        if isinstance(media, dict):
+            file_info = media.get("file_info")
+        else:
+            file_info = getattr(media, "file_info", None)
+        if not file_info:
+            raise RuntimeError("post_group_file 未返回 file_info")
+        await bot.api.post_group_message(group_openid=gid, msg_type=7, media={"file_info": file_info})
+
+    # ---- 后台任务 ----
+    async def _song_search_async(self, group_id: str, keyword: str) -> None:
+        try:
+            data = await asyncio.to_thread(self._song_api_search, keyword)
+            songs = (data.get("data") or {}).get("songs") or []
+            if not songs:
+                await self._song_send(group_id, f"❌ 没找到「{keyword}」相关歌曲，换个关键词试试。")
+                return
+            self._song_sessions[str(group_id)] = {
+                "keyword": keyword, "songs": songs, "page": 1, "ts": time.time(),
+            }
+            await self._song_send(group_id, self._song_render(group_id))
+        except Exception as e:
+            logger.warning(f"[petpark] 点歌搜索失败：{e}")
+            await self._song_send(group_id, "❌ 搜索失败，请稍后再试。")
+
+    async def _song_select_async(self, group_id: str, seq: int) -> None:
+        s = self._song_session(group_id)
+        if not s:
+            await self._song_send(group_id, "❌ 请先发送「点歌 歌名」搜索后再选歌。")
+            return
+        songs = s["songs"]
+        if seq < 1 or seq > len(songs):
+            await self._song_send(group_id, f"❌ 序号超出范围（1–{len(songs)}）。")
+            return
+        song = songs[seq - 1]
+        name = str(song.get("name", ""))
+        artists = " / ".join(str(a.get("name", "")) for a in song.get("artists", []) if a.get("name"))
+        by = f" - {artists}" if artists else ""
+        try:
+            play_url = await asyncio.to_thread(self._song_play_url, song.get("id"))
+            if not play_url:
+                await self._song_send(group_id, f"❌《{name}》暂无试听资源（可能是 VIP 曲目），换一首吧。")
+                return
+            silk_url = await self._song_make_silk(play_url)
+            if not silk_url:
+                await self._song_send(group_id, "❌ 语音生成失败，请稍后再试。")
+                return
+            await self._song_send_voice(group_id, silk_url)
+            await self._song_send(group_id, f"🎵《{name}{by}》已用官方语音发出，请听～")
+        except Exception as e:
+            logger.warning(f"[petpark] 点歌选歌/发语音失败：{e}")
+            await self._song_send(group_id, f"❌ 发送语音失败：{e}")
+
+    async def _song_make_silk(self, play_url: str) -> str | None:
+        """下载 mp3 → 转码 silk v3 → 放入临时目录，返回 QQ 可拉取的公网 URL。
+
+        仅清理 mp3 / pcm / wav；silk 文件保留给 webadmin 对外供 QQ 拉取（由 TTL 清理）。
+        """
+        name = uuid.uuid4().hex
+        mp3 = self.song_silk_dir / f"{name}.mp3"
+        pcm = self.song_silk_dir / f"{name}.pcm"
+        wav = self.song_silk_dir / f"{name}.wav"
+        silk = self.song_silk_dir / f"{name}.silk"
+        try:
+            # 1) 下载 mp3
+            req = urllib.request.Request(play_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp, open(mp3, "wb") as fh:
+                shutil.copyfileobj(resp, fh)
+            if mp3.stat().st_size == 0:
+                raise RuntimeError("mp3 下载为空")
+            # 2) mp3 → pcm(16bit/24k/mono)
+            ff = "ffmpeg"
+            r = subprocess.run([ff, "-y", "-i", str(mp3), "-ar", "24000", "-ac", "1",
+                                "-f", "s16le", str(pcm)],
+                               timeout=120, check=False, capture_output=True)
+            if r.returncode != 0 or not pcm.exists() or pcm.stat().st_size == 0:
+                raise RuntimeError("ffmpeg 转 mp3→pcm 失败")
+            # 3) pcm → silk（失败时回退用 wav 输入）
+            enc = self.silk_encoder_path
+            if not enc:
+                raise RuntimeError("未配置 silk 编码器路径")
+            r = subprocess.run([enc, str(pcm), str(silk), "24000"],
+                               timeout=120, check=False, capture_output=True)
+            if r.returncode != 0 or not silk.exists() or silk.stat().st_size == 0:
+                r = subprocess.run([ff, "-y", "-i", str(mp3), "-ar", "24000", "-ac", "1", str(wav)],
+                                   timeout=120, check=False, capture_output=True)
+                if r.returncode == 0 and wav.exists() and wav.stat().st_size > 0:
+                    r = subprocess.run([enc, str(wav), str(silk), "24000"],
+                                       timeout=120, check=False, capture_output=True)
+                if r.returncode != 0 or not silk.exists() or silk.stat().st_size == 0:
+                    raise RuntimeError("silk_v3_encoder 编码失败")
+            if not self.silk_url_base:
+                raise RuntimeError("未配置 silk_url_base")
+            return f"{self.silk_url_base}/api/song_silk/{name}.silk"
+        except Exception as e:
+            logger.warning(f"[petpark] 点歌制作 silk 失败：{e}")
+            return None
+        finally:
+            for f in (mp3, pcm, wav):
+                try:
+                    if f.exists():
+                        f.unlink()
+                except Exception:
+                    pass
 
     # --------------------------- Boss 全服广播 -----------------------------
     def _broadcast_to_authorized_groups(self, text: str):
@@ -6439,6 +6747,10 @@ class PetParkPlugin(Star):
                 "- 摸金组队 用户ID · 摸金准备 · 摸金队伍 · 摸金取消组队（双排）",
                 "- 摸金救援 · 摸金捡取 · 摸金传送（双排互动）",
                 "",
+                "**【棋类对弈】** 五子棋 · 中国象棋",
+                "- 五子棋单人 1~4 · 象棋单人 1~4",
+                "- 五子棋双人 @对方 · 象棋双人 @对方 · 接受棋局",
+                "- 棋类帮助 · 棋局 · 棋局统计（每步10分钟，超时判放弃）",
                 "**【宠物扫雷】**（全服积分排行）",
                 "- 扫雷介绍 · 开始扫雷 难度(1~4)",
                 "- 扫 坐标（支持多扫，如：扫a1b2）· 插旗 坐标",
@@ -13245,141 +13557,9 @@ class PetParkPlugin(Star):
         return None, None
 
     def _ms_draw_board(self, session: dict, reveal: bool = False, boom: tuple[int, int] | None = None) -> str:
-        """绘制扫雷棋盘，返回图片文件名。
-
-        参考样式：顶部显示剩余雷数与难度；每个未翻开格子显示坐标；
-        右侧与底部绘制行列标尺（数字 / 字母）。
-        """
-        cfg = data.MS_DIFFICULTIES[session["difficulty"]]
-        w, h = session["w"], session["h"]
-        cell = data.MS_CELL_SIZE
-        pad = data.MS_PADDING
-        label_m = 28  # 右侧/底部标尺宽度
-        header_h = 56
-        font, small_font = self._ms_load_fonts(20, 12)
-
-        remain = max(0, session["deadline"] - int(time.time()))
-        flags_left = session["mines_total"] - len(session["flags"])
-
-        img_w = w * cell + pad * 2 + label_m
-        img_h = h * cell + pad * 2 + header_h + label_m
-        img = Image.new("RGB", (img_w, img_h), data.MS_COLORS["bg"])
-        draw = ImageDraw.Draw(img)
-
-        # ---- 顶部标题栏 ----
-        # 左侧：炸弹图标 + 剩余雷数
-        bomb_cx, bomb_cy = pad + 16, header_h // 2
-        r = 10
-        draw.ellipse(
-            [bomb_cx - r, bomb_cy - r, bomb_cx + r, bomb_cy + r],
-            fill=(40, 40, 40),
-            outline=(20, 20, 20),
-            width=2,
-        )
-        # 引信
-        draw.arc(
-            [bomb_cx - 4, bomb_cy - r - 7, bomb_cx + 6, bomb_cy - r + 2],
-            start=200,
-            end=340,
-            fill=(180, 60, 60),
-            width=2,
-        )
-        # 火花
-        draw.polygon(
-            [(bomb_cx + 5, bomb_cy - r - 5), (bomb_cx + 9, bomb_cy - r - 10), (bomb_cx + 7, bomb_cy - r - 4)],
-            fill=(255, 140, 0),
-        )
-
-        count_x = bomb_cx + r + 10
-        count_text = str(max(0, flags_left))
-        if font:
-            draw.text(
-                (count_x, bomb_cy - 12),
-                count_text,
-                fill=data.MS_COLORS["text"],
-                font=font,
-            )
-
-        # 右侧：难度
-        diff_text = f"难度：{cfg['name']}"
-        if font:
-            tw = draw.textlength(diff_text, font=font)
-            draw.text(
-                (img_w - pad - label_m - tw, bomb_cy - 12),
-                diff_text,
-                fill=data.MS_COLORS["text"],
-                font=font,
-            )
-
-        # ---- 棋盘原点 ----
-        ox = pad
-        oy = pad + header_h
-
-        # ---- 绘制格子 ----
-        for y in range(h):
-            for x in range(w):
-                cx = ox + x * cell
-                cy = oy + y * cell
-                pos = (x, y)
-                is_open = pos in session["opened"]
-                is_mine = session["mines"] is not None and pos in session["mines"]
-                show_mine = reveal and is_mine
-
-                if is_open or show_mine:
-                    base = data.MS_COLORS["open"] if (x + y) % 2 else data.MS_COLORS["open_alt"]
-                    if boom and pos == boom:
-                        base = data.MS_COLORS["boom"]
-                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=base)
-                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], outline=data.MS_COLORS["grid"], width=1)
-                    if show_mine:
-                        self._ms_draw_mine(draw, cx, cy, cell)
-                    elif is_open:
-                        num = session["numbers"].get(pos, 0)
-                        if num > 0 and font:
-                            color = data.MS_NUMBER_COLORS.get(num, data.MS_COLORS["text"])
-                            tw = draw.textlength(str(num), font=font)
-                            draw.text(
-                                (cx + (cell - tw) / 2, cy + cell / 2 - 11),
-                                str(num),
-                                fill=color,
-                                font=font,
-                            )
-                else:
-                    base = data.MS_COLORS["closed"] if (x + y) % 2 else data.MS_COLORS["closed_alt"]
-                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=base)
-                    draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], outline=(80, 105, 80), width=1)
-                    if pos in session["flags"]:
-                        self._ms_draw_flag(draw, cx, cy, cell)
-                    elif small_font:
-                        label = self._ms_coord_name(x, y)
-                        tw = draw.textlength(label, font=small_font)
-                        draw.text(
-                            (cx + (cell - tw) / 2, cy + cell / 2 - 7),
-                            label,
-                            fill=data.MS_COLORS["coord"],
-                            font=small_font,
-                        )
-
-        # ---- 右侧行号标尺 ----
-        ruler_font = small_font or font
-        if ruler_font:
-            for y in range(h):
-                cy = oy + y * cell + cell // 2 - 7
-                label = str(y + 1)
-                tw = draw.textlength(label, font=ruler_font)
-                rx = ox + w * cell + (label_m - int(tw)) // 2
-                draw.text((rx, cy), label, fill=data.MS_COLORS["text"], font=ruler_font)
-
-        # ---- 底部列字母标尺 ----
-        if ruler_font:
-            for x in range(w):
-                cx = ox + x * cell + cell // 2
-                label = self._ms_col_name(x)
-                tw = draw.textlength(label, font=ruler_font)
-                bx = cx - int(tw) // 2
-                by = oy + h * cell + (label_m - 14) // 2
-                draw.text((bx, by), label, fill=data.MS_COLORS["text"], font=ruler_font)
-
+        """使用 GPT 生成底座与精确格子渲染扫雷棋盘。"""
+        from .petpark.minesweeper_view import render
+        img = render(session, data.MS_DIFFICULTIES[session["difficulty"]], reveal, boom)
         filename = f"ms_{uuid.uuid4().hex}.png"
         img.save(self.store.custom_images_dir / filename, "PNG")
         return filename
@@ -13409,8 +13589,11 @@ class PetParkPlugin(Star):
         return chr(ord("a") + x)
 
     def _ms_board_md(self, session: dict, reveal: bool = False, boom: tuple[int, int] | None = None) -> str:
-        url = self._tomb_image_url(self._ms_draw_board(session, reveal=reveal, boom=boom))
-        return f"![扫雷棋盘 #{images._IMG_DISPLAY} #{images._IMG_DISPLAY}]({url})"
+        filename = self._ms_draw_board(session, reveal=reveal, boom=boom)
+        with Image.open(self.store.custom_images_dir / filename) as board:
+            width, height = board.size
+        url = self._tomb_image_url(filename)
+        return f"![扫雷棋盘 #{width}px #{height}px]({url})"
 
     def _ms_status_line(self, session: dict) -> str:
         cfg = data.MS_DIFFICULTIES[session["difficulty"]]
