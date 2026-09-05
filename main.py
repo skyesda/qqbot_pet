@@ -1407,6 +1407,7 @@ class PetParkPlugin(Star):
         4. 货币税 20%，道具税 10%
         5. 7天内向同一人转让 ≥ TRANSFER_WEEKLY_SAME_LIMIT 次 → 双倍税
         6. 大管理员（admins 白名单）豁免以上所有限制与税费
+        7. 无限服：以上所有限制与税费全部去除（不收税、不限次数、不限单次数量）
         """
         # 大管理员豁免：不限次数、不交税、不计次数（普通玩家不受影响）
         sender_id = str(sender.get("qq", ""))
@@ -1419,6 +1420,9 @@ class PetParkPlugin(Star):
         qq2 = str(target.get("qq", ""))
         if qq1 == qq2:
             return "不能转让/赠送给自己。", 0.0
+        # 无限服：转让限制与税费全部去除（不走每日次数、单次数量、税率逻辑）
+        if self._group_is_infinite(group_id):
+            return None, 0.0
 
         # ---- 每日总次数检查 ----
         today = time.strftime("%Y-%m-%d")
@@ -3616,6 +3620,8 @@ class PetParkPlugin(Star):
             return None
         if not cel.get("enabled"):
             return "🎂 **生辰盛典** 尚未开启，敬请期待！"
+        if self._group_is_infinite(group_id):
+            return "⚠️ 本群为无限服，不参与官方服全局生辰盛典。"
         now = int(time.time())
         start = int(cel.get("start_at") or 0)
         end = int(cel.get("end_at") or 0)
@@ -4663,7 +4669,13 @@ class PetParkPlugin(Star):
         """显示单个活动 Boss 的当前伤害排行。"""
         state = cfg.get("_boss_state", {})
         rank = sorted(
-            state.get("damage_rank", {}).items(), key=lambda x: x[1], reverse=True
+            (
+                item
+                for item in state.get("damage_rank", {}).items()
+                if not self._group_is_infinite(str(item[0]).split("\x1f")[0])
+            ),
+            key=lambda x: x[1],
+            reverse=True,
         )
         bname = cfg.get("boss", {}).get("name", "活动Boss")
         lines = [f"## 👹 {cfg.get('name','活动')}·{bname} 伤害排行", ""]
@@ -5119,6 +5131,8 @@ class PetParkPlugin(Star):
         g = self.store.get_group(group_id)
         if not g.get("enabled", True):
             return "本群未开启宠物乐园，暂时无法参与口令抽奖。"
+        if self._group_is_infinite(group_id):
+            return "⚠️ 本群为无限服，不参与官方服全局口令抽奖。"
         if self._is_group(group_id) and not self._is_group_authorized(group_id):
             return self._auth_blocked_text()
         qq = str(qq)
@@ -5512,7 +5526,10 @@ class PetParkPlugin(Star):
             f"🌀 **深渊结晶**　{self.store.get_abyss_crystal(player)}",
         ]
         streak = player.get("active_streak", 0)
-        tax_status = "🟢 转让免税" if streak >= 7 else f"🏷️ 活跃 {streak}/7 天"
+        if self._group_is_infinite(group_id):
+            tax_status = "🟢 转让免税 · 无限服（无限制）"
+        else:
+            tax_status = "🟢 转让免税" if streak >= 7 else f"🏷️ 活跃 {streak}/7 天"
         lines.append(f"📅 **活跃**　{tax_status}")
         active = self.store.active_events()
         if active:
@@ -6088,6 +6105,15 @@ class PetParkPlugin(Star):
                 out.add(self.store.resolve_group(str(gid)))
         return out
 
+    def _infinite_member_qqs(self) -> set[str]:
+        """所有「在无限服群有玩家档案」的 openid 集合，用于从按-qq共享的排行中剔除。"""
+        inf = self._infinite_group_ids()
+        out: set[str] = set()
+        for pl in self.store.all_players().values():
+            if self.store.resolve_group(str(pl.get("group", ""))) in inf:
+                out.add(str(pl.get("qq", "")))
+        return out
+
     def _is_group_authorized(self, group_id: str) -> bool:
         if not self._is_group(group_id):
             return True  # 私聊不受群授权限制
@@ -6154,7 +6180,7 @@ class PetParkPlugin(Star):
         if days is None:
             return f"❌ 授权失败：{err}"
         group = self.store.get_group(group_id)
-        group["server_type"] = server_type
+        self._apply_server_type(group_id, server_type)
         until = self._extend_group_auth(group_id, days)
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
         # 非大管理员激活本群者，自动升级为本群小管理员（随本群授权失效而失效）
@@ -6192,7 +6218,7 @@ class PetParkPlugin(Star):
         server_type = self._parse_server_type(self._arg(tokens, 2))
         group = self.store.get_group(group_id)
         if server_type:
-            group["server_type"] = server_type
+            self._apply_server_type(group_id, server_type)
         until = self._extend_group_auth(group_id, days)
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
         verb = "延长" if days > 0 else "缩短"
@@ -6203,6 +6229,18 @@ class PetParkPlugin(Star):
             f"剩余：**{self._fmt_remain(until)}**\n当前服：**{st_label}**"
         )
 
+    def _apply_server_type(self, group_id: str, st: str) -> None:
+        """切换群服类型，并做家园数据迁移（官方↔无限）。"""
+        group = self.store.get_group(group_id)
+        old = str(group.get("server_type", "official"))
+        if old == st:
+            return
+        group["server_type"] = st
+        if st == "infinite":
+            self.store._migrate_homestead_to_group(group_id)
+        else:
+            self.store._migrate_homestead_from_group(group_id)
+
     def _set_server_type(self, event, group_id: str, cmd: str) -> str:
         """设为无限服 / 设为官方服（仅大管理员）。"""
         if not self._is_admin(event):
@@ -6210,8 +6248,7 @@ class PetParkPlugin(Star):
         if not self._is_group(group_id):
             return "请在群聊内使用本指令。"
         st = "infinite" if cmd.startswith("设为无限服") else "official"
-        group = self.store.get_group(group_id)
-        group["server_type"] = st
+        self._apply_server_type(group_id, st)
         if st == "infinite":
             return (
                 "## 🌐 已设为无限服\n"
@@ -8615,7 +8652,9 @@ class PetParkPlugin(Star):
         receive_count = count - tax_count
         self.store.remove_item(player, name, count)
         self.store.add_item(tp, name, receive_count)
-        if tax_rate == 0:
+        if self._group_is_infinite(group_id):
+            tax_info = "（无限服：免一切税费与限制）"
+        elif tax_rate == 0:
             if count <= 3:
                 tax_info = "（🆓 少量免税）"
             else:
@@ -8633,6 +8672,8 @@ class PetParkPlugin(Star):
         currency = cmd.replace("赠送", "")
         tx_type = {"金币": "coin", "积分": "jifen", "钻石": "diamond"}.get(currency, "coin")
         if len(tokens) < 3:
+            if self._group_is_infinite(group_id):
+                return f"用法：{cmd} 用户ID 数量"
             return f"用法：{cmd} 用户ID 数量（单次上限 {data.TRANSFER_PER_TX_MAX}）"
         target = self._arg(tokens, 1)
         if not target:
@@ -8658,7 +8699,9 @@ class PetParkPlugin(Star):
         self.store.add_currency(player, currency, -count)
         if receive_amount > 0:
             self.store.add_currency(tp, currency, receive_amount)
-        if tax_rate == 0:
+        if self._group_is_infinite(group_id):
+            tax_info = "（无限服：免一切税费与限制）"
+        elif tax_rate == 0:
             tax_info = "（🟢 活跃免税）"
         elif tax_rate > data.TRANSFER_TAX_COIN:
             tax_info = f"（税 {tax_amount}，{tax_rate:.0%} ⚠️ 高频同用户）"
@@ -12399,11 +12442,14 @@ class PetParkPlugin(Star):
         return (self.store.get_bound_qq(qq) or qq or "未知").replace("|", "丨")
 
     def _tomb_rank(self, player: dict, group_id: str) -> str:
-        """摸金财富全服排行（按永久冥币）。"""
+        """摸金财富全服排行（按永久冥币）。无限服群不参与。"""
+        if self._group_is_infinite(group_id):
+            return "⚠️ 本群为无限服，不参与全服摸金排行。"
+        skip = self._infinite_member_qqs()
         entries = []
         for qq, st in self.store._data.get("tomb_players", {}).items():
             mingbi = st.get("mingbi", 0)
-            if mingbi > 0:
+            if mingbi > 0 and str(qq) not in skip:
                 entries.append((str(qq), self._tomb_display_qq(qq), mingbi))
         entries.sort(key=lambda x: x[2], reverse=True)
         if not entries:
@@ -12427,13 +12473,16 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _tomb_daily_rank(self, player: dict) -> str:
-        """今日摸金神榜（按今日获得冥币）。"""
+        """今日摸金神榜（按今日获得冥币）。无限服群不参与。"""
+        if self._group_is_infinite(str(player.get("group", ""))):
+            return "⚠️ 本群为无限服，不参与全服摸金神榜。"
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
+        skip = self._infinite_member_qqs()
         entries = []
         for qq, st in self.store._data.get("tomb_players", {}).items():
             gain = st.get("daily_gains", {}).get(today, 0)
-            if gain > 0:
+            if gain > 0 and str(qq) not in skip:
                 entries.append((str(qq), self._tomb_display_qq(qq), gain))
         entries.sort(key=lambda x: x[2], reverse=True)
         if not entries:
@@ -12467,10 +12516,11 @@ class PetParkPlugin(Star):
         """昨日摸金神榜（按昨日获得冥币）。"""
         from datetime import datetime, timedelta
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        skip = self._infinite_member_qqs()
         entries = []
         for qq, st in self.store._data.get("tomb_players", {}).items():
             gain = st.get("daily_gains", {}).get(yesterday, 0)
-            if gain > 0:
+            if gain > 0 and str(qq) not in skip:
                 entries.append((str(qq), self._tomb_display_qq(qq), gain))
         entries.sort(key=lambda x: x[2], reverse=True)
         if not entries:
@@ -12502,6 +12552,8 @@ class PetParkPlugin(Star):
 
     def _tomb_claim_daily_reward(self, player: dict, group_id: str) -> str:
         """领取昨日今日摸金神榜前三奖励（宠物主经验，发给当前群宠物）。"""
+        if self._group_is_infinite(group_id):
+            return "⚠️ 本群为无限服，不参与全服摸金神榜奖励。"
         p = player.get("pet")
         if not p:
             return "你还没有宠物，无法领取经验奖励。"
@@ -13520,11 +13572,14 @@ class PetParkPlugin(Star):
         return f"🏳 已放弃本局扫雷。{exp_text.lstrip()}" if exp_text else "🏳 已放弃本局扫雷。"
 
     def _ms_rank(self, player: dict) -> str:
-        """扫雷全服排行（按累计积分），使用 Markdown 表格展示。"""
+        """扫雷全服排行（按累计积分），使用 Markdown 表格展示。无限服群不参与。"""
+        if self._group_is_infinite(str(player.get("group", ""))):
+            return "⚠️ 本群为无限服，不参与全服扫雷排行。"
+        skip = self._infinite_member_qqs()
         entries = []
         for qq, st in self.store.all_ms_players().items():
             score = st.get("score", 0)
-            if score > 0:
+            if score > 0 and str(qq) not in skip:
                 entries.append((qq, score, st.get("wins", 0), st.get("plays", 0)))
         entries.sort(key=lambda x: x[1], reverse=True)
         if not entries:
@@ -14486,59 +14541,82 @@ class PetParkPlugin(Star):
                             names.append(n)
         return names
 
+    def _homestead_entries(self, group_id: str) -> list[tuple[str, str, dict]]:
+        """按当前群服取家园候选：(键, openid, 家园状态)。
+
+        无限服=本群局部（只取本群隔离键）；官方服=共享层（排除所有隔离键）。
+        """
+        hps = self.store._data.get("homestead_players", {})
+        if self._group_is_infinite(group_id):
+            gid = self.store.resolve_group(str(group_id))
+            prefix = f"hom\x1f{gid}\x1f"
+            return [(k, str(k)[len(prefix):], v) for k, v in hps.items() if str(k).startswith(prefix)]
+        return [(k, str(k), v) for k, v in hps.items() if not self.store._is_isolated_state_key("hom", k)]
+
     def _homestead_rank(self, player: dict) -> str:
-        """家园排行 —— 本周金币产出排行。"""
-        all_players = self.store._data.get("homestead_players", {})
+        """家园排行 —— 本周金币产出排行（无限服=本群，官方=共享层）。"""
+        group_id = str(player.get("group", ""))
+        is_inf = self._group_is_infinite(group_id)
+        if is_inf:
+            gid = self.store.resolve_group(group_id)
+            my_key = f"hom\x1f{gid}\x1f{str(player.get('qq', ''))}"
+        else:
+            my_key = self.store._state_key("hom", group_id, str(player.get("qq", "")))
         entries = []
-        for qq, hs in all_players.items():
+        for key, qq, hs in self._homestead_entries(group_id):
             self._homestead_update_weekly(hs)
             weekly = hs.get("weekly_coin", 0)
-            level = hs.get("level", 1)
             if weekly > 0:
-                entries.append({"qq": qq, "weekly": weekly, "level": level, "total": hs.get("total_coin_earned", 0), "hs": hs})
+                entries.append({"qq": qq, "weekly": weekly, "level": hs.get("level", 1), "hs": hs, "key": key})
         entries.sort(key=lambda x: x["weekly"], reverse=True)
         top = entries[:data.HOMESTEAD_RANK_SIZE]
-        group_id = str(player.get("group", ""))
-        lines = ["## 🏆 家园排行（本周金币产出）", ""]
-        my_qq = str(player.get("qq", ""))
+        lines = ["## 🏆 家园排行（本周金币产出）" + (" · 本群（无限服）" if is_inf else ""), ""]
         for i, e in enumerate(top):
             medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
             pnames = self._homestead_dispatch_pet_names(e["hs"], group_id)
             suffix = f"（{'、'.join(pnames)}）" if pnames else ""
             lines.append(f"{medal} {self._display_uid(e['qq'])}{suffix} — 💰 {e['weekly']} 金（Lv{e['level']}）")
+        if not top and is_inf:
+            lines.append("> 本群（无限服）暂无玩家产出。")
         # 我的排名
         my_weekly = self.store.homestead_state(player).get("weekly_coin", 0)
-        my_rank = next((i + 1 for i, e in enumerate(entries) if e["qq"] == my_qq), None)
+        my_rank = next((i + 1 for i, e in enumerate(entries) if e["key"] == my_key), None)
         lines.append("")
         if my_rank:
             lines.append(f"📊 你的排名：第 {my_rank} 名（💰 {my_weekly} 金）")
         else:
             lines.append(f"📊 你本周暂无产出。快去建造家园！")
         # 奖励预告
-        lines.append(f"🏅 周榜前 3 奖励：🥇{data.HOMESTEAD_RANK_REWARD_COIN[1]} 🥈{data.HOMESTEAD_RANK_REWARD_COIN[2]} 🥉{data.HOMESTEAD_RANK_REWARD_COIN[3]} 金币")
+        if not is_inf:
+            lines.append(f"🏅 周榜前 3 奖励：🥇{data.HOMESTEAD_RANK_REWARD_COIN[1]} 🥈{data.HOMESTEAD_RANK_REWARD_COIN[2]} 🥉{data.HOMESTEAD_RANK_REWARD_COIN[3]} 金币")
         return "\n".join(lines)
 
     def _homestead_total_rank(self, player: dict) -> str:
-        """家园总排行 —— 累计金币产出排行。"""
-        all_players = self.store._data.get("homestead_players", {})
+        """家园总排行 —— 累计金币产出排行（无限服=本群，官方=共享层）。"""
+        group_id = str(player.get("group", ""))
+        is_inf = self._group_is_infinite(group_id)
+        if is_inf:
+            gid = self.store.resolve_group(group_id)
+            my_key = f"hom\x1f{gid}\x1f{str(player.get('qq', ''))}"
+        else:
+            my_key = self.store._state_key("hom", group_id, str(player.get("qq", "")))
         entries = []
-        for qq, hs in all_players.items():
+        for key, qq, hs in self._homestead_entries(group_id):
             total = hs.get("total_coin_earned", 0)
-            level = hs.get("level", 1)
             if total > 0:
-                entries.append({"qq": qq, "total": total, "level": level, "hs": hs})
+                entries.append({"qq": qq, "total": total, "level": hs.get("level", 1), "hs": hs, "key": key})
         entries.sort(key=lambda x: x["total"], reverse=True)
         top = entries[:data.HOMESTEAD_RANK_SIZE]
-        group_id = str(player.get("group", ""))
-        lines = ["## 🏆 家园总排行（累计金币产出）", ""]
+        lines = ["## 🏆 家园总排行（累计金币产出）" + (" · 本群（无限服）" if is_inf else ""), ""]
         for i, e in enumerate(top):
             medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
             pnames = self._homestead_dispatch_pet_names(e["hs"], group_id)
             suffix = f"（{'、'.join(pnames)}）" if pnames else ""
             lines.append(f"{medal} {self._display_uid(e['qq'])}{suffix} — 💰 {e['total']} 金（Lv{e['level']}）")
-        my_qq = str(player.get("qq", ""))
+        if not top and is_inf:
+            lines.append("> 本群（无限服）暂无玩家累计产出。")
         my_total = self.store.homestead_state(player).get("total_coin_earned", 0)
-        my_rank = next((i + 1 for i, e in enumerate(entries) if e["qq"] == my_qq), None)
+        my_rank = next((i + 1 for i, e in enumerate(entries) if e["key"] == my_key), None)
         lines.append("")
         if my_rank:
             lines.append(f"📊 你的排名：第 {my_rank} 名（💰 {my_total} 金）")

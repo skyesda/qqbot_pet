@@ -275,6 +275,62 @@ class PetStore:
             # 找不到归属群的孤立数据：跳过
         self._data["bank_players"] = migrated
 
+    # ------------------------------------------------------------------
+    # 服类型：官方共享 / 无限隔离 双键
+    #   官方服：子系统的「共享键」= 纯 openid（沿用旧逻辑，跨群共享）。
+    #   无限服：子系统的「隔离键」= f"{game}\x1f{group}\x1f{openid}"，按群独立。
+    # ------------------------------------------------------------------
+    def _is_infinite_group(self, group_id) -> bool:
+        """该群是否为无限服（私聊/空群返回 False）。"""
+        if not group_id or str(group_id) == "private":
+            return False
+        g = self.get_group(self.resolve_group(str(group_id)))
+        return str(g.get("server_type", "official")) == "infinite"
+
+    def _state_key(self, game: str, group_id, qq: str) -> str:
+        """按服类型挑共享键（官方）或隔离键（无限）。game 如 'hom'/'tomb'/'ms'。"""
+        if self._is_infinite_group(group_id):
+            gid = self.resolve_group(str(group_id))
+            return f"{game}\x1f{gid}\x1f{qq}"
+        return str(qq)
+
+    @staticmethod
+    def _is_isolated_state_key(game: str, key: str) -> bool:
+        """该键是否为某子系统的无限隔离键（以 game\x1f 开头）。"""
+        return str(key).startswith(f"{game}\x1f")
+
+    def _migrate_homestead_to_group(self, group_id) -> None:
+        """切为无限服：把该群玩家位于共享键的家园复制到隔离键作为基线。"""
+        gid = self.resolve_group(str(group_id))
+        hps = self._data["homestead_players"]
+        for pl in list(self._data["players"].values()):
+            if self.resolve_group(str(pl.get("group", ""))) != gid:
+                continue
+            qq = str(pl.get("qq", ""))
+            if not qq:
+                continue
+            iso = f"hom\x1f{gid}\x1f{qq}"
+            if iso not in hps and qq in hps:
+                hps[iso] = hps[qq]
+
+    def _migrate_homestead_from_group(self, group_id) -> None:
+        """切回官方服：把该群隔离键的家园合并回共享键，并删除隔离键。"""
+        gid = self.resolve_group(str(group_id))
+        hps = self._data["homestead_players"]
+        prefix = f"hom\x1f{gid}\x1f"
+        for k in list(hps.keys()):
+            if not str(k).startswith(prefix):
+                continue
+            qq = str(k)[len(prefix):]
+            if qq in hps:
+                sh, iso = hps[qq], hps[k]
+                for f in ("level", "exp", "weekly_coin", "total_coin_earned"):
+                    if isinstance(iso.get(f), (int, float)) and isinstance(sh.get(f), (int, float)):
+                        sh[f] = max(sh[f], iso[f])
+            else:
+                hps[qq] = hps[k]
+            del hps[k]
+
     def _flush(self) -> None:
         # 序列化前剥离运行时 pet 引用（避免重复序列化）
         for pl in self._data["players"].values():
@@ -1923,11 +1979,16 @@ class PetStore:
 
     @classmethod
     def homestead_state(cls, player: dict) -> dict:
-        """返回玩家家园状态（全局按 QQ 共享，与宠物数据隔离）。"""
+        """返回玩家家园状态。
+
+        官方服=共享键(纯QQ，跨群共享)；无限服=隔离键(f"hom\\x1f{group}\\x1f{qq}")，
+        按群独立，不与官方/其它无限服群共享。
+        """
         store = cls._active
         qq = str(player.get("qq", ""))
         if store is not None and qq:
-            g = store._data["homestead_players"].setdefault(qq, cls._default_homestead_state())
+            key = store._state_key("hom", str(player.get("group", "")), qq)
+            g = store._data["homestead_players"].setdefault(key, cls._default_homestead_state())
             # 兼容旧字段
             for field, default in cls._default_homestead_state().items():
                 if field not in g:
