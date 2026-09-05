@@ -7319,7 +7319,7 @@ class PetParkPlugin(Star):
         lines = [
             "## 🐾 宠物市场 / 宠物专域",
             "> 现已改卖 **品质卡** 与 **变种卡**（不再按物种直售宠物）。",
-            "> 购买方式：`购买市场 物品名`（例如：`购买市场 史诗卡`）",
+            "> 购买方式：`购买市场 物品名 [数量]`（例如：`购买市场 史诗卡 10`，默认买 1）",
             "",
             "**【品质卡】**",
             "> 可 `使用 XXX卡 召唤` 随机召唤同品质宠物，或 `使用 XXX卡 宠物名` 给指定宠物提升品质。",
@@ -7436,32 +7436,38 @@ class PetParkPlugin(Star):
         return None
 
     def _buy_market_item(self, player: dict, tokens: list[str]) -> str:
-        """宠物市场购买品质卡/变种卡。品质卡可召唤宠物或升品质，变种卡用于换物种。"""
+        """宠物市场购买品质卡/变种卡。品质卡可召唤宠物或升品质，变种卡用于换物种。
+
+        支持批量：`购买市场 物品名 数量`（默认 1）。
+        """
         if len(tokens) < 2:
-            return "用法：购买市场 物品名（例如：购买市场 史诗卡 / 购买市场 变种卡）"
+            return "用法：购买市场 物品名 [数量]（例如：购买市场 史诗卡 10 / 购买市场 变种卡）"
         name = tokens[1]
+        count = self._parse_count(tokens, 2)
         jifen = self.store.get_currency(player, "积分")
         # 品质卡
         if name in data.PET_MARKET_CARDS:
             price = data.PET_MARKET_CARDS[name]
-            if jifen < price:
-                return f"购买『{name}』需 {price} 积分，积分不足（当前 {jifen}）。"
-            self.store.add_currency(player, "积分", -price)
-            self.store.add_item(player, name, 1)
+            cost = price * count
+            if jifen < cost:
+                return f"购买 {count} 张『{name}』需 {cost} 积分，积分不足（当前 {jifen}）。"
+            self.store.add_currency(player, "积分", -cost)
+            self.store.add_item(player, name, count)
             return (
-                f"✅ **购买成功！** 花费 {price} 积分，获得 **{name}** ×1。\n"
+                f"✅ **购买成功！** 花费 {cost} 积分，获得 **{name}** ×{count}。\n"
                 f"> 发送 `使用 {name} 召唤` 召唤同品质宠物，或 `使用 {name} 宠物名` 提升品质。"
             )
         # 变种卡
         sc = data.SPECIES_CHANGE_CARD
         if name == sc["name"]:
             price = sc["price"]
-            if jifen < price:
-                return f"购买『{name}』需 {price} 积分，积分不足（当前 {jifen}）。"
-            self.store.add_currency(player, "积分", -price)
-            self.store.add_item(player, name, 1)
+            cost = price * count
+            if jifen < cost:
+                return f"购买 {count} 张『{name}』需 {cost} 积分，积分不足（当前 {jifen}）。"
+            self.store.add_currency(player, "积分", -cost)
+            self.store.add_item(player, name, count)
             return (
-                f"✅ **购买成功！** 花费 {price} 积分，获得 **{name}** ×1。\n"
+                f"✅ **购买成功！** 花费 {cost} 积分，获得 **{name}** ×{count}。\n"
                 f"> 发送 `使用 {name} 宠物名` 随机改变该宠物种类（保留等级/品质/属性）。"
             )
         return (
