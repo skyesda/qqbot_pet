@@ -13,6 +13,7 @@ import base64
 import hashlib
 import random
 import re
+import shutil
 import subprocess
 import time
 import urllib.parse
@@ -508,6 +509,8 @@ class PetParkPlugin(Star):
             default_enabled=bool(self.config.get("default_enabled", True)),
             default_cross=bool(self.config.get("default_cross_group", True)),
         )
+        # 坐骑 GIF 资产同步到 custom_images_dir（经 /custom_images 静态路由动画展示）
+        self._sync_mount_gifs()
         # 管理员 QQ 列表（白名单），统一转成字符串便于比较
         self.admins = {str(a).strip() for a in self.config.get("admins", []) if str(a).strip()}
         # 对战精力消耗、排行名额、神榜奖励等可调参数
@@ -6777,6 +6780,84 @@ class PetParkPlugin(Star):
             pass
         return None
 
+    def _sync_mount_gifs(self) -> None:
+        """启动时把仓库内坐骑 GIF 复制到 custom_images_dir（经 /custom_images 动画展示）。"""
+        src_dir = Path(__file__).resolve().parent / "petpark" / "assets" / "mounts"
+        try:
+            for g in src_dir.glob("*.gif"):
+                dst = Path(self.store.custom_images_dir) / g.name
+                if not dst.exists():
+                    shutil.copyfile(g, dst)
+        except OSError:
+            logger.exception("[petpark] 同步坐骑 GIF 失败")
+
+    def _mount_gif_url(self, name: str) -> str:
+        """坐骑 GIF 的 /custom_images URL；无图返回 ""。"""
+        fname = f"{name}.gif"
+        dst = Path(self.store.custom_images_dir) / fname
+        if not dst.exists():
+            src = Path(__file__).resolve().parent / "petpark" / "assets" / "mounts" / fname
+            if src.exists():
+                try:
+                    shutil.copyfile(src, dst)
+                except OSError:
+                    return ""
+        if not dst.exists():
+            return ""
+        return self._tomb_image_url(fname)
+
+    def _mount_image_md(self, name: str, disp_w: int = 640) -> str:
+        """坐骑 GIF 的 Markdown 图片；无图返回 ""。"""
+        url = self._mount_gif_url(name)
+        if not url:
+            return ""
+        try:
+            target = Path(self.store.custom_images_dir) / f"{name}.gif"
+            w, h = self._image_dims(target, disp_w)
+        except Exception:
+            return f"![{name}]({url})"
+        return f"![{name} #{w} #{h}]({url})"
+
+    def _mount_info_text(self, name: str, player: dict, kind: str = "enter") -> str:
+        """坐骑文字信息卡（GIF 之外的属性行；kind 控制主题/奖励行）。"""
+        cfg = data.MOUNTS.get(name, {})
+        owned = name in (player.get("mounts") or {})
+        inst = player.get("mounts", {}).get(name, {}) if owned else {}
+        stars = int(cfg.get("stars", 1))
+        star_str = "★" * stars + "☆" * (5 - stars)
+        owner = self._display_uid(player.get("qq", "")) if owned else "—"
+        plate = inst.get("plate", "骑-?") if owned else "未拥有"
+        level = int(inst.get("level", 1))
+        power = int(inst.get("power", cfg.get("base_power", 0)))
+        value = self._short_num(cfg.get("value", 0))
+        rmin, rmax = cfg.get("reward_min", 0), cfg.get("reward_max", 0)
+        now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
+        theme = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
+        custom = bool(inst.get("custom"))
+        lines = [
+            f"┌★★—{theme}—★★┐",
+            f"**【{name}】** {star_str} · Lv.{level}",
+            f"坐骑战力：**{self._short_num(power)}**",
+            f"主人：{owner} · 号牌：{plate}",
+            f"价值：{value}",
+        ]
+        if kind in ("enter", "leave"):
+            lines.append(f"奖励：{self._short_num(rmin)}~{self._short_num(rmax)} 积分")
+        else:
+            lines.append(f"入场奖励：{self._short_num(rmin)}~{self._short_num(rmax)} 积分")
+        if custom:
+            lines.append("来源：专属定制")
+        lines.append(f"时间：{now_hhmm}")
+        return "\n".join(lines)
+
+    def _mount_full_message(self, name: str, player: dict, kind: str = "enter") -> str:
+        """完整坐骑消息：GIF（若有）+ 文字信息卡。"""
+        info = self._mount_info_text(name, player, kind)
+        img = self._mount_image_md(name)
+        if img:
+            return f"{img}\n\n{info}"
+        return info
+
     def _mount_card_html(self, name: str, player: dict, kind: str = "enter") -> str:
         """坐骑卡 HTML（入场/离场/我的坐骑三种，主题由 kind 决定）。"""
         esc = self._menu_esc
@@ -6881,9 +6962,7 @@ class PetParkPlugin(Star):
             self.store.add_currency(player, "积分", reward)
         await self.store.save()
         if player.get("mount_enter_notify", True):
-            md = self._render_mount_card(chosen, player, "enter")
-            if md:
-                await self._send_group_text(group_id, md)
+            await self._send_group_text(group_id, self._mount_full_message(chosen, player, "enter"))
 
     async def _mount_idle_tick(self) -> None:
         """后台扫描：在场但超过 30 分钟无消息的玩家自动离场。"""
@@ -6903,9 +6982,7 @@ class PetParkPlugin(Star):
             player["mount_enter_ts"] = 0
             changed = True
             if player.get("mount_leave_notify", True) and gid:
-                md = self._render_mount_card(name, player, "leave")
-                if md:
-                    await self._send_group_text(gid, md)
+                await self._send_group_text(gid, self._mount_full_message(name, player, "leave"))
         if changed:
             await self.store.save()
 
@@ -7575,9 +7652,9 @@ class PetParkPlugin(Star):
             mark = "★" * data.MOUNTS.get(n, {}).get("stars", 1)
             lines.append(f"· {n}（{mark} · 战力 {self._short_num(info.get('power', 0))}）{st}")
         lines.append("\n发送『骑乘坐骑 名称』切换骑乘，『坐骑升级』提升战力。")
-        md = self._render_mount_card(name, player, "my")
-        if md:
-            return ("\n".join(lines), md)
+        img = self._mount_image_md(name)
+        if img:
+            return ("\n".join(lines), img)
         return "\n".join(lines)
 
     def _mount_ride(self, player: dict, group_id: str, tokens: list[str]) -> str:
@@ -7595,10 +7672,11 @@ class PetParkPlugin(Star):
         player["mount_enter_ts"] = now
         player["last_msg_ts"] = now
         player["mount_group"] = group_id
-        md = self._render_mount_card(name, player, "my")
-        txt = f"已骑乘『{name}』（战力 {self._short_num(player['mounts'][name].get('power', 0))}），计入对战胜负。"
-        if md:
-            return (txt, md)
+        txt = (f"已骑乘『{name}』，战力计入对战胜负。\n\n"
+               f"{self._mount_info_text(name, player, 'my')}")
+        img = self._mount_image_md(name)
+        if img:
+            return (txt, img)
         return txt
 
     def _gift_mount(self, player: dict, group_id: str, tokens: list[str]) -> str:
@@ -7681,8 +7759,12 @@ class PetParkPlugin(Star):
             "obtained": time.time(),
             "custom": False,
         }
-        return (f"✅ **入手成功！** 花费 {self._short_num(cfg['price'])} 积分，获得坐骑 **{name}**。\n"
+        head = (f"✅ **入手成功！** 花费 {self._short_num(cfg['price'])} 积分，获得坐骑 **{name}**。\n"
                 f"> 在本群发送消息即自动骑乘登场；入场奖励见『坐骑图鉴』。")
+        img = self._mount_image_md(name)
+        if img:
+            return (head, img)
+        return head
 
     def _mount_codex(self, player: dict, tokens: list[str]) -> str:
         """坐骑图鉴：无参枚举全部；带参查详情（已拥有则渲染卡片）。"""
@@ -7705,10 +7787,9 @@ class PetParkPlugin(Star):
                 f"价值 {self._short_num(cfg['value'])} · 售价 {self._short_num(cfg['price'])} 积分\n"
                 f"入场奖励 {self._short_num(cfg['reward_min'])}~{self._short_num(cfg['reward_max'])} 积分"
                 f"（{'已拥有' if own else '未拥有'}）")
-        if own:
-            md = self._render_mount_card(name, player, "my")
-            if md:
-                return (head, md)
+        img = self._mount_image_md(name)
+        if img:
+            return (head, img)
         return head
 
     def _mount_custom(self, player: dict) -> str:
