@@ -8800,7 +8800,11 @@ class PetParkPlugin(Star):
             return self._battle_win(
                 attacker, defender, ap_player, dp_player, flawless=True, ap=ap, dp=dp
             )
-        if ap >= dp:
+        # 首轮胜负判定：攻击方【攻击值】vs 防御方【防御值】——破防者直接占优；
+        # 两者恰好相同（攻击==防御）时，才退回用有效战力(含属性克制)再比高低。
+        a_atk = int(attacker.get("atk", 0) or 0)
+        d_def = int(defender.get("def", 0) or 0)
+        if a_atk > d_def or (a_atk == d_def and ap >= dp):
             return self._battle_win(
                 attacker, defender, ap_player, dp_player, ap=ap, dp=dp
             )
