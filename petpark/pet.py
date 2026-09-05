@@ -354,7 +354,7 @@ def effective_power_vs(pet: dict, enemy: dict) -> int:
 # --------------------------------------------------------------------------
 # 文本渲染
 # --------------------------------------------------------------------------
-def render_pet(pet: dict) -> str:
+def render_pet(pet: dict, mount_power: int = 0) -> str:
     refresh_energy(pet)
     gender = {"男": "雄", "女": "雌"}.get(pet.get("gender"), pet.get("gender", "—"))
     love = pet.get("love_state", "单身")
@@ -371,10 +371,12 @@ def render_pet(pet: dict) -> str:
         need = _exp_to_next(pet["level"])
         resource_line = f"- 📈 **经验**　{pet['exp']}/{need}"
     species_display = pet.get("custom_species_name") or pet.get("species")
+    total = battle_power(pet) + mount_power
+    power_suffix = f"（含坐骑 +{short_num(mount_power)}）" if mount_power else ""
     lines = [
         f"## 🐾 {pet['nickname']}",
         f"> {species_display} · {pet['element']}属性 · {pet['stage']} · **{pet['quality']}**",
-        f"> {gender} · {love} · Lv{pet['level']}/{level_cap(pet)} · ⚔️ 战力 {short_num(battle_power(pet))}",
+        f"> {gender} · {love} · Lv{pet['level']}/{level_cap(pet)} · ⚔️ 战力 {short_num(total)}{power_suffix}",
         "",
         f"- ❤️ **血量**　{short_num(pet['hp'])}/{short_num(pet['hp_max'])}",
         f"- ⚡ **精力**　{short_num(pet['energy'])}/{short_num(pet['energy_max'])}",

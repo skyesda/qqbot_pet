@@ -6,3 +6,7 @@ data/
 *.html
 pv2.js
 *.js
+
+# local logs
+framework.log
+astrbot.log
