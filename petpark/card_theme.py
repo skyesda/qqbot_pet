@@ -8,10 +8,10 @@ ASSETS = Path(__file__).parent / 'assets' / 'ui'
 
 @lru_cache(maxsize=3)
 def stylesheet(kind: str) -> str:
-    if kind not in {'pet', 'bag', 'menu'}:
+    if kind not in {'pet', 'bag', 'menu', 'mount'}:
         raise ValueError(kind)
     filename = {'pet': 'celestial-clouds.png', 'bag': 'treasure-atelier.png',
-                'menu': 'mountain-gate.png'}[kind]
+                'menu': 'mountain-gate.png', 'mount': 'celestial-clouds.png'}[kind]
     background = base64.b64encode((ASSETS / filename).read_bytes()).decode('ascii')
     return (ASSETS / 'common.css').read_text(encoding='utf-8').replace(
         '__BACKGROUND__', 'data:image/png;base64,' + background

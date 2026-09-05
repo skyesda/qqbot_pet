@@ -339,6 +339,14 @@ class PetStore:
                 "abyss_crystal": 0,
                 "abyss_last_decay": 0,
                 "abyss_last_reset": "",
+                # 坐骑系统：拥有坐骑（名 -> {level,power,plate,obtained,custom}）
+                "mounts": {},
+                "active_mount": "",          # 当前骑乘的坐骑名，"" 表示未骑乘
+                "mount_group": "",           # 骑乘所在的群（离场推送用）
+                "mount_enter_ts": 0,         # 入场时间戳
+                "last_msg_ts": 0,            # 最后一条消息时间戳（离场判定）
+                "mount_enter_notify": True,  # 入场提示开关
+                "mount_leave_notify": True,  # 离场提示开关
             }
             qq = str(qq)
             players[key]["tomb"] = self._ensure_global_tomb(qq)
@@ -348,6 +356,14 @@ class PetStore:
             pl.setdefault("quest_done", [])
             if not isinstance(pl["quest_done"], list):
                 pl["quest_done"] = []
+            # 坐骑系统字段迁移
+            pl.setdefault("mounts", {})
+            pl.setdefault("active_mount", "")
+            pl.setdefault("mount_group", "")
+            pl.setdefault("mount_enter_ts", 0)
+            pl.setdefault("last_msg_ts", 0)
+            pl.setdefault("mount_enter_notify", True)
+            pl.setdefault("mount_leave_notify", True)
         return pl
 
     def all_players(self) -> dict[str, dict]:
@@ -362,6 +378,12 @@ class PetStore:
             k: v for k, v in self._data["players"].items() if k.startswith(prefix)
         }
 
+    def next_mount_plate(self) -> str:
+        """坐骑号牌：全局递增计数，返回如『骑-50001』。"""
+        seq = self._data.setdefault("mount_plate_seq", 50000) + 1
+        self._data["mount_plate_seq"] = seq
+        return f"骑-{seq}"
+
     # ----------------------------- 群设置 -----------------------------
     def get_group(self, group_id: str) -> dict:
         group_id = str(group_id)
@@ -374,6 +396,7 @@ class PetStore:
         group = groups[group_id]
         group.setdefault("enabled", self.default_enabled)
         group.setdefault("cross", self.default_cross)
+        group.setdefault("mount_enabled", True)
         return group
 
     # ----------------------------- 群映射（跨机器人群身份统一） -----------------------------

@@ -354,6 +354,24 @@ KNOWN_COMMANDS = {
     "宠物列表",
     "查看所有宠物",
     "宠物信息",
+    # 坐骑系统
+    "坐骑系统",
+    "开启坐骑系统",
+    "关闭坐骑系统",
+    "开启坐骑入场提示",
+    "关闭坐骑入场提示",
+    "开启坐骑离场提示",
+    "关闭坐骑离场提示",
+    "我的坐骑",
+    "骑乘坐骑",
+    "赠送坐骑",
+    "丢弃坐骑",
+    "坐骑市场",
+    "购买坐骑",
+    "坐骑图鉴",
+    "定制坐骑",
+    "坐骑升级",
+    "升级坐骑",
 }
 
 # 合并中元活动指令（由独立模块动态提供，避免在 KNOWN_COMMANDS 手写两份清单）
@@ -475,6 +493,7 @@ class PetParkPlugin(Star):
         "_lottery_task_ref",
         "_custom_push_task_ref",
         "_celebrate_task_ref",
+        "_mount_task_ref",
     )
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -582,6 +601,7 @@ class PetParkPlugin(Star):
         self._lottery_task_ref = asyncio.create_task(self._lottery_loop())
         self._custom_push_task_ref = asyncio.create_task(self._custom_push_loop())
         self._celebrate_task_ref = asyncio.create_task(self._celebrate_loop())
+        self._mount_task_ref = asyncio.create_task(self._mount_loop())
         if self.zhongyuan is not None:
             self.zhongyuan.start()
 
@@ -1154,6 +1174,13 @@ class PetParkPlugin(Star):
                     reply = f"🤖 已识别：{routed}\n{reply}"
                 elif isinstance(reply, tuple):
                     reply = (f"🤖 已识别：{routed}\n{reply[0]}", reply[1])
+        # 坐骑自动入场：任何群消息都可能触发（拥有坐骑即骑乘登场，入场发一次奖励）。
+        if self._is_group(group_id):
+            try:
+                await self._mount_enter_tick(qq, group_id)
+            except Exception:
+                logger.exception("[petpark] 坐骑入场检测出错")
+
         # 部分指令返回 (文本, Markdown图片串) 二元组，把图片以 Markdown 语法内嵌到文本最前，
         # 与宠物图片发送方式保持一致（![alt #width #height](url)）。
         image_md = None
@@ -3070,6 +3097,7 @@ class PetParkPlugin(Star):
                         "授权状态", "授权", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
+                        "坐骑系统", "坐骑市场", "坐骑图鉴", "我的坐骑",
                         "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
                         "我的奖品", "口令抽奖",
                         "生辰活动", "生日抽奖", "生日快乐"}
@@ -3084,6 +3112,34 @@ class PetParkPlugin(Star):
             rb_block = self._rebirth_prep_block(player)
             if rb_block:
                 return rb_block
+
+        # ---- 坐骑系统 ----
+        if cmd == "坐骑系统":
+            return self._mount_help()
+        if cmd in ("开启坐骑系统", "关闭坐骑系统"):
+            return self._mount_group_toggle(group_id, cmd, event)
+        if cmd in ("开启坐骑入场提示", "关闭坐骑入场提示"):
+            return self._mount_notify(player, "enter", cmd)
+        if cmd in ("开启坐骑离场提示", "关闭坐骑离场提示"):
+            return self._mount_notify(player, "leave", cmd)
+        if cmd == "我的坐骑":
+            return self._my_mounts(player)
+        if cmd == "骑乘坐骑":
+            return self._mount_ride(player, group_id, tokens)
+        if cmd == "赠送坐骑":
+            return self._gift_mount(player, group_id, tokens)
+        if cmd == "丢弃坐骑":
+            return self._mount_discard(player, tokens)
+        if cmd == "坐骑市场":
+            return self._mount_market_text()
+        if cmd == "购买坐骑":
+            return self._buy_mount(player, tokens)
+        if cmd == "坐骑图鉴":
+            return self._mount_codex(player, tokens)
+        if cmd == "定制坐骑":
+            return self._mount_custom(player)
+        if cmd in ("坐骑升级", "升级坐骑"):
+            return self._mount_upgrade(player, tokens)
 
         # ---- 我的信息（唯一展示 ID / 群 / 金币 / 积分 的地方）----
         if cmd in ("我的信息", "个人信息"):
@@ -6303,6 +6359,13 @@ class PetParkPlugin(Star):
                 "- 宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋",
                 "- 查看说明 名称",
                 "",
+                "**【坐骑】**",
+                "> 拥有即自动登场：入场发一次积分，30 分钟无消息自动退场，战力计入对战胜负。",
+                "- 我的坐骑 · 骑乘坐骑 名称 · 坐骑升级",
+                "- 坐骑市场 · 购买坐骑 名称 · 坐骑图鉴 名称",
+                "- 赠送坐骑 用户ID · 丢弃坐骑 名称 · 定制坐骑",
+                "- 开启/关闭坐骑系统 · 开启/关闭入场提示 · 开启/关闭离场提示",
+                "",
                 "> 管理员指令请发送 `管理菜单` 查看。",
             ]
         )
@@ -6697,6 +6760,167 @@ class PetParkPlugin(Star):
             return None
         return self._render_html_image(html, "petcard", 720, crop=self._card_crop,
                                        win_w=760, win_h=4200)
+
+    # =====================================================================
+    # 坐骑系统：卡片渲染 / 入场离场 / 后台循环 / 战力
+    # =====================================================================
+    MOUNT_IDLE_CHECK_SEC = 60  # 每 60 秒扫描一次离场
+
+    def _mount_portrait_uri(self, name: str) -> str | None:
+        """坐骑立绘 data-URI：优先 assets/mounts/<名>.png，无则 None（占位）。"""
+        try:
+            p = (Path(__file__).resolve().parent / "petpark" / "assets"
+                 / "mounts" / f"{name}.png")
+            if p.exists():
+                return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+        except OSError:
+            pass
+        return None
+
+    def _mount_card_html(self, name: str, player: dict, kind: str = "enter") -> str:
+        """坐骑卡 HTML（入场/离场/我的坐骑三种，主题由 kind 决定）。"""
+        esc = self._menu_esc
+        cfg = data.MOUNTS.get(name, {})
+        inst = player.get("mounts", {}).get(name, {})
+        stars = int(cfg.get("stars", 1))
+        star_str = "★" * stars + "☆" * (5 - stars)
+        owner = self._display_uid(player.get("qq", ""))
+        plate = inst.get("plate", "骑-?")
+        level = int(inst.get("level", 1))
+        power = int(inst.get("power", cfg.get("base_power", 0)))
+        value = self._short_num(cfg.get("value", 0))
+        rmin, rmax = cfg.get("reward_min", 0), cfg.get("reward_max", 0)
+        now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
+        theme_word = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
+        custom = bool(inst.get("custom"))
+        uri = self._mount_portrait_uri(name)
+        if uri:
+            portrait = (f'<div class="portrait-wrap">'
+                        f'<img class="portrait ph-img" src="{uri}" alt="{esc(name)}"></div>')
+        else:
+            portrait = (f'<div class="portrait-wrap"><div class="portrait-ph">'
+                        f'<div>🐎</div><div>{esc(name)}</div>'
+                        f'<div class="ph-sub">Lv.{level} · 坐骑战力 {self._short_num(power)}</div>'
+                        f'</div></div>')
+        rows = [
+            ("坐骑", name),
+            ("主人", owner),
+            ("号牌", plate),
+            ("灵智", star_str),
+            ("价值", value),
+            ("奖励" if kind in ("enter", "leave") else "入场",
+             f"{self._short_num(rmin)}~{self._short_num(rmax)} 积分"),
+            ("时间", now_hhmm),
+        ]
+        if custom:
+            rows.append(("来源", "专属定制"))
+        rows_html = "".join(
+            f'<div class="row"><k>{esc(str(k))}</k><v>{esc(str(v))}</v></div>'
+            for k, v in rows
+        )
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<style>{card_theme.stylesheet('mount')}</style></head><body>"
+            '<div class="card"><div class="masthead"><div>'
+            f'<div class="mast-title">骑兽灵鉴</div>'
+            f'<div class="mast-caption">{esc(theme_word)} · 宠物乐园 坐骑档案</div></div></div>'
+            f'<div class="mount-heading"><div><div class="name">{esc(name)}</div>'
+            f'<div class="identity">{esc(star_str)} · Lv.{level}</div></div>'
+            f'<div class="rank">{esc(star_str)}</div></div>'
+            '<div class="mount-layout"><div>'
+            f'{portrait}</div><div>'
+            f'<div class="power"><span>坐骑战力</span><strong>{self._short_num(power)}</strong></div>'
+            f'<div class="attributes panel mount-rows">{rows_html}</div></div></div>'
+            '<div class="foot"><span>骑乘状态：我的坐骑</span><span>兑换入口：坐骑市场</span></div>'
+            '</div></body></html>'
+        )
+
+    def _render_mount_card(self, name: str, player: dict, kind: str = "enter") -> str | None:
+        """渲染并返回坐骑卡 Markdown；任何失败返回 None。"""
+        try:
+            html = self._mount_card_html(name, player, kind)
+        except Exception as e:
+            logger.warning(f"[petpark] 坐骑卡 HTML 生成失败：{e}")
+            return None
+        return self._render_html_image(html, "mountcard", 720, crop=self._card_crop,
+                                       win_w=760, win_h=4200)
+
+    def _mount_power(self, player: dict) -> int:
+        """当前骑乘坐骑的战力（计入宠物对战）。"""
+        m = player.get("active_mount") or ""
+        inst = player.get("mounts", {}).get(m)
+        return int(inst.get("power", 0)) if inst else 0
+
+    @staticmethod
+    def _pick_mount(mounts: dict) -> str | None:
+        """挑选骑乘的坐骑：已有坐骑中基础战力最高者。"""
+        if not mounts:
+            return None
+        return max(mounts, key=lambda n: data.MOUNTS.get(n, {}).get("base_power", 0))
+
+    async def _mount_enter_tick(self, qq: str, group_id: str) -> None:
+        """玩家在群发言时刷新 last_msg_ts，未骑乘则自动入场并推送入场卡。"""
+        player = self.store.get_player(qq, group_id, create=False)
+        if not player:
+            return
+        now = int(time.time())
+        player["last_msg_ts"] = now
+        if not player.get("mounts") or player.get("active_mount"):
+            return  # 无坐骑 / 已在场（仅刷新 last_msg_ts）
+        if not self.store.get_group(group_id).get("mount_enabled", True):
+            return
+        chosen = self._pick_mount(player["mounts"])
+        if not chosen:
+            return
+        player["active_mount"] = chosen
+        player["mount_group"] = group_id
+        player["mount_enter_ts"] = now
+        cfg = data.MOUNTS.get(chosen)
+        if cfg:
+            reward = random.randint(cfg["reward_min"], cfg["reward_max"])
+            self.store.add_currency(player, "积分", reward)
+        await self.store.save()
+        if player.get("mount_enter_notify", True):
+            md = self._render_mount_card(chosen, player, "enter")
+            if md:
+                await self._send_group_text(group_id, md)
+
+    async def _mount_idle_tick(self) -> None:
+        """后台扫描：在场但超过 30 分钟无消息的玩家自动离场。"""
+        now = int(time.time())
+        timeout = data.MOUNT_IDLE_TIMEOUT_MIN * 60
+        changed = False
+        for player in self.store.all_players().values():
+            act = player.get("active_mount") or ""
+            if not act:
+                continue
+            if now - player.get("last_msg_ts", 0) < timeout:
+                continue
+            gid = player.get("mount_group") or ""
+            name = act
+            player["active_mount"] = ""
+            player["mount_group"] = ""
+            player["mount_enter_ts"] = 0
+            changed = True
+            if player.get("mount_leave_notify", True) and gid:
+                md = self._render_mount_card(name, player, "leave")
+                if md:
+                    await self._send_group_text(gid, md)
+        if changed:
+            await self.store.save()
+
+    async def _mount_loop(self) -> None:
+        while True:
+            try:
+                await self._mount_idle_tick()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("[petpark] 坐骑离场循环异常")
+            try:
+                await asyncio.sleep(self.MOUNT_IDLE_CHECK_SEC)
+            except asyncio.CancelledError:
+                break
 
     # ---------------------------------------------------------------------
     # 背包卡 · 蓝绿游戏面板（H5 -> PNG，无 emoji）
@@ -7300,6 +7524,224 @@ class PetParkPlugin(Star):
             self._add_pet(player, removed)  # 回滚
             return "对方接收失败（席位异常），已退还。"
         return f"🎁 已将『{removed['nickname']}』赠送给 `{self._display_uid(target)}`。"
+
+    # =====================================================================
+    # 坐骑系统：指令处理
+    # =====================================================================
+    def _mount_help(self) -> str:
+        """坐骑玩法帮助。"""
+        return (
+            "## 🐎 坐骑系统\n"
+            "拥有坐骑后，在本群发送任意消息即自动骑乘登场，入场获得一次积分奖励；"
+            "**30 分钟无消息自动离场**，坐骑战力计入宠物对战。\n"
+            "**常用指令**\n"
+            "- 我的坐骑 · 坐骑市场 · 购买坐骑 名称\n"
+            "- 坐骑图鉴 名称 · 骑乘坐骑 名称 · 坐骑升级\n"
+            "- 赠送坐骑 用户ID · 丢弃坐骑 名称\n"
+            "- 开启/关闭坐骑系统 · 开启/关闭入场/离场提示\n"
+            "- 定制坐骑（专属名称 + GIF 立绘，联系客服/群主）"
+        )
+
+    def _mount_group_toggle(self, group_id: str, cmd: str, event) -> str:
+        """群级开关（需群主/管理员/插件管理员）。"""
+        if not self._is_admin(event):
+            return "仅管理员可开关坐骑系统。"
+        group = self.store.get_group(group_id)
+        on = cmd.startswith("开启")
+        group["mount_enabled"] = bool(on)
+        return f"本群坐骑系统已{'开启' if on else '关闭'}。"
+
+    def _mount_notify(self, player: dict, kind: str, cmd: str) -> str:
+        """玩家级入场/离场提示开关。"""
+        on = cmd.startswith("开启")
+        if kind == "enter":
+            player["mount_enter_notify"] = bool(on)
+            label = "入场"
+        else:
+            player["mount_leave_notify"] = bool(on)
+            label = "离场"
+        return f"坐骑{label}提示已{'开启' if on else '关闭'}。"
+
+    def _my_mounts(self, player: dict) -> str:
+        """我的坐骑：列出所有已拥有坐骑 + 渲染当前骑乘卡。"""
+        mounts = player.get("mounts") or {}
+        if not mounts:
+            return "你还没有坐骑。发送『坐骑市场』购买，或『坐骑图鉴』查看全部。"
+        act = player.get("active_mount") or ""
+        name = act or self._pick_mount(mounts)
+        lines = [f"已拥有 {len(mounts)} 只坐骑"]
+        for n, info in mounts.items():
+            st = " ✔骑乘中" if n == act else ""
+            mark = "★" * data.MOUNTS.get(n, {}).get("stars", 1)
+            lines.append(f"· {n}（{mark} · 战力 {self._short_num(info.get('power', 0))}）{st}")
+        lines.append("\n发送『骑乘坐骑 名称』切换骑乘，『坐骑升级』提升战力。")
+        md = self._render_mount_card(name, player, "my")
+        if md:
+            return ("\n".join(lines), md)
+        return "\n".join(lines)
+
+    def _mount_ride(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """切换骑乘；无参自动骑最高档。"""
+        mounts = player.get("mounts") or {}
+        if not mounts:
+            return "你还没有坐骑。发送『坐骑市场』购买。"
+        name = self._arg(tokens, 1)
+        if not name:
+            name = self._pick_mount(mounts)
+        if not name or name not in mounts:
+            return "指定坐骑不存在。发送『我的坐骑』查看。"
+        now = int(time.time())
+        player["active_mount"] = name
+        player["mount_enter_ts"] = now
+        player["last_msg_ts"] = now
+        player["mount_group"] = group_id
+        md = self._render_mount_card(name, player, "my")
+        txt = f"已骑乘『{name}』（战力 {self._short_num(player['mounts'][name].get('power', 0))}），计入对战胜负。"
+        if md:
+            return (txt, md)
+        return txt
+
+    def _gift_mount(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """赠送坐骑 用户ID [坐骑名]：仿赠送宠物，走转让限制。"""
+        target = self._arg(tokens, 1)
+        if not target:
+            return "用法：赠送坐骑 用户ID（可选坐骑名，默认当前骑乘/最高档）"
+        if target == player["qq"]:
+            return "不能赠送给自己。"
+        mounts = player.get("mounts") or {}
+        if not mounts:
+            return "你还没有坐骑可赠送。"
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        name = self._arg(tokens, 2)
+        if not name:
+            name = player.get("active_mount") or self._pick_mount(mounts)
+        if not name or name not in mounts:
+            return f"你没有『{name}』。发送『我的坐骑』查看。"
+        bank_block = self._bank_block_check(player, "gift")
+        if bank_block:
+            return bank_block
+        limit_err, _ = self._check_transfer_limit(player, tp, group_id, 1, "mount")
+        if limit_err:
+            return limit_err
+        inst = mounts.pop(name)
+        if player.get("active_mount") == name:
+            player["active_mount"] = ""
+            player["mount_group"] = ""
+            player["mount_enter_ts"] = 0
+        tp.setdefault("mounts", {})[name] = inst
+        return f"🎁 已将坐骑『{name}』赠送给 `{self._display_uid(target)}`。"
+
+    def _mount_discard(self, player: dict, tokens: list[str]) -> str:
+        """丢弃坐骑 坐骑名。"""
+        mounts = player.get("mounts") or {}
+        if not mounts:
+            return "你还没有坐骑。"
+        name = self._arg(tokens, 1)
+        if not name or name not in mounts:
+            return "用法：丢弃坐骑 坐骑名。发送『我的坐骑』查看。"
+        mounts.pop(name)
+        if player.get("active_mount") == name:
+            player["active_mount"] = ""
+            player["mount_group"] = ""
+            player["mount_enter_ts"] = 0
+        return f"已丢弃坐骑『{name}』。"
+
+    def _mount_market_text(self) -> str:
+        """坐骑市场：在售 12 款坐骑列表。"""
+        lines = ["## 🐎 坐骑市场", "发送『购买坐骑 名称』入手，『坐骑图鉴 名称』看详情："]
+        for name in data.MOUNTS_ORDER:
+            cfg = data.MOUNTS[name]
+            star = "★" * cfg["stars"]
+            lines.append(f"- {name}（{star} · 初始战力 {self._short_num(cfg['base_power'])} · "
+                         f"{self._short_num(cfg['price'])} 积分）")
+        lines.append("\n> 拥有即自动登场：入场奖励积分，30 分钟无消息自动退场。")
+        return "\n".join(lines)
+
+    def _buy_mount(self, player: dict, tokens: list[str]) -> str:
+        """购买坐骑 坐骑名：扣积分，获得坐骑 + 号牌。"""
+        name = self._arg(tokens, 1)
+        if not name:
+            return "用法：购买坐骑 坐骑名（例如：购买坐骑 踏风玄鹿）"
+        if name not in data.MOUNTS:
+            return f"没有『{name}』。发送『坐骑市场』查看在售坐骑。"
+        cfg = data.MOUNTS[name]
+        jifen = self.store.get_currency(player, "积分")
+        if jifen < cfg["price"]:
+            return (f"购买『{name}』需 {self._short_num(cfg['price'])} 积分，"
+                    f"积分不足（当前 {self._short_num(jifen)}）。")
+        if name in (player.get("mounts") or {}):
+            return f"你已经拥有『{name}』。"
+        self.store.add_currency(player, "积分", -cfg["price"])
+        player.setdefault("mounts", {})[name] = {
+            "level": 1,
+            "power": cfg["base_power"],
+            "plate": self.store.next_mount_plate(),
+            "obtained": time.time(),
+            "custom": False,
+        }
+        return (f"✅ **入手成功！** 花费 {self._short_num(cfg['price'])} 积分，获得坐骑 **{name}**。\n"
+                f"> 在本群发送消息即自动骑乘登场；入场奖励见『坐骑图鉴』。")
+
+    def _mount_codex(self, player: dict, tokens: list[str]) -> str:
+        """坐骑图鉴：无参枚举全部；带参查详情（已拥有则渲染卡片）。"""
+        if len(tokens) < 2:
+            lines = ["## 📖 坐骑图鉴", "发送『坐骑图鉴 坐骑名』查看详情："]
+            for name in data.MOUNTS_ORDER:
+                cfg = data.MOUNTS[name]
+                star = "★" * cfg["stars"]
+                lines.append(f"- {name}（{star} · 初始 {self._short_num(cfg['base_power'])} 战力 · "
+                             f"入场 {self._short_num(cfg['reward_min'])}~{self._short_num(cfg['reward_max'])} 积分）")
+            lines.append("\n> 难度越高奖励越高，共 12 款。发送『坐骑市场』购买。")
+            return "\n".join(lines)
+        name = tokens[1]
+        if name not in data.MOUNTS:
+            return f"图鉴没有『{name}』。发送『坐骑图鉴』查看全部。"
+        cfg = data.MOUNTS[name]
+        own = name in (player.get("mounts") or {})
+        head = (f"## 📖 『{name}』\n{cfg['desc']}\n"
+                f"星级 {'★' * cfg['stars']} · 初始战力 {self._short_num(cfg['base_power'])} · "
+                f"价值 {self._short_num(cfg['value'])} · 售价 {self._short_num(cfg['price'])} 积分\n"
+                f"入场奖励 {self._short_num(cfg['reward_min'])}~{self._short_num(cfg['reward_max'])} 积分"
+                f"（{'已拥有' if own else '未拥有'}）")
+        if own:
+            md = self._render_mount_card(name, player, "my")
+            if md:
+                return (head, md)
+        return head
+
+    def _mount_custom(self, player: dict) -> str:
+        """定制坐骑：预留说明入口（本轮不接后台申请/录入）。"""
+        return ("## 🎨 定制坐骑\n"
+                "定制坐骑需联系客服或群主申请：自定义名称 + 专属 GIF 立绘。\n"
+                "**起步 100 万积分**：第 1 只 100 万、第 2 只 500 万、第 3 只 1000 万、"
+                "第 4 只 2000 万，此后每只 +1000 万，以此类推。\n"
+                "定制完成同样：入场奖励积分、进群自动登场、战力计入对战。")
+
+    def _mount_upgrade(self, player: dict, tokens: list[str]) -> str:
+        """坐骑升级：耗 5000 钻石，Lv+1，战力 +500~1000 随机。"""
+        mounts = player.get("mounts") or {}
+        if not mounts:
+            return "你还没有坐骑。发送『坐骑市场』购买。"
+        name = self._arg(tokens, 1)
+        if not name or name not in mounts:
+            name = player.get("active_mount") or self._pick_mount(mounts)
+        if not name or name not in mounts:
+            return "指定坐骑不存在。发送『我的坐骑』查看。"
+        cfg = data.MOUNTS[name]
+        cost = data.MOUNT_UPGRADE_COST_DIAMOND
+        diamond = self.store.get_currency(player, "钻石")
+        if diamond < cost:
+            return f"升级『{name}』需 {cost} 钻石，钻石不足（当前 {diamond}）。"
+        inst = mounts[name]
+        gain = random.randint(data.MOUNT_UPGRADE_POWER_MIN, data.MOUNT_UPGRADE_POWER_MAX)
+        inst["level"] = inst.get("level", 1) + 1
+        inst["power"] = inst.get("power", cfg["base_power"]) + gain
+        self.store.add_currency(player, "钻石", -cost)
+        return (f"✅ **坐骑升级成功！**\n『{name}』升至 Lv.{inst['level']}"
+                f"（+{gain} 战力）→ 当前战力 {inst['power']}。\n"
+                f"本轮消耗 {cost} 钻石，战力已计入对战胜负。")
 
     def _release(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -8784,8 +9226,8 @@ class PetParkPlugin(Star):
     def _battle(
         self, attacker: dict, defender: dict, ap_player: dict, dp_player: dict
     ) -> str:
-        ap = petmod.effective_power_vs(attacker, defender)
-        dp = petmod.effective_power_vs(defender, attacker)
+        ap = petmod.effective_power_vs(attacker, defender) + self._mount_power(ap_player)
+        dp = petmod.effective_power_vs(defender, attacker) + self._mount_power(dp_player)
         # 神隐遁术：被高战力攻击有概率逃脱
         if defender.get("talent") == "神隐遁术" and ap > dp and random.random() < 0.5:
             return f"对方宠物『{defender['nickname']}』触发【神隐遁术】，逃之夭夭！"
