@@ -116,6 +116,7 @@ class PetStore:
         self._migrate_multi_pet()
         self._migrate_bank_to_per_group()
         self._migrate_clear_cooldowns_once()
+        self._migrate_purge_sect()
 
     def _migrate_clear_cooldowns_once(self) -> None:
         """一次性清空所有玩家冷却（修复时区后重置）。仅在未标记时执行一次。"""
@@ -130,6 +131,21 @@ class PetStore:
                 if isinstance(pet, dict) and "cooldowns" in pet:
                     pet["cooldowns"] = {}
         self._data["cooldowns_cleared_v1"] = True
+
+    def _migrate_purge_sect(self) -> None:
+        """一次性清理宗门子系统残留数据（sect_season / 玩家.sect / 群.sect）。幂等。"""
+        changed = self._data.pop("sect_season", None) is not None
+        for pl in self._data.get("players", {}).values():
+            if isinstance(pl, dict) and "sect" in pl:
+                del pl["sect"]
+                changed = True
+        for grp in self._data.get("groups", {}).values():
+            if isinstance(grp, dict) and "sect" in grp:
+                del grp["sect"]
+                changed = True
+        self._data["sect_purged_v1"] = True
+        if changed:
+            self._dirty = True
 
     @staticmethod
     def make_key(group_id: str, qq: str) -> str:
