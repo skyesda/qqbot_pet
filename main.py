@@ -2250,6 +2250,10 @@ class PetParkPlugin(Star):
         # 配置里的管理员白名单优先
         if str(event.get_sender_id()) in self.admins:
             return True
+        # 群消息事件透传的成员身份（owner/admin/member）：非群消息无该字段则跳过。
+        role = str(getattr(event, "sender_role", "") or "").lower()
+        if role in ("owner", "admin", "member"):
+            return role in ("owner", "admin")
         for attr in ("is_admin",):
             fn = getattr(event, attr, None)
             if callable(fn):
@@ -2463,11 +2467,17 @@ class PetParkPlugin(Star):
         """判断发送者是否为群主/管理员（含插件管理员白名单）。
 
         返回 (是否通过, 未通过原因文本)。通过优先级：插件管理员白名单 >
-        QQ 官方 member_role（owner/admin）。这是群管理类指令（撤回/禁言/踢人）
-        的统一权限门禁。
+        群消息事件自带的 member_role（owner/admin）> 成员详情接口（兜底）。
+
+        事件身份（event.sender_role）来自群消息 payload 的 author.member_role，
+        零额外 API 请求；旧客户端/非群消息场景无该字段时，回退查成员详情接口。
         """
         if str(qq) in self.admins:
             return True, ""
+        # 群消息事件已携带身份（框架透传 author.member_role）
+        role = str(getattr(event, "sender_role", "") or "") or ""
+        if role in ("owner", "admin", "member"):
+            return role in ("owner", "admin"), ""
         if api is None:
             return False, "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
         role = await self._member_role(api, group_id, qq)
