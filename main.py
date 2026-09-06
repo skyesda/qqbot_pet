@@ -572,8 +572,8 @@ class PetParkPlugin(Star):
         self.song_enabled = bool(self.config.get("song_enabled", True))
         self.song_max_results = max(1, int(self.config.get("song_max_results", 50)))
         self.song_page_size = max(1, int(self.config.get("song_page_size", 10)))
-        # 单段语音时长上限（秒）：超长歌曲按此拆成多段分段发（允许为空/0 时默认 60）
-        self.song_max_seconds = max(1, int(self.config.get("song_max_seconds") or 60))
+        # 单段语音时长上限（秒）：超长歌曲按此拆成多段分段发（允许为空/0 时默认 240 = 4 分钟）
+        self.song_max_seconds = max(1, int(self.config.get("song_max_seconds") or 240))
         # 最长拆分段落数上限，防止极端长歌刷屏
         self.song_max_segments = max(1, int(self.config.get("song_max_segments") or 8))
         self.alapi_token = str(self.config.get("alapi_token") or "").strip()

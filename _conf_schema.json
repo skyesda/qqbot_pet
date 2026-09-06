@@ -235,9 +235,9 @@
   },
   "song_max_seconds": {
     "description": "点歌单段语音时长上限（秒）",
-    "hint": "QQ 官方语音单条有时长上限，默认 60。选中的歌曲超过该时长会自动拆成多段语音依次发出。",
+    "hint": "QQ 官方语音单条有时长上限，默认 240（4 分钟）。选中的歌曲超过该时长会自动拆成多段语音依次发出。",
     "type": "int",
-    "default": 60
+    "default": 240
   },
   "song_max_segments": {
     "description": "点歌超长拆分段落数上限",
