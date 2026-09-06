@@ -1,7 +1,7 @@
 """Versioned, data-driven adventure content. No production player data required."""
 from ..data import _DUNGEON_DEFS
 
-VERSION = 2
+VERSION = 3
 # Each tier is unlocked individually by a trial, never by another player.
 HEAVENS = [
     {"name": "初识", "level": 1, "enemy": 1.0, "bonus": 0},

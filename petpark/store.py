@@ -129,6 +129,9 @@ class PetStore:
         if self._data.get("unified_migrated_v1"):
             return
         self._data["unified_migrated_v1"] = True
+        # 统一战力 v1：schema 提升到 2（v2.1.0 融合）；adventure 侧 schema 由 service 按 VERSION=3 写入。
+        if self._data.get("schema_version", 1) < 2:
+            self._data["schema_version"] = 2
 
     def _migrate_clear_cooldowns_once(self) -> None:
         """一次性清空所有玩家冷却（修复时区后重置）。仅在未标记时执行一次。"""

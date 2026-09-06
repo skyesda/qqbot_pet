@@ -817,7 +817,7 @@ class PetParkPlugin(Star):
                     petmod.add_xianyuan(p, xianyuan)
                     if random.random() < data.ASCEND_TREASURE.get("jifen_chance", 0.5):
                         jifen = random.randint(*data.ASCEND_TREASURE.get("jifen", (500, 3000)))
-                        self.store.add_currency(player, "积分", jifen)
+                        self.store.add_currency(player, "玄晶", jifen)
                     self._inc_stat(player, "ascended_fantasy_treasure")
                     ac["total_sessions"] = ac.get("total_sessions", 0) + 1
                     ac["total_exp"] = ac.get("total_exp", 0) + xianyuan
@@ -2064,8 +2064,8 @@ class PetParkPlugin(Star):
             return f"钻石不足（需要 {need_d:,}，当前 {diamond:,}）。"
         if jifen < need_j:
             return f"积分不足（需要 {need_j:,}，当前 {jifen:,}）。"
-        self.store.add_currency(player, "钻石", -need_d)
-        self.store.add_currency(player, "积分", -need_j)
+        self.store.add_currency(player, "天晶", -need_d)
+        self.store.add_currency(player, "玄晶", -need_j)
         p["rebirth_gem"] = True
         return (
             "💎 **重生宝石** 购买成功！\n"
@@ -4390,7 +4390,7 @@ class PetParkPlugin(Star):
             if exp_gain:
                 petmod.add_exp(p, exp_gain)
             if jifen_gain:
-                self.store.add_currency(player, "积分", jifen_gain)
+                self.store.add_currency(player, "玄晶", jifen_gain)
             if token_gain:
                 self.store.add_event_token(player, eid, token, token_gain)
             reward_lines = []
@@ -5961,9 +5961,9 @@ class PetParkPlugin(Star):
             f"👥 **群号**　`{gid}`",
             f"🌐 **所处分服**　{self._server_label(group_id)}",
             f"👤 **群身份**　{'—' if gid == '私聊' else self._role_label_text(event)}",
-            f"🪙 **金币**　{self._short_num(player.get('coin', 0))}",
-            f"💎 **积分**　{self._short_num(player.get('jifen', 0))}",
-            f"💠 **钻石**　{self._short_num(player.get('diamond', 0))}",
+            f"🪙 **灵石**　{self._short_num(player.get('coin', 0))}",
+            f"💎 **玄晶**　{self._short_num(player.get('jifen', 0))}",
+            f"💠 **天晶**　{self._short_num(player.get('diamond', 0))}",
             f"🌀 **深渊结晶**　{self._short_num(self.store.get_abyss_crystal(player))}",
         ]
         streak = player.get("active_streak", 0)
@@ -6270,8 +6270,8 @@ class PetParkPlugin(Star):
         jifen = random.randint(self.sign_jifen_min, self.sign_jifen_max)
         coin = random.randint(self.sign_coin_min, self.sign_coin_max)
         extra = min(streak, 7) * self.sign_streak_bonus
-        self.store.add_currency(player, "积分", jifen)
-        self.store.add_currency(player, "金币", coin + extra)
+        self.store.add_currency(player, "玄晶", jifen)
+        self.store.add_currency(player, "灵石", coin + extra)
 
         title, need, nxt = data.sign_title(total)
         now = time.strftime("%Y/%m/%d %H:%M")
@@ -6279,7 +6279,7 @@ class PetParkPlugin(Star):
             "## ✅ 签到成功",
             f"> 🎖️ 今日第 **{order}** 位签到 · {now}",
             "",
-            f"- 🪙 金币 **+{coin}**（连续签到额外 +{extra}）",
+            f"- 🪙 灵石 **+{coin}**（连续签到额外 +{extra}）",
             f"- 🎯 积分 **+{jifen}**",
             f"- 📅 累计签到 **{total}** 天 · 连续 **{streak}** 天",
             f"- 🏅 当前称号：**{title}**",
@@ -6825,6 +6825,7 @@ class PetParkPlugin(Star):
                 "- 世界首领 · 讨伐首领 · 首领奖励",
                 "- 仙途深渊 · 深渊抉择 · 深渊收手",
                 "- 仙途切磋 @对方 · 接受切磋 · 拒绝切磋 · 战斗详情 · 仙途战绩",
+                "- 我的修士(看战力) · 仙途战力榜(全服战力) · 领取神榜奖励",
                 "",
                 "**【入门】**",
                 "- 砸蛋 · 宠物市场（品质卡/变种卡）· 我的宠物 · 宠物状态",
@@ -7591,7 +7592,7 @@ class PetParkPlugin(Star):
         reward = None
         if cfg:
             reward = random.randint(cfg["reward_min"], cfg["reward_max"])
-            self.store.add_currency(player, "积分", reward)
+            self.store.add_currency(player, "玄晶", reward)
         await self.store.save()
         if player.get("mount_enter_notify", True):
             await self._send_group_text(group_id, self._mount_full_message(chosen, player, "enter", reward=reward))
@@ -7949,7 +7950,7 @@ class PetParkPlugin(Star):
             cost = price * count
             if jifen < cost:
                 return f"购买 {count} 张『{name}』需 {cost} 积分，积分不足（当前 {jifen}）。"
-            self.store.add_currency(player, "积分", -cost)
+            self.store.add_currency(player, "玄晶", -cost)
             self.store.add_item(player, name, count)
             return (
                 f"✅ **购买成功！** 花费 {cost} 积分，获得 **{name}** ×{count}。\n"
@@ -7962,7 +7963,7 @@ class PetParkPlugin(Star):
             cost = price * count
             if jifen < cost:
                 return f"购买 {count} 张『{name}』需 {cost} 积分，积分不足（当前 {jifen}）。"
-            self.store.add_currency(player, "积分", -cost)
+            self.store.add_currency(player, "玄晶", -cost)
             self.store.add_item(player, name, count)
             return (
                 f"✅ **购买成功！** 花费 {cost} 积分，获得 **{name}** ×{count}。\n"
@@ -8408,7 +8409,7 @@ class PetParkPlugin(Star):
                     f"积分不足（当前 {self._short_num(jifen)}）。")
         if name in (player.get("mounts") or {}):
             return f"你已经拥有『{name}』。"
-        self.store.add_currency(player, "积分", -cfg["price"])
+        self.store.add_currency(player, "玄晶", -cfg["price"])
         player.setdefault("mounts", {})[name] = {
             "level": 1,
             "power": cfg["base_power"],
@@ -8476,7 +8477,7 @@ class PetParkPlugin(Star):
         gain = random.randint(data.MOUNT_UPGRADE_POWER_MIN, data.MOUNT_UPGRADE_POWER_MAX)
         inst["level"] = inst.get("level", 1) + 1
         inst["power"] = inst.get("power", cfg["base_power"]) + gain
-        self.store.add_currency(player, "钻石", -cost)
+        self.store.add_currency(player, "天晶", -cost)
         return (f"✅ **坐骑升级成功！**\n『{name}』升至 Lv.{inst['level']}"
                 f"（+{gain} 战力）→ 当前战力 {inst['power']}。\n"
                 f"本轮消耗 {cost} 钻石，战力已计入对战胜负。")
@@ -8557,10 +8558,10 @@ class PetParkPlugin(Star):
             return f"炼化需要 **{cost} 积分**，当前积分不足。"
         quality = target.get("quality", "普通") or "普通"
         nick = target.get("nickname", "?")
-        self.store.add_currency(player, "积分", -cost)
+        self.store.add_currency(player, "玄晶", -cost)
         removed = self._remove_pet(player, idx)
         if not removed:
-            self.store.add_currency(player, "积分", cost)  # 回滚
+            self.store.add_currency(player, "玄晶", cost)  # 回滚
             return "炼化失败，宠物移除异常。"
         if random.random() < data.REFINE_CARD_CHANCE:
             card = f"{quality}卡"
@@ -8583,7 +8584,7 @@ class PetParkPlugin(Star):
         cost = data.REFINE_COST
         if self.store.get_currency(player, "积分") < cost:
             return f"炼化需要 **{cost} 积分**，当前积分不足。"
-        self.store.add_currency(player, "积分", -cost)
+        self.store.add_currency(player, "玄晶", -cost)
         self.store.remove_item(player, name, 1)
         q = self._roll_quality()
         if random.random() < data.REFINE_CARD_CHANCE:
@@ -9041,11 +9042,11 @@ class PetParkPlugin(Star):
                 roll = random.random()
                 if roll < 0.30:
                     amt = random.randint(500, 2000)
-                    self.store.add_currency(player, "金币", amt)
+                    self.store.add_currency(player, "灵石", amt)
                     results.append(f"金币 +{amt}")
                 elif roll < 0.60:
                     amt = random.randint(100, 500)
-                    self.store.add_currency(player, "积分", amt)
+                    self.store.add_currency(player, "玄晶", amt)
                     results.append(f"积分 +{amt}")
                 elif roll < 0.80:
                     self.store.add_item(player, "普通经验书", 1)
@@ -9283,8 +9284,8 @@ class PetParkPlugin(Star):
             )
         if action == "打工":
             gain = random.randint(200, 600) + p["level"] * 5
-            self.store.add_currency(player, "积分", gain)
-            return f"💰 打工辛苦了，积分 +{gain}，当前 {player['jifen']}。"
+            self.store.add_currency(player, "玄晶", gain)
+            return f"💰 打工辛苦了，玄晶 +{gain}，当前 {player['jifen']}。"
         if action == "闭关":
             p["hp"] = p["hp_max"]
             return "🛡 闭关完成，血量已回满。"
@@ -9335,7 +9336,7 @@ class PetParkPlugin(Star):
         )[0]
         if kind == "积分":
             g = random.randint(500, 3000)
-            self.store.add_currency(player, "积分", g)
+            self.store.add_currency(player, "玄晶", g)
             return f"🧭 探险发现宝箱，积分 +{g}！"
         if kind == "经验":
             g = random.randint(500, 4000)
@@ -9489,7 +9490,7 @@ class PetParkPlugin(Star):
         jifen_text = ""
         if random.random() < data.ASCEND_TREASURE.get("jifen_chance", 1.0):
             j = random.randint(*data.ASCEND_TREASURE["jifen"])
-            self.store.add_currency(player, "积分", j)
+            self.store.add_currency(player, "玄晶", j)
             jifen_text = f"积分 +{j}，"
         petmod.add_xianyuan(p, x)
         self._inc_stat(player, "ascended_fantasy_treasure")
@@ -9564,7 +9565,7 @@ class PetParkPlugin(Star):
                 f"打造需要『{cost.get('blueprint', '神器图纸')}』"
                 f"x{cost.get('blueprint_count', 1)}。"
             )
-        self.store.add_currency(player, "积分", -cost["jifen"])
+        self.store.add_currency(player, "玄晶", -cost["jifen"])
         self.store.remove_item(player, cost["material"], cost["material_count"])
         self.store.remove_item(
             player, cost.get("blueprint", "神器图纸"), cost.get("blueprint_count", 1)
@@ -9684,7 +9685,7 @@ class PetParkPlugin(Star):
         if cost.get("energy") and p["energy"] < cost["energy"]:
             return f"{action}需要 {cost_text}。", cost_text
         if cost.get("jifen"):
-            self.store.add_currency(player, "积分", -cost["jifen"])
+            self.store.add_currency(player, "玄晶", -cost["jifen"])
         if cost.get("exp"):
             p["exp"] -= cost["exp"]
         if cost.get("xianyuan"):
@@ -9723,7 +9724,7 @@ class PetParkPlugin(Star):
             if self.store.get_currency(player, "积分") < c["jifen"]:
                 return f"觉醒要求 {c['jifen']} 积分。"
             p["exp"] -= c["exp"]
-            self.store.add_currency(player, "积分", -c["jifen"])
+            self.store.add_currency(player, "玄晶", -c["jifen"])
             cost_text = f"{c['exp']} 经验、{c['jifen']} 积分"
         p["energy"] -= c["energy"]
         self.store.set_cooldown(
@@ -10433,7 +10434,7 @@ class PetParkPlugin(Star):
             exp_gain = max(1, int(d["exp"] * random.uniform(0.8, 1.2)))
             jifen_gain = max(1, int(d["jifen"] * random.uniform(0.8, 1.2)))
             petmod.add_exp(p, exp_gain)
-            self.store.add_currency(player, "积分", jifen_gain)
+            self.store.add_currency(player, "玄晶", jifen_gain)
             if petmod._is_ascended(p):
                 self._inc_stat(player, "ascended_dungeon_clear")
             drop = ""
@@ -10522,7 +10523,7 @@ class PetParkPlugin(Star):
             xianyuan_gain = random.randint(*d["xianyuan"])
             jifen_gain = d["jifen"]
             petmod.add_xianyuan(p, xianyuan_gain)
-            self.store.add_currency(player, "积分", jifen_gain)
+            self.store.add_currency(player, "玄晶", jifen_gain)
             self._inc_stat(player, "ascended_dungeon_clear")
             drop_text = ""
             drop = d.get("drop")
@@ -10670,7 +10671,7 @@ class PetParkPlugin(Star):
                 exp = _add_exp(event["exp_mult"])
                 jifen = 50 + p["level"] * 2
                 crystal = random.randint(*event.get("crystal", (1, 3)))
-                self.store.add_currency(player, "积分", jifen)
+                self.store.add_currency(player, "玄晶", jifen)
                 self.store.add_abyss_crystal(player, crystal)
                 reward_lines.extend(
                     [
@@ -10726,7 +10727,7 @@ class PetParkPlugin(Star):
                 reward_lines.append(f"经验 +{exp}（乱流中捕捉到一丝能量）")
             else:  # 异象
                 jifen = 20 + p["level"]
-                self.store.add_currency(player, "积分", jifen)
+                self.store.add_currency(player, "玄晶", jifen)
                 reward_lines.append(f"积分 +{jifen}（你看到了无法理解的景象）")
 
         elif event["id"] == "altar":
@@ -10750,7 +10751,7 @@ class PetParkPlugin(Star):
             crystal = random.randint(*event.get("crystal", (2, 4)))
             jifen = 100 + p["level"] * 3
             p["hp"] = p["hp_max"]
-            self.store.add_currency(player, "积分", jifen)
+            self.store.add_currency(player, "玄晶", jifen)
             self.store.add_abyss_crystal(player, crystal)
             self.store.reset_abyss_pity(player)
             reward_lines.extend(
@@ -11073,7 +11074,7 @@ class PetParkPlugin(Star):
         reward = quest["reward"]
         for k, v in reward.items():
             if k == "jifen":
-                self.store.add_currency(player, "积分", v)
+                self.store.add_currency(player, "玄晶", v)
             elif k == "exp" and player.get("pet"):
                 petmod.add_exp(player["pet"], v)
             elif k == "xianyuan" and player.get("pet"):
