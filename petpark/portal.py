@@ -1260,7 +1260,7 @@ class PlayerPortal:
                 text = gw._manual_level(player, ["宠物升级", str(times)])
             elif action == "evolve":
                 # 等同群聊「宠物进化」
-                text = gw._evolve(player)
+                text = gw._evolve(player, render_image=False)
             else:
                 return web.json_response({"ok": False, "msg": "未知操作"})
         except Exception as e:

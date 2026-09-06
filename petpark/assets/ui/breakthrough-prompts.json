@@ -1,0 +1,18 @@
+{
+  "generator": "Built-in GPT image generation (image_gen)",
+  "purpose": "Scene backgrounds only; existing pet portraits remain unchanged.",
+  "prompts": [
+    {
+      "action": "evolution",
+      "prompt": "Use case: stylized-concept. A premium portrait mobile fantasy pet game EVOLUTION ritual background, 2:3 portrait. Lush teal jade forest sanctuary, concentric glowing cyan magic circles on a stone dais in the lower middle, tiny gold motes rising toward an ethereal beam, richly painted anime game environment, luminous mint and emerald palette, detailed foliage at edges, inviting magical atmosphere. Composition reserved for UI compositing: middle third has an empty softly lit pale ivory oval area for an existing pet portrait, top 20 percent soft dark teal gradient sky with very low detail for a title, bottom 25 percent dark teal stone and shadow with low detail for result text. Background art only. NO creatures, NO people, NO text, NO letters, NO logos, NO watermark, no frame. Beautiful full bleed illustration."
+    },
+    {
+      "action": "ascension",
+      "prompt": "Use case: stylized-concept. Premium portrait mobile fantasy pet game ASCENSION ritual background, 2:3 portrait. Golden celestial palace above a sea of luminous clouds, ascending ivory marble steps and floating gold rings, distant elegant Chinese immortal pavilions at the edges, sunlight and drifting gold feathers, richly painted anime game environment. Warm ivory gold champagne with deep midnight blue edges. Composition reserved for UI: middle third empty softly lit ivory cloud area for an existing pet portrait, top 20 percent dark navy sky with low detail for a title, bottom 25 percent shadowy navy and golden cloud steps with low detail for result text. Full bleed background art only, NO pets, NO people, NO creatures, NO text, NO letters, NO logos, NO watermark, no frame. Majestic uplifting magical atmosphere."
+    },
+    {
+      "action": "tribulation",
+      "prompt": "Use case: stylized-concept. Premium portrait mobile fantasy pet game HEAVENLY THUNDER TRIBULATION ritual background, 2:3 portrait. Dramatic violet indigo storm clouds, forked lavender lightning along both outer edges descending toward an ancient circular obsidian ritual platform, floating crystal fragments, distant jagged mountain silhouettes, richly painted anime game environment, cinematic magical storm. Composition reserved for UI compositing: middle third empty soft pale lavender mist oval for an existing pet portrait; top 20 percent dark indigo low-detail cloud space for title; bottom 25 percent dark obsidian stone low detail for result text. Full bleed background art only, NO creatures, NO people, NO pets, NO text, NO letters, NO logos, NO watermark, no frame. Dramatic but beautiful, appropriate for either successful or failed trial."
+    }
+  ]
+}

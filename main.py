@@ -9613,7 +9613,20 @@ class PetParkPlugin(Star):
             + reward + prep_msg
         )
 
-    def _evolve(self, player: dict) -> str:
+    def _breakthrough_result(self, pet, action, previous_stage, ok, msg) -> str:
+        """Render the outcome only; an image failure must never retry gameplay."""
+        try:
+            from .petpark.breakthrough_card import card_html
+            html = card_html(pet, action, previous_stage, ok, msg,
+                             self._pet_portrait_uri(pet))
+            md = self._render_html_image(html, "breakthrough", 720, crop=self._card_crop,
+                                         win_w=760, win_h=4200, keep=30)
+            return md or msg
+        except Exception as e:
+            logger.warning(f"[petpark] 突破结果图生成失败：{e}")
+            return msg
+
+    def _evolve(self, player: dict, *, render_image: bool = True) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
@@ -9629,11 +9642,14 @@ class PetParkPlugin(Star):
         before = list(p.get("skills", [])) + (
             [p["artifact"]] if p.get("artifact") else []
         )
+        previous_stage = p.get("stage", "")
         ok, msg = petmod.evolve(p)
         if ok:
             self.store.remove_item(player, "进化神石", 1)
             for it in before:
                 self.store.add_item(player, it, 1)
+        if ok and render_image:
+            return self._breakthrough_result(p, "进化", previous_stage, ok, msg)
         return msg
 
     def _ascend(self, player: dict) -> str:
@@ -9643,7 +9659,10 @@ class PetParkPlugin(Star):
         busy = self._busy_reason(p)
         if busy:
             return busy
+        previous_stage = p.get("stage", "")
         ok, msg = petmod.ascend(p)
+        if ok:
+            return self._breakthrough_result(p, "飞升", previous_stage, ok, msg)
         return msg
 
     def _tribulation(self, player: dict) -> str:
@@ -9656,10 +9675,13 @@ class PetParkPlugin(Star):
         cd = self._cooldown_block(player, "渡劫", "宠物渡劫")
         if cd:
             return cd
+        previous_stage = p.get("stage", "")
         ok, msg = petmod.tribulation(p)
         if not ok and msg.startswith("💥"):
             self.store.set_cooldown(player, "渡劫", data.TRIBULATION_FAIL_COOLDOWN)
             msg += f"\n‣ 天劫余威未散，{data.TRIBULATION_FAIL_COOLDOWN // 60} 分钟后才可再次渡劫。"
+        if ok or msg.startswith("💥"):
+            return self._breakthrough_result(p, "渡劫", previous_stage, ok, msg)
         return msg
 
     def _fantasy_treasure(self, player: dict) -> str:
