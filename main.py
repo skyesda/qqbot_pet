@@ -9032,7 +9032,7 @@ class PetParkPlugin(Star):
             if not ok:
                 return msg
             self.store.remove_item(player, name, 1)
-            return f"使用『{name}』x1：{msg}"
+            return f"使用『{name}』x1：{msg}" + self._quality_to_cultivation(player, p, target)
         # 神秘宝箱：随机开出金币/积分/道具
         if "mystery_box" in eff:
             self.store.remove_item(player, name, count)
@@ -10355,6 +10355,15 @@ class PetParkPlugin(Star):
             return ""
         a["cultivation"] = a.get("cultivation", 0) + gain
         return f"\n🧘 灵宠反哺：修为 +{gain}（{src or '宠物成长'}）"
+
+    def _quality_to_cultivation(self, player: dict, pet: dict, quality: str) -> str:
+        """灵宠反哺（提品）：宠物品级晋升，修士同步获得一笔记修为。"""
+        a = player.get("adventure")
+        if not a:
+            return ""
+        gain = int(200 + pet.get("level", 1) * 20)
+        a["cultivation"] = a.get("cultivation", 0) + gain
+        return f"\n🧘 灵宠反哺：晋升【{quality}】品质，修为 +{gain}！"
 
     def _auto_level_note(self, player: dict, p: dict) -> str:
         """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
