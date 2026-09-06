@@ -94,6 +94,18 @@ _BIND_ALWAYS_ALLOWED = {
     "灵契仙途", "仙途帮助", "查看说明",
 }
 
+# 修士化「成长/培养」命令：玩家用灵宠视角指令（灵宠升级/灵宠进化…）驱动，
+# 内部统一归一到 宠物X 的既有逻辑/冷却/统计，宠物X 仍作别名可用。
+_GROWTH_ALIASES = {
+    "灵宠升级": "宠物升级",
+    "一键升级灵宠": "一键升级宠物",
+    "灵宠进化": "宠物进化",
+    "灵宠飞升": "宠物飞升",
+    "灵宠渡劫": "宠物渡劫",
+    "灵宠觉醒": "宠物觉醒",
+    "灵宠神仙劫": "宠物神仙劫",
+}
+
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
 KNOWN_COMMANDS = {
     *BOARD_COMMANDS,
@@ -209,15 +221,21 @@ KNOWN_COMMANDS = {
     "宠物复活",
     "宠物状态",
     "喂食",
-    # 成长
+    # 成长（修士化：灵宠为视角名，宠物X仍作别名）
+    "一键升级灵宠",
     "一键升级宠物",
     "开启自动升级",
     "关闭自动升级",
+    "灵宠升级",
     "宠物升级",
+    "灵宠进化",
     "宠物进化",
+    "灵宠飞升",
     "宠物飞升",
+    "灵宠渡劫",
     "宠物渡劫",
     "幻境寻宝",
+    "灵宠神仙劫",
     "宠物神仙劫",
     "经验换仙元",
     "合成卡",
@@ -245,6 +263,7 @@ KNOWN_COMMANDS = {
     "参悟秘技",
     "遗忘秘技",
     # 天赋 / 炼丹
+    "灵宠觉醒",
     "宠物觉醒",
     "制作天赋符",
     "使用天赋符",
@@ -3105,6 +3124,10 @@ class PetParkPlugin(Star):
             if m:
                 tokens = ["开始扫雷", m.group(1)] + tokens[1:]
                 cmd = "开始扫雷"
+        # 修士化成长命令归一化：灵宠升级 → 宠物升级（逻辑/冷却统走内部名，旧名仍可用）
+        if cmd in _GROWTH_ALIASES:
+            cmd = _GROWTH_ALIASES[cmd]
+            tokens[0] = cmd
         # 非本插件指令直接放行，避免为每条普通聊天创建玩家/群档案
         event_cmds = self._active_event_commands()
         # 家园指令白名单直通（绕过可能的模块缓存问题）
@@ -6914,9 +6937,9 @@ class PetParkPlugin(Star):
             + event_lines
             + [
                 "**【成长】**",
-                "- 一键升级宠物 · 宠物升级 次数 · 宠物进化",
+                "- 一键升级灵宠 · 灵宠升级 次数 · 灵宠进化（旧名 宠物升级/宠物进化 仍可用）",
                 "- 开启自动升级 · 关闭自动升级（经验满自动升级开关，默认开启）",
-                "- 宠物飞升 · 宠物渡劫 · 幻境寻宝 · 宠物神仙劫",
+                "- 灵宠飞升 · 灵宠渡劫 · 幻境寻宝 · 灵宠神仙劫（旧名 宠物飞升/渡劫/神仙劫 仍可用）",
                 "- 合成卡 目标卡名 · 一键合成品质卡（自动级联升到最高）",
                 "- 一键合成品质碎片（把所有碎片批量转卡）",
                 "> 每突破 60 级赠史诗卡；10 张低品质卡可合成为高一级卡，碎片 10 片兑 1 张同品质卡",
@@ -6926,7 +6949,7 @@ class PetParkPlugin(Star):
                 "- 参悟秘技 名称 · 遗忘秘技",
                 "",
                 "**【天赋 / 炼丹】**",
-                "- 宠物觉醒 · 制作天赋符 · 使用天赋符 天赋",
+                "- 灵宠觉醒 · 制作天赋符 · 使用天赋符 天赋（旧名 宠物觉醒 仍可用）",
                 "- 炼丹 · 使用仙丹 名称 用户ID 数量",
                 "- 治愈 用户ID · 复活 用户ID · 精力转移 用户ID 值",
                 "- 复活他人宠物：『起死回生』天赋免费，无天赋耗『九转还魂丹』",
@@ -9518,9 +9541,9 @@ class PetParkPlugin(Star):
         """开启/关闭经验满自动升级（默认开启）。"""
         if enable:
             player["auto_level"] = True
-            return "已开启『自动升级』：经验满后自动一键升级。发送『关闭自动升级』可关闭。"
+            return "已开启『自动升级』：经验满后自动为灵宠升级。发送『关闭自动升级』可关闭。"
         player["auto_level"] = False
-        return ("已关闭『自动升级』：经验满后不再自动升级，需发送『一键升级宠物』手动升级。"
+        return ("已关闭『自动升级』：经验满后不再自动升级，需发送『一键升级灵宠』手动升级。"
                 "发送『开启自动升级』可恢复。")
 
     def _manual_level(self, player: dict, tokens: list[str]) -> str:
@@ -9541,7 +9564,7 @@ class PetParkPlugin(Star):
         prep_msg = self._rebirth_prep_reminder(p, before)
         return (
             f"⬆ 升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}。{suffix}"
-            + self._pet_to_cultivation(player, p, n, "宠物升级")
+            + self._pet_to_cultivation(player, p, n, "灵宠升级")
             + reward + prep_msg
         )
 
@@ -9602,7 +9625,7 @@ class PetParkPlugin(Star):
         if busy:
             return busy
         if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
-            return "宠物飞升后才能『幻境寻宝』。"
+            return "灵宠飞升后才能『幻境寻宝』。"
         cd = self._cooldown_block(player, "fantasy_treasure", "幻境寻宝")
         if cd:
             return cd
@@ -9629,7 +9652,7 @@ class PetParkPlugin(Star):
         if busy:
             return busy
         if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
-            return "宠物飞升后才能挑战神仙劫。"
+            return "灵宠飞升后才能挑战神仙劫。"
         cd = self._cooldown_block(player, "immortal_calamity", "宠物神仙劫")
         if cd:
             return cd
@@ -9653,7 +9676,7 @@ class PetParkPlugin(Star):
         if not p:
             return "你没有宠物。"
         if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
-            return "只有宠物飞升后才能把经验兑换成仙元。"
+            return "只有灵宠飞升后才能把经验兑换成仙元。"
         exp = p.get("exp", 0)
         rate = data.ASCEND_XIANYUAN_PER_EXP
         gain = exp // rate
@@ -10611,7 +10634,7 @@ class PetParkPlugin(Star):
         if busy:
             return busy
         if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
-            return "只有宠物飞升后才能挑战神仙。"
+            return "只有灵宠飞升后才能挑战神仙。"
         if len(tokens) < 2:
             return "用法：挑战神仙 等级（如：挑战神仙 120）"
         try:
