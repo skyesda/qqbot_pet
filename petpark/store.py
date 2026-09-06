@@ -347,7 +347,7 @@ class PetStore:
         try:
             json.loads(tmp.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            return  # 写入损坏，放弃本次保存，保留旧数据
+            raise OSError("存档校验失败，原存档未替换")
         # 保留一份备份
         bak = self.path.with_suffix(".bak")
         try:
@@ -2073,4 +2073,3 @@ class PetStore:
     def email_config(self) -> dict:
         """返回邮箱服务配置（SMTP）。"""
         return self._data.setdefault("email_config", {})
-

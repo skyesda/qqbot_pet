@@ -37,6 +37,9 @@ from astrbot.api.star import Context, Star, register
 from .petpark import card_theme, data, images, pet as petmod
 from .petpark.ai_router import AIRouter
 from .petpark.store import PetStore
+from .petpark.adventure import AdventureService, COMMANDS as ADVENTURE_COMMANDS
+from .petpark.admin_reset import handle_group_reset, COMMANDS as GROUP_RESET_COMMANDS
+from .petpark.adventure.service import MENU as ADVENTURE_MENU
 from .petpark.boardgames import BoardGames, COMMANDS as BOARD_COMMANDS
 
 # 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响宠物乐园主程序。
@@ -77,12 +80,15 @@ _MENTION_RE = re.compile(r"<@!?([0-9A-Za-z_\-]+)>")
 # 强制绑定QQ模式下，未绑定用户仍可使用的指令（绑定相关 + 菜单/帮助）
 _BIND_ALWAYS_ALLOWED = {
     "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
-    "宠物乐园", "查看说明",
+    "宠物乐园", "灵契仙途", "仙途帮助", "查看说明",
 }
 
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
 KNOWN_COMMANDS = {
     *BOARD_COMMANDS,
+    *ADVENTURE_COMMANDS,
+    *GROUP_RESET_COMMANDS,
+    "旧版菜单",
     # 管理
     "开启宠物乐园",
     "关闭宠物乐园",
@@ -1100,9 +1106,9 @@ class PetParkPlugin(Star):
     def _main_menu_keyboard(self) -> dict:
         return self._build_qq_keyboard(
             [
-                [("🥚 砸蛋", "砸蛋"), ("🐾 我的宠物", "我的宠物")],
-                [("💼 查看背包", "查看背包"), ("⚔️ 宠物攻击", "宠物攻击")],
-                [("📜 宠物乐园", "宠物乐园"), ("🎁 每日签到", "签到")],
+                [("✨ 我的修士", "我的修士"), ("🐾 我的宠物", "我的宠物")],
+                [("🗺 山海历练", "仙途地图"), ("⚔️ 组队秘境", "组队秘境")],
+                [("📜 灵契仙途", "灵契仙途"), ("👹 世界首领", "世界首领")],
                 [("💎 我要氪金", "我要氪金")],
                 [("🌐 官方网站", "官方网站")],
             ]
@@ -1140,7 +1146,7 @@ class PetParkPlugin(Star):
 
     def _keyboard_for_cmd(self, text: str, reply: str = "") -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。"""
-        if text in {"宠物乐园", "管理菜单"}:
+        if text in {"宠物乐园", "管理菜单", "灵契仙途", "仙途帮助"} or (text.split() and text.split()[0] in ADVENTURE_COMMANDS):
             return self._main_menu_keyboard()
         if text.split() and text.split()[0] in BOARD_COMMANDS:
             context = text + "\n" + reply
@@ -3091,6 +3097,9 @@ class PetParkPlugin(Star):
         if cmd in ("点歌", "下一页", "上一页", "选歌"):
             return self._song_dispatch(qq, group_id, cmd, tokens)
 
+        if cmd in GROUP_RESET_COMMANDS:
+            return handle_group_reset(self, event, group_id, tokens)
+
         group = self.store.get_group(group_id)
 
         # ---- 管理开关（管理员） ----
@@ -3184,6 +3193,14 @@ class PetParkPlugin(Star):
         player = self.store.get_player(qq, group_id)
         player["group"] = group_id
         self._track_activity(player)
+
+        # New adventure owns its role resources and progression; legacy bank freezes
+        # do not block the character's free recovery and cooperative gameplay.
+        if cmd in ADVENTURE_COMMANDS:
+            if cmd == "仙途切磋" and len(tokens) > 1:
+                tokens = [cmd, self._resolve_user_token(tokens[1])]
+            request_id = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "") or None
+            return AdventureService(self.store, config=getattr(self, "config", None)).handle(group_id, qq, tokens, request_id=request_id)
 
         # 银行逾期冻结检查（放行查看/还款类指令）
         _bank_allow = {"银行信息", "银行还款", "宠物乐园",
@@ -5753,7 +5770,9 @@ class PetParkPlugin(Star):
     # 帮助 / 信息查询
     # =====================================================================
     def _handle_info(self, cmd: str, tokens: list[str]) -> str | tuple | None:
-        if cmd == "宠物乐园":
+        if cmd in ("宠物乐园", "灵契仙途", "仙途帮助"):
+            return ADVENTURE_MENU
+        if cmd == "旧版菜单":
             md = self._render_menu_image()
             if md:
                 return ("宠物乐园 · 指令菜单", md)
@@ -7684,6 +7703,7 @@ class PetParkPlugin(Star):
                 "**【小管理员】**",
                 "- 任命小管理 用户ID · 撤销小管理 用户ID",
                 "- 小管理列表（大管理员查看全服）",
+                "- 清空本群用户数据（仅大管理员，5分钟确认码，自动备份）",
                 "- 我的管理额度（小管理员查看今日额度）",
                 "",
                 "**【群授权】**",

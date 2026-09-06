@@ -1,7 +1,7 @@
 name: astrbot_plugin_petpark
-display_name: 宠物乐园
-desc: 宠物乐园：群聊宠物养成与对战玩法（砸蛋抽宠、商城、属性克制对战、进化飞升渡劫、姻缘繁殖、天赋觉醒、炼丹、神器秘技、副本、剧情任务、跨群挑战、排行神榜）。
-short_desc: 群聊宠物养成对战游戏插件
-version: v1.139.0
+display_name: 灵契仙途
+desc: 灵契仙途：修士职业、灵宠伙伴、真实回合战斗、山海历练、三人秘境、世界首领和深渊抉择；兼容宠物乐园原有存档与玩法。
+short_desc: 修士职业、灵宠助战、组队秘境与世界首领
+version: v2.0.0
 author: Devin
 repo: https://github.com/skyesda/qqbot_pet

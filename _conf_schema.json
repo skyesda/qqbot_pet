@@ -256,5 +256,17 @@
     "hint": "QQ 服务器拉取语音 silk 文件的 URL 前缀，指向管理网站公网地址（需外网可达）。若 QQ 拒绝 http，可改成 https 临时图床地址兜底。",
     "type": "string",
     "default": "http://103.38.83.146:7799"
+  },
+  "adventure_enemy_percent": {
+    "description": "灵契仙途：敌人数值百分比",
+    "hint": "50—200，默认100。调整副本、洞天试炼和个人首领遭遇；与洞天倍率相乘。重载配置后生效。",
+    "type": "int",
+    "default": 100
+  },
+  "adventure_boss_hp": {
+    "description": "灵契仙途：共享首领总生命",
+    "hint": "1000—10000000，默认100000。仅影响下一次生成的每日首领，不重置当天战果。",
+    "type": "int",
+    "default": 100000
   }
 }

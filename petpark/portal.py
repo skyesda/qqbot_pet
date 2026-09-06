@@ -1343,7 +1343,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>宠物乐园 · 玩家中心</title>
+<title>灵契仙途 · 玩家中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
 <style>
   :root{
@@ -1500,7 +1500,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <div id="app" v-cloak>
 <div class="layout">
   <aside class="sidebar">
-    <div class="side-brand">宠物乐园 · 玩家中心</div>
+    <div class="side-brand">灵契仙途 · 玩家中心</div>
     <div class="side-sec">我的宠物</div>
     <div class="side-pets">
       <div v-for="(p,i) in pets" :key="p.group_id + ':' + p.qq" class="pet-chip"
@@ -2479,7 +2479,7 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>宠物对话 · 宠物乐园</title>
+<title>灵契仙途 · 修行对话</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
 <style>
   :root{
@@ -2697,7 +2697,7 @@ createApp({
     const sending = ref(false);
     const bodyEl = ref(null);
     const inputEl = ref(null);
-    const quickCmds = ['签到','我的宠物','宠物状态','查看背包','宠物升级','宠物菜单','宠物排行','自动修炼状态'];
+    const quickCmds = ['灵契仙途','创建角色','选择职业 剑修','结契灵宠 九尾狐','我的洞天','洞天突破','仙途毕业','踏入仙途 体修','踏入仙途 灵修','我的修士','修士修炼','仙途地图','历练 1','修士装备','世界首领','战斗详情','我的宠物'];
 
     const current = computed(()=> pets.value[petIdx.value] || null);
     const myName = computed(()=> account.value ? 'QQ ' + account.value.qq : '我');
@@ -2786,7 +2786,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>宠物乐园 · 全服数据中心</title>
+<title>灵契仙途 · 全服数据中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
 <link rel="stylesheet" href="/webstatic/element-plus-dark.css">
 <style>
@@ -2929,7 +2929,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <div id="app" v-cloak>
 <div class="wrap">
   <nav>
-    <div class="brand"><span class="dot"></span>宠物乐园</div>
+    <div class="brand"><span class="dot"></span>灵契仙途</div>
     <div class="nav-btns" v-if="loggedIn">
       <span class="user-chip">✅ 已登录{{ userQQ ? ' · ' + userQQ : '' }}</span>
       <el-button class="btn-grad" round @click="goPortal">仪表盘</el-button>

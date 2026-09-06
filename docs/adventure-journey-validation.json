@@ -1,0 +1,74 @@
+{
+  "seed": 20260906,
+  "clock": "1 claim/day; 12-hour offline cap; simulated days, not retention evidence",
+  "resource_injection": false,
+  "commands": 2094,
+  "world_reward_claims": {
+    "剑修": 5,
+    "体修": 5,
+    "灵修": 5
+  },
+  "three_player_raid": true,
+  "results": [
+    {
+      "job": "剑修",
+      "days": 27,
+      "level": 80,
+      "heaven": 4,
+      "equipment": {
+        "weapon": 38,
+        "robe": 37,
+        "seal": 37
+      },
+      "ore": 243,
+      "milestones": [
+        "hard:20",
+        "raid:葬龙秘境",
+        "raid:机关迷城",
+        "raid:暗月幽林",
+        "deep:5"
+      ],
+      "graduation": "## 仙途毕业进度\n✓ 化神Lv80\n✓ 归真洞天\n✓ 二十张地图\n✓ 终章困难\n✓ 三大秘境\n✓ 五层深渊\n✓ 已结契伙伴\n恭喜，完成当前版本全部毕业目标！"
+    },
+    {
+      "job": "体修",
+      "days": 27,
+      "level": 80,
+      "heaven": 4,
+      "equipment": {
+        "weapon": 38,
+        "robe": 37,
+        "seal": 37
+      },
+      "ore": 243,
+      "milestones": [
+        "hard:20",
+        "raid:葬龙秘境",
+        "raid:机关迷城",
+        "raid:暗月幽林",
+        "deep:5"
+      ],
+      "graduation": "## 仙途毕业进度\n✓ 化神Lv80\n✓ 归真洞天\n✓ 二十张地图\n✓ 终章困难\n✓ 三大秘境\n✓ 五层深渊\n✓ 已结契伙伴\n恭喜，完成当前版本全部毕业目标！"
+    },
+    {
+      "job": "灵修",
+      "days": 27,
+      "level": 80,
+      "heaven": 4,
+      "equipment": {
+        "weapon": 38,
+        "robe": 37,
+        "seal": 37
+      },
+      "ore": 249,
+      "milestones": [
+        "hard:20",
+        "raid:葬龙秘境",
+        "raid:机关迷城",
+        "raid:暗月幽林",
+        "deep:5"
+      ],
+      "graduation": "## 仙途毕业进度\n✓ 化神Lv80\n✓ 归真洞天\n✓ 二十张地图\n✓ 终章困难\n✓ 三大秘境\n✓ 五层深渊\n✓ 已结契伙伴\n恭喜，完成当前版本全部毕业目标！"
+    }
+  ]
+}
