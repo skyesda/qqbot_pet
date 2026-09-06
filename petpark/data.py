@@ -967,7 +967,8 @@ ARTIFACT_NAMES = list(ARTIFACTS.keys())
 
 # ---- 修士商城道具 ----
 # daily(灵石商城)：改名符 / 变性丹 —— 不直接 usable，由 service 道号/性别命令消耗。
-# 战力类走 玄晶/天晶商城：修为丹、属性丹、悟道丹、炼体丹 —— 在 main._use_item 修士级分支结算。
+# 战力类：属性丹(力量/铁骨/气血/疾风)、悟道丹、炼体丹 走 天晶商城；修为丹(修为养成)走 玄晶商城。
+# 均在 main._use_item 修士级分支结算。
 ITEMS.update({
     "改名符": {
         "price": 2000,
@@ -994,35 +995,35 @@ ITEMS.update({
         "effect": {"add_cultivation": 2000},
     },
     "力量丹": {
-        "price": 6000,
-        "currency": CURRENCY_JIFEN,
+        "price": 150,
+        "currency": CURRENCY_DIAMOND,
         "category": "仙丹",
         "usable": True,
-        "desc": "使用后修士攻击永久 +30（需已踏入仙途）。",
+        "desc": "使用后修士攻击永久 +30（已踏入仙途后使用，计入修士战力）。",
         "effect": {"buff_atk": 30},
     },
     "铁骨丹": {
-        "price": 6000,
-        "currency": CURRENCY_JIFEN,
+        "price": 150,
+        "currency": CURRENCY_DIAMOND,
         "category": "仙丹",
         "usable": True,
-        "desc": "使用后修士防御永久 +20（需已踏入仙途）。",
+        "desc": "使用后修士防御永久 +20（已踏入仙途后使用，计入修士战力）。",
         "effect": {"buff_def": 20},
     },
     "气血丹": {
-        "price": 6000,
-        "currency": CURRENCY_JIFEN,
+        "price": 150,
+        "currency": CURRENCY_DIAMOND,
         "category": "仙丹",
         "usable": True,
-        "desc": "使用后修士性命上限永久 +100（需已踏入仙途）。",
+        "desc": "使用后修士性命上限永久 +100（已踏入仙途后使用，计入修士战力）。",
         "effect": {"buff_hp": 100},
     },
     "疾风丹": {
-        "price": 6000,
-        "currency": CURRENCY_JIFEN,
+        "price": 150,
+        "currency": CURRENCY_DIAMOND,
         "category": "仙丹",
         "usable": True,
-        "desc": "使用后修士速度永久 +5（需已踏入仙途）。",
+        "desc": "使用后修士速度永久 +5（已踏入仙途后使用，影响战斗先手）。",
         "effect": {"buff_speed": 5},
     },
     "悟道丹": {

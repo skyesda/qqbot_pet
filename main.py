@@ -5871,7 +5871,7 @@ class PetParkPlugin(Star):
                     lines.append(f"\n> 效果：{self._format_effect(eff)}")
                 lines.append(
                     f"\n> 分类：{info.get('category', '未分类')} | "
-                    f"价格：{info.get('price', 0)} {info.get('currency', '')} | "
+                    f"价格：{info.get('price', 0)} {_cur_disp(info.get('currency', ''))} | "
                     f"{'可使用 ✅' if info.get('usable') else '不可使用 ❌'}"
                 )
                 return "\n".join(lines)
@@ -5955,6 +5955,29 @@ class PetParkPlugin(Star):
                 parts.append("解除所有限制和异常")
             elif k == "kill":
                 parts.append("立即死亡")
+            # 修士养成（main._use_item 修士级分支结算）——中文文案，避免 effect 键原样外泄
+            elif k == "add_cultivation":
+                parts.append(f"修为 +{v}")
+            elif k == "buff_atk":
+                parts.append(f"攻击 +{v}（永久）")
+            elif k == "buff_def":
+                parts.append(f"防御 +{v}（永久）")
+            elif k == "buff_hp":
+                parts.append(f"性命上限 +{v}（永久）")
+            elif k == "buff_speed":
+                parts.append(f"速度 +{v}（永久）")
+            elif k == "add_wudao":
+                parts.append(f"悟性 +{v}（永久）")
+            elif k == "add_gengu":
+                parts.append(f"根骨 +{v}（永久）")
+            elif k == "add_cultivation_days":
+                parts.append(f"自动修炼卡时长 +{v} 天")
+            elif k == "add_pet_slot":
+                parts.append(f"宠物席位 +{v}")
+            elif k == "custom_pet":
+                parts.append("定制宠物")
+            elif k == "summon_pet_card":
+                parts.append("召唤宠物卡")
             else:
                 parts.append(f"{k}:{v}")
         return "、".join(parts) if parts else "无"
