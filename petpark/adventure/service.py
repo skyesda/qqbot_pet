@@ -123,15 +123,24 @@ class AdventureService:
         lines.append("发送「战斗详情」查看完整战报。")
         return "\n".join(lines)
 
-    def reward(self, a, level, first=False, tier=None):
+    @staticmethod
+    def _has_daolv(p):
+        """道侣判定：当前结契灵宠为『已婚』即视为有道侣（与 power.py 口径一致）。"""
+        pets = p.get("pets") or []
+        return bool(pets and pets[0].get("love_state") == "已婚")
+
+    def reward(self, a, level, first=False, tier=None, partner=False):
         self.daily(a)
         if a["rewards"] >= c.DAILY_REWARDS:
             return "今日8次副本收益已领取，仍可自由练习；首次通关记录保留。"
         a["rewards"] += 1
         ore = 3 + level // 3 + (3 if first else 0) + c.HEAVENS[a.get("heaven", 0) if tier is None else tier]["bonus"]
         a["ore"] += ore
-        a["cultivation"] += 35 + level * 6
-        return f"获得灵材×{ore}、修为×{35 + level * 6}（今日收益 {a['rewards']}/8）。"
+        cult = 35 + level * 6
+        if partner:
+            cult = int(cult * 1.2)  # 道侣修为加速 +20%
+        a["cultivation"] += cult
+        return f"获得灵材×{ore}、修为×{cult}{'（道侣加成）' if partner else ''}（今日收益 {a['rewards']}/8）。"
 
     def encounter(self, enc, tier):
         result = deepcopy(enc)
@@ -299,7 +308,7 @@ class AdventureService:
                 if first:
                     a['cleared'].append(enc['id'])
                 eligible=a['rewards']<c.DAILY_REWARDS
-                text += "\n" + self.reward(a,enc['level'],first)
+                text += "\n" + self.reward(a,enc['level'],first,partner=self._has_daolv(p))
                 if hard and eligible:
                     a['ore']+=2
                     text+=' 困难额外灵材＋2。'
@@ -391,7 +400,7 @@ class AdventureService:
             if result['won']:
                 if 'raid:'+team['name'] not in member.setdefault('milestones',[]):
                     member['milestones'].append('raid:'+team['name'])
-                messages.append(member['profession']+'：'+self.reward(member,c.RAIDS[team['name']]['level'],tier=team.get('tier',0)))
+                messages.append(member['profession']+'：'+self.reward(member,c.RAIDS[team['name']]['level'],tier=team.get('tier',0),partner=self._has_daolv(self.player(k))))
         title=team['name']
         del teams[tid]
         return self.report({'title':title,'result':result})+'\n'+'\n'.join(messages)
@@ -403,7 +412,7 @@ class AdventureService:
             floor=a['deep']['floor']
             tier=a['deep'].get('tier',0)
             a['deep']=None
-            return '已离开深渊。'+(self.reward(a,floor*3,tier=tier) if floor else '尚未通关，没有奖励。')
+            return '已离开深渊。'+(self.reward(a,floor*3,tier=tier,partner=self._has_daolv(p)) if floor else '尚未通关，没有奖励。')
         if cmd=='仙途深渊' and not a['deep']:
             a['deep']={'tier':a['heaven'],'floor':0,'party':build_party(p,key),'seed':random.randrange(2**32)}
         self.require(a['deep'],'先发送「仙途深渊」。')
@@ -421,7 +430,7 @@ class AdventureService:
         text=self.record(a,result,f'仙途深渊 {floor}层')
         if not result['won']:
             passed=d['floor']; a['deep']=None
-            return text+'\n'+(self.reward(a,passed,tier=d.get("tier",0)) if passed else '本轮结束，没有消耗收益次数。')
+            return text+'\n'+(self.reward(a,passed,tier=d.get("tier",0),partner=self._has_daolv(p)) if passed else '本轮结束，没有消耗收益次数。')
         d['floor']=floor
         d['party']=[u for u in result['units'] if u['side']==0]
         for u in d['party']: u['burn']=0
@@ -429,7 +438,7 @@ class AdventureService:
             if 'deep:5' not in a['milestones']:
                 a['milestones'].append('deep:5')
             a['deep']=None
-            return text+'\n'+self.reward(a,20,tier=d.get("tier",0))
+            return text+'\n'+self.reward(a,20,tier=d.get("tier",0),partner=self._has_daolv(p))
         return text+'\n深渊抉择 强攻 / 固守 / 回春，或深渊收手。'
 
     def duel(self,group,key,cmd,arg):
