@@ -2,7 +2,7 @@
 from copy import deepcopy
 import math
 import random
-from .content import PROFESSIONS, VERSION
+from .content import PROFESSIONS, VERSION, TACTICS, SPIRIT_ROOTS
 from .. import data as legacy
 
 
@@ -27,7 +27,13 @@ def hero_sheet(a, player, include_mount=True):
     坐骑改由 power._mount_contrib 以独立 20% 占比计入，避免在英雄本体里双重计。
     """
     spec = PROFESSIONS[a["profession"]]
-    growth = 1 + .16 * (a["level"] - 1)
+    # 成长曲线：Lv1~80 保持原线性（不破坏既有副本/洞天平衡），80 级后对数压缩，
+    # 999 级约 22 倍（有界），避免纯线性拖到 160 倍导致高等级战力爆炸。
+    lv = a["level"] - 1
+    if lv <= 79:
+        growth = 1 + 0.16 * lv
+    else:
+        growth = 1 + 0.16 * 79 + 2.5 * math.log2(1 + (lv - 79) / 100)
     eq = a.get("equipment", {"weapon": 0, "robe": 0, "seal": 0})
     mount = {} if not include_mount else player.get("mounts", {}).get(player.get("active_mount"), {})
     mount_atk = 0 if not include_mount else projection(mount.get("power", 0), 10000, 5)
@@ -45,6 +51,21 @@ def hero_sheet(a, player, include_mount=True):
     elif a.get("gender") == "女":
         dfn = int(dfn * 1.05)
         spd = int(spd * 1.05)
+    # 神通被动（渡劫里程碑解锁）＋ 灵根天赋（创建随机），百分比乘区叠加。
+    mult = {"atk": 0.0, "hp": 0.0, "def": 0.0, "speed": 0.0}
+    for name in a.get("tactics", []):
+        t = next((x for x in TACTICS if x["name"] == name), None)
+        if t:
+            for k in mult:
+                mult[k] += t.get(k, 0.0)
+    root = next((r for r in SPIRIT_ROOTS if r["name"] == a.get("spirit_root", "")), None)
+    if root:
+        for k in mult:
+            mult[k] += root.get(k, 0.0)
+    atk = int(atk * (1 + mult["atk"]))
+    hp = int(hp * (1 + mult["hp"]))
+    dfn = int(dfn * (1 + mult["def"]))
+    spd = int(spd * (1 + mult["speed"]))
     return {"hp": int(hp), "atk": int(atk), "def": int(dfn), "speed": int(spd),
             "wudao": wudao, "gengu": gengu}
 

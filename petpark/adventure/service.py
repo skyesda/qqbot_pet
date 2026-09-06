@@ -15,13 +15,13 @@ MENU = """## 灵契仙途
 
 初次游玩：`创建角色` → `选择职业 剑修`（体修 / 灵修）→ `结契灵宠 九尾狐`
 老玩家可用 `灵宠助战 序号` 选择已有宠物。
-`我的洞天` → 等级达到10/20/40/60时 `洞天突破`，提高个人挑战和收益。
-① `修士修炼` 领取离线修为 → `修士突破` 提升境界
-② `仙途地图` → `历练 1` 挑战首领
-③ `修士装备` → `锻造 灵剑` 培养装备
+① `修士修炼` 领取离线修为 → `修士突破` 提升等级（上限 999）
+② 每个境界满级后 `渡劫` 破境（需天材地宝 + 天劫战斗），解锁「神通」
+③ `仙途地图` → `历练 1` 挑战首领 · `锻造 灵剑` 培养装备
 ④ `组队秘境 葬龙秘境` 邀请群友并肩作战
 
-`我的修士` · `修士配装 破阵` · `灵宠专长 辅助` · `道号` · `性别`
+`我的修士`（看灵根/神通/战力）· `我的洞天` · `洞天突破`
+`修士配装 破阵` · `灵宠专长 辅助` · `道号` · `性别`
 `世界首领` · `仙途深渊` · `仙途切磋 @对方`
 `战斗详情` · `今日修行` · `仙途战绩`
 完整指令（含原宠物玩法）请发送 `灵契仙途` 查看菜单图。"""
@@ -142,7 +142,8 @@ class AdventureService:
         a["rewards"] += 1
         ore = 3 + level // 3 + (3 if first else 0) + c.HEAVENS[a.get("heaven", 0) if tier is None else tier]["bonus"]
         a["ore"] += ore
-        cult = 35 + level * 6
+        # 修为随「修士等级」增长（999 级长线节奏），灵材仍按副本等级结算。
+        cult = 35 + a["level"] * 6
         if partner:
             cult = int(cult * 1.2)  # 道侣修为加速 +20%
         a["cultivation"] += cult
@@ -189,15 +190,17 @@ class AdventureService:
             self.require(not p.get("adventure"), "你已踏入仙途。查看「我的修士」，更换职业使用「修士转职 职业」。")
             self.require(arg in c.PROFESSIONS, "请选择：踏入仙途 剑修 / 体修 / 灵修")
             pet = p.get("pet") or {}
-            p["adventure"] = {"schema_version": 2, "heaven": 0, "milestones": [], "name": f"{arg}修士", "profession": arg,
+            root = random.choices(c.SPIRIT_ROOTS, weights=[r["weight"] for r in c.SPIRIT_ROOTS], k=1)[0]["name"]
+            p["adventure"] = {"schema_version": c.VERSION, "heaven": 0, "milestones": [], "name": f"{arg}修士", "profession": arg,
                 "level": 1, "realm": 0, "cultivation": 0, "last_train": int(self.clock()) - 3600,
                 "equipment": {slot: 0 for slot, _ in c.GEAR.values()}, "ore": 9,
                 "style": "均衡", "pet_role": "攻击", "companion_pet_id": pet.get("pet_id"),
                 "gender": random.choice(["男", "女"]), "bonus": {"atk": 0, "def": 0, "hp": 0, "speed": 0},
                 "wudao": 0, "gengu": 0, "name_customized": False,
+                "spirit_root": root, "tactics": [c.TACTICS[0]["name"]], "tribulation_cd": 0,
                 "cleared": [], "history": [], "deep": None, "transfer_at": 0}
             p.pop("adventure_draft", None)
-            return f"## 欢迎踏入灵契仙途\n你已成为{arg}！获赠9份灵材与一小时修炼积累。\n「修士修炼」→「历练 1」→「锻造 灵剑」\n下一步：结契灵宠 九尾狐 / 卡比兽 / 七夕青鸟（新玩家任选一只）；老玩家用「灵宠助战 序号」。"
+            return f"## 欢迎踏入灵契仙途\n你已成为{arg}，觉醒了「{root}」！获赠9份灵材与一小时修炼积累。\n「修士修炼」→「历练 1」→「锻造 灵剑」\n下一步：结契灵宠 九尾狐 / 卡比兽 / 七夕青鸟（新玩家任选一只）；老玩家用「灵宠助战 序号」。"
         a = self.player(key)["adventure"]
         a.setdefault("heaven", 0)
         a.setdefault("milestones", [])
@@ -206,8 +209,14 @@ class AdventureService:
         a.setdefault("wudao", 0)
         a.setdefault("gengu", 0)
         a.setdefault("name_customized", False)
+        a.setdefault("tribulation_cd", 0)
         for slot, _ in c.GEAR.values():
             a.setdefault("equipment", {}).setdefault(slot, 0)
+        # 惰性补齐：老玩家无灵根则补随机一个；无神通则按当前境界补发已解锁神通（炼气期必得灵台清明）。
+        if not a.get("spirit_root"):
+            a["spirit_root"] = random.choices(c.SPIRIT_ROOTS, weights=[r["weight"] for r in c.SPIRIT_ROOTS], k=1)[0]["name"]
+        if not a.get("tactics"):
+            a["tactics"] = [c.TACTICS[r]["name"] for r in range(min(a.get("realm", 0), len(c.TACTICS) - 1) + 1)]
         a["schema_version"] = c.VERSION
         self.daily(a)
         if cmd == "结契灵宠":
@@ -227,7 +236,7 @@ class AdventureService:
         if cmd == "洞天突破":
             self.can_edit(key)
             self.require(not a['deep'], "请先结束本轮深渊再突破洞天。")
-            self.require(a['heaven'] < len(c.HEAVENS)-1, "洞天已达归真。")
+            self.require(a['heaven'] < len(c.HEAVENS)-1, f"洞天已达{c.HEAVENS[-1]['name']}。")
             target = a['heaven']+1
             tier = c.HEAVENS[target]
             self.require(a['level'] >= tier['level'], f"洞天突破需要Lv{tier['level']}。")
@@ -240,7 +249,7 @@ class AdventureService:
                 return text + f"\n洞天突破成功：{tier['name']}（{target}阶）。个人副本倍率×{tier['enemy']}，收益额外灵材＋{tier['bonus']}。"
             return text + "\n突破失败，洞天与资源不变。提升装备或改用辅助灵宠后重试。"
         if cmd == "仙途毕业":
-            goals = {"化神Lv80": a['level'] == 80, "归真洞天": a['heaven'] == 4,
+            goals = {"真仙Lv999": a['level'] == 999, "九渡天劫": a['realm'] == 9, "仙门洞天": a['heaven'] == len(c.HEAVENS) - 1,
                      "二十张地图": len(a['cleared']) == 20, "终章困难": "hard:20" in a['milestones'],
                      "三大秘境": all("raid:"+n in a['milestones'] for n in c.RAIDS),
                      "五层深渊": "deep:5" in a['milestones'], "已结契伙伴": bool(a.get('companion_pet_id'))}
@@ -258,11 +267,16 @@ class AdventureService:
                 )
             else:
                 power_lines = "总战力 0"
-            return (f"## 灵契仙途 · {a['profession']}\n道号 {a['name']} · {a['gender']} · {c.REALMS[a['realm']][0]} Lv{a['level']} · 修为 {a['cultivation']}\n"
+            tactics = " · ".join(a.get("tactics", [])) or "无"
+            cap = c.realm_cap(a["realm"])
+            cap_hint = "" if a["realm"] >= len(c.REALMS) - 1 else f"\n境界封顶 Lv{cap}（满级后「渡劫」破境）"
+            return (f"## 灵契仙途 · {a['profession']}\n道号 {a['name']} · {a['gender']} · {c.REALMS[a['realm']]} Lv{a['level']} · 修为 {a['cultivation']}\n"
+                    f"灵根：{a.get('spirit_root') or '无'} · 神通：{tactics}\n"
                     f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n{power_lines}\n性命 {s['hp']} · 攻击 {s['atk']} · 防御 {s['def']} · 速度 {s['speed']}\n"
                     f"悟性 {s['wudao']} · 根骨 {s['gengu']}\n功法：{a['style']} · 灵宠：{units[1]['name']}（{a['pet_role']}）\n"
-                    f"灵材 {a['ore']} · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3\n"
-                    f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备 · 道号 · 性别")
+                    f"灵材 {a['ore']} · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3"
+                    f"{cap_hint}\n"
+                    f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备 · 渡劫 · 道号 · 性别")
         if cmd == "修士转职":
             self.can_edit(key)
             self.require(arg in c.PROFESSIONS, "职业：剑修 / 体修 / 灵修")
@@ -295,27 +309,50 @@ class AdventureService:
             a["gender"] = arg
             return f"已变性为{arg}修。" + ("攻击+5%" if arg == "男" else "防御与速度+5%")
         if cmd == "修士修炼":
+            rate = 2 + a["realm"] * 4
+            root = c.spirit_root_by_name(a.get("spirit_root", ""))
+            if root and root.get("cult"):
+                rate *= 1 + root["cult"]
             minutes = min(720, max(0, int((self.clock() - a["last_train"]) // 60)))
-            self.require(minutes > 0, "每分钟积累1点修为，最多储存12小时，请稍后领取。")
-            a["cultivation"] += minutes
+            self.require(minutes > 0, "每分钟积累修为（随境界与灵根加速），最多储存12小时，请稍后领取。")
+            gain = int(minutes * rate)
+            a["cultivation"] += gain
             a["last_train"] = int(self.clock())
-            return f"修炼归来，修为＋{minutes}。发送「修士突破」提升修为等级。"
+            return f"修炼归来，修为＋{gain}（{rate:g}修为/分）。发送「修士突破」提升修为等级。"
         if cmd == "修士突破":
             self.can_edit(key)
-            self.require(a["level"] < 80, "当前已达化神圆满，期待后续仙界篇章。")
+            cap = c.realm_cap(a["realm"])
+            self.require(a["level"] < c.MAX_LEVEL, "已臻真仙圆满，臻于化境，无可再进。")
+            self.require(a["level"] < cap, f"已达{c.REALMS[a['realm']]}巅峰Lv{cap}，须「渡劫」方可破境。")
             cost = 60 + a["level"] * 20
             self.require(a["cultivation"] >= cost, f"突破需要{cost}修为，当前{a['cultivation']}。")
-            realmed = False
-            if a["level"] >= c.REALMS[a["realm"]][1]:
-                self.require(a['heaven'] > a['realm'], "境界已达上限，请先发送「洞天突破」完成个人试炼，再继续修士突破。")
-                a["realm"] += 1
-                realmed = True
             a["cultivation"] -= cost
             a["level"] += 1
-            gain = 3 if realmed else 1
-            a["wudao"] = a.get("wudao", 0) + gain
-            a["gengu"] = a.get("gengu", 0) + gain
-            return f"突破成功：{c.REALMS[a['realm']][0]} Lv{a['level']}！悟性+{gain} · 根骨+{gain}"
+            a["wudao"] = a.get("wudao", 0) + 1
+            a["gengu"] = a.get("gengu", 0) + 1
+            return f"突破成功：{c.REALMS[a['realm']]} Lv{a['level']}！悟性+1 · 根骨+1"
+        if cmd == "渡劫":
+            self.can_edit(key)
+            self.require(a["realm"] < len(c.REALMS) - 1, "已臻真仙，无劫可渡。")
+            cap = c.realm_cap(a["realm"])
+            self.require(a["level"] >= cap, f"需先修炼至{c.REALMS[a['realm']]}巅峰Lv{cap}，方可渡劫。")
+            self.require(self.clock() >= a.get("tribulation_cd", 0), "渡劫失利，需静养30分钟方可再试。")
+            mat = c.TRIBULATION_MATERIALS[a["realm"]]
+            self.require(self.store.remove_item(p, mat), f"渡劫需『{mat}』×1（灵石商城购买，或历练/首领低概率掉落）。")
+            enc = dict(boss=f"{c.REALMS[a['realm']]}天劫", scale=c.tribulation_scale(a["realm"]), mechanic="strike")
+            result = simulate(build_party(p, key), enemies(enc), random.randrange(2**32))
+            text = self.record(a, result, "渡劫")
+            if result["won"]:
+                a["realm"] += 1
+                tactic = c.TACTICS[a["realm"]]["name"]
+                if tactic not in a.setdefault("tactics", []):
+                    a["tactics"].append(tactic)
+                a["wudao"] = a.get("wudao", 0) + 3
+                a["gengu"] = a.get("gengu", 0) + 3
+                a["tribulation_cd"] = 0
+                return text + f"\n⛈ 渡劫成功！你已踏入{c.REALMS[a['realm']]}（{a['realm']}境）！\n解锁神通「{tactic}」· 悟性+3 · 根骨+3"
+            a["tribulation_cd"] = self.clock() + c.TRIBULATION_FAIL_COOLDOWN
+            return text + f"\n⛈ 渡劫失败：雷劫加身，境界未退，『{mat}』已消耗。30分钟内不可再渡劫。"
         if cmd == "修士配装":
             self.can_edit(key)
             self.require(arg in c.STYLES, "修士配装 均衡 / 破阵 / 守心\n" + "\n".join(f"{k}：{v}" for k,v in c.STYLES.items()))

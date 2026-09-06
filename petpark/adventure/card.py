@@ -68,7 +68,7 @@ def card_html(player, key, equipment=False):
             '</style></head><body><div class="card"><div class="identity"><div>'
             f'<div class="eyebrow">灵契仙途 · {"修士装备" if equipment else "我的修士"}</div>'
             f'<h1>{escape(str(a["name"]))}</h1><p>{escape(str(a["profession"]))} · {escape(str(a.get("gender", "男")))} · '
-            f'{c.REALMS[a["realm"]][0]} Lv{a["level"]} · {c.HEAVENS[a.get("heaven", 0)]["name"]}洞天</p></div>'
+            f'{c.REALMS[a["realm"]]} Lv{a["level"]} · {c.HEAVENS[a.get("heaven", 0)]["name"]}洞天</p></div>'
             f'<div class="power">总战力<strong>{bd["total"] if bd else 0}</strong></div></div>'
             f'<div class="loadout"><div class="gear-column">{"".join(slots[:3])}</div>'
             f'<div class="portrait"><img src="{asset_uri(portrait_name(a))}" alt="修士立绘"></div>'

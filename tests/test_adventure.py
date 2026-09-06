@@ -33,7 +33,7 @@ class AdventureTests(unittest.TestCase):
         p.update(pets=[pet],active_pet=0,pet=pet,bag={'红药水':3})
         before=copy.deepcopy(pet)
         self.create()
-        self.assertIn('修为＋60',self.call('修士修炼'))
+        self.assertIn('修为＋',self.call('修士修炼'))
         self.assertIn('锻造成功',self.call('锻造 灵剑'))
         self.assertIn('获得灵材',self.call('历练 1'))
         self.assertEqual(p['bag'],{'红药水':3})
@@ -209,7 +209,6 @@ class AdventureTests(unittest.TestCase):
         self.assertIn('需要Lv10',self.call('洞天突破'))
         a=self.store.get_player('a','g')['adventure']
         a.update(level=10,cultivation=1000)
-        self.assertIn('先发送',self.call('修士突破'))
         before=copy.deepcopy(self.store.get_player('a','g')['adventure'])
         with patch('qqbot_pet.petpark.adventure.service.simulate',return_value=dict(won=False,winner=1,rounds=1,reason='test',events=[],units=[],metrics={})):
             self.assertIn('突破失败',self.call('洞天突破'))
@@ -257,5 +256,73 @@ class AdventureTests(unittest.TestCase):
         result=simulate(build_party(p,'a'),enemies(enc),0)
         self.assertTrue(result['won'])
         self.assertTrue(any('破阵削弱' in e for e in result['events']))
+
+    def test_tribulation_requires_material(self):
+        p=self.create();a=p['adventure'];a.update(level=99)
+        self.assertIn('渡劫需',self.call('渡劫'))
+        self.assertEqual(self.store.get_player('a','g')['adventure']['realm'],0)
+
+    def test_tribulation_success_unlocks_realm_and_tactic(self):
+        p=self.create();a=p['adventure']
+        a.update(level=99,wudao=10,gengu=10)
+        p['bag']={'筑基丹':1}
+        won=dict(won=True,winner=0,rounds=2,reason='test',events=[],units=[],metrics={})
+        with patch('qqbot_pet.petpark.adventure.service.simulate',return_value=won):
+            result=self.call('渡劫')
+        self.assertIn('筑基',result)
+        self.assertIn('神通',result)
+        self.assertEqual(a['realm'],1)
+        self.assertIn('剑意通明',a['tactics'])
+        self.assertEqual(a['wudao'],13)
+        self.assertEqual(a['gengu'],13)
+        self.assertNotIn('筑基丹',p['bag'])
+
+    def test_tribulation_failure_costs_material_and_cools_down(self):
+        p=self.create();a=p['adventure']
+        a.update(level=99)
+        p['bag']={'筑基丹':1}
+        lost=dict(won=False,winner=1,rounds=2,reason='test',events=[],units=[],metrics={})
+        with patch('qqbot_pet.petpark.adventure.service.simulate',return_value=lost):
+            result=self.call('渡劫')
+        self.assertIn('渡劫失败',result)
+        self.assertEqual(a['realm'],0)
+        self.assertNotIn('筑基丹',p['bag'])
+        self.assertGreater(a['tribulation_cd'],self.now)
+        p['bag']={'筑基丹':1}
+        self.assertIn('静养',self.call('渡劫'))
+
+    def test_level_999_cap_and_realm_gate(self):
+        p=self.create();a=p['adventure']
+        a.update(level=99,cultivation=999999)
+        self.assertIn('渡劫',self.call('修士突破'))
+        self.assertEqual(self.store.get_player('a','g')['adventure']['level'],99)
+        a=self.store.get_player('a','g')['adventure']
+        a.update(realm=9,level=999,cultivation=999999)
+        self.assertIn('无可再进',self.call('修士突破'))
+        self.assertEqual(self.store.get_player('a','g')['adventure']['level'],999)
+
+    def test_spirit_root_and_tactic_affect_hero_sheet(self):
+        from qqbot_pet.petpark.adventure.combat import hero_sheet
+        p=self.create('体修');a=p['adventure']
+        a.update(level=20,spirit_root='金灵根',tactics=['灵台清明'])
+        base=hero_sheet(a,p)
+        a['tactics']=['灵台清明','剑意通明']
+        boosted=hero_sheet(a,p)
+        self.assertGreater(boosted['atk'],base['atk'])
+        self.assertEqual(boosted['hp'],base['hp'])
+
+    def test_water_root_accelerates_training(self):
+        p=self.create();a=p['adventure'];a.update(spirit_root='水灵根')
+        self.assertIn('修为＋144',self.call('修士修炼'))
+
+    def test_legacy_realm_four_player_can_continue(self):
+        # 老玩家：化神(realm=4) Lv80（旧上限），现应可继续突破到 499 封顶
+        p=self.create();a=p['adventure']
+        a.update(realm=4,level=80,cultivation=1000000)
+        info=self.call('我的修士')
+        self.assertIn('化神',info)
+        self.assertIn('499',info)
+        self.assertIn('突破成功',self.call('修士突破'))
+        self.assertEqual(self.store.get_player('a','g')['adventure']['level'],81)
 
 if __name__=='__main__':unittest.main()

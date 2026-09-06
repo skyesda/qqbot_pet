@@ -1042,6 +1042,67 @@ ITEMS.update({
         "desc": "使用后修士根骨永久 +5，根骨加成防御与速度（需已踏入仙途）。",
         "effect": {"add_gengu": 5},
     },
+    "洗髓丹": {
+        "price": 10000,
+        "currency": CURRENCY_COIN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士随机重洗灵根（可能洗出杂灵根，需已踏入仙途）。",
+        "effect": {"reroll_spirit_root": True},
+    },
+    "灵根丹": {
+        "price": 50000,
+        "currency": CURRENCY_COIN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士重洗灵根，保底洗出五行灵根（不会洗出杂灵根，需已踏入仙途）。",
+        "effect": {"reroll_spirit_root_boosted": True},
+    },
+    "筑基丹": {
+        "price": 5000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "炼气破入筑基的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "结丹丹": {
+        "price": 20000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "筑基破入金丹的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "元婴丹": {
+        "price": 60000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "金丹破入元婴的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "化神丹": {
+        "price": 150000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "元婴破入化神的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "炼虚草": {
+        "price": 300000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "化神破入炼虚的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "合体道果": {
+        "price": 600000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "炼虚破入合体的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "大乘舍利": {
+        "price": 1200000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "合体破入大乘的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "渡劫符": {
+        "price": 2400000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "大乘破入渡劫的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
+    "真仙花": {
+        "price": 4800000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "desc": "渡劫破入真仙的渡劫材料（渡劫自动消耗）。",
+        "effect": {},
+    },
 })
 
 # 神器也作为可购买、可佩戴的背包物品（由「购买」入包，「佩戴神器」穿戴）。

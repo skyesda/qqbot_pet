@@ -44,6 +44,8 @@ from .petpark.admin_reset import handle_group_reset, COMMANDS as GROUP_RESET_COM
 from .petpark.adventure.service import MENU as ADVENTURE_MENU
 from .petpark.adventure.power import compute_unified_power
 from .petpark.adventure.content import REALMS as ADVENTURE_REALMS
+from .petpark.adventure.content import SPIRIT_ROOTS as ADVENTURE_SPIRIT_ROOTS
+from .petpark.adventure.content import realm_cap as adventure_realm_cap
 from .petpark.boardgames import BoardGames, COMMANDS as BOARD_COMMANDS
 
 # 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响灵契仙途主程序。
@@ -6023,6 +6025,10 @@ class PetParkPlugin(Star):
                 parts.append(f"悟性 +{v}（永久）")
             elif k == "add_gengu":
                 parts.append(f"根骨 +{v}（永久）")
+            elif k == "reroll_spirit_root":
+                parts.append("重洗灵根（随机）")
+            elif k == "reroll_spirit_root_boosted":
+                parts.append("重洗灵根（保底非杂灵根）")
             elif k == "add_cultivation_days":
                 parts.append(f"自动修炼卡时长 +{v} 天")
             elif k == "add_pet_slot":
@@ -6923,10 +6929,10 @@ class PetParkPlugin(Star):
                 "> 修士问道灵宠同行：选职业→结契灵宠→历练→锻造，一条龙养成。",
                 "- 灵契仙途 查看本菜单/全程引导 · 创建角色 · 选择职业 剑修(体修/灵修) · 修士转职",
                 "- 结契灵宠 九尾狐 · 灵宠助战 序号 · 灵宠专长 辅助",
-                "- 修士修炼(领离线修为) · 修士突破(升境界) · 今日修行",
+                "- 修士修炼(领离线修为) · 修士突破(升等级·上限999) · 渡劫(破境解锁神通) · 今日修行",
                 "- 仙途地图 · 历练 1 · 挑战秘境",
                 "- 修士装备 · 锻造 灵剑 · 修士配装 破阵",
-                "- 我的洞天 · 洞天突破(10/20/40/60级) · 仙途毕业",
+                "- 我的洞天 · 洞天突破(自选难度收益) · 仙途毕业",
                 "- 组队秘境 葬龙秘境 · 仙途队伍 · 加入/退出队伍 · 准备出发 · 队伍出发",
                 "- 世界首领 · 讨伐首领 · 首领奖励",
                 "- 仙途深渊 · 深渊抉择 · 深渊收手",
@@ -7859,7 +7865,7 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 商城
     # =====================================================================
-    _CATEGORY_ORDER = ["药品", "道具", "宝石", "材料", "仙丹", "符箓", "其他"]
+    _CATEGORY_ORDER = ["药品", "道具", "宝石", "材料", "仙丹", "天材地宝", "符箓", "其他"]
 
     def _shop_text(self, which: str) -> str:
         if which == "宠物商城":
@@ -9100,7 +9106,8 @@ class PetParkPlugin(Star):
                 "> 等级/品质/属性均保留。"
             )
         # 修士级道具：修为丹 / 力量·铁骨·气血·疾风丹 / 悟道丹 / 炼体丹 —— 作用于修士本体（无需宠物）。
-        _HERO_EFFECTS = ("add_cultivation", "buff_atk", "buff_def", "buff_hp", "buff_speed", "add_wudao", "add_gengu")
+        _HERO_EFFECTS = ("add_cultivation", "buff_atk", "buff_def", "buff_hp", "buff_speed", "add_wudao", "add_gengu",
+                         "reroll_spirit_root", "reroll_spirit_root_boosted")
         if it_check and any(k in it_check.get("effect", {}) for k in _HERO_EFFECTS):
             if not self.store.has_item(player, name):
                 return f"背包里没有『{name}』。"
@@ -9133,6 +9140,12 @@ class PetParkPlugin(Star):
                 total = eff["add_gengu"] * count
                 a["gengu"] = a.get("gengu", 0) + total
                 msgs.append(f"根骨 +{total}")
+            if "reroll_spirit_root" in eff or "reroll_spirit_root_boosted" in eff:
+                boosted = "reroll_spirit_root_boosted" in eff
+                pool = [r for r in ADVENTURE_SPIRIT_ROOTS if not boosted or r["name"] != "杂灵根"]
+                root = random.choices(pool, weights=[r["weight"] for r in pool], k=1)[0]["name"]
+                a["spirit_root"] = root
+                msgs.append(f"灵根重洗为「{root}」")
             self.store.remove_item(player, name, count)
             return f"✅ 使用『{name}』x{count}：{' · '.join(msgs)}"
         p = self._need_pet(player)
@@ -9389,15 +9402,19 @@ class PetParkPlugin(Star):
         a = player.get("adventure")
         if a:
             eq = a.get("equipment", {})
+            realm = ADVENTURE_REALMS[a.get("realm", 0)] if 0 <= a.get("realm", 0) < len(ADVENTURE_REALMS) else "?"
+            cap = adventure_realm_cap(a.get("realm", 0))
             lines += [
                 "━━━━━━━━━━━━━━",
                 "**【修士行囊】**",
+                f"• 境界：{realm} Lv{a.get('level', 1)}（封顶 Lv{cap}）",
+                f"• 灵根：{a.get('spirit_root') or '无'} · 神通：{' · '.join(a.get('tactics', [])) or '无'}",
                 f"• 灵材 ×{a.get('ore', 0)}",
                 f"• 修为 {a.get('cultivation', 0)} / {60 + a.get('level', 1) * 20}（升级需 60+等级×20）",
                 f"• 装备：{equipment_summary(a)}",
                 f"• 悟性 {a.get('wudao', 0)} · 根骨 {a.get('gengu', 0)}",
                 "",
-                "> 修士道具（修为丹/属性丹/悟道丹等）在上方背包里，用 `使用 道具名` 作用于修士本体。",
+                "> 修士道具（修为丹/属性丹/悟道丹/洗髓丹/灵根丹等）在上方背包里，用 `使用 道具名` 作用于修士本体。",
             ]
         return "\n".join(lines)
 
@@ -10463,7 +10480,7 @@ class PetParkPlugin(Star):
         for i, (q, a, pw) in enumerate(top, 1):
             rk = medals.get(i, str(i))
             nick = str(a.get("name", q)).replace("|", "丨")
-            realm = ADVENTURE_REALMS[a["realm"]][0] if 0 <= a["realm"] < len(ADVENTURE_REALMS) else "?"
+            realm = ADVENTURE_REALMS[a["realm"]] if 0 <= a["realm"] < len(ADVENTURE_REALMS) else "?"
             lines.append(f"| {rk} | {nick} | {a['profession']} | {realm} | {self._fmt_power(pw)} |")
         if not local:
             lines.append(
