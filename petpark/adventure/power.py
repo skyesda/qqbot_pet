@@ -78,27 +78,53 @@ def _mount_contrib(player, lv):
     return int(projection(inst.get("power", 0), 10000, _MOUNT_POW_W))
 
 
-def compute_unified_power(player, key):
-    """唯一仙途战力。未踏入仙途返回 0（引导去「踏入仙途」）。
-
-    战力 = 修士本体(不含坐骑) + 40%×所带灵宠有界贡献 + 20%×坐骑有界贡献，再乘道侣与洞天增益。
-    所带灵宠按 companion_pet_id；无则取贡献最高一只；再无则引路灵蝶兜底。
-    """
+def _unified_components(player, key):
+    """统一战力的各分量（供 compute_unified_power 与总战力明细展示共用，保证两处数字一致）。"""
     a = player.get("adventure")
     if not a:
-        return 0
+        return None
     hero = hero_power(a, player, include_mount=False)  # 修士本体（去坐骑，坐骑走独立 20% 项）
     pets = player.get("pets", []) or []
     cid = a.get("companion_pet_id")
     pet = next((p for p in pets if p.get("pet_id") == cid), None)
     if pet is None:
         pet = max(pets, key=lambda p: _pet_contrib(p, a["level"]), default=None)
-    contrib = _pet_contrib(pet, a["level"]) if pet else _guide_pet(a["level"])
+    if pet is None:  # 无宠物：引路灵蝶兜底（name 仅供明细展示）
+        pet = {"nickname": "引路灵蝶", "hp_max": 800, "atk": 50, "def": 40, "intel": 30, "mood": 5}
+        contrib = _guide_pet(a["level"])
+    else:
+        contrib = _pet_contrib(pet, a["level"])
     mount = _mount_contrib(player, a["level"])
     partner = 1.15 if (pets and pets[0].get("love_state") == "已婚") else 1.0  # 修士道侣加成（修士与修士结道侣，灵宠为见证）
     heaven_margin = 1 + .02 * a.get("heaven", 0)
-    total = hero + PET_POWER_RATIO * contrib + MOUNT_POWER_RATIO * mount
-    return int(total * partner * heaven_margin)
+    base = hero + PET_POWER_RATIO * contrib + MOUNT_POWER_RATIO * mount
+    return {
+        "hero": hero,
+        "pet_name": pet.get("nickname") or pet.get("name") or "灵宠",
+        "pet_contrib": contrib,
+        "pet_part": round(PET_POWER_RATIO * contrib),
+        "mount_contrib": mount,
+        "mount_part": round(MOUNT_POWER_RATIO * mount),
+        "partner": partner,
+        "heaven_margin": heaven_margin,
+        "base": base,
+        "total": int(base * partner * heaven_margin),
+    }
+
+
+def compute_unified_power(player, key):
+    """唯一仙途战力。未踏入仙途返回 0（引导去「踏入仙途」）。
+
+    战力 = 修士本体(不含坐骑) + 40%×所带灵宠有界贡献 + 20%×坐骑有界贡献，再乘道侣与洞天增益。
+    所带灵宠按 companion_pet_id；无则取贡献最高一只；再无则引路灵蝶兜底。
+    """
+    c = _unified_components(player, key)
+    return c["total"] if c else 0
+
+
+def power_breakdown(player, key):
+    """总战力明细：各分量与原值，供「我的修士」展示，确保数字透明可核（与 compute_unified_power 同源）。"""
+    return _unified_components(player, key)
 
 
 def power_to_scale(power, k=30000):
@@ -106,4 +132,4 @@ def power_to_scale(power, k=30000):
     return max(.6, min(3.0, .6 + power / k))
 
 
-__all__ = ["compute_unified_power", "hero_power", "power_to_scale"]
+__all__ = ["compute_unified_power", "power_breakdown", "hero_power", "power_to_scale"]
