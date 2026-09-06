@@ -76,6 +76,7 @@ class PetStore:
                 self._data = {"players": {}, "groups": {}}
         self._data.setdefault("players", {})
         self._data.setdefault("groups", {})
+        self._data.setdefault("schema_version", 1)
         self._data.setdefault("cards", {})
         self._data.setdefault("events", {})
         self._data.setdefault("accounts", {})
@@ -117,6 +118,17 @@ class PetStore:
         self._migrate_bank_to_per_group()
         self._migrate_clear_cooldowns_once()
         self._migrate_purge_sect()
+        self._migrate_unified_v1()
+
+    def _migrate_unified_v1(self) -> None:
+        """统一经济 v1：仅打幂等标记，为后续「双键货币/仙途战力」迁移预留钩子。
+
+        三新币（灵石/玄晶/天晶）复用 coin/jifen/diamond 字段，靠 CURRENCY_KEYS
+        双键映射兼容新旧名，旧存档/卡密/银行记录零迁移。这里不改造任何已有数据。
+        """
+        if self._data.get("unified_migrated_v1"):
+            return
+        self._data["unified_migrated_v1"] = True
 
     def _migrate_clear_cooldowns_once(self) -> None:
         """一次性清空所有玩家冷却（修复时区后重置）。仅在未标记时执行一次。"""
@@ -497,7 +509,11 @@ class PetStore:
         return group["sign_count"]
 
     # ----------------------------- 货币 / 背包 -----------------------------
-    CURRENCY_KEYS = {"金币": "coin", "积分": "jifen", "钻石": "diamond"}
+    CURRENCY_KEYS = {
+        "灵石": "coin", "金币": "coin",
+        "玄晶": "jifen", "积分": "jifen",
+        "天晶": "diamond", "钻石": "diamond",
+    }
 
     @classmethod
     def currency_key(cls, currency: str) -> str:
