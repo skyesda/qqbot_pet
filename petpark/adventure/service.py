@@ -8,7 +8,7 @@ import uuid
 from . import content as c
 from ..pet import new_pet
 from .combat import build_party, enemies, simulate
-from .power import compute_unified_power
+from .power import compute_unified_power, power_to_scale
 
 MENU = """## 灵契仙途
 修士问道，灵宠同行。
@@ -44,6 +44,12 @@ class AdventureService:
                 return default
         self.enemy_percent = bounded("adventure_enemy_percent", 100, 50, 200)
         self.boss_hp = bounded("adventure_boss_hp", 100000, 1000, 10000000)
+        # 统一战力×敌人数值缩放：0=关闭(现行为不变) · 1=完全按战力缩放。灰度先行。
+        try:
+            self.adventure_power_scale = float(config.get("adventure_power_scale", 0.0))
+        except (TypeError, ValueError):
+            self.adventure_power_scale = 0.0
+        self.adventure_power_scale = max(0.0, min(1.0, self.adventure_power_scale))
 
     def handle(self, group, qq, tokens, request_id=None):
         # No await inside transaction. Works with the shared plugin's single event loop.
@@ -141,6 +147,13 @@ class AdventureService:
             cult = int(cult * 1.2)  # 道侣修为加速 +20%
         a["cultivation"] += cult
         return f"获得灵材×{ore}、修为×{cult}{'（道侣加成）' if partner else ''}（今日收益 {a['rewards']}/8）。"
+
+    def _power_scale_factor(self, p, key):
+        """统一战力→敌人数值缩放的灰度系数。开关为 0 时恒为 1.0（行为不变）。"""
+        if self.adventure_power_scale <= 0:
+            return 1.0
+        target = power_to_scale(compute_unified_power(p, key))
+        return 1.0 + (target - 1.0) * self.adventure_power_scale
 
     def encounter(self, enc, tier):
         result = deepcopy(enc)
@@ -299,7 +312,7 @@ class AdventureService:
             enc=self.encounter(enc, a["heaven"])
             if hard:
                 enc['scale']*=1.65
-            result = simulate(build_party(p,key), enemies(enc), random.randrange(2**32))
+            result = simulate(build_party(p,key), enemies(enc, scale_factor=self._power_scale_factor(p, key)), random.randrange(2**32))
             text = self.record(a,result,enc['name']+('·困难' if hard else ''))
             if result['won']:
                 if hard and 'hard:'+enc['id'] not in a['milestones']:
@@ -325,7 +338,7 @@ class AdventureService:
             self.require(b['hp'] > 0, "首领已被击败，发送「首领奖励」。")
             self.require(a['world_hits'] < 3, "今日首领挑战已完成，明日再来。")
             enc = self.encounter(dict(boss=b['name'],scale=1+c.HEAVENS[a['heaven']]['level']*.16,mechanic=b['mechanic']),a['heaven'])
-            result = simulate(build_party(p,key), enemies(enc), random.randrange(2**32),max_rounds=12)
+            result = simulate(build_party(p,key), enemies(enc, scale_factor=self._power_scale_factor(p, key)), random.randrange(2**32),max_rounds=12)
             damage = min(b['hp'],sum(v['damage'] for k,v in result['metrics'].items() if k==key))
             b['hp'] -= damage
             b['contributions'][key] = b['contributions'].get(key,0)+damage
@@ -392,7 +405,7 @@ class AdventureService:
         self.require(team['leader']==key,'只有队长可以出发。')
         self.require(all(k in team['ready'] for k in team['members']),'还有队友未准备。')
         party = [u for k in team['members'] for u in team['ready'][k]]
-        result = simulate(party,enemies(self.encounter(c.RAIDS[team['name']],team.get('tier',0)),len(team['members'])),random.randrange(2**32))
+        result = simulate(party,enemies(self.encounter(c.RAIDS[team['name']],team.get('tier',0)),len(team['members']),scale_factor=self._power_scale_factor(self.player(key),key)),random.randrange(2**32))
         messages=[]
         for k in team['members']:
             member=self.player(k)['adventure']
@@ -426,7 +439,7 @@ class AdventureService:
                 elif arg=='固守': u['defense']*=1.25
                 else: u['hp']=min(u['max_hp'],u['hp']+int(u['max_hp']*.45))
         floor=d['floor']+1
-        result=simulate(d['party'],enemies(self.encounter(dict(boss=f'深渊守卫·{floor}',scale=1+floor*.3,mechanic=['strike','shield','burn','pack','rage'][floor-1]),d.get('tier',0))),d['seed']+floor)
+        result=simulate(d['party'],enemies(self.encounter(dict(boss=f'深渊守卫·{floor}',scale=1+floor*.3,mechanic=['strike','shield','burn','pack','rage'][floor-1]),d.get('tier',0)),scale_factor=self._power_scale_factor(p,key)),d['seed']+floor)
         text=self.record(a,result,f'仙途深渊 {floor}层')
         if not result['won']:
             passed=d['floor']; a['deep']=None

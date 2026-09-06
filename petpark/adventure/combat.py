@@ -50,8 +50,8 @@ def build_party(player, key, side=0):
     return [hero, companion]
 
 
-def enemies(encounter, members=1):
-    s = encounter["scale"]
+def enemies(encounter, members=1, scale_factor=1.0):
+    s = encounter["scale"] * scale_factor
     boss = unit("boss", encounter["boss"], 1, 850 * s * members, 88 * s,
                 22 * s, 85)
     boss.update(kind="boss", mechanic=encounter["mechanic"], spawned=False, target="")
