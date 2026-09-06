@@ -284,14 +284,21 @@ KNOWN_COMMANDS = {
     "取消剧情任务",
     "提交任务",
     "领取任务",
-    # 婚恋
+    # 婚恋（修士道侣：修士与修士结道侣，结契灵宠为见证）
+    "道侣情缘",
+    "了断道侣",
+    "离缘",
+    "结道侣",
+    "同意道侣",
+    "求婚",
+    "同意求婚",
+    # 旧名保留为隐藏别名
     "宠物恋情",
     "宠物分手",
     "宠物离婚",
     "宠物追求",
     "同意追求",
     "宠物求婚",
-    "同意求婚",
     # Boss
     "Boss伤害排行",
     "Boss历史奖品",
@@ -1253,7 +1260,7 @@ class PetParkPlugin(Star):
             try:
                 allowed = (
                     KNOWN_COMMANDS
-                    | set(data.DAILY_ACTIONS)
+                    | data.daily_tokens()
                     | self._active_event_commands()
                 )
                 routed = await self._ai_router.route(text, allowed)
@@ -1382,7 +1389,7 @@ class PetParkPlugin(Star):
             try:
                 allowed = (
                     KNOWN_COMMANDS
-                    | set(data.DAILY_ACTIONS)
+                    | data.daily_tokens()
                     | self._active_event_commands()
                 ) - WEB_BLOCKED_COMMANDS
                 routed = await self._ai_router.route(text, allowed)
@@ -2300,7 +2307,7 @@ class PetParkPlugin(Star):
         if explores > 0:
             life_parts.append("🧭 探险 **{0}** 次".format(explores))
         if shuangxiu > 0:
-            life_parts.append("💕 双修 **{0}** 次".format(shuangxiu))
+            life_parts.append("💕 道侣双修 **{0}** 次".format(shuangxiu))
         if treasure > 0:
             life_parts.append("✨ 幻境寻宝 **{0}** 次".format(treasure))
         if calamity > 0:
@@ -3114,7 +3121,7 @@ class PetParkPlugin(Star):
             and cmd not in _BANK_CMDS
             and cmd not in _REBIRTH_CMDS
             and cmd not in _PET_CMDS
-            and text not in data.DAILY_ACTIONS
+            and data.daily_key(text) not in data.DAILY_ACTIONS
             and cmd not in event_cmds
             and text not in event_cmds
         ):
@@ -3392,8 +3399,9 @@ class PetParkPlugin(Star):
             return self._feed(player, group_id, tokens)
 
         # ---- 日常活动 ----
-        if text in data.DAILY_ACTIONS:
-            return self._daily(player, group_id, text)
+        _dk = data.daily_key(text)
+        if _dk in data.DAILY_ACTIONS:
+            return self._daily(player, group_id, _dk)
 
         # ---- 成长 ----
         if cmd == "一键升级宠物":
@@ -6873,7 +6881,7 @@ class PetParkPlugin(Star):
                 "- 仙途深渊 · 深渊抉择 · 深渊收手",
                 "- 仙途切磋 @对方 · 接受切磋 · 拒绝切磋 · 战斗详情 · 仙途战绩",
                 "- 我的修士(看战力) · 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励",
-                "- 与灵宠结为道侣(追求/求婚/分手/离婚) · 道侣可加速修为与提供战力加成",
+                "- 与对方修士结为道侣(结道侣/求婚/了断道侣/离缘) · 双方结契灵宠为见证 · 道侣可加速修为与提供战力加成",
                 "",
                 "**【入门】**",
                 "- 砸蛋 · 宠物市场（品质卡/变种卡）· 我的宠物 · 宠物状态",
@@ -6898,9 +6906,9 @@ class PetParkPlugin(Star):
                 "- 转让 用户ID 物品 数量 · 清空背包",
                 "- 查看说明 物品名",
                 "",
-                "**【喂养 / 日常】**",
-                "> ⏳ 各 10~20 分钟冷却",
-                "- 喂食 物品 · " + " · ".join(data.DAILY_ACTIONS),
+                "**【修行 / 日常】**",
+                "> ⏳ 各 10~20 分钟冷却｜修士指点灵宠修行，道侣双修更高效",
+                "- 喂食 物品 · " + " · ".join(data.daily_display(k) for k in data.DAILY_ACTIONS),
                 "",
             ]
             + event_lines
@@ -6989,10 +6997,10 @@ class PetParkPlugin(Star):
                 "> ⛔ 准备期（Lv800+）：禁止出售/转让/丢弃物品",
                 "> 📦 重生后保留：品质卡/定制卡/宠物卡/品质碎片/自动修炼卡（其余清空）",
                 "",
-                "**【道侣姻缘】**（与灵宠结为道侣，可加速修为与提供战力加成）",
-                "- 宠物追求 用户ID · 同意追求 用户ID",
-                "- 宠物求婚 用户ID · 同意求婚 用户ID",
-                "- 宠物分手 · 宠物离婚 · 宠物恋情",
+                "**【修士道侣】**（你与对方修士结为道侣，以双方结契灵宠为见证，可加速修为与提供战力加成）",
+                "- 结道侣 用户ID · 同意道侣 用户ID",
+                "- 求婚 用户ID · 同意求婚 用户ID",
+                "- 了断道侣 · 离缘 · 道侣情缘",
                 "",
                 "**【个人】**",
                 "- 我的信息 · 签到 · 我要氪金",
@@ -8968,8 +8976,9 @@ class PetParkPlugin(Star):
                 return "召唤失败，席位异常。"
             self.store.remove_item(player, name, 1)
             return (
-                f"🎴 **召唤成功！** 消耗 {name} ×1，获得 【{q}】品质的 **{species}**！\n"
-                "> 发送 `我的宠物` 查看详情。"
+                f"⚭ **灵契缔结仪式**——你以心神为引、以焚香为契，唤醒沉睡的灵种。\n"
+                f"> 灵光散尽，一只【{q}】品质的『{species}』随契而生，与你道心相通、缔结因缘。\n"
+                f"> 消耗 {name} ×1，发送 `我的宠物` 与它一见。"
             )
         # 品质卡（普通卡~混沌卡）：双用途 —— ①「召唤」该品质随机宠物；②对指定宠物升品质。
         # 召唤不需要已有宠物，故必须在此分支处理（在 _need_pet 门槛之前）。
@@ -8991,8 +9000,9 @@ class PetParkPlugin(Star):
                     return "召唤失败，席位异常。"
                 self.store.remove_item(player, name, 1)
                 return (
-                    f"🎴 **召唤成功！** 消耗 {name} ×1，获得 【{target_q}】品质的 **{species}**！\n"
-                    "> 发送 `我的宠物` 查看详情。"
+                    f"⚭ **灵契缔结仪式**——你以心神为引、以焚香为契，唤醒沉睡的灵种。\n"
+                    f"> 灵光散尽，一只【{target_q}】品质的『{species}』随契而生，与你道心相通、缔结因缘。\n"
+                    f"> 消耗 {name} ×1，发送 `我的宠物` 与它一见。"
                 )
             # 指定宠物升品质：未指定 → 当前宠物；指定宠物名/序号 → 按名查找
             p = self._need_pet(player)
@@ -9357,11 +9367,11 @@ class PetParkPlugin(Star):
         if action == "冥想" and not p.get("custom"):
             return "『冥想』需要定制宠物才行。"
         if action in ("修炼", "双修") and self._pet_is_ascended(p):
-            return "宠物已飞升，凡间的『修炼/双修』已无法带来增益，请通过『幻境寻宝』『宠物神仙劫』获取仙元。"
+            return "此灵宠已飞升，凡间的『灵宠修行/道侣双修』已无法带来增益，请通过『幻境寻宝』『神仙劫』获取仙元。"
         if action == "双修" and p.get("love_state") != "已婚":
-            return "『双修』需与伴侣结为夫妻才行，先通过『宠物求婚 / 同意求婚』结婚吧（单身/恋爱中可用『修炼』）。"
+            return "『道侣双修』需与道侣缔结婚约才行，先通过『求婚 / 同意求婚』结为道侣吧（未缔结可用『灵宠修行』）。"
         if action == "修炼" and p.get("love_state") == "已婚":
-            return "你已结婚，解锁了更高效的『双修』，请使用『双修』代替『修炼』。"
+            return "你已缔结婚约，解锁了更高效的『道侣双修』，请以之代替『灵宠修行』。"
         cd = self._cooldown_block(player, f"日常:{action}", action)
         if cd:
             return cd
@@ -9382,16 +9392,17 @@ class PetParkPlugin(Star):
                     tp["pet"]["favor"] = min(
                         data.FAVOR_MAX, tp["pet"]["favor"] + gain
                     )
-                    extra = f"\n💕 伴侣 `{self._display_uid(p['love_target'])}` 的好感度也 +{gain}。"
-            return f"💕 约会愉快，好感度 +{gain}，当前 {p['favor']}。" + extra
+                    extra = f"\n💕 道侣 `{self._display_uid(p['love_target'])}` 的灵宠好感度也 +{gain}。"
+            return f"💕 你与道侣赴约，灵宠好感度 +{gain}，当前 {p['favor']}。" + extra
         if action in ("修炼", "双修"):
             base = random.randint(50, 120) + p["level"] * 15
             exp = base * (2 if action == "双修" else 1)
             petmod.add_exp(p, exp)
             if action == "双修":
                 self._inc_stat(player, "shuangxiu")
+            verb = f"你与道侣共修为『{p['nickname']}』双修" if action == "双修" else f"你为『{p['nickname']}』护法修行"
             return (
-                f"🧘 {action}完成，经验 +{exp}，当前经验 {p['exp']}。"
+                f"🧘 {verb}，经验 +{exp}，当前经验 {p['exp']}。"
                 + self._auto_level_note(player, p)
             )
         if action == "打工":
@@ -14177,13 +14188,13 @@ class PetParkPlugin(Star):
     # 婚恋
     # =====================================================================
     def _handle_love(self, player, group_id, cmd, tokens) -> str | None:
-        if cmd == "宠物恋情":
+        if cmd in ("宠物恋情", "道侣情缘"):
             return self._love_status(player)
-        if cmd == "宠物分手":
+        if cmd in ("宠物分手", "了断道侣"):
             return self._breakup(player, group_id)
-        if cmd == "宠物离婚":
+        if cmd in ("宠物离婚", "离缘"):
             return self._divorce(player, group_id)
-        if cmd in ("宠物追求", "同意追求", "宠物求婚", "同意求婚"):
+        if cmd in ("宠物追求", "同意追求", "宠物求婚", "同意求婚", "结道侣", "同意道侣", "求婚"):
             target = self._arg(tokens, 1)
             if not target:
                 return f"用法：{cmd} 用户ID"
@@ -14195,10 +14206,11 @@ class PetParkPlugin(Star):
         if not p:
             return "你没有宠物。"
         if p["love_state"] == "单身":
-            return f"💔 『{p['nickname']}』当前**单身**。"
+            return f"💔 你眼下道侣情缘**未结**（结契灵宠『{p['nickname']}』单身）。"
         return (
-            f"💕 『{p['nickname']}』**{p['love_state']}** 中\n"
-            f"> 伴侣：`{self._display_uid(p['love_target'])}`　好感度：{p['favor']}"
+            f"💕 你现为**{p['love_state']}**（道侣：`{self._display_uid(p['love_target'])}`，"
+            f"以结契灵宠『{p['nickname']}』为凭）\n"
+            f"> 道侣好感度：{p['favor']}"
         )
 
     def _love_action(
@@ -14216,69 +14228,71 @@ class PetParkPlugin(Star):
             return "对方没有宠物。"
         tpet = tp["pet"]
 
-        if cmd == "宠物追求":
+        u0 = self._display_uid(player["qq"])
+        u1 = self._display_uid(target)
+        if cmd in ("宠物追求", "结道侣"):
             if p["love_state"] != "单身" or tpet["love_state"] != "单身":
-                return "只有双方都单身才能追求。"
+                return "只有双方修士都未结道侣，方能缔结道侣之约。"
             if p["gender"] == tpet["gender"]:
-                return "只有异性宠物才能互相追求。"
+                return "道侣须一阴一阳，结契灵宠性别相同无法缔结。"
             tp.setdefault("pending", {})["pursue"] = player["qq"]
-            return f"💌 已向 {self._display_uid(target)} 的宠物发起追求，等待对方『同意追求 {self._display_uid(player['qq'])}』。"
-        if cmd == "同意追求":
+            return f"⚭ 焚香三炷、灵契为凭——你已向 {u1} 的修士递出道侣之约，等待对方『同意道侣 {u0}』。"
+        if cmd in ("同意追求", "同意道侣"):
             pend = player.get("pending", {}).get("pursue")
             if self._display_uid(pend) != self._display_uid(target):
-                return "没有来自该 QQ 的追求请求。"
+                return "没有来自该 QQ 的道侣之约。"
             p["love_state"] = tpet["love_state"] = "恋爱"
             p["love_target"], tpet["love_target"] = target, player["qq"]
             p["favor"] = tpet["favor"] = data.LOVE_INIT_FAVOR
             player.get("pending", {}).pop("pursue", None)
-            return f"💕 追求成功！双方进入恋爱状态，初始好感度 {data.LOVE_INIT_FAVOR}。"
-        if cmd == "宠物求婚":
+            return f"💞 灵契既成！你与 {u1} 修士结为道侣，双方结契灵宠共证此约，初始好感度 {data.LOVE_INIT_FAVOR}。"
+        if cmd in ("宠物求婚", "求婚"):
             if p["love_state"] != "恋爱" or p["love_target"] != target:
-                return "只能向恋爱中的伴侣求婚。"
+                return "只能向已缔道侣之约的伴侣求婚。"
             if p["favor"] < data.FAVOR_MARRY_REQUIRE:
-                return f"好感度需达到 {data.FAVOR_MARRY_REQUIRE} 才能求婚（当前 {p['favor']}）。"
+                return f"道侣好感度需达到 {data.FAVOR_MARRY_REQUIRE} 方能缔结婚约（当前 {p['favor']}）。"
             if not self.store.has_item(player, "永恒钻戒"):
-                return "求婚需要消耗『永恒钻戒』。"
+                return "缔结婚约需要『永恒钻戒』。"
             if not self.store.remove_item(player, "永恒钻戒"):
                 return "你没有『永恒钻戒』。"
             tp.setdefault("pending", {})["marry"] = player["qq"]
-            return f"💍 已向 {self._display_uid(target)} 求婚，消耗『永恒钻戒』x1，等待对方『同意求婚 {self._display_uid(player['qq'])}』。"
+            return f"⚭ 你已向 {u1} 修士递上婚约与『永恒钻戒』x1，等待对方『同意求婚 {u0}』。"
         if cmd == "同意求婚":
             pend = player.get("pending", {}).get("marry")
             if self._display_uid(pend) != self._display_uid(target):
                 return "没有来自该 QQ 的求婚请求。"
             p["love_state"] = tpet["love_state"] = "已婚"
             player.get("pending", {}).pop("marry", None)
-            return "🎉 喜结连理！双方宠物已婚，约会获得双倍好感度。"
-        return "未知姻缘操作。"
+            return "⚭ 婚约已成！你与道侣从此灵契相连、道途共进：修士战力+15%、历练修为+20%、约会好感度翻倍。"
+        return "未知道侣操作。"
 
     def _breakup(self, player: dict, group_id: str) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
         if p["love_state"] != "恋爱":
-            return "当前不在恋爱状态。"
+            return "当前未缔道侣之约。"
         partner = p.get("love_target")
         self._reset_love(p)
         if partner:
             tp = self.store.get_player(partner, group_id, create=False)
             if tp and tp.get("pet"):
                 self._reset_love(tp["pet"])
-        return "💔 已分手。"
+        return f"💔 道侣之约已散，你与 {self._display_uid(partner) if partner else '对方'} 缘尽于此。"
 
     def _divorce(self, player: dict, group_id: str) -> str:
         p = self._need_pet(player)
         if not p:
             return "你没有宠物。"
         if p["love_state"] != "已婚":
-            return "当前未婚。"
+            return "当前未缔结婚约。"
         partner = p.get("love_target")
         self._reset_love(p)
         if partner:
             tp = self.store.get_player(partner, group_id, create=False)
             if tp and tp.get("pet"):
                 self._reset_love(tp["pet"])
-        return "🕊 已离婚，缘尽于此。"
+        return f"🕊 婚约已解，你与 {self._display_uid(partner) if partner else '对方'} 道侣之情缘尽于此。"
 
     @staticmethod
     def _reset_love(pet: dict) -> None:

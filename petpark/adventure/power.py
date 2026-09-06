@@ -95,7 +95,7 @@ def compute_unified_power(player, key):
         pet = max(pets, key=lambda p: _pet_contrib(p, a["level"]), default=None)
     contrib = _pet_contrib(pet, a["level"]) if pet else _guide_pet(a["level"])
     mount = _mount_contrib(player, a["level"])
-    partner = 1.15 if (pets and pets[0].get("love_state") == "已婚") else 1.0  # 道侣加成
+    partner = 1.15 if (pets and pets[0].get("love_state") == "已婚") else 1.0  # 修士道侣加成（修士与修士结道侣，灵宠为见证）
     heaven_margin = 1 + .02 * a.get("heaven", 0)
     total = hero + PET_POWER_RATIO * contrib + MOUNT_POWER_RATIO * mount
     return int(total * partner * heaven_margin)

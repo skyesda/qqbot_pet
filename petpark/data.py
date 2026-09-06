@@ -320,7 +320,7 @@ ITEMS = {
         "currency": CURRENCY_JIFEN,
         "category": "道具",
         "usable": False,
-        "desc": "宠物求婚所需消耗的信物。",
+        "desc": "与道侣缔结婚约所需的信物。",
         "effect": {},
     },
     "三明治": {
@@ -1274,7 +1274,7 @@ ASCEND_DUNGEON_COOLDOWN = 1200  # 20 分钟
 LOVE_STATES = ["单身", "恋爱", "已婚"]
 FAVOR_MAX = 999999
 FAVOR_MARRY_REQUIRE = 200  # 好感度达到 200 即可求婚
-LOVE_INIT_FAVOR = 100  # 追求成功初始好感度
+LOVE_INIT_FAVOR = 100  # 缔结道侣之初好感度
 
 # ----------------------------------------------------------------------------
 # 日常活动消耗与产出
@@ -1314,6 +1314,35 @@ DAILY_ACTIONS = {
     },
     "冥想": {"energy": 30, "desc": "永久增加随机属性值（需定制宠物才行）"},
 }
+
+# ----------------------------------------------------------------------------
+# 修士化：日常活动「指令词」的修士叫法 → 内部 key
+# ----------------------------------------------------------------------------
+# 机制/冷却/统计仍走内部 key（如 日常:修炼、add_exp），这里只做用户输入的指令词映射，
+# 让玩家用修士视角的指令（灵宠修行/道侣双修/道侣之约）驱动同一个日常动作。
+DAILY_CMD_ALIASES = {
+    "灵宠修行": "修炼",   # 你为灵宠护法修行
+    "道侣双修": "双修",   # 与道侣共同双修
+    "道侣之约": "约会",   # 与道侣赴约
+}
+
+# 修士叫法（用于菜单/提示显示）
+_DAILY_DISPLAY = {v: k for k, v in DAILY_CMD_ALIASES.items()}
+
+
+def daily_key(text: str) -> str:
+    """把用户输入的日常活动指令词映射回内部 key；未命中则原样返回。"""
+    return DAILY_CMD_ALIASES.get(text, text)
+
+
+def daily_display(key: str) -> str:
+    """内部日常活动 key → 修士化显示名；无修士叫法则原样返回。"""
+    return _DAILY_DISPLAY.get(key, key)
+
+
+def daily_tokens() -> frozenset:
+    """所有可被用户识别的日常活动指令词（内部 key + 修士叫法别名）。"""
+    return frozenset(DAILY_ACTIONS) | frozenset(DAILY_CMD_ALIASES)
 
 # ----------------------------------------------------------------------------
 # 深渊秘境

@@ -131,7 +131,7 @@ class AdventureService:
 
     @staticmethod
     def _has_daolv(p):
-        """道侣判定：当前结契灵宠为『已婚』即视为有道侣（与 power.py 口径一致）。"""
+        """道侣判定：修士与修士结道侣，以结契灵宠为『已婚』为准（与 power.py 口径一致）。"""
         pets = p.get("pets") or []
         return bool(pets and pets[0].get("love_state") == "已婚")
 
