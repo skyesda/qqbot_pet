@@ -39,6 +39,7 @@ from .petpark.ai_router import AIRouter
 from .petpark.store import PetStore
 from .petpark.adventure import AdventureService, COMMANDS as ADVENTURE_COMMANDS
 from .petpark.adventure.card import card_html as cultivator_card_html, equipment_summary
+from .petpark.adventure.map_card import map_html as adventure_map_html
 from .petpark.admin_reset import handle_group_reset, COMMANDS as GROUP_RESET_COMMANDS
 from .petpark.adventure.service import MENU as ADVENTURE_MENU
 from .petpark.adventure.power import compute_unified_power
@@ -3261,6 +3262,15 @@ class PetParkPlugin(Star):
             request_id = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "") or None
             service = AdventureService(self.store, config=getattr(self, "config", None))
             result = service.handle(group_id, qq, tokens, request_id=request_id)
+            if cmd == "仙途地图" and player.get("adventure"):
+                try:
+                    html = adventure_map_html(player, service.enemy_percent)
+                    image = self._render_html_image(html, "adventuremap", 900, crop=self._card_crop,
+                                                    win_w=940, win_h=2400)
+                    if image:
+                        return image
+                except Exception as exc:
+                    logger.warning(f"[petpark] 仙途地图生成失败，回退文字：{exc}")
             if cmd in ("我的修士", "今日修行", "修士装备") and player.get("adventure"):
                 try:
                     html = cultivator_card_html(player, service.key(group_id, qq), equipment=cmd == "修士装备")
@@ -6614,7 +6624,7 @@ class PetParkPlugin(Star):
 
     # --------------------------- 群授权 ---------------------------
     def _group_is_infinite(self, group_id: str) -> bool:
-        """该群是否为无限服（跨群挑战/仙途战力榜全服对其关闭，小管理员加币/积分无上限）。"""
+        """该群是否为无限服（跨群挑战/仙途战力榜全服对其关闭，小管理员加灵石/玄晶无上限）。"""
         if not self._is_group(group_id):
             return False  # 私聊不属于任何服
         group = self.store.get_group(self.store.resolve_group(group_id))

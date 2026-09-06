@@ -3,7 +3,7 @@
 在 AstrBot 进程内启动一个独立端口的 aiohttp 网站，提供：
 - 账号密码登录（默认 admin / 2468080asd，可在插件配置修改）；
 - 查看 / 增删改查 插件数据库（玩家 players、群设置 groups、卡密 cards）；
-- 批量生成卡密（金币 / 积分 / 钻石）。
+- 批量生成卡密（灵石 / 玄晶 / 天晶）。
 
 依赖 aiohttp（AstrBot 自带）。启动失败不会影响插件主体功能。
 """
@@ -1304,9 +1304,9 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
  <option value="custom_pet">宠物定制卡</option>
  <option value="auto_cultivation">自动修炼卡</option>
 </select>
-<input id="amt_coin" type="number" placeholder="金币面额" style="width:120px">
-<input id="amt_jifen" type="number" placeholder="积分面额" style="width:120px">
-<input id="amt_diamond" type="number" placeholder="钻石面额" style="width:120px">
+<input id="amt_coin" type="number" placeholder="灵石面额" style="width:120px">
+<input id="amt_jifen" type="number" placeholder="玄晶面额" style="width:120px">
+<input id="amt_diamond" type="number" placeholder="天晶面额" style="width:120px">
 <select id="amt_item" style="width:140px"></select>
 <input id="amt_item_count" type="number" placeholder="数量" value="1" style="width:80px">
 <input id="amt_authdays" type="number" placeholder="授权天数(群授权卡)" style="width:160px">
@@ -1613,7 +1613,7 @@ const PET_FIELDS=[
 const PET_DEF={nickname:'宝宝',species:'幼龙',quality:'普通',element:'金',gender:'男',stage:'幼年期',level:1,exp:0,hp:800,hp_max:800,atk:50,def:40,intel:30,mood:5,energy:100,energy_max:100,status:'正常',love_state:'单身',love_target:null,favor:0,artifact:null,talent:null,custom:false,skills:[],ascended:false,frozen_until:0};
 async function loadMeta(){try{const r=await api('/api/meta',{});META=r.data||{};}catch(e){META={};} const am=g('amt_item'); if(am) am.innerHTML=optHtml(META.items||[],'', '道具名（可选）');}
 function escA(s){return esc(s).replace(/"/g,'&quot;');}
-function optHtml(list,val,empty){let h='';const L=(list||[]).map(String);if(empty!==undefined)h+=`<option value="">${esc(empty)}</option>`;for(const o of L)h+=`<option ${String(o)===String(val)?'selected':''}>${esc(o)}</option>`;if(val!==undefined&&val!==null&&val!==''&&!L.includes(String(val)))h+=`<option selected>${esc(val)}</option>`;return h;}
+function optHtml(list,val,empty){let h='';const L=(list||[]).map(String);if(empty!==undefined)h+=`<option value="">${esc(empty)}</option>`;for(const o of L)h+=`<option value="${escA(o)}" ${String(o)===String(val)?'selected':''}>${dsp(esc(o))}</option>`;if(val!==undefined&&val!==null&&val!==''&&!L.includes(String(val)))h+=`<option value="${escA(val)}" selected>${dsp(esc(val))}</option>`;return h;}
 function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
@@ -1663,7 +1663,7 @@ function renderLottery(){
  const prize=l.prize||{};
  const kind=prize.kind||'currency';
  const count=Number(prize.count)||1;
- const curName=(kind==='currency')?(prize.name||'金币'):(prize.name||'');
+ const curName=(kind==='currency')?(prize.name||'灵石'):(prize.name||'');
  const winners=(l.winners||[]).map(esc).join('、')||'（未开奖）';
  const entriesN=l.entries?Object.keys(l.entries).length:0;
  document.getElementById('tablewrap').innerHTML=`
@@ -2006,10 +2006,10 @@ function renderCelebrate(){
  for(let i=0;i<rounds.length;i++) rrows+=ceRoundRow(rounds[i],i);
  const cur=po.currencies||{};
  let curRows='';
- for(const nm of ['积分','金币','钻石']){
+ for(const nm of ['金币','积分','钻石']){
   const cc=cur[nm]||{};
   curRows+=`<tr>
-   <td><input value="${esc(nm)}" style="width:80px" readonly></td>
+   <td><input value="${dsp(nm)}" style="width:80px" readonly></td>
    <td><input type="number" min="0" value="${cc.total||0}" id="ce_ct_${nm}" style="width:140px"></td></tr>`;
  }
  const st=c.start_at||0, en=c.end_at||0;
@@ -2068,10 +2068,10 @@ function renderCelebrate(){
    <div class="row">
     <label class="fld">每次瓜分额度 <input type="number" min="0" value="${po.per_grab||1000}" id="ce_pgrab" style="width:100px"></label>
     <label class="fld">无冷却 <input type="checkbox" id="ce_pnocd" ${po.no_cd===false?'':'checked'}></label>
-    <span class="muted" style="font-size:12px">积分/金币各等额拿该值（上限=该币剩余）；钻石默认 100；勾选则关闭冷却、可连续点击。</span>
+    <span class="muted" style="font-size:12px">玄晶/灵石各等额拿该值（上限=该币剩余）；天晶默认 100；勾选则关闭冷却、可连续点击。</span>
    </div>
    <table><thead><tr><th>货币</th><th>总量（动态库存）</th></tr></thead><tbody>${curRows||'<tr><td colspan="2" class="muted">未配置</td></tr>'}</tbody></table>
-   <div style="color:#9aa3b8;font-size:12px">每日到达开启时间后开放瓜分；每次按等额固定额度抽取（积分/金币各取 per_grab，钻石默认 100），而非随机比例；勾选无冷却可连续瓜分。</div>
+   <div style="color:#9aa3b8;font-size:12px">每日到达开启时间后开放瓜分；每次按等额固定额度抽取（玄晶/灵石各取 per_grab，天晶默认 100），而非随机比例；勾选无冷却可连续瓜分。</div>
    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
     <button class="act" onclick="saveCelebrate()">保存配置</button>
     <button class="act ghost" onclick="resetPool()">重置奖池剩余</button>
@@ -2217,7 +2217,7 @@ function renderPlayers(){
    <td>${pet}</td><td class="num">${lv}</td>
    <td class="num coin">${v.coin||0}</td><td class="num jifen">${v.jifen||0}</td><td class="num diamond">${v.diamond||0}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
- shell('<th>群号</th><th>QQ号</th><th>宠物</th><th>等级</th><th>金币</th><th>积分</th><th>钻石</th><th>操作</th>',rows);
+ shell('<th>群号</th><th>QQ号</th><th>宠物</th><th>等级</th><th>灵石</th><th>玄晶</th><th>天晶</th><th>操作</th>',rows);
 }
 function renderGroups(){
  let rows='';
@@ -2230,6 +2230,7 @@ function renderGroups(){
  shell('<th>群号</th><th>灵契仙途</th><th>跨群挑战</th><th>今日签到数</th><th>操作</th>',rows);
 }
 const CUR_CLS={'金币':'coin','积分':'jifen','钻石':'diamond'};
+const DISP={'金币':'灵石','积分':'玄晶','钻石':'天晶'};const dsp=s=>DISP[s]||s;
 function cardRewards(v){
  if(v.rewards&&typeof v.rewards==='object')return v.rewards;
  if(v.currency&&v.amount)return {[v.currency]:v.amount};
@@ -2240,7 +2241,7 @@ function cardItems(v){
  return {};
 }
 function rewardsHtml(r){
- const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(`<span class="${CUR_CLS[c]}">${c} +${r[c]}</span>`);
+ const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(`<span class="${CUR_CLS[c]}">${dsp(c)} +${r[c]}</span>`);
  return parts.length?parts.join(' ＋ '):'';
 }
 function itemsHtml(items){
@@ -2319,9 +2320,9 @@ function renderEvents(){
 function fieldHtml(){
  if(cur==='players')return `
   <div class="sec">基础</div>
-  <div class="row"><div><label class="fld">金币</label><input id="f_coin" type="number"></div>
-  <div><label class="fld">积分</label><input id="f_jifen" type="number"></div>
-  <div><label class="fld">钻石</label><input id="f_diamond" type="number"></div></div>
+  <div class="row"><div><label class="fld">灵石</label><input id="f_coin" type="number"></div>
+  <div><label class="fld">玄晶</label><input id="f_jifen" type="number"></div>
+  <div><label class="fld">天晶</label><input id="f_diamond" type="number"></div></div>
   <div class="row"><div><label class="fld">胜场</label><input id="f_st_win" type="number"></div>
   <div><label class="fld">探索次数</label><input id="f_st_exp" type="number"></div></div>
   <div class="sec">宠物</div><div id="petbox"></div>
@@ -2374,7 +2375,7 @@ function fieldHtml(){
   </div>
   <div class="row">
    <div style="flex:1"><label class="fld">小奖保底次数</label><input id="f_pity_small_threshold" type="number" value="500" placeholder="如 500"></div>
-   <div style="flex:2"><label class="fld">小奖物品名（须与奖池奖品一致）</label><input id="f_pity_small_item" placeholder="如：金币"></div>
+   <div style="flex:2"><label class="fld">小奖物品名（须与奖池奖品一致）</label><input id="f_pity_small_item" placeholder="如：灵石"></div>
   </div>
   <div id="event_gacha_pool"></div>
   <button class="act ghost" type="button" onclick="eventAddGacha()" style="margin-top:6px">＋ 添加奖品</button>
@@ -2411,9 +2412,9 @@ function fieldHtml(){
   <div class="muted" style="margin-top:10px">高级用户仍可在下方「高级编辑」中直接修改 JSON。表单保存时会覆盖表单内容到 JSON。</div>`;
  return `
   <div class="muted">套餐面额（空或 0 表示不含该项，可任意组合）；或填「授权天数」改为群授权卡。</div>
-  <div class="row"><div><label class="fld">金币</label><input id="f_r_coin" type="number"></div>
-  <div><label class="fld">积分</label><input id="f_r_jifen" type="number"></div>
-  <div><label class="fld">钻石</label><input id="f_r_diamond" type="number"></div>
+  <div class="row"><div><label class="fld">灵石</label><input id="f_r_coin" type="number"></div>
+  <div><label class="fld">玄晶</label><input id="f_r_jifen" type="number"></div>
+  <div><label class="fld">天晶</label><input id="f_r_diamond" type="number"></div>
   <div><label class="fld">授权天数(群授权卡)</label><input id="f_authdays" type="number"></div></div>
   <div class="chk"><input id="f_used" type="checkbox"><label for="f_used">已使用</label></div>`;
 }
@@ -2718,7 +2719,7 @@ async function genCards(){
    const itemCount=+g('amt_item_count').value||0;
    const items={};
    if(itemName&&itemCount>0)items[itemName]=itemCount;
-   if(!Object.keys(rewards).length&&!Object.keys(items).length){alert('请填写金币/积分/钻石面额，或选择道具及数量，或填写授权天数生成群授权卡');return;}
+   if(!Object.keys(rewards).length&&!Object.keys(items).length){alert('请填写灵石/玄晶/天晶面额，或选择道具及数量，或填写授权天数生成群授权卡');return;}
    payload={rewards:rewards,items:items,count:+g('cnt').value,prefix:g('pre').value};
   }
  }
@@ -2733,7 +2734,7 @@ function cardTypeChange(){
  ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays','amt_server_type'].forEach(id=>{const el=g(id);if(el)el.style.display=hideRewards?'none':'';});
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(c+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(dsp(c)+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }
@@ -2784,7 +2785,7 @@ function eventRewardHtml(reward){
   const k=Object.keys(reward).find(x=>META.currencies.includes(x))||'金币';
   const v=reward[k]||0;
   const vmax=reward[k+'_max'];
-  detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${META.currencies.map(o=>`<option ${o===k?'selected':''}>${o}</option>`).join('')}</select></div><div style="flex:1"><label>最小值</label><input class="ev-r-curv" type="number" value="${v}"></div><div style="flex:1"><label>最大值</label><input class="ev-r-curv-max" type="number" value="${vmax!==undefined?vmax:''}" placeholder="固定"></div></div>`;
+  detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${META.currencies.map(o=>`<option value="${o}" ${o===k?'selected':''}>${dsp(o)}</option>`).join('')}</select></div><div style="flex:1"><label>最小值</label><input class="ev-r-curv" type="number" value="${v}"></div><div style="flex:1"><label>最大值</label><input class="ev-r-curv-max" type="number" value="${vmax!==undefined?vmax:''}" placeholder="固定"></div></div>`;
  } else if(type==='token'){
   const k=Object.keys(reward).find(x=>!META.currencies.includes(x)&&x!=='msg'&&!x.endsWith('_max'))||'';
   const v=reward[k]||0;
@@ -2800,7 +2801,7 @@ function eventRewardTypeChange(sel){
  let detail='';
  if(type==='item') detail=`<div class="row"><div style="flex:2"><label>物品名</label><input class="ev-r-item" list="ev-item-datalist" value="" placeholder="输入或选择道具名"></div><div style="flex:1"><label>最小数量</label><input class="ev-r-count" type="number" value="1"></div><div style="flex:1"><label>最大数量</label><input class="ev-r-count-max" type="number" value="" placeholder="固定"></div></div>`;
  else if(type==='effect') detail=`<div class="row"><div style="flex:2"><label>效果键</label><select class="ev-r-effk">${['add_atk','add_def','add_intel','add_hp_max','add_energy_max','mood','heal_hp','heal_energy','add_exp'].map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>数值</label><input class="ev-r-effv" type="number" value="0"></div></div>`;
- else if(type==='currency') detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${(META.currencies||['金币','积分','钻石']).map(o=>`<option>${o}</option>`).join('')}</select></div><div style="flex:1"><label>最小值</label><input class="ev-r-curv" type="number" value="0"></div><div style="flex:1"><label>最大值</label><input class="ev-r-curv-max" type="number" value="" placeholder="固定"></div></div>`;
+ else if(type==='currency') detail=`<div class="row"><div style="flex:2"><label>货币</label><select class="ev-r-cur">${(META.currencies||['金币','积分','钻石']).map(o=>`<option value="${o}">${dsp(o)}</option>`).join('')}</select></div><div style="flex:1"><label>最小值</label><input class="ev-r-curv" type="number" value="0"></div><div style="flex:1"><label>最大值</label><input class="ev-r-curv-max" type="number" value="" placeholder="固定"></div></div>`;
  else if(type==='token') detail=`<div class="row"><div style="flex:2"><label>代币名</label><input class="ev-r-tok" value=""></div><div style="flex:1"><label>最小值</label><input class="ev-r-tokv" type="number" value="0"></div><div style="flex:1"><label>最大值</label><input class="ev-r-tokv-max" type="number" value="" placeholder="固定"></div></div>`;
  box.querySelector('.ev-r-detail').innerHTML=detail;
 }
@@ -2933,7 +2934,7 @@ function eventShopHtml(name,it){
  return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
   <div class="row">
    <div style="flex:2"><label>商品名</label><input class="ev-s-name" value="${escA(name)}"></div>
-   <div style="flex:2"><label>价格（如：贝壳 20 / 金币 100）</label><input class="ev-s-cost" value="${escA(eventCostToString(it.cost||{}))}"></div>
+   <div style="flex:2"><label>价格（如：贝壳 20 / 灵石 100）</label><input class="ev-s-cost" value="${escA(eventCostToString(it.cost||{}))}"></div>
    <div style="flex:1"><label>每人限购</label><input class="ev-s-per" type="number" value="${it.stock&&it.stock.per_player!==undefined?it.stock.per_player:''}" placeholder="空=不限"></div>
    <div style="flex:1"><label>全局库存</label><input class="ev-s-global" type="number" value="${it.stock&&it.stock.global!==undefined?it.stock.global:''}" placeholder="空=不限"></div>
   </div>
@@ -3054,7 +3055,7 @@ function eventDungeonHtml(name,conf){
   </div>
   <div class="row">
    <div style="flex:1"><label title="推荐≈(100+等级×80)×0.35，避免一次副本连升数级">经验</label><input class="ev-d-exp" type="number" value="${conf.exp!==undefined?conf.exp:0}"></div>
-   <div style="flex:1"><label title="推荐≈100+等级×8">积分</label><input class="ev-d-jifen" type="number" value="${conf.jifen!==undefined?conf.jifen:0}"></div>
+   <div style="flex:1"><label title="推荐≈100+等级×8">玄晶</label><input class="ev-d-jifen" type="number" value="${conf.jifen!==undefined?conf.jifen:0}"></div>
    <div style="flex:1"><label>代币奖励</label><input class="ev-d-token" type="number" value="${conf.token_reward!==undefined?conf.token_reward:0}"></div>
   </div>
   <div class="sec" style="margin-top:10px">通关额外奖励（可选）</div>

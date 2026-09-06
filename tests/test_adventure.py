@@ -181,7 +181,11 @@ class AdventureTests(unittest.TestCase):
         plugin._is_admin=lambda e:True
         self.assertTrue(content.COMMANDS<=KNOWN_COMMANDS)
         self.assertIn('欢迎',plugin.dispatch(None,'a','g','踏入仙途 剑修'))
-        self.assertIn('山海历练',plugin.dispatch(None,'a','g','仙途地图'))
+        with patch.object(plugin, '_render_html_image', return_value='![仙途地图](map.png)') as render:
+            self.assertEqual('![仙途地图](map.png)', plugin.dispatch(None,'a','g','仙途地图'))
+            self.assertEqual(render.call_args.args[1], 'adventuremap')
+        with patch.object(plugin, '_render_html_image', return_value=None):
+            self.assertIn('山海历练', plugin.dispatch(None,'a','g','仙途地图'))
         p=self.store.get_player('a','g');pet=new_pet('狐狸','普通')
         pet.update(stage='渡劫',level=999,rebirth_gem=True)
         p.update(pets=[pet],active_pet=0,pet=pet)

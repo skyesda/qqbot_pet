@@ -18,20 +18,20 @@
     "default": true
   },
   "start_coin": {
-    "description": "新玩家初始金币",
-    "hint": "玩家首次参与时获得的金币数量。",
+    "description": "新玩家初始灵石",
+    "hint": "玩家首次参与时获得的灵石数量。",
     "type": "int",
     "default": 1000
   },
   "start_jifen": {
-    "description": "新玩家初始积分",
-    "hint": "玩家首次参与时获得的积分数量（积分用于商城购买、炼丹、觉醒等）。",
+    "description": "新玩家初始玄晶",
+    "hint": "玩家首次参与时获得的玄晶数量（玄晶用于商城购买、炼丹、觉醒等）。",
     "type": "int",
     "default": 0
   },
   "start_diamond": {
-    "description": "新玩家初始钻石",
-    "hint": "玩家首次参与时获得的钻石数量（钻石展示在『我的信息』，后续用于商店）。",
+    "description": "新玩家初始天晶",
+    "hint": "玩家首次参与时获得的天晶数量（天晶展示在『我的信息』，后续用于商店）。",
     "type": "int",
     "default": 0
   },
@@ -54,68 +54,68 @@
     "default": 10
   },
   "subadmin_daily_add_limit": {
-    "description": "小管理员每日增加额度上限（金币/积分各自独立）",
-    "hint": "小管理员每天通过『加金币/加积分』累计可增加的上限（金币、积分分别计算；减少不受限；不可操作钻石）。",
+    "description": "小管理员每日增加额度上限（灵石/玄晶各自独立）",
+    "hint": "小管理员每天通过『加灵石/加玄晶』累计可增加的上限（灵石、玄晶分别计算；减少不受限；不可操作天晶）。",
     "type": "int",
     "default": 100000
   },
   "rank_reward_diamond_min": {
-    "description": "神榜前三每日可领取的钻石奖励下限",
-    "hint": "『领取神榜奖励』时，全服神榜前三名每天可领取一次的随机钻石最小值。",
+    "description": "神榜前三每日可领取的天晶奖励下限",
+    "hint": "『领取神榜奖励』时，全服神榜前三名每天可领取一次的随机天晶最小值。",
     "type": "int",
     "default": 10
   },
   "rank_reward_diamond_max": {
-    "description": "神榜前三每日可领取的钻石奖励上限",
-    "hint": "『领取神榜奖励』时随机钻石的最大值（应 ≥ 下限）。",
+    "description": "神榜前三每日可领取的天晶奖励上限",
+    "hint": "『领取神榜奖励』时随机天晶的最大值（应 ≥ 下限）。",
     "type": "int",
     "default": 50
   },
   "sign_jifen_min": {
-    "description": "每日签到积分随机下限",
-    "hint": "『签到』时随机获得积分的最小值。",
+    "description": "每日签到玄晶随机下限",
+    "hint": "『签到』时随机获得玄晶的最小值。",
     "type": "int",
     "default": 1000
   },
   "sign_jifen_max": {
-    "description": "每日签到积分随机上限",
-    "hint": "『签到』时随机获得积分的最大值（应 ≥ 下限）。",
+    "description": "每日签到玄晶随机上限",
+    "hint": "『签到』时随机获得玄晶的最大值（应 ≥ 下限）。",
     "type": "int",
     "default": 12000
   },
   "sign_coin_min": {
-    "description": "每日签到金币随机下限",
-    "hint": "『签到』时随机获得金币的最小值。",
+    "description": "每日签到灵石随机下限",
+    "hint": "『签到』时随机获得灵石的最小值。",
     "type": "int",
     "default": 50
   },
   "sign_coin_max": {
-    "description": "每日签到金币随机上限",
-    "hint": "『签到』时随机获得金币的最大值（应 ≥ 下限）。",
+    "description": "每日签到灵石随机上限",
+    "hint": "『签到』时随机获得灵石的最大值（应 ≥ 下限）。",
     "type": "int",
     "default": 200
   },
   "sign_streak_bonus": {
-    "description": "连续签到每天的额外金币",
-    "hint": "额外金币 = 连续签到天数 × 该值（连续天数最多按 7 天计）。设为 0 则无额外金币。",
+    "description": "连续签到每天的额外灵石",
+    "hint": "额外灵石 = 连续签到天数 × 该值（连续天数最多按 7 天计）。设为 0 则无额外灵石。",
     "type": "int",
     "default": 100
   },
   "invite_coin": {
-    "description": "邀请成功奖励金币",
-    "hint": "被邀请用户输入『受邀 邀请人QQ』且双方均在本群时，双方各得的金币数量。",
+    "description": "邀请成功奖励灵石",
+    "hint": "被邀请用户输入『受邀 邀请人QQ』且双方均在本群时，双方各得的灵石数量。",
     "type": "int",
     "default": 500
   },
   "invite_jifen": {
-    "description": "邀请成功奖励积分",
-    "hint": "邀请成功时双方各得的积分数量。",
+    "description": "邀请成功奖励玄晶",
+    "hint": "邀请成功时双方各得的玄晶数量。",
     "type": "int",
     "default": 5000
   },
   "invite_diamond": {
-    "description": "邀请成功奖励钻石",
-    "hint": "邀请成功时双方各得的钻石数量。",
+    "description": "邀请成功奖励天晶",
+    "hint": "邀请成功时双方各得的天晶数量。",
     "type": "int",
     "default": 50
   },
