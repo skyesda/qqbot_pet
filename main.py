@@ -9417,6 +9417,7 @@ class PetParkPlugin(Star):
         prep_msg = self._rebirth_prep_reminder(p, before)
         return (
             f"⬆ 升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}。{suffix}"
+            + self._pet_to_cultivation(player, p, n, "宠物升级")
             + reward + prep_msg
         )
 
@@ -10254,8 +10255,8 @@ class PetParkPlugin(Star):
 
     def _rank(self, player: dict, group_id: str, local: bool) -> str:
         if not local and self._group_is_infinite(group_id):
-            return "⚠️ 本群为无限服，不参与宠物神榜（跨群共享功能已关闭）。"
-        # 本群排行只统计本群玩家；神榜为全服（跨群），但排除无限服群。
+            return "⚠️ 本群为无限服，不参与全服战力榜（跨群共享功能已关闭）。"
+        # 本群排行只统计本群玩家；全服榜为跨群，但排除无限服群。
         source = self.store.players_in_group(group_id) if local else self.store.all_players()
         if not local:
             inf = self._infinite_group_ids()
@@ -10265,48 +10266,6 @@ class PetParkPlugin(Star):
                 if self.store.resolve_group(str(v.get("group", ""))) not in inf
             }
         entries = []
-        for pl in source.values():
-            pet = pl.get("pet")
-            if not pet:
-                continue
-            entries.append((pl.get("qq", "?"), pet, petmod.battle_power(pet)))
-        entries.sort(key=lambda x: x[2], reverse=True)
-        if not entries:
-            return "暂无宠物上榜。"
-        title = "## 🏆 宠物排行（本群）" if local else "## 🏅 宠物神榜（全服）"
-        lines = [title]
-        # 我的排名/战力：按全量排序算真实名次，即使未进前 N 也显示。
-        my_pet = player.get("pet")
-        if my_pet:
-            my_bp = petmod.battle_power(my_pet)
-            my_rank = 1 + sum(1 for _, _, bp in entries if bp > my_bp)
-            lines.append(
-                f"> 我的排名：**{my_rank}**　·　我的战力：**{self._fmt_power(my_bp)}**"
-            )
-        top = entries[: self.rank_size]
-        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        lines.append("")
-        lines.append("| 排名 | 昵称 | 等级 | 阶段 | 级别 | 战力 |")
-        lines.append("|:--:|:--:|:--:|:--:|:--:|--:|")
-        for i, (q, pet, bp) in enumerate(top, 1):
-            rk = medals.get(i, str(i))
-            # 昵称里若含 | 会破坏表格列，替换为视觉相近的全角竖线。
-            nick = str(pet.get("nickname", "")).replace("|", "丨")
-            lines.append(
-                f"| {rk} | {nick} | Lv{pet['level']} | "
-                f"{pet['stage']} | {pet['quality']} | {self._fmt_power(bp)} |"
-            )
-        if not local:
-            lines.append(
-                f"\n> 🎁 神榜前三每日可『领取神榜奖励』，随机钻石 💠 "
-                f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
-            )
-        return "\n".join(lines)
-
-    def _adventure_rank(self, player: dict, group_id: str) -> str:
-        """仙途战力榜（加性）：按统一仙途战力排序本群修士。不动宠物排行。"""
-        source = self.store.players_in_group(group_id)
-        entries = []
         for key, pl in source.items():
             a = pl.get("adventure")
             if not a:
@@ -10315,10 +10274,12 @@ class PetParkPlugin(Star):
         entries.sort(key=lambda x: x[2], reverse=True)
         if not entries:
             return "还没有道友登记战力。发送「踏入仙途」开始修行。"
+        title = "## 🏆 仙途战力榜（本群）" if local else "## 🏅 仙途战力榜（全服）"
+        lines = [title]
+        # 我的排名/战力：按全量排序算真实名次，即使未进前 N 也显示。
         my_pw = compute_unified_power(player, group_id)
         my_rank = 1 + sum(1 for _, _, pw in entries if pw > my_pw)
-        lines = ["## 🏆 仙途战力榜（本群）",
-                 f"> 我的排名：**{my_rank}**　·　我的战力：**{self._fmt_power(my_pw)}**"]
+        lines.append(f"> 我的排名：**{my_rank}**　·　我的战力：**{self._fmt_power(my_pw)}**")
         top = entries[: self.rank_size]
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         lines.append("")
@@ -10329,16 +10290,25 @@ class PetParkPlugin(Star):
             nick = str(a.get("name", q)).replace("|", "丨")
             realm = ADVENTURE_REALMS[a["realm"]][0] if 0 <= a["realm"] < len(ADVENTURE_REALMS) else "?"
             lines.append(f"| {rk} | {nick} | {a['profession']} | {realm} | {self._fmt_power(pw)} |")
+        if not local:
+            lines.append(
+                f"\n> 🎁 神榜前三每日可『领取神榜奖励』，随机天晶 💠 "
+                f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
+            )
         lines.append("\n> 仙途战力 = 修士境界/装备/洞天 + 结契灵宠贡献 + 道侣加成。")
         return "\n".join(lines)
+
+    def _adventure_rank(self, player: dict, group_id: str) -> str:
+        """仙途战力榜（本群）：即 `_rank` 的本地分支，逻辑已并入统一战力榜。"""
+        return self._rank(player, group_id, local=True)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:
         # 神榜为官方服跨群排行，以「群ID+用户ID」为唯一身份；无限服群不参与。
         inf = self._infinite_group_ids()
         entries = []
         for k, pl in self.store.all_players().items():
-            if pl.get("pet") and self.store.resolve_group(str(pl.get("group", ""))) not in inf:
-                entries.append((k, petmod.battle_power(pl["pet"])))
+            if pl.get("adventure") and self.store.resolve_group(str(pl.get("group", ""))) not in inf:
+                entries.append((k, compute_unified_power(pl, k)))
         entries.sort(key=lambda x: x[1], reverse=True)
         top = [k for k, _ in entries[:3]]
         self_key = self.store.make_key(player.get("group", group_id), player["qq"])
@@ -10351,8 +10321,8 @@ class PetParkPlugin(Star):
         reward = random.randint(
             self.rank_reward_diamond_min, self.rank_reward_diamond_max
         )
-        self.store.add_currency(player, "钻石", reward)
-        return f"🎁 神榜强者奖励到账，钻石 💠 +{reward}！"
+        self.store.add_currency(player, "天晶", reward)
+        return f"🎁 战力榜强者奖励到账，天晶 💠 +{reward}！"
 
     # =====================================================================
     # 副本 / 剧情任务
@@ -10371,6 +10341,21 @@ class PetParkPlugin(Star):
         lines.append("\n> 战力 ≥ 怪物战力即可通关；经验满后自动升级。")
         return "\n".join(lines)
 
+    def _pet_to_cultivation(self, player: dict, pet: dict, n: int, src: str = "") -> str:
+        """灵宠反哺：宠物每提升一级，修士同步获得少量修为（宠物为次、修士为主）。
+
+        修为是仙途的成长币（升级/突破/境界用），走 player["adventure"]["cultivation"]，
+        不进 add_currency（那是灵石/玄晶/天晶主钱包）。未踏入仙途则原样返回空串。
+        """
+        a = player.get("adventure")
+        if not a or n <= 0:
+            return ""
+        gain = int(n * (12 + pet.get("level", 1)))
+        if gain <= 0:
+            return ""
+        a["cultivation"] = a.get("cultivation", 0) + gain
+        return f"\n🧘 灵宠反哺：修为 +{gain}（{src or '宠物成长'}）"
+
     def _auto_level_note(self, player: dict, p: dict) -> str:
         """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
         if not petmod.exp_enough_to_level(p):
@@ -10385,7 +10370,7 @@ class PetParkPlugin(Star):
         return (
             f"\n⬆ **自动升级 +{gained} 级！** 当前 "
             f"Lv{p['level']}/{petmod.level_cap(p)}（剩余精力 {p['energy']}）"
-        ) + self._grant_level60_reward(player, p, before) + prep_msg
+        ) + self._pet_to_cultivation(player, p, gained, "自动成长") + self._grant_level60_reward(player, p, before) + prep_msg
 
     def _grant_level60_reward(self, player: dict, p: dict, before_level: int) -> str:
         """宠物本次升级若跨过 60 级倍数，赠送 1 张『史诗卡』放入背包。返回提示文本。"""
