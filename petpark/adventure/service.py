@@ -191,7 +191,7 @@ class AdventureService:
             pet = p.get("pet") or {}
             p["adventure"] = {"schema_version": 2, "heaven": 0, "milestones": [], "name": f"{arg}修士", "profession": arg,
                 "level": 1, "realm": 0, "cultivation": 0, "last_train": int(self.clock()) - 3600,
-                "equipment": {"weapon": 0, "robe": 0, "seal": 0}, "ore": 9,
+                "equipment": {slot: 0 for slot, _ in c.GEAR.values()}, "ore": 9,
                 "style": "均衡", "pet_role": "攻击", "companion_pet_id": pet.get("pet_id"),
                 "gender": random.choice(["男", "女"]), "bonus": {"atk": 0, "def": 0, "hp": 0, "speed": 0},
                 "wudao": 0, "gengu": 0, "name_customized": False,
@@ -206,6 +206,8 @@ class AdventureService:
         a.setdefault("wudao", 0)
         a.setdefault("gengu", 0)
         a.setdefault("name_customized", False)
+        for slot, _ in c.GEAR.values():
+            a.setdefault("equipment", {}).setdefault(slot, 0)
         a["schema_version"] = c.VERSION
         self.daily(a)
         if cmd == "结契灵宠":
@@ -331,10 +333,10 @@ class AdventureService:
             a["companion_pet_id"] = pet["pet_id"]
             return f"已与{pet['nickname']}结契。"
         if cmd == "修士装备":
-            return "## 修士装备\n" + "\n".join(f"{name} ＋{a['equipment'][slot]} · 提升{label}" for name,(slot,label) in c.GEAR.items()) + f"\n灵材 {a['ore']}\n锻造 灵剑 / 法衣 / 灵印：每级消耗 3＋当前等级×2 灵材，强化上限为角色等级。"
+            return "## 修士装备\n" + "\n".join(f"{name} Lv{a['equipment'][slot]} · 提升{label}" for name,(slot,label) in c.GEAR.items()) + f"\n灵材 {a['ore']}\n锻造 {c.GEAR_NAMES}：每级消耗 3＋当前等级×2 灵材，强化上限为角色等级。"
         if cmd == "锻造":
             self.can_edit(key)
-            self.require(arg in c.GEAR, "用法：锻造 灵剑 / 法衣 / 灵印")
+            self.require(arg in c.GEAR, "用法：锻造 " + c.GEAR_NAMES)
             slot = c.GEAR[arg][0]
             rank = a["equipment"][slot]
             cost = 3 + rank * 2

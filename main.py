@@ -38,6 +38,7 @@ from .petpark import card_theme, data, images, pet as petmod
 from .petpark.ai_router import AIRouter
 from .petpark.store import PetStore
 from .petpark.adventure import AdventureService, COMMANDS as ADVENTURE_COMMANDS
+from .petpark.adventure.card import card_html as cultivator_card_html, equipment_summary
 from .petpark.admin_reset import handle_group_reset, COMMANDS as GROUP_RESET_COMMANDS
 from .petpark.adventure.service import MENU as ADVENTURE_MENU
 from .petpark.adventure.power import compute_unified_power
@@ -3258,7 +3259,18 @@ class PetParkPlugin(Star):
             if cmd == "仙途切磋" and len(tokens) > 1:
                 tokens = [cmd, self._resolve_user_token(tokens[1])]
             request_id = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "") or None
-            return AdventureService(self.store, config=getattr(self, "config", None)).handle(group_id, qq, tokens, request_id=request_id)
+            service = AdventureService(self.store, config=getattr(self, "config", None))
+            result = service.handle(group_id, qq, tokens, request_id=request_id)
+            if cmd in ("我的修士", "今日修行", "修士装备") and player.get("adventure"):
+                try:
+                    html = cultivator_card_html(player, service.key(group_id, qq), equipment=cmd == "修士装备")
+                    image = self._render_html_image(html, "cultivator", 720, crop=self._card_crop,
+                                                    win_w=760, win_h=1800)
+                    if image:
+                        return image
+                except Exception as exc:
+                    logger.warning(f"[petpark] 修士卡生成失败，回退文字：{exc}")
+            return result
 
         # 银行逾期冻结检查（放行查看/还款类指令）
         _bank_allow = {"银行信息", "银行还款", "灵契仙途",
@@ -7745,7 +7757,7 @@ class PetParkPlugin(Star):
                 'border:1px solid #9fb884;color:#37523e;font-size:15px;line-height:1.7">'
                 '<div style="font-weight:700;color:#2c4a3a;margin-bottom:5px">修士行囊</div>'
                 f'灵材 ×{esc(str(adv.get("ore", 0)))} · 修为 {esc(str(adv.get("cultivation", 0)))} · '
-                f'灵剑+{esc(str(eq.get("weapon", 0)))} · 法衣+{esc(str(eq.get("robe", 0)))} · 灵印+{esc(str(eq.get("seal", 0)))}'
+                f'{esc(equipment_summary(adv))}'
                 '</div>'
             )
         return (
@@ -9372,7 +9384,7 @@ class PetParkPlugin(Star):
                 "**【修士行囊】**",
                 f"• 灵材 ×{a.get('ore', 0)}",
                 f"• 修为 {a.get('cultivation', 0)} / {60 + a.get('level', 1) * 20}（升级需 60+等级×20）",
-                f"• 装备：灵剑+{eq.get('weapon', 0)} · 法衣+{eq.get('robe', 0)} · 灵印+{eq.get('seal', 0)}",
+                f"• 装备：{equipment_summary(a)}",
                 f"• 悟性 {a.get('wudao', 0)} · 根骨 {a.get('gengu', 0)}",
                 "",
                 "> 修士道具（修为丹/属性丹/悟道丹等）在上方背包里，用 `使用 道具名` 作用于修士本体。",

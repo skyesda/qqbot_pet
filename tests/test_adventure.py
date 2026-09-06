@@ -40,6 +40,42 @@ class AdventureTests(unittest.TestCase):
         self.assertEqual(p['pet'],before)
         self.assertIn('先通关',self.call('历练 3'))
 
+    def test_six_equipment_migration_and_forging(self):
+        from qqbot_pet.petpark.adventure.combat import hero_sheet
+        p = self.create()
+        a = p['adventure']
+        self.assertEqual(len(a['equipment']), 6)
+        a.update(level=5, ore=100, equipment={'weapon': 3, 'robe': 2, 'seal': 1})
+        before = hero_sheet(a, p)
+        self.assertIn('玉佩 Lv0', self.call('修士装备'))
+        self.assertEqual(a['equipment']['weapon'], 3)
+        for name in ('灵冠', '灵靴', '玉佩'):
+            self.assertIn('锻造成功', self.call('锻造 ' + name))
+        after = hero_sheet(a, p)
+        for stat in ('hp', 'def', 'speed'):
+            self.assertGreater(after[stat], before[stat])
+        self.assertEqual(a['ore'], 91)
+        self.assertEqual(after['atk'], before['atk'])
+        a['equipment']['boots'] = 5
+        self.assertIn('等级上限', self.call('锻造 灵靴'))
+        self.assertEqual(self.store.get_player('a', 'g')['adventure']['ore'], 91)
+
+    def test_portrait_selection_and_safe_card_text(self):
+        from qqbot_pet.petpark.adventure.card import portrait_name, card_html
+        p = self.create()
+        portraits = set()
+        for profession in content.PROFESSIONS:
+            for gender in ('男', '女'):
+                p['adventure'].update(profession=profession, gender=gender)
+                portraits.add(portrait_name(p['adventure']))
+        self.assertEqual(len(portraits), 6)
+        p['adventure']['name'] = '<script>坏</script>'
+        with patch('qqbot_pet.petpark.adventure.card.asset_uri', return_value='data:image/png;base64,'):
+            html = card_html(p, self.service.key('g', 'a'))
+        self.assertIn('&lt;script&gt;', html)
+        self.assertNotIn('<script>坏</script>', html)
+        self.assertEqual(html.count('class="gear"'), 6)
+
     def test_deterministic_bounded_and_no_mutation(self):
         p=self.create(); party=build_party(p,'a'); snapshot=copy.deepcopy(party)
         foes=enemies(content.MAPS['2'])

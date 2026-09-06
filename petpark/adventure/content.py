@@ -1,7 +1,7 @@
 """Versioned, data-driven adventure content. No production player data required."""
 from ..data import _DUNGEON_DEFS
 
-VERSION = 3
+VERSION = 4
 # Each tier is unlocked individually by a trial, never by another player.
 HEAVENS = [
     {"name": "初识", "level": 1, "enemy": 1.0, "bonus": 0},
@@ -19,7 +19,9 @@ PROFESSIONS = {
 REALMS = [("炼气", 10), ("筑基", 20), ("金丹", 40), ("元婴", 60), ("化神", 80)]
 STYLES = {"均衡": "自动选择攻击目标", "破阵": "优先小怪，攻击削弱目标一半护盾，每三回合群攻并再削除75%护盾", "守心": "每三回合净化自身并获得护盾"}
 PET_ROLES = ("攻击", "守护", "辅助")
-GEAR = {"灵剑": ("weapon", "攻击"), "法衣": ("robe", "生命"), "灵印": ("seal", "防御")}
+GEAR = {"灵剑": ("weapon", "攻击"), "法衣": ("robe", "生命"), "灵印": ("seal", "防御"),
+        "灵冠": ("crown", "防御"), "灵靴": ("boots", "速度"), "玉佩": ("pendant", "生命")}
+GEAR_NAMES = " / ".join(GEAR)
 MECHANICS = {
     "strike": ("蓄力重击", "第三回合重击：护盾和治疗有助于生存。"),
     "pack": ("召唤狼群", "第二回合召唤小怪：破阵会优先清理小怪。"),

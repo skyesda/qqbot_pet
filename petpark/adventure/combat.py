@@ -35,10 +35,10 @@ def hero_sheet(a, player, include_mount=True):
     a.setdefault("gender", "男")
     wudao = a.get("wudao", 0)
     gengu = a.get("gengu", 0)
-    hp = (spec["hp"] + eq["robe"] * 55 + b.get("hp", 0)) * growth
-    atk = (spec["atk"] + eq["weapon"] * 7 + mount_atk + b.get("atk", 0) + wudao) * growth
-    dfn = (spec["def"] + eq["seal"] * 5 + b.get("def", 0) + gengu) * growth
-    spd = spec["speed"] + b.get("speed", 0) + gengu
+    hp = (spec["hp"] + eq.get("robe", 0) * 55 + eq.get("pendant", 0) * 35 + b.get("hp", 0)) * growth
+    atk = (spec["atk"] + eq.get("weapon", 0) * 7 + mount_atk + b.get("atk", 0) + wudao) * growth
+    dfn = (spec["def"] + eq.get("seal", 0) * 5 + eq.get("crown", 0) * 3 + b.get("def", 0) + gengu) * growth
+    spd = spec["speed"] + eq.get("boots", 0) * 2 + b.get("speed", 0) + gengu
     # 性别微调：男修 +5% 攻击；女修 +5% 防御与速度。
     if a.get("gender") == "男":
         atk = int(atk * 1.05)
