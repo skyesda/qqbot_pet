@@ -1057,7 +1057,7 @@ class PetParkPlugin(Star):
         logger.info("[petpark] 已打补丁：QQ 官方消息支持 Markdown 与消息按钮")
 
     @staticmethod
-    def _build_qq_keyboard(rows: list[list[tuple[str, str]]]) -> dict:
+    def _build_qq_keyboard(rows: list[list[tuple]]) -> dict:
         """构造 QQ 官方机器人的 InlineKeyboard 数据字典。
 
         rows: 每一行是 (显示文字, 点击后发送的文本) 元组列表。
@@ -1065,7 +1065,9 @@ class PetParkPlugin(Star):
         out_rows: list[dict] = []
         for r, row in enumerate(rows):
             buttons: list[dict] = []
-            for c, (label, data) in enumerate(row):
+            for c, item in enumerate(row):
+                label, data = item[:2]
+                enter = item[2] if len(item) > 2 else True
                 buttons.append(
                     {
                         "id": f"btn_{r}_{c}",
@@ -1083,6 +1085,7 @@ class PetParkPlugin(Star):
                             },
                             "click_limit": 100,
                             "data": data,
+                            "enter": enter,
                             "at_bot_show_channel_list": False,
                         },
                     }
@@ -1131,17 +1134,18 @@ class PetParkPlugin(Star):
             ]
         )
 
-    def _keyboard_for_cmd(self, text: str) -> dict | None:
+    def _keyboard_for_cmd(self, text: str, reply: str = "") -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。"""
         if text in {"宠物乐园", "管理菜单"}:
             return self._main_menu_keyboard()
         if text.split() and text.split()[0] in BOARD_COMMANDS:
-            board_kind = "围棋" if "围棋" in text else "军棋" if "军棋" in text else "象棋" if "象棋" in text else "五子棋"
+            context = text + "\n" + reply
+            board_kind = "斗兽棋" if "斗兽棋" in context else "围棋" if "围棋" in context else "军棋" if "军棋" in context else "象棋" if "象棋" in context else "五子棋"
             return self._build_qq_keyboard([
-                [("⚫ 五子棋", "五子棋"), ("🎴 中国象棋", "中国象棋"), ("🚩 军棋", "军棋"), ("⚪ 围棋", "围棋")],
+                [("⚫ 五子棋", "五子棋"), ("🎴 中国象棋", "中国象棋"), ("🚩 军棋", "军棋"), ("⚪ 围棋", "围棋"), ("🐾 斗兽棋", "斗兽棋")],
                 [(f"{board_kind}·简单", f"{board_kind}单人 1"), (f"{board_kind}·普通", f"{board_kind}单人 2")],
                 [(f"{board_kind}·困难", f"{board_kind}单人 3"), (f"{board_kind}·地狱", f"{board_kind}单人 4")],
-                [("查看棋局", "棋局"), ("接受邀请", "接受棋局")] + ([("停一手", "围棋停一手")] if board_kind == "围棋" else []),
+                [("✍️ 填落子", "落 ", False), ("查看棋局", "棋局"), ("接受邀请", "接受棋局")] + ([("停一手", "围棋停一手")] if board_kind == "围棋" else []),
                 [("玩法帮助", "棋类帮助"), ("棋局统计", "棋局统计")],
             ])
         if text in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
@@ -1248,7 +1252,7 @@ class PetParkPlugin(Star):
         if image_md:
             reply = f"{image_md}\n{reply}"
         # 在合适的地方附加 QQ 官方消息按钮，方便用户快捷发送指令
-        keyboard = self._keyboard_for_cmd(effective_text)
+        keyboard = self._keyboard_for_cmd(effective_text, reply)
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
         if self._is_group(group_id):
             # 真正的艾特：QQ 官方消息内嵌 <qqbot-at-user id="openid" />，客户端

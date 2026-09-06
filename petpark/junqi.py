@@ -115,7 +115,7 @@ class Junqi:
 
 RULES = """### 🚩 双人明棋规则
 5 列×12 行，列 a–e、行 1–12，黑方在上、红方在下；双方坐标不翻转。红先黑后。
-采用固定合法布阵，双方 25 枚棋子全部公开，单人玩家与邀请人执红。例：`军棋落子 a7 a6`。
+采用固定合法布阵，双方 25 枚棋子全部公开，单人玩家与邀请人执红。例：`落 a7 a6`。
 司令＞军长＞师长＞旅长＞团长＞营长＞连长＞排长＞工兵；大吃小，同级同归于尽。
 公路每次一步；铁路沿直线可走任意距离，工兵可沿空铁路转弯，都不能越子。
 行营可沿相连斜线出入，营内棋子不能被攻击。中央仅 a、c、e 三条铁路连接双方。
@@ -191,5 +191,5 @@ def render_junqi(room):
             h = 10 if n == 0 else 28
             draw.rectangle((x - r, y - h, x + r, y + h), outline="#197a80", width=3)
     draw.text((380, 1102), "红方先行 · 棋子公开 · 夺旗获胜", font=small, fill=ink, anchor="mm")
-    draw.text((380, 1130), "军棋落子 a7 a6", font=small, fill=ink, anchor="mm")
+    draw.text((380, 1130), "落 a7 a6", font=small, fill=ink, anchor="mm")
     return canvas

@@ -12,10 +12,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from .junqi import Junqi, RULES as JUNQI_RULES, render_junqi
 from .go import Go, RULES as GO_RULES, go_ai, render_go
+from .doushouqi import Doushouqi, RULES as DOUSHOUQI_RULES, render_doushouqi
 
 NAMES = {1: "简单", 2: "普通", 3: "困难", 4: "地狱"}
-KINDS = ("五子棋", "象棋", "军棋", "围棋")
-COMMANDS = {"棋类帮助", "棋局", "棋局统计", "接受棋局", "拒绝棋局", "取消棋局邀请", "认输", "求和", "同意和棋", "拒绝和棋"}
+KINDS = ("五子棋", "象棋", "军棋", "围棋", "斗兽棋")
+COMMANDS = {"棋类帮助", "棋局", "棋局统计", "接受棋局", "拒绝棋局", "取消棋局邀请", "认输", "求和", "同意和棋", "拒绝和棋", "落"}
 COMMANDS.update({"围棋停一手", "围棋过"})
 for _kind in (*KINDS, "中国象棋"):
     COMMANDS.update({_kind, f"{_kind}帮助", f"{_kind}介绍", f"{_kind}指令", f"开始{_kind}", f"{_kind}单人", f"{_kind}双人", f"{_kind}邀请", f"{_kind}落子", f"{_kind}棋盘", f"放弃{_kind}"})
@@ -223,7 +224,7 @@ class Xiangqi:
         return value * side
 
 
-ENGINES = {"五子棋": Gomoku, "象棋": Xiangqi, "军棋": Junqi, "围棋": Go}
+ENGINES = {"五子棋": Gomoku, "象棋": Xiangqi, "军棋": Junqi, "围棋": Go, "斗兽棋": Doushouqi}
 
 
 def ai_move(kind, board, side, difficulty):
@@ -252,6 +253,8 @@ def ai_move(kind, board, side, difficulty):
         if kind == "象棋" and turn not in position:
             return -10000000 + ply
         if kind == "军棋" and 12 * turn not in position:
+            return -10000000 + ply
+        if kind == "斗兽棋" and engine.winner(position):
             return -10000000 + ply
         if depth == 0:
             return engine.evaluate(position, turn)
@@ -321,7 +324,7 @@ def game_help(kind):
 青色边框标记上一手落点。
 """ if kind == "五子棋" else """### 🔴 棋盘与胜负
 9 列×10 行，列 a–i 从左到右、行 1–10 从上到下；黑方在上、红方在下，双方坐标不翻转。
-红先黑后：单人玩家执红，双人邀请人执红。例：`中国象棋落子 a7 a6`，把 a7 的红兵向前走一步。
+红先黑后：单人玩家执红，双人邀请人执红。例：`落 a7 a6`，把 a7 的红兵向前走一步。
 车沿直线走，不能越子；马走日字，注意蹩马腿；相/象走田字，不能过河且不能塞象眼。
 仕/士在九宫内斜走一格；帅/将在九宫内直走一格，将帅不能直接照面。
 炮不吃子时沿直线走，吃子时必须恰好隔一个炮架；兵/卒每次向前一格，过河后可横走，不能后退。
@@ -331,9 +334,11 @@ def game_help(kind):
 """)
     if kind == "军棋":
         rules = JUNQI_RULES
+    if kind == "斗兽棋":
+        rules = DOUSHOUQI_RULES
     return f"""## {'⚫' if kind == '五子棋' else '🎴'} {name} · 完整玩法指南
 ### 🚀 快速开始
-单人：`{name}单人 2` → 等待棋盘 → `{name}落子 {example}`。
+单人：`{name}单人 2` → 等待棋盘 → `落 {example}`。
 双人：`{name}双人 @对方` → 对方发送 `接受棋局` → 邀请人先走。
 
 ### 🤖 单人四档 AI
@@ -347,9 +352,9 @@ def game_help(kind):
 - `{name}` / `{name}帮助` / `{name}介绍` / `{name}指令`：本页说明。
 - `{name}单人 [1–4]` / `开始{name} [1–4]`：单人开局。
 - `{name}双人 @对方` / `{name}邀请 用户ID`：定向邀请，双人不选 AI 难度。
-- `{name}落子 {example}`：{'落下一枚棋子' if kind == '五子棋' else '起点与终点之间用空格分开'}。
+- `落 {example}`：{'落下一枚棋子' if kind == '五子棋' else '起点与终点之间用空格分开'}；`{name}落子 {example}` 仍兼容。
 - `{name}棋盘`：查看棋盘；`放弃{name}`：立即认输。
-{'所有“中国象棋”指令均可简写为“象棋”，例如 `象棋落子 a7 a6`。' if kind == '象棋' else ''}
+{'所有“中国象棋”指令均可简写为“象棋”；棋局中直接发送 `落 a7 a6` 即可。' if kind == '象棋' else ''}
 
 {rules}
 {SHARED_HELP}"""
@@ -361,13 +366,15 @@ HELP = """## 🎴 棋类大厅 · 全群共享
 - `中国象棋` / `中国象棋帮助`：中国象棋全部指令、棋子走法及胜负规则。
 - `军棋` / `军棋帮助`：双人明棋、铁路行营及夺旗规则。
 - `围棋` / `围棋帮助`：19 路围棋、提子、打劫和停一手计分。
+- `斗兽棋` / `斗兽棋帮助`：7×9 斗兽棋、河流、陷阱与兽穴规则。
 ### 立即开局
 - `五子棋单人 2` / `中国象棋单人 2`：挑战 AI。
 - `五子棋双人 @对方` / `中国象棋双人 @对方`：邀请玩家。
-- `军棋单人 2` / `军棋双人 @对方`：挑战 AI 或邀请玩家；`军棋落子 a7 a6` 移动棋子。
-- `围棋单人 2` / `围棋双人 @对方`：挑战 AI 或邀请玩家；`围棋落子 d4`、`围棋停一手`。
+- `军棋单人 2` / `军棋双人 @对方`：挑战 AI 或邀请玩家；`落 a7 a6` 移动棋子。
+- `围棋单人 2` / `围棋双人 @对方`：挑战 AI 或邀请玩家；`落 d4`、`围棋停一手`。
+- `斗兽棋单人 2` / `斗兽棋双人 @对方`：挑战 AI 或邀请玩家；`落 a7 a6` 移动棋子。
 - 四档 AI：1 简单 / 2 普通 / 3 困难 / 4 地狱，与扫雷难度名称一致。
-- 五子棋落子例：`五子棋落子 h8`；象棋落子例：`中国象棋落子 a7 a6`。
+- 短落子：五子棋/围棋用 `落 h8`，象棋/军棋/斗兽棋用 `落 a7 a6`。
 
 """ + SHARED_HELP
 
@@ -485,6 +492,10 @@ class BoardGames:
             self.finish(room, winner, "对方已无合法着法。")
         elif room["kind"] == "象棋" and not engine.moves(room["board"], -side):
             self.finish(room, winner, "对方被将死或困毙。")
+        elif room["kind"] == "斗兽棋" and engine.winner(room["board"]) == side:
+            self.finish(room, winner, "攻入对方兽穴！")
+        elif room["kind"] == "斗兽棋" and not engine.moves(room["board"], -side):
+            self.finish(room, winner, "对方已无合法着法。")
         room["turn"] = -side
         if room["status"] == "playing" and room["kind"] != "五子棋":
             key = self.position_key(room)
@@ -518,7 +529,7 @@ class BoardGames:
                 move = None
             else:
                 if len(args) != 1:
-                    raise ValueError("用法：围棋落子 d4；或发送 围棋停一手。")
+                    raise ValueError("用法：落 d4；或发送 围棋停一手。")
                 move = coord(args[0], 19, 19)
             self.play_go(room, move)
         except ValueError as exc:
@@ -604,7 +615,7 @@ class BoardGames:
             else:
                 return "邀请尚未接受。对方发送「接受棋局」后才能落子。"
             return self.view(room)
-        if room["kind"] == "围棋" and cmd in ("围棋落子", "围棋停一手", "围棋过"):
+        if room["kind"] == "围棋" and cmd in ("围棋落子", "围棋停一手", "围棋过", "落"):
             return self.handle_go_move(room, user, cmd, args)
         if cmd == "认输" or cmd.startswith("放弃"):
             self.finish(room, next(p for p in room["players"] if p != user), f"{self.name(user)} 主动认输。")
@@ -624,24 +635,26 @@ class BoardGames:
                 return self.view(room)
             room["offer"] = None
             return "已拒绝和棋，请继续落子。"
-        if cmd.endswith("落子"):
+        if cmd == "落" or cmd.endswith("落子"):
             if room["players"][0 if room["turn"] == 1 else 1] != user:
                 return "还没轮到你落子，请等待对方。"
             engine = ENGINES[room["kind"]]
             try:
-                if len(args) != (1 if kind == "五子棋" else 2):
-                    raise ValueError(f"用法：{kind}落子 " + ("h8。" if kind == "五子棋" else "a7 a6。"))
+                active_kind = room["kind"]
+                if len(args) != (1 if active_kind == "五子棋" else 2):
+                    raise ValueError("用法：落 " + ("h8。" if active_kind == "五子棋" else "a7 a6。"))
                 coords = [coord(a, engine.width, engine.height) for a in args]
-                move = coords[0] if kind == "五子棋" else tuple(coords)
+                move = coords[0] if active_kind == "五子棋" else tuple(coords)
                 if move not in engine.moves(room["board"], room["turn"]):
-                    raise ValueError("落子不合法：请检查己方棋子、路径和目的地。" + ("行营内敌子不能被攻击，地雷、军旗及本营内棋子不能移动。" if kind == "军棋" else "位置被占用、棋子走法错误，或此步会使己方被将军。"))
+                    detail = "行营内敌子不能被攻击，地雷、军旗及本营内棋子不能移动。" if active_kind == "军棋" else "请检查棋子走法、地形、吃子等级与目的地。" if active_kind == "斗兽棋" else "位置被占用、棋子走法错误，或此步会使己方被将军。"
+                    raise ValueError("落子不合法：请检查己方棋子、路径和目的地。" + detail)
             except ValueError as exc:
                 return str(exc)
             self.play(room, move)
             if room["status"] == "playing" and "@AI" in room["players"]:
                 reply = ai_move(room["kind"], room["board"], room["turn"], room["difficulty"])
                 if reply is None:
-                    self.finish(room, user if kind != "五子棋" else None, "对方已无合法着法。")
+                    self.finish(room, user if active_kind != "五子棋" else None, "对方已无合法着法。")
                 else:
                     self.play(room, reply)
             return self.view(room)
@@ -654,7 +667,7 @@ class BoardGames:
             return f"{title}\n{first} 邀请 {second} 对弈。\n请 {second} 发送「接受棋局」或「拒绝棋局」。10 分钟内有效。"
         if room["status"] == "cancelled":
             return f"{title}\n{room['result']}"
-        roles = "黑 / 白" if room["kind"] in ("五子棋", "围棋") else "红 / 黑"
+        roles = "黑 / 白" if room["kind"] in ("五子棋", "围棋") else "红 / 蓝" if room["kind"] == "斗兽棋" else "红 / 黑"
         text = f"{title}\n{roles}：{first} / {second} · 已走 {room['moves']} 步\n"
         if room["status"] == "finished":
             text += room["result"] + (f"\n获胜：{self.name(room['winner'])}" if room["winner"] else "\n结果：和棋")
@@ -664,7 +677,7 @@ class BoardGames:
             text += f"轮到 {self.name(who)} · 剩余 {left // 60}:{left % 60:02d}，超时视为放弃。"
             if room["kind"] == "象棋" and Xiangqi.checked(room["board"], room["turn"]):
                 text += "\n⚠️ 将军！请先解除将军。"
-            text += "\n" + ("围棋落子 d4 · 围棋停一手" if room["kind"] == "围棋" else "五子棋落子 h8" if room["kind"] == "五子棋" else f"{room['kind']}落子 a7 a6")
+            text += "\n" + ("落 d4 · 围棋停一手" if room["kind"] == "围棋" else "落 h8" if room["kind"] == "五子棋" else "落 a7 a6")
         if room["kind"] == "围棋":
             text += f"\n黑提子 {room['captures']['1']} / 白提子 {room['captures']['-1']} · 白贴 7.5 点"
             if room["passes"]:
@@ -681,6 +694,8 @@ class BoardGames:
         if room["kind"] == "军棋":
             canvas = render_junqi(room)
             return self.save_render(room, canvas)
+        if room["kind"] == "斗兽棋":
+            return self.save_render(room, render_doushouqi(room))
         engine = ENGINES[room["kind"]]
         width, height = engine.width, engine.height
         cell = 44 if width == 15 else 66
