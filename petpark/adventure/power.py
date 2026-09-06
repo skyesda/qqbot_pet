@@ -13,22 +13,14 @@ pet.battle_power(pet) 显示值。两者是两把尺。本模块提供唯一的�
 - 不改动 combat.build_party / enemies（战斗模拟与「战力标尺」分离）。
 """
 import math
-from .combat import projection
-from .content import PROFESSIONS
+from .combat import hero_sheet, projection
 from .. import data as legacy
 
 
 def hero_power(a, player):
     """修士本体：职业基础属性 + 等级成长 + 洞天装备 + 坐骑战力，折成单个数。"""
-    spec = PROFESSIONS[a["profession"]]
-    growth = 1 + .16 * (a["level"] - 1)
-    eq = a.get("equipment", {"weapon": 0, "robe": 0, "seal": 0})
-    mount = player.get("mounts", {}).get(player.get("active_mount"), {})
-    mount_atk = projection(mount.get("power", 0), 10000, 5)
-    hp = (spec["hp"] + eq["robe"] * 55) * growth
-    atk = (spec["atk"] + eq["weapon"] * 7 + mount_atk) * growth
-    dfn = (spec["def"] + eq["seal"] * 5) * growth
-    return int(hp / 10 + atk * 2 + dfn * 2)
+    s = hero_sheet(a, player)
+    return int(s["hp"] / 10 + s["atk"] * 2 + s["def"] * 2)
 
 
 def _stage_idx(stage):

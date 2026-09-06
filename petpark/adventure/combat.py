@@ -17,16 +17,40 @@ def projection(value, base, weight):
     return weight * math.log2(1 + max(0, int(value)) / base)
 
 
-def build_party(player, key, side=0):
-    a = player["adventure"]
+def hero_sheet(a, player):
+    """修士完整属性面（战斗与战力共用的唯一事实源）。
+
+    基础：职业基础属性 + 等级成长 + 洞天装备 + 坐骑攻击加成；
+    进阶：装备/道具带来的 bonus（力量/铁骨/气血/疾风丹）、持久属性 悟性/根骨、性别微调。
+    旧存档缺字段一律 setdefault 惰性补默认，零迁移。
+    """
     spec = PROFESSIONS[a["profession"]]
     growth = 1 + .16 * (a["level"] - 1)
-    equipment = a["equipment"]
+    eq = a.get("equipment", {"weapon": 0, "robe": 0, "seal": 0})
     mount = player.get("mounts", {}).get(player.get("active_mount"), {})
-    mount_bonus = projection(mount.get("power", 0), 10000, 5)
-    hero = unit(key, a["name"], side, (spec["hp"] + equipment["robe"] * 55) * growth,
-                (spec["atk"] + equipment["weapon"] * 7 + mount_bonus) * growth,
-                (spec["def"] + equipment["seal"] * 5) * growth, spec["speed"])
+    mount_atk = projection(mount.get("power", 0), 10000, 5)
+    b = a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})
+    a.setdefault("gender", "男")
+    wudao = a.get("wudao", 0)
+    gengu = a.get("gengu", 0)
+    hp = (spec["hp"] + eq["robe"] * 55 + b.get("hp", 0)) * growth
+    atk = (spec["atk"] + eq["weapon"] * 7 + mount_atk + b.get("atk", 0) + wudao) * growth
+    dfn = (spec["def"] + eq["seal"] * 5 + b.get("def", 0) + gengu) * growth
+    spd = spec["speed"] + b.get("speed", 0) + gengu
+    # 性别微调：男修 +5% 攻击；女修 +5% 防御与速度。
+    if a.get("gender") == "男":
+        atk = int(atk * 1.05)
+    elif a.get("gender") == "女":
+        dfn = int(dfn * 1.05)
+        spd = int(spd * 1.05)
+    return {"hp": int(hp), "atk": int(atk), "def": int(dfn), "speed": int(spd),
+            "wudao": wudao, "gengu": gengu}
+
+
+def build_party(player, key, side=0):
+    a = player["adventure"]
+    s = hero_sheet(a, player)
+    hero = unit(key, a["name"], side, s["hp"], s["atk"], s["def"], s["speed"])
     hero.update(role=a["profession"], style=a["style"])
     pet = next((p for p in player.get("pets", []) if p.get("pet_id") == a.get("companion_pet_id")), None)
     # A free guide makes the introduction playable without destroying/replacing legacy pets.

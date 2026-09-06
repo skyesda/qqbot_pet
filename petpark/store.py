@@ -100,7 +100,7 @@ class PetStore:
             "start_at": 0, "end_at": 0,
             "announce": "🎂 生辰盛典开启！", "announce_end": "🎂 生辰盛典收官",
             "announced_start": False, "announced_end": False,
-            "howto": "🎂 如何参与【生辰盛典】\n\n- 发送 `生日抽奖` 报名下一轮开奖箱（每轮1次，到点自动开奖，约80%中奖）\n- 发送 `生日快乐` 瓜分千万积分/金币/钻石（每日 `07:00` 开启，每15~30分钟随机冷却）\n\n> 场次详情见 `生辰活动`。",
+            "howto": "🎂 如何参与【生辰盛典】\n\n- 发送 `生日抽奖` 报名下一轮开奖箱（每轮1次，到点自动开奖，约80%中奖）\n- 发送 `生日快乐` 瓜分千万玄晶/灵石/天晶（每日 `07:00` 开启，每15~30分钟随机冷却）\n\n> 场次详情见 `生辰活动`。",
             "howto_interval_h": 0, "howto_last_ts": 0,   # 每N小时全群推一次「如何参与」，0=关闭
             "gacha": {"enabled": True, "cmd": "生日抽奖", "menu_cmd": "生辰活动",
                       "win_rate": 0.8,                    # 每轮中奖人数≈参与人数×80%
@@ -119,6 +119,37 @@ class PetStore:
         self._migrate_clear_cooldowns_once()
         self._migrate_purge_sect()
         self._migrate_unified_v1()
+        self._migrate_homestead_building_names()
+
+    def _migrate_homestead_building_names(self) -> None:
+        """家园建筑键改名：金币矿→灵石矿、积分工坊→玄晶工坊（仙途语境，重命名不删数据）。
+
+        仅对存储键做一次性重命名，玩家建筑/派遣/产量数据零丢失；幂等。
+        """
+        if self._data.get("homestead_renamed_v1"):
+            return
+        self._data["homestead_renamed_v1"] = True
+        rename = {"金币矿": "灵石矿", "积分工坊": "玄晶工坊"}
+
+        def rekey(state: dict) -> None:
+            if not isinstance(state, dict):
+                return
+            for section in ("buildings", "dispatch"):
+                sec = state.get(section)
+                if isinstance(sec, dict):
+                    for old, new in rename.items():
+                        if old in sec and new not in sec:
+                            sec[new] = sec.pop(old)
+
+        for state in self._data.get("homestead_players", {}).values():
+            rekey(state)
+        for pl in self._data.get("players", {}).values():
+            if isinstance(pl, dict):
+                rekey(pl.get("_homestead_fallback"))
+                # 兼容旧字段路径：部分玩家把家园键直接挂在玩家对象下
+                for key in ("homestead", "homestead_state"):
+                    if isinstance(pl.get(key), dict):
+                        rekey(pl[key])
 
     def _migrate_unified_v1(self) -> None:
         """统一经济 v1：仅打幂等标记，为后续「双键货币/仙途战力」迁移预留钩子。

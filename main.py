@@ -62,6 +62,15 @@ except Exception:  # pragma: no cover - 兼容旧版本
 
 PLUGIN_NAME = "astrbot_plugin_petpark"
 
+# 币种显示词：存档字段仍用旧名（金/积/钻），仅对外展示新名（灵石/玄晶/天晶）。
+# 双键映射见 petpark.store.CURRENCY_KEYS；此处只做「库存名 → 展示名」的逆映射。
+_CURRENCY_DISPLAY = {"金币": "灵石", "积分": "玄晶", "钻石": "天晶"}
+
+
+def _cur_disp(name: str) -> str:
+    """把内部币种名（金币/积分/钻石）映射为对外展示名（灵石/玄晶/天晶）。"""
+    return _CURRENCY_DISPLAY.get(name, name)
+
 # 统一进程时区为北京时间（Asia/Shanghai），使所有 time.localtime() 显示正确。
 # 仅 Unix 支持 tzset；服务器为 Linux，本地开发（Windows）忽略即可。
 import os as _os
@@ -144,6 +153,12 @@ KNOWN_COMMANDS = {
     "减积分",
     "加钻石",
     "减钻石",
+    "加灵石",
+    "减灵石",
+    "加玄晶",
+    "减玄晶",
+    "加天晶",
+    "减天晶",
     # 小管理员（分群授权）
     "任命小管理",
     "任命小管理员",
@@ -156,6 +171,8 @@ KNOWN_COMMANDS = {
     "道具商城",
     "积分商城",
     "钻石商城",
+    "玄晶商城",
+    "天晶商城",
     "秘技商城",
     "神器商城",
     "宠物市场",
@@ -218,6 +235,9 @@ KNOWN_COMMANDS = {
     "赠送金币",
     "赠送积分",
     "赠送钻石",
+    "赠送灵石",
+    "赠送玄晶",
+    "赠送天晶",
     # 神器 / 秘技
     "打造神器",
     "佩戴神器",
@@ -412,6 +432,9 @@ WEB_BLOCKED_COMMANDS = {
     "赠送金币",
     "赠送积分",
     "赠送钻石",
+    "赠送灵石",
+    "赠送玄晶",
+    "赠送天晶",
     # 获取宠物（应在群内进行）
     "砸蛋",
     "砸蛋十连",
@@ -1585,8 +1608,8 @@ class PetParkPlugin(Star):
         # 逾期强制还款：从账户余额自动抵扣
         force_repaid = False
         for cur, key_due, key_loan in [
-            ("金币", "loan_coin_due", "loan_coin"),
-            ("积分", "loan_jifen_due", "loan_jifen"),
+            ("灵石", "loan_coin_due", "loan_coin"),
+            ("玄晶", "loan_jifen_due", "loan_jifen"),
         ]:
             loan = bk.get(key_loan, 0)
             due_str = bk.get(key_due, "")
@@ -1610,7 +1633,7 @@ class PetParkPlugin(Star):
                         if bk[key_loan] <= 0:
                             bk[key_loan] = 0
                             bk.pop(key_due, None)
-                            key_cd = "loan_coin_repaid_at" if cur == "金币" else "loan_jifen_repaid_at"
+                            key_cd = "loan_coin_repaid_at" if cur in ("金币", "灵石") else "loan_jifen_repaid_at"
                             bk[key_cd] = int(time.time())
                             # 逾期罚分
                             old_credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
@@ -1618,8 +1641,8 @@ class PetParkPlugin(Star):
                             bk["credit_score"] = max(0, old_credit + penalty)
         # 重新检查是否还被冻结
         frozen_msgs = []
-        for cur, key_due in [("金币", "loan_coin_due"), ("积分", "loan_jifen_due")]:
-            key_loan = "loan_coin" if cur == "金币" else "loan_jifen"
+        for cur, key_due in [("灵石", "loan_coin_due"), ("玄晶", "loan_jifen_due")]:
+            key_loan = "loan_coin" if cur in ("金币", "灵石") else "loan_jifen"
             loan = bk.get(key_loan, 0)
             due_str = bk.get(key_due, "")
             if loan > 0 and due_str:
@@ -1639,7 +1662,7 @@ class PetParkPlugin(Star):
                 msg += "\n\n⚠️ 已自动从余额强制抵扣部分欠款，仍不足还清。"
             msg += (
                 "\n\n请立即还款以解冻账户：\n"
-                "`银行还款 金币 数量` 或 `银行还款 积分 数量`\n"
+                "`银行还款 灵石 数量` 或 `银行还款 玄晶 数量`\n"
                 "还清所有贷款后自动解冻。"
             )
             return msg
@@ -1649,14 +1672,14 @@ class PetParkPlugin(Star):
         if action in ("transfer", "gift"):
             debts = []
             if bk.get("loan_coin", 0) > 0:
-                debts.append(f"金币贷款 {bk['loan_coin']:,}")
+                debts.append(f"灵石贷款 {bk['loan_coin']:,}")
             if bk.get("loan_jifen", 0) > 0:
-                debts.append(f"积分贷款 {bk['loan_jifen']:,}")
+                debts.append(f"玄晶贷款 {bk['loan_jifen']:,}")
             if debts:
                 return (
                     "🚫 **有未还贷款，无法进行转让/赠送操作！**\n"
                     + "、".join(debts)
-                    + "\n请先还清贷款：`银行还款 金币/积分 数量`"
+                    + "\n请先还清贷款：`银行还款 灵石/玄晶 数量`"
                 )
         return None
 
@@ -1704,9 +1727,9 @@ class PetParkPlugin(Star):
         dep_jifen = bk.get("deposit_jifen", 0)
         lines.append(f"💰 **存款**")
         if dep_coin > 0:
-            lines.append(f"　金币：{dep_coin:,}")
+            lines.append(f"　灵石：{dep_coin:,}")
         if dep_jifen > 0:
-            lines.append(f"　积分：{dep_jifen:,}")
+            lines.append(f"　玄晶：{dep_jifen:,}")
         if dep_coin == 0 and dep_jifen == 0:
             lines.append("　（无存款）")
         # 贷款
@@ -1716,17 +1739,17 @@ class PetParkPlugin(Star):
                 od_str = f" ⚠️ 已逾期{lc_days}天"
             else:
                 od_str = f" ⏳ 还剩{-lc_days}天"
-            lines.append(f"　金币：{lc:,} | {lc_dur}天期 | 到期 {lc_due}{od_str}")
+            lines.append(f"　灵石：{lc:,} | {lc_dur}天期 | 到期 {lc_due}{od_str}")
         else:
-            lines.append(f"　金币：无贷款")
+            lines.append(f"　灵石：无贷款")
         if lj > 0:
             if lj_days >= 0:
                 od_str = f" ⚠️ 已逾期{lj_days}天"
             else:
                 od_str = f" ⏳ 还剩{-lj_days}天"
-            lines.append(f"　积分：{lj:,} | {lj_dur}天期 | 到期 {lj_due}{od_str}")
+            lines.append(f"　玄晶：{lj:,} | {lj_dur}天期 | 到期 {lj_due}{od_str}")
         else:
-            lines.append(f"　积分：无贷款")
+            lines.append(f"　玄晶：无贷款")
         # 信用
         lines.append(f"⭐ **信用分**：{credit}（{grade}）")
         # 利息统计
@@ -1743,15 +1766,15 @@ class PetParkPlugin(Star):
             remain = data.BANK_OVERDUE_FREEZE_DAYS - max_od
             lines.append(f"> ⚠️ 贷款已逾期{max_od}天，{remain}天后将冻结账户！")
         lines.append("━━━━━━━━━━━━━━")
-        lines.append("`银行存款 金币/积分 数量` | `银行取款 金币/积分 数量`")
-        lines.append("`银行贷款 金币/积分 数量` | `银行还款 金币/积分 数量`")
+        lines.append("`银行存款 灵石/玄晶 数量` | `银行取款 灵石/玄晶 数量`")
+        lines.append("`银行贷款 灵石/玄晶 数量` | `银行还款 灵石/玄晶 数量`")
         return "\n".join(lines)
 
     def _bank_deposit(self, player: dict, tokens: list[str]) -> str:
-        """存款：银行存款 金币/积分 数量"""
+        """存款：银行存款 灵石/玄晶 数量"""
         currency = self._arg(tokens, 1)
-        if currency not in ("金币", "积分"):
-            return "用法：银行存款 金币/积分 数量\n例如：银行存款 金币 10000"
+        if currency not in ("金币", "积分", "灵石", "玄晶"):
+            return "用法：银行存款 灵石/玄晶 数量\n例如：银行存款 灵石 10000"
         count_str = self._arg(tokens, 2)
         if not count_str or not count_str.isdigit():
             return "请输入有效的存款数量（正整数）。"
@@ -1762,16 +1785,16 @@ class PetParkPlugin(Star):
         if have < count:
             return f"你的{currency}不足（需要 {count:,}，当前 {have:,}）。"
         bk = self.store.bank_state(player)
-        key = "deposit_coin" if currency == "金币" else "deposit_jifen"
+        key = "deposit_coin" if currency in ("金币", "灵石") else "deposit_jifen"
         self.store.add_currency(player, currency, -count)
         bk[key] = bk.get(key, 0) + count
         return f"🏦 已存入 {currency} ×{count:,}。当前存款 {currency} {bk[key]:,}。\n> 周利率 1%，每周一自动计息。"
 
     def _bank_withdraw(self, player: dict, tokens: list[str]) -> str:
-        """取款：银行取款 金币/积分 数量"""
+        """取款：银行取款 灵石/玄晶 数量"""
         currency = self._arg(tokens, 1)
-        if currency not in ("金币", "积分"):
-            return "用法：银行取款 金币/积分 数量\n例如：银行取款 金币 5000"
+        if currency not in ("金币", "积分", "灵石", "玄晶"):
+            return "用法：银行取款 灵石/玄晶 数量\n例如：银行取款 灵石 5000"
         count_str = self._arg(tokens, 2)
         if not count_str or not count_str.isdigit():
             return "请输入有效的取款数量（正整数）。"
@@ -1779,7 +1802,7 @@ class PetParkPlugin(Star):
         if count <= 0:
             return "取款数量必须大于 0。"
         bk = self.store.bank_state(player)
-        key = "deposit_coin" if currency == "金币" else "deposit_jifen"
+        key = "deposit_coin" if currency in ("金币", "灵石") else "deposit_jifen"
         have = bk.get(key, 0)
         if have < count:
             return f"银行存款不足（需要 {count:,}，存款余额 {have:,}）。"
@@ -1788,12 +1811,12 @@ class PetParkPlugin(Star):
         return f"🏦 已取出 {currency} ×{count:,}。当前存款 {currency} {bk[key]:,}。"
 
     def _bank_loan(self, player: dict, tokens: list[str]) -> str:
-        """贷款：银行贷款 金币/积分 数量 [7/14/30天]"""
+        """贷款：银行贷款 灵石/玄晶 数量 [7/14/30天]"""
         currency = self._arg(tokens, 1)
-        if currency not in ("金币", "积分"):
+        if currency not in ("金币", "积分", "灵石", "玄晶"):
             return (
-                "用法：银行贷款 金币/积分 数量 [天数]\n"
-                "例如：银行贷款 金币 50000 7\n"
+                "用法：银行贷款 灵石/玄晶 数量 [天数]\n"
+                "例如：银行贷款 灵石 50000 7\n"
                 "可选期限：7天 / 14天 / 30天（默认7天）"
             )
         count_str = self._arg(tokens, 2)
@@ -1811,9 +1834,9 @@ class PetParkPlugin(Star):
         if dur not in data.BANK_LOAN_DURATIONS:
             return f"贷款期限仅支持：{' / '.join(data.BANK_LOAN_DURATIONS.values())}"
         bk = self.store.bank_state(player)
-        key_loan = "loan_coin" if currency == "金币" else "loan_jifen"
-        key_due = "loan_coin_due" if currency == "金币" else "loan_jifen_due"
-        key_dur = "loan_coin_dur" if currency == "金币" else "loan_jifen_dur"
+        key_loan = "loan_coin" if currency in ("金币", "灵石") else "loan_jifen"
+        key_due = "loan_coin_due" if currency in ("金币", "灵石") else "loan_jifen_due"
+        key_dur = "loan_coin_dur" if currency in ("金币", "灵石") else "loan_jifen_dur"
         # 最低贷款金额
         if count < data.BANK_LOAN_MIN_AMOUNT:
             return f"单次贷款最低 {data.BANK_LOAN_MIN_AMOUNT:,} {currency}。"
@@ -1821,7 +1844,7 @@ class PetParkPlugin(Star):
         if bk.get(key_loan, 0) > 0:
             return f"你已有未还清的{currency}贷款（余额 {bk[key_loan]:,}），请先还清再贷。"
         # 还清后冷却检查
-        key_cd = "loan_coin_repaid_at" if currency == "金币" else "loan_jifen_repaid_at"
+        key_cd = "loan_coin_repaid_at" if currency in ("金币", "灵石") else "loan_jifen_repaid_at"
         last_repaid = bk.get(key_cd, 0)
         if last_repaid:
             elapsed = int(time.time()) - last_repaid
@@ -1855,14 +1878,14 @@ class PetParkPlugin(Star):
         )
 
     def _bank_repay(self, player: dict, tokens: list[str]) -> str:
-        """还款：银行还款 金币/积分 数量"""
+        """还款：银行还款 灵石/玄晶 数量"""
         currency = self._arg(tokens, 1)
-        if currency not in ("金币", "积分"):
-            return "用法：银行还款 金币/积分 数量（或 全部）\n例如：银行还款 金币 5000"
+        if currency not in ("金币", "积分", "灵石", "玄晶"):
+            return "用法：银行还款 灵石/玄晶 数量（或 全部）\n例如：银行还款 灵石 5000"
         count_str = self._arg(tokens, 2)
         bk = self.store.bank_state(player)
-        key_loan = "loan_coin" if currency == "金币" else "loan_jifen"
-        key_due = "loan_coin_due" if currency == "金币" else "loan_jifen_due"
+        key_loan = "loan_coin" if currency in ("金币", "灵石") else "loan_jifen"
+        key_due = "loan_coin_due" if currency in ("金币", "灵石") else "loan_jifen_due"
         loan = bk.get(key_loan, 0)
         if loan <= 0:
             return f"你没有{currency}贷款需要还。"
@@ -1885,7 +1908,7 @@ class PetParkPlugin(Star):
         if bk[key_loan] <= 0:
             bk[key_loan] = 0
             # 记录还清时间（冷却用）
-            key_cd = "loan_coin_repaid_at" if currency == "金币" else "loan_jifen_repaid_at"
+            key_cd = "loan_coin_repaid_at" if currency in ("金币", "灵石") else "loan_jifen_repaid_at"
             bk[key_cd] = int(time.time())
             # 信用分调整（按贷款金额比例缩放，防刷小额贷款涨分）
             due_str = bk.pop(key_due, "")
@@ -1946,7 +1969,7 @@ class PetParkPlugin(Star):
             return (
                 "\n\n🎉 **已达 Lv999！可以重生！**\n"
                 "> 发送 `购买重生宝石` 购买重生宝石\n"
-                "> 发送 `祭奠 积分/钻石 数量` 提升倍率\n"
+                "> 发送 `祭奠 玄晶/天晶 数量` 提升倍率\n"
                 "> 发送 `确认重生` 执行重生"
             )
         return ""
@@ -1987,8 +2010,8 @@ class PetParkPlugin(Star):
                 "- 攻击/防御/智力/血量 **随机 2~10 倍**暴击\n"
                 "- 精力上限重置为 100\n"
                 "- 背包全部清空（品质卡和定制卡保留）\n\n"
-                "**重生宝石：** 1 万钻石 + 10 万积分\n"
-                "**祭奠：** 消耗积分/钻石提升高倍率概率\n"
+                "**重生宝石：** 1 万天晶 + 10 万玄晶\n"
+                "**祭奠：** 消耗玄晶/天晶提升高倍率概率\n"
                 "> 发送 `购买重生宝石` 提前准备宝石。"
             )
         sacrifice_pts = p.get("rebirth_sacrifice", 0)
@@ -2030,12 +2053,12 @@ class PetParkPlugin(Star):
         lines.append("**消耗：**")
         gem_status = "✅ 已拥有" if has_gem else "❌ 未购买"
         lines.append(f"- 重生宝石：{gem_status}")
-        lines.append(f"- 购买宝石：`购买重生宝石`（1万钻石 + 10万积分）")
+        lines.append(f"- 购买宝石：`购买重生宝石`（1万天晶 + 10万玄晶）")
         lines.append("")
         lines.append("**祭奠（提升高倍率概率）：**")
-        lines.append(f"- `祭奠 积分 数量`（最低 {data.REBIRTH_SACRIFICE_MIN_JIFEN:,}）")
-        lines.append(f"- `祭奠 钻石 数量`（最低 {data.REBIRTH_SACRIFICE_MIN_DIAMOND:,}）")
-        lines.append(f"- 每 {data.REBIRTH_SACRIFICE_PER_POINT_JIFEN:,} 积分 / {data.REBIRTH_SACRIFICE_PER_POINT_DIAMOND:,} 钻石 = 1 祭奠点")
+        lines.append(f"- `祭奠 玄晶 数量`（最低 {data.REBIRTH_SACRIFICE_MIN_JIFEN:,}）")
+        lines.append(f"- `祭奠 天晶 数量`（最低 {data.REBIRTH_SACRIFICE_MIN_DIAMOND:,}）")
+        lines.append(f"- 每 {data.REBIRTH_SACRIFICE_PER_POINT_JIFEN:,} 玄晶 / {data.REBIRTH_SACRIFICE_PER_POINT_DIAMOND:,} 天晶 = 1 祭奠点")
         lines.append(f"- 最多 {data.REBIRTH_SACRIFICE_MAX_POINTS} 点")
         lines.append("")
         lines.append("**重生后：**")
@@ -2050,7 +2073,7 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _rebirth_buy_gem(self, player: dict) -> str:
-        """购买重生宝石：1万钻石 + 10万积分。"""
+        """购买重生宝石：1万天晶 + 10万玄晶。"""
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
@@ -2061,44 +2084,44 @@ class PetParkPlugin(Star):
         need_d = data.REBIRTH_GEM_COST_DIAMOND
         need_j = data.REBIRTH_GEM_COST_JIFEN
         if diamond < need_d:
-            return f"钻石不足（需要 {need_d:,}，当前 {diamond:,}）。"
+            return f"天晶不足（需要 {need_d:,}，当前 {diamond:,}）。"
         if jifen < need_j:
-            return f"积分不足（需要 {need_j:,}，当前 {jifen:,}）。"
+            return f"玄晶不足（需要 {need_j:,}，当前 {jifen:,}）。"
         self.store.add_currency(player, "天晶", -need_d)
         self.store.add_currency(player, "玄晶", -need_j)
         p["rebirth_gem"] = True
         return (
             "💎 **重生宝石** 购买成功！\n"
-            f"> 消耗：钻石 {need_d:,} + 积分 {need_j:,}\n"
+            f"> 消耗：天晶 {need_d:,} + 玄晶 {need_j:,}\n"
             "> 宠物达到渡劫 Lv999 后发送 `确认重生` 即可。\n"
-            "> 💡 发送 `祭奠 积分/钻石 数量` 可提升高倍率概率。"
+            "> 💡 发送 `祭奠 玄晶/天晶 数量` 可提升高倍率概率。"
         )
 
     def _rebirth_sacrifice(self, player: dict, tokens: list[str]) -> str:
-        """祭奠：消耗积分或钻石提升重生倍率权重。"""
+        """祭奠：消耗玄晶或天晶提升重生倍率权重。"""
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
         if p.get("stage", "") != "渡劫":
             return "只有渡劫阶段（Lv800+）的宠物才能祭奠。"
         currency = self._arg(tokens, 1)
-        if currency not in ("积分", "钻石"):
+        if currency not in ("积分", "钻石", "玄晶", "天晶"):
             return (
-                "用法：祭奠 积分/钻石 数量\n"
-                f"例如：祭奠 积分 {data.REBIRTH_SACRIFICE_MIN_JIFEN:,}\n"
-                f"　　　祭奠 钻石 {data.REBIRTH_SACRIFICE_MIN_DIAMOND:,}"
+                "用法：祭奠 玄晶/天晶 数量\n"
+                f"例如：祭奠 玄晶 {data.REBIRTH_SACRIFICE_MIN_JIFEN:,}\n"
+                f"　　　祭奠 天晶 {data.REBIRTH_SACRIFICE_MIN_DIAMOND:,}"
             )
         count_str = self._arg(tokens, 2)
         if not count_str or not count_str.isdigit():
             return "请输入有效的数量。"
         count = int(count_str)
-        min_required = data.REBIRTH_SACRIFICE_MIN_JIFEN if currency == "积分" else data.REBIRTH_SACRIFICE_MIN_DIAMOND
+        min_required = data.REBIRTH_SACRIFICE_MIN_JIFEN if currency in ("积分", "玄晶") else data.REBIRTH_SACRIFICE_MIN_DIAMOND
         if count < min_required:
             return f"祭奠{currency}最低 {min_required:,}。"
         have = self.store.get_currency(player, currency)
         if have < count:
             return f"{currency}不足（需要 {count:,}，当前 {have:,}）。"
-        per_point = data.REBIRTH_SACRIFICE_PER_POINT_JIFEN if currency == "积分" else data.REBIRTH_SACRIFICE_PER_POINT_DIAMOND
+        per_point = data.REBIRTH_SACRIFICE_PER_POINT_JIFEN if currency in ("积分", "玄晶") else data.REBIRTH_SACRIFICE_PER_POINT_DIAMOND
         pts = count // per_point
         if pts <= 0:
             return f"数量不足，每 {per_point:,} {currency} = 1 祭奠点。"
@@ -2133,7 +2156,7 @@ class PetParkPlugin(Star):
                 f"当前：Lv{p['level']}/999"
             )
         if not p.get("rebirth_gem"):
-            return "你还没有重生宝石，请先 `购买重生宝石`（1万钻石 + 10万积分）。"
+            return "你还没有重生宝石，请先 `购买重生宝石`（1万天晶 + 10万玄晶）。"
         # 收集一生回顾（在修改宠物数据之前）
         review_text = self._rebirth_review(player, p)
         # 计算最终倍率
@@ -3119,7 +3142,8 @@ class PetParkPlugin(Star):
             return f"## 🌐 跨群挑战\n本群跨群功能**{state}**。"
 
         # ---- 管理员：增减指定用户金币 / 积分 / 钻石 ----
-        if cmd in ("加金币", "减金币", "加积分", "减积分", "加钻石", "减钻石"):
+        if cmd in ("加金币", "减金币", "加积分", "减积分", "加钻石", "减钻石",
+                   "加灵石", "减灵石", "加玄晶", "减玄晶", "加天晶", "减天晶"):
             return self._admin_adjust(event, qq, group_id, cmd, tokens)
 
         # ---- 大管理员：任命 / 撤销 / 查看 小管理员 ----
@@ -3181,9 +3205,9 @@ class PetParkPlugin(Star):
         # ---- 商城（无需宠物）----
         if cmd == "宠物商城":
             return self._shop_text("宠物商城")
-        if cmd in ("道具商城", "积分商城"):
+        if cmd in ("道具商城", "积分商城", "玄晶商城"):
             return self._shop_text("道具商城")
-        if cmd == "钻石商城":
+        if cmd in ("钻石商城", "天晶商城"):
             return self._shop_text("钻石商城")
         if cmd == "秘技商城":
             return self._shop_text("秘技商城")
@@ -3313,7 +3337,7 @@ class PetParkPlugin(Star):
             return self._batch_exchange_fragments(player)
         if cmd in ("一键合成品质卡", "一键卡合成", "批量卡合成"):
             return self._batch_compose_cards(player)
-        if cmd in ("赠送金币", "赠送积分", "赠送钻石"):
+        if cmd in ("赠送金币", "赠送积分", "赠送钻石", "赠送灵石", "赠送玄晶", "赠送天晶"):
             return self._gift_currency(player, group_id, cmd, tokens)
 
         # ---- 背包 / 商城购买 / 物品 ----
@@ -3881,7 +3905,7 @@ class PetParkPlugin(Star):
         # 等额固定额度：每次从剩余奖池抽「固定若干」而非随机比例。积分/金币各取 per_grab；
         # 钻石默认 100（可用 pool.per_grab_by_cur 按币种单独覆盖）。
         per_grab = max(0, int(pool.get("per_grab") or 1000))
-        per_by_cur = {"钻石": 100}
+        per_by_cur = {"钻石": 100, "天晶": 100}
         per_by_cur.update(pool.get("per_grab_by_cur") or {})
         remain = cel.setdefault("pool_remain", {})
         gained = []
@@ -4397,7 +4421,7 @@ class PetParkPlugin(Star):
             if exp_gain:
                 reward_lines.append(f"经验 +{exp_gain}")
             if jifen_gain:
-                reward_lines.append(f"积分 +{jifen_gain}")
+                reward_lines.append(f"玄晶 +{jifen_gain}")
             if token_gain:
                 reward_lines.append(f"{token} +{token_gain}")
             item_reward = d.get("reward", {})
@@ -6207,9 +6231,9 @@ class PetParkPlugin(Star):
         # 记录邀请关系并发放奖励
         self.store.record_invite(inviter, player)
         rewards = [
-            ("金币", self.invite_coin),
-            ("积分", self.invite_jifen),
-            ("钻石", self.invite_diamond),
+            ("灵石", self.invite_coin),
+            ("玄晶", self.invite_jifen),
+            ("天晶", self.invite_diamond),
         ]
         for p in (inviter, player):
             for currency, amount in rewards:
@@ -6280,7 +6304,7 @@ class PetParkPlugin(Star):
             f"> 🎖️ 今日第 **{order}** 位签到 · {now}",
             "",
             f"- 🪙 灵石 **+{coin}**（连续签到额外 +{extra}）",
-            f"- 🎯 积分 **+{jifen}**",
+            f"- 🎯 玄晶 **+{jifen}**",
             f"- 📅 累计签到 **{total}** 天 · 连续 **{streak}** 天",
             f"- 🏅 当前称号：**{title}**",
         ]
@@ -6343,15 +6367,15 @@ class PetParkPlugin(Star):
             "📌 **购买后请复制卡密，然后在本群发送**：\n"
             "```\n兑换 你的卡密\n```\n"
             "例如：`兑换 ABCD1234EFGH`\n\n"
-            "卡密可兑换金币、积分、钻石或系统道具，具体以商品说明为准。"
+            "卡密可兑换灵石、玄晶、天晶或系统道具，具体以商品说明为准。"
         )
 
     def _admin_adjust(
         self, event, qq: str, group_id: str, cmd: str, tokens: list[str]
     ) -> str:
-        if "钻石" in cmd:
+        if "钻石" in cmd or "天晶" in cmd:
             currency = "钻石"
-        elif "金币" in cmd:
+        elif "金币" in cmd or "灵石" in cmd:
             currency = "金币"
         else:
             currency = "积分"
@@ -6359,7 +6383,7 @@ class PetParkPlugin(Star):
         is_super = self._is_admin(event)
         is_sub = self._is_subadmin(group_id, qq)
         if not (is_super or is_sub):
-            return "❌ 仅管理员可增减用户金币/积分/钻石。"
+            return "❌ 仅管理员可增减用户灵石/玄晶/天晶。"
         # 目标 ID 不一定是纯数字（QQ 官方机器人/频道为 openid 字符串），
         # 仅要求最后给出的数量是整数。
         if len(tokens) < 3 or not tokens[2].lstrip("-").isdigit():
@@ -6370,13 +6394,13 @@ class PetParkPlugin(Star):
             return f"用法：{cmd} QQ号/ID 数量（数量需为正整数）"
         # 单次加币上限 1000亿（金/积/钻统一，含大、小管理员；减币不限）
         if sign > 0 and amount > 100_000_000_000:
-            return f"❌ 单次增加{currency}上限 1000亿，本次 {amount} 超出。"
+            return f"❌ 单次增加{_cur_disp(currency)}上限 1000亿，本次 {amount} 超出。"
         # 小管理员：仅限本群、仅金币/积分、加币有每日额度、减币不限
         # 无限服：小管理员加币/积分无每日上限（仍不得增减钻石）
         no_sub_limit = self._group_is_infinite(group_id)
         if not is_super:
             if currency == "钻石":
-                return "❌ 小管理员无权增减钻石（仅大管理员可操作钻石）。"
+                return "❌ 小管理员无权增减天晶（仅大管理员可操作天晶）。"
             if sign > 0 and not no_sub_limit:
                 actor = self.store.get_player(qq, group_id)
                 quota = self._subadmin_quota(actor)
@@ -6386,7 +6410,7 @@ class PetParkPlugin(Star):
                 if used + amount > limit:
                     remain = max(0, limit - used)
                     return (
-                        f"❌ 小管理员每日增加{currency}上限 {limit}，今日已增加 {used}，"
+                        f"❌ 小管理员每日增加{_cur_disp(currency)}上限 {limit}，今日已增加 {used}，"
                         f"剩余 {remain}，本次 {amount} 超出额度。"
                     )
         tp, err = self._find_target(group_id, target)
@@ -6407,19 +6431,19 @@ class PetParkPlugin(Star):
         if not is_super and sign > 0:
             if no_sub_limit:
                 extra = (
-                    f"\n> 🛡️ 小管理{currency}无每日上限（无限服）"
+                    f"\n> 🛡️ 小管理{_cur_disp(currency)}无每日上限（无限服）"
                 )
             else:
                 key = "coin" if currency == "金币" else "jifen"
                 used = self._subadmin_quota(self.store.get_player(qq, group_id)).get(key, 0)
                 extra = (
-                    f"\n> 🛡️ 小管理今日{currency}已增加 {used}/"
+                    f"\n> 🛡️ 小管理今日{_cur_disp(currency)}已增加 {used}/"
                     f"{self.subadmin_daily_add_limit}"
                 )
         return (
             f"## ⚙️ 管理操作\n"
-            f"已为用户 `{self._display_uid(target)}` {verb}{icon}**{currency} {self._short_num(amount)}**\n"
-            f"> {currency}：{self._short_num(before)} → **{self._short_num(after)}**{extra}"
+            f"已为用户 `{self._display_uid(target)}` {verb}{icon}**{_cur_disp(currency)} {self._short_num(amount)}**\n"
+            f"> {_cur_disp(currency)}：{self._short_num(before)} → **{self._short_num(after)}**{extra}"
         )
 
     # --------------------------- 小管理员 ---------------------------
@@ -6456,12 +6480,12 @@ class PetParkPlugin(Star):
             subs.append(target)
             group["subadmins"] = subs
             if self._group_is_infinite(group_id):
-                limit_line = "加金币/积分**无每日上限**（无限服）。"
+                limit_line = "加灵石/玄晶**无每日上限**（无限服）。"
             else:
-                limit_line = f"每日增加金币、积分各上限 {self.subadmin_daily_add_limit}，减少不限。"
+                limit_line = f"每日增加灵石、玄晶各上限 {self.subadmin_daily_add_limit}，减少不限。"
             return (
                 f"## 🛡️ 小管理员任命\n已任命 `{self._display_uid(target)}` 为本群小管理员。\n"
-                f"> 权限：本群内『加金币/减金币/加积分/减积分』（不可操作钻石）；"
+                f"> 权限：本群内『加灵石/减灵石/加玄晶/减玄晶』（不可操作天晶）；"
                 f"{limit_line}"
             )
         else:
@@ -6498,7 +6522,7 @@ class PetParkPlugin(Star):
         is_sub = self._is_subadmin(group_id, qq)
         if is_super:
             return (
-                "## 🛡️ 管理额度\n你是**大管理员**，增减金币/积分/钻石均无每日上限。"
+                "## 🛡️ 管理额度\n你是**大管理员**，增减灵石/玄晶/天晶均无每日上限。"
             )
         if not is_sub:
             return "你不是本群管理员。"
@@ -6507,7 +6531,7 @@ class PetParkPlugin(Star):
                 "## 🛡️ 我的管理额度（本群 · 今日）\n"
                 "━━━━━━━━━━━━━━\n"
                 "♂️ 本群为 **无限服**：**无每日上限**\n"
-                "> 加金币/积分不限量、减金币/积分不限；不可增减钻石。"
+                "> 加灵石/玄晶不限量、减灵石/玄晶不限；不可增减天晶。"
             )
         actor = self.store.get_player(qq, group_id)
         quota = self._subadmin_quota(actor)
@@ -6517,9 +6541,9 @@ class PetParkPlugin(Star):
         return (
             "## 🛡️ 我的管理额度（本群 · 今日）\n"
             "━━━━━━━━━━━━━━\n"
-            f"🪙 **金币**　已增加 {coin_used} / {limit}　·　剩余 **{max(0, limit - coin_used)}**\n"
-            f"💎 **积分**　已增加 {jifen_used} / {limit}　·　剩余 **{max(0, limit - jifen_used)}**\n"
-            "> 减少金币/积分不受限；不可增减钻石。额度每日 0 点自动重置。"
+            f"🪙 **灵石**　已增加 {coin_used} / {limit}　·　剩余 **{max(0, limit - coin_used)}**\n"
+            f"💎 **玄晶**　已增加 {jifen_used} / {limit}　·　剩余 **{max(0, limit - jifen_used)}**\n"
+            "> 减少灵石/玄晶不受限；不可增减天晶。额度每日 0 点自动重置。"
         )
 
     # --------------------------- 群授权 ---------------------------
@@ -6643,11 +6667,11 @@ class PetParkPlugin(Star):
                 subs.append(str(qq))
                 group["subadmins"] = subs
             if server_type == "infinite":
-                limit_txt = "无限服：加积分/金币无每日上限"
+                limit_txt = "无限服：加灵石/玄晶无每日上限"
             else:
-                limit_txt = f"每日加币积分各上限 {self.subadmin_daily_add_limit}"
+                limit_txt = f"每日加灵石、玄晶各上限 {self.subadmin_daily_add_limit}"
             promoted = (
-                f"\n> 🛡️ 你已成为**本群小管理员**（可加减本群金币/积分，{limit_txt}）；"
+                f"\n> 🛡️ 你已成为**本群小管理员**（可加减本群灵石/玄晶，{limit_txt}）；"
                 f"该身份随本群授权失效而消失。"
             )
         st_label = "无限服（跨群/神榜关闭）" if server_type == "infinite" else "官方服"
@@ -6674,7 +6698,7 @@ class PetParkPlugin(Star):
         until = self._extend_group_auth(group_id, days)
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
         verb = "延长" if days > 0 else "缩短"
-        st_label = "无限服（跨群/神榜关闭，小管理员加币积分无上限）" if group["server_type"] == "infinite" else "官方服"
+        st_label = "无限服（跨群/神榜关闭，小管理员加灵石/玄晶无上限）" if group["server_type"] == "infinite" else "官方服"
         return (
             "## 🔐 大管理员授权\n"
             f"已为本群{verb} **{abs(days)} 天**。\n到期时间：{when}\n"
@@ -6705,12 +6729,12 @@ class PetParkPlugin(Star):
             return (
                 "## 🌐 已设为无限服\n"
                 "本群已退出跨群共享层：宠物神榜/跨群挑战对群关闭，数据完全群独立；"
-                "群内小管理员加积分/金币**无每日上限**。"
+                "群内小管理员加灵石/玄晶**无每日上限**。"
             )
         return (
             "## 🌐 已设为官方服\n"
             "本群已回到跨群共享层：参与宠物神榜、可/可被跨群挑战；"
-            "小管理员加币积分按每日上限执行。"
+            "小管理员加灵石/玄晶按每日上限执行。"
         )
 
     # --------------------------- 群绑定（跨机器人互通） ---------------------------
@@ -6826,6 +6850,7 @@ class PetParkPlugin(Star):
                 "- 仙途深渊 · 深渊抉择 · 深渊收手",
                 "- 仙途切磋 @对方 · 接受切磋 · 拒绝切磋 · 战斗详情 · 仙途战绩",
                 "- 我的修士(看战力) · 仙途战力榜(全服战力) · 领取神榜奖励",
+                "- 与灵宠结为道侣(追求/求婚/分手/离婚) · 道侣可加速修为与提供战力加成",
                 "",
                 "**【入门】**",
                 "- 砸蛋 · 宠物市场（品质卡/变种卡）· 我的宠物 · 宠物状态",
@@ -6840,10 +6865,10 @@ class PetParkPlugin(Star):
                 "- 宠物信息 序号（查看指定宠物详情）",
                 "- 放生宠物（放生当前宠物，最后一只不可放生）",
                 "- 赠送宠物 QQ（赠送当前宠物）",
-                "- 炼化宠物（消耗 1000 积分，将宠物化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化宠物 宠物卡` 可炼化神秘宠物卡）",
+                "- 炼化宠物（消耗 1000 玄晶，将宠物化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化宠物 宠物卡` 可炼化神秘宠物卡）",
                 "",
                 "**【商城 / 背包】**",
-                "- 宠物商城（总览）· 道具商城 · 钻石商城",
+                "- 宠物商城（总览）· 道具商城 · 天晶商城",
                 "- 秘技商城 · 神器商城 · 宠物市场",
                 "- 查看背包 · 购买 物品 数量 · 使用 物品",
                 "- 出售 物品 数量 · 丢弃 物品 数量",
@@ -6905,50 +6930,50 @@ class PetParkPlugin(Star):
                 "- 扫 坐标（支持多扫，如：扫a1b2）· 插旗 坐标",
                 "- 扫雷地图 · 放弃扫雷 · 扫雷排行 · 扫雷兑换",
                 "",
-                "**【宠物家园】**（放置建造 · 离线产出）",
-                "> 在家园中建造建筑，随时间自动累积金币和积分，离线也产。",
+                "**【洞天家园】**（放置建造 · 离线产出）",
+                "> 在家园中建造建筑，随时间自动累积灵石和玄晶，离线也产。",
                 "- 家园 · 建造 建筑名 · 升级 建筑名",
                 "- 派遣 建筑名 · 召回 建筑名 · 派遣状态",
                 "- 家园收取 · 家园建筑 · 商人购买 编号",
                 "- 拆除 建筑名（返还20%费用）",
                 "- 拜访家园 QQ · 顺手牵羊 QQ（偷菜）",
                 "- 家园排行 · 家园总排行",
-                "> 🏗️ 7种建筑：金币矿/积分工坊/聚宝盆/经验泉/仓库/哨塔/祈福坛",
+                "> 🏗️ 7种建筑：灵石矿/玄晶工坊/聚宝盆/经验泉/仓库/哨塔/祈福坛",
                 "> 🐾 宠物派遣：驻扎建筑提升产量，等级品质越高加成越多",
                 "> 💀 偷菜：拼成功率偷别人未收资源，建哨塔可防御",
                 "> 🧳 流浪商人：收取时概率出现，可买加速券/护院符/双倍券",
                 "",
-                "**【宠物银行】**（存款生息 · 信用贷款）",
+                "**【灵石银行】**（存款生息 · 信用贷款）",
                 "> 在银行存钱赚利息，信用好可低息贷款，逾期将冻结账户！",
-                "- 宠物银行 · 银行信息",
-                "- 银行存款 金币/积分 数量",
-                "- 银行取款 金币/积分 数量",
-                "- 银行贷款 金币/积分 数量 [7/14/30天]",
-                "- 银行还款 金币/积分 数量（或 全部）",
+                "- 灵石银行 · 银行信息",
+                "- 银行存款 灵石/玄晶 数量",
+                "- 银行取款 灵石/玄晶 数量",
+                "- 银行贷款 灵石/玄晶 数量 [7/14/30天]",
+                "- 银行还款 灵石/玄晶 数量（或 全部）",
                 "> 💰 活期存款：周利率 1%，随时存取，每周一自动计息",
                 "> 📋 信用贷款：初始额度 10 万，信用分越高额度越大",
                 "> ⭐ 信用分：初始 500，按时还款 +10~30，逾期扣分",
                 "> 🚫 逾期超 7 天：冻结所有游戏功能，还清自动解冻",
                 "> ⚠️ 有贷款期间：无法赠送宠物、转让物品和货币",
                 "",
-                "**【宠物重生】**（涅槃新生 · 属性暴击）",
+                "**【涅槃重生】**（涅槃新生 · 属性暴击）",
                 "> 渡劫 Lv800 进入准备期，Lv999 可重生。",
-                "- 重生 · 购买重生宝石 · 祭奠 积分/钻石 数量",
+                "- 重生 · 购买重生宝石 · 祭奠 玄晶/天晶 数量",
                 "- 确认重生（需重生宝石 + Lv999）",
-                "> 💎 重生宝石：1万钻石 + 10万积分",
-                "> 🔥 祭奠：消耗积分/钻石提升高倍率概率",
+                "> 💎 重生宝石：1万天晶 + 10万玄晶",
+                "> 🔥 祭奠：消耗玄晶/天晶提升高倍率概率",
                 "> 🎲 属性暴击：2~10×随机（2×最高概率）",
                 "> ⛔ 准备期（Lv800+）：禁止出售/转让/丢弃物品",
                 "> 📦 重生后保留：品质卡/定制卡/宠物卡/品质碎片/自动修炼卡（其余清空）",
                 "",
-                "**【姻缘】**",
+                "**【道侣姻缘】**（与灵宠结为道侣，可加速修为与提供战力加成）",
                 "- 宠物追求 用户ID · 同意追求 用户ID",
                 "- 宠物求婚 用户ID · 同意求婚 用户ID",
                 "- 宠物分手 · 宠物离婚 · 宠物恋情",
                 "",
                 "**【个人】**",
                 "- 我的信息 · 签到 · 我要氪金",
-                "- 兑换 卡密 · 赠送金币/积分/钻石 用户ID 数量",
+                "- 兑换 卡密 · 赠送灵石/玄晶/天晶 用户ID 数量",
                 "- 我的邀请情况 · 受邀 用户ID",
                 "- 绑定QQ QQ号 · 验证码 123456 · 换绑QQ · 解绑QQ · 绑定教程",
                 "> 必须先绑定QQ才能游玩；绑定后跨群通用、可用QQ号或@对方指定他人",
@@ -6959,7 +6984,7 @@ class PetParkPlugin(Star):
                 "- 查看说明 名称",
                 "",
                 "**【坐骑】**",
-                "> 拥有即自动登场：入场发一次积分，30 分钟无消息自动退场，战力计入对战胜负。",
+                "> 拥有即自动登场：入场发一次玄晶，30 分钟无消息自动退场，战力计入对战胜负。",
                 "- 坐骑列表 · 我的坐骑 · 骑乘坐骑 名称 · 坐骑升级",
                 "- 坐骑市场 · 购买坐骑 名称 · 坐骑图鉴 名称",
                 "- 赠送坐骑 用户ID · 丢弃坐骑 名称 · 定制坐骑",
@@ -7472,11 +7497,11 @@ class PetParkPlugin(Star):
             f"价值：{value}",
         ]
         if reward is not None:
-            lines.append(f"入场奖励：**+{self._short_num(reward)} 积分（已到账）**")
+            lines.append(f"入场奖励：**+{self._short_num(reward)} 玄晶（已到账）**")
         elif kind in ("enter", "leave"):
-            lines.append(f"奖励：{self._short_num(rmin)}~{self._short_num(rmax)} 积分")
+            lines.append(f"奖励：{self._short_num(rmin)}~{self._short_num(rmax)} 玄晶")
         else:
-            lines.append(f"入场奖励：{self._short_num(rmin)}~{self._short_num(rmax)} 积分")
+            lines.append(f"入场奖励：{self._short_num(rmin)}~{self._short_num(rmax)} 玄晶")
         if custom:
             lines.append("来源：专属定制")
         lines.append(f"时间：{now_hhmm}")
@@ -7522,7 +7547,7 @@ class PetParkPlugin(Star):
             ("灵智", star_str),
             ("价值", value),
             ("奖励" if kind in ("enter", "leave") else "入场",
-             f"{self._short_num(rmin)}~{self._short_num(rmax)} 积分"),
+             f"{self._short_num(rmin)}~{self._short_num(rmax)} 玄晶"),
             ("时间", now_hhmm),
         ]
         if custom:
@@ -7707,13 +7732,13 @@ class PetParkPlugin(Star):
                 "- 开启灵契仙途 · 关闭灵契仙途",
                 "- 开启宠物跨群 · 关闭宠物跨群",
                 "- 设为无限服 · 设为官方服（大管理员设定本群服类型）",
-                "> 无限服：宠物神榜/跨群挑战关闭、数据完全群独立、小管理员加币积分无每日上限",
+                "> 无限服：宠物神榜/跨群挑战关闭、数据完全群独立、小管理员加灵石/玄晶无每日上限",
                 "",
                 "**【货币管理】**（大/小管理员）",
                 "- 加金币 用户ID 数量 · 减金币 用户ID 数量",
                 "- 加积分 用户ID 数量 · 减积分 用户ID 数量",
                 "- 加钻石 用户ID 数量 · 减钻石 用户ID 数量",
-                "> 💡 小管理员仅可增减金币/积分，加币有每日额度上限",
+                "> 💡 小管理员仅可增减灵石/玄晶，加币有每日额度上限",
                 "",
                 "**【小管理员】**",
                 "- 任命小管理 用户ID · 撤销小管理 用户ID",
@@ -7752,7 +7777,7 @@ class PetParkPlugin(Star):
             ]
             for n, v in data.SKILLS.items():
                 lines.append(
-                    f"- **{n}** — {data.ITEMS[n]['price']} 积分　"
+                    f"- **{n}** — {data.ITEMS[n]['price']} 玄晶　"
                     f"（Lv{v['level_req']}/智力{v['intel_req']}·战力+{v['power']}）"
                 )
             return "\n".join(lines)
@@ -7764,7 +7789,7 @@ class PetParkPlugin(Star):
             ]
             for n, v in data.ARTIFACTS.items():
                 lines.append(
-                    f"- **{n}** — {data.ITEMS[n]['price']} 积分　"
+                    f"- **{n}** — {data.ITEMS[n]['price']} 玄晶　"
                     f"（Lv{v['level_req']}·战力+{v['power']}）"
                 )
             return "\n".join(lines)
@@ -7772,7 +7797,7 @@ class PetParkPlugin(Star):
         # 道具商城（金币 + 积分）/ 钻石商城（钻石）：按币种自动归类
         if which == "钻石商城":
             accepted = (data.CURRENCY_DIAMOND,)
-            title = "## 💎 钻石商城"
+            title = "## 💎 天晶商城"
         else:
             accepted = (data.CURRENCY_COIN, data.CURRENCY_JIFEN)
             title = "## 🏪 道具商城"
@@ -7796,7 +7821,7 @@ class PetParkPlugin(Star):
         ):
             lines.append(f"**【{cat}】**")
             for n, it in sorted(groups[cat], key=lambda kv: kv[1]["price"]):
-                lines.append(f"- **{n}** — {it['price']} {it['currency']}")
+                lines.append(f"- **{n}** — {it['price']} {_cur_disp(it['currency'])}")
             lines.append("")
         return "\n".join(lines).rstrip()
 
@@ -7805,10 +7830,10 @@ class PetParkPlugin(Star):
             "## 🛒 宠物商城",
             "> 发送对应指令进入商城：",
             "- **宠物商城** — 商城总览（当前）",
-            "- **道具商城** — 金币/积分道具",
-            "- **钻石商城** — 钻石道具（精力瓶·五系属性符）",
-            "- **秘技商城** — 秘技书（最低 2 万积分起）",
-            "- **神器商城** — 神器（最低 2 万积分起）",
+            "- **道具商城** — 灵石/玄晶道具",
+            "- **天晶商城** — 天晶道具（精力瓶·五系属性符）",
+            "- **秘技商城** — 秘技书（最低 2 万玄晶起）",
+            "- **神器商城** — 神器（最低 2 万玄晶起）",
             "- **宠物市场** — 品质卡 / 变种卡",
             "",
             "> 购买：`购买 物品名 [数量]` · 市场：`购买市场 物品名`",
@@ -7824,11 +7849,11 @@ class PetParkPlugin(Star):
             "> 可 `使用 XXX卡 召唤` 随机召唤同品质宠物，或 `使用 XXX卡 宠物名` 给指定宠物提升品质。",
         ]
         for card, price in data.PET_MARKET_CARDS.items():
-            lines.append(f"- **{card}** — {price} 积分")
+            lines.append(f"- **{card}** — {price} 玄晶")
         sc = data.SPECIES_CHANGE_CARD
         lines.append("")
         lines.append("**【变种卡】**")
-        lines.append(f"- **{sc['name']}** — {sc['price']} 积分　`使用 {sc['name']} 宠物名` 随机改变该宠物种类（保留等级/品质/属性）")
+        lines.append(f"- **{sc['name']}** — {sc['price']} 玄晶　`使用 {sc['name']} 宠物名` 随机改变该宠物种类（保留等级/品质/属性）")
         lines.append("")
         lines.append("> 注：圣灵/洪荒/创世/混沌为活动/定制限定品质，不在市场出售。")
         return "\n".join(lines)
@@ -7949,11 +7974,11 @@ class PetParkPlugin(Star):
             price = data.PET_MARKET_CARDS[name]
             cost = price * count
             if jifen < cost:
-                return f"购买 {count} 张『{name}』需 {cost} 积分，积分不足（当前 {jifen}）。"
+                return f"购买 {count} 张『{name}』需 {cost} 玄晶，玄晶不足（当前 {jifen}）。"
             self.store.add_currency(player, "玄晶", -cost)
             self.store.add_item(player, name, count)
             return (
-                f"✅ **购买成功！** 花费 {cost} 积分，获得 **{name}** ×{count}。\n"
+                f"✅ **购买成功！** 花费 {cost} 玄晶，获得 **{name}** ×{count}。\n"
                 f"> 发送 `使用 {name} 召唤` 召唤同品质宠物，或 `使用 {name} 宠物名` 提升品质。"
             )
         # 变种卡
@@ -7962,11 +7987,11 @@ class PetParkPlugin(Star):
             price = sc["price"]
             cost = price * count
             if jifen < cost:
-                return f"购买 {count} 张『{name}』需 {cost} 积分，积分不足（当前 {jifen}）。"
+                return f"购买 {count} 张『{name}』需 {cost} 玄晶，玄晶不足（当前 {jifen}）。"
             self.store.add_currency(player, "玄晶", -cost)
             self.store.add_item(player, name, count)
             return (
-                f"✅ **购买成功！** 花费 {cost} 积分，获得 **{name}** ×{count}。\n"
+                f"✅ **购买成功！** 花费 {cost} 玄晶，获得 **{name}** ×{count}。\n"
                 f"> 发送 `使用 {name} 宠物名` 随机改变该宠物种类（保留等级/品质/属性）。"
             )
         return (
@@ -8253,7 +8278,7 @@ class PetParkPlugin(Star):
         """坐骑玩法帮助。"""
         return (
             "## 🐎 坐骑系统\n"
-            "拥有坐骑后，在本群发送任意消息即自动骑乘登场，入场获得一次积分奖励；"
+            "拥有坐骑后，在本群发送任意消息即自动骑乘登场，入场获得一次玄晶奖励；"
             "**30 分钟无消息自动离场**，坐骑战力计入宠物对战。\n"
             "**常用指令**\n"
             "- 坐骑列表 · 我的坐骑 · 坐骑市场 · 购买坐骑 名称\n"
@@ -8391,12 +8416,12 @@ class PetParkPlugin(Star):
             cfg = data.MOUNTS[name]
             star = "★" * cfg["stars"]
             lines.append(f"- {name}（{star} · 初始战力 {self._short_num(cfg['base_power'])} · "
-                         f"{self._short_num(cfg['price'])} 积分）")
-        lines.append("\n> 拥有即自动登场：入场奖励积分，30 分钟无消息自动退场。")
+                         f"{self._short_num(cfg['price'])} 玄晶）")
+        lines.append("\n> 拥有即自动登场：入场奖励玄晶，30 分钟无消息自动退场。")
         return "\n".join(lines)
 
     def _buy_mount(self, player: dict, tokens: list[str]) -> str:
-        """购买坐骑 坐骑名：扣积分，获得坐骑 + 号牌。"""
+        """购买坐骑 坐骑名：扣玄晶，获得坐骑 + 号牌。"""
         name = self._arg(tokens, 1)
         if not name:
             return "用法：购买坐骑 坐骑名（例如：购买坐骑 踏风玄鹿）"
@@ -8405,8 +8430,8 @@ class PetParkPlugin(Star):
         cfg = data.MOUNTS[name]
         jifen = self.store.get_currency(player, "积分")
         if jifen < cfg["price"]:
-            return (f"购买『{name}』需 {self._short_num(cfg['price'])} 积分，"
-                    f"积分不足（当前 {self._short_num(jifen)}）。")
+            return (f"购买『{name}』需 {self._short_num(cfg['price'])} 玄晶，"
+                    f"玄晶不足（当前 {self._short_num(jifen)}）。")
         if name in (player.get("mounts") or {}):
             return f"你已经拥有『{name}』。"
         self.store.add_currency(player, "玄晶", -cfg["price"])
@@ -8417,7 +8442,7 @@ class PetParkPlugin(Star):
             "obtained": time.time(),
             "custom": False,
         }
-        head = (f"✅ **入手成功！** 花费 {self._short_num(cfg['price'])} 积分，获得坐骑 **{name}**。\n"
+        head = (f"✅ **入手成功！** 花费 {self._short_num(cfg['price'])} 玄晶，获得坐骑 **{name}**。\n"
                 f"> 在本群发送消息即自动骑乘登场；入场奖励见『坐骑图鉴』。")
         img = self._mount_image_md(name)
         if img:
@@ -8432,7 +8457,7 @@ class PetParkPlugin(Star):
                 cfg = data.MOUNTS[name]
                 star = "★" * cfg["stars"]
                 lines.append(f"- {name}（{star} · 初始 {self._short_num(cfg['base_power'])} 战力 · "
-                             f"入场 {self._short_num(cfg['reward_min'])}~{self._short_num(cfg['reward_max'])} 积分）")
+                             f"入场 {self._short_num(cfg['reward_min'])}~{self._short_num(cfg['reward_max'])} 玄晶）")
             lines.append("\n> 难度越高奖励越高，共 12 款。发送『坐骑市场』购买。")
             return "\n".join(lines)
         name = tokens[1]
@@ -8442,8 +8467,8 @@ class PetParkPlugin(Star):
         own = name in (player.get("mounts") or {})
         head = (f"## 📖 『{name}』\n{cfg['desc']}\n"
                 f"星级 {'★' * cfg['stars']} · 初始战力 {self._short_num(cfg['base_power'])} · "
-                f"价值 {self._short_num(cfg['value'])} · 售价 {self._short_num(cfg['price'])} 积分\n"
-                f"入场奖励 {self._short_num(cfg['reward_min'])}~{self._short_num(cfg['reward_max'])} 积分"
+                f"价值 {self._short_num(cfg['value'])} · 售价 {self._short_num(cfg['price'])} 玄晶\n"
+                f"入场奖励 {self._short_num(cfg['reward_min'])}~{self._short_num(cfg['reward_max'])} 玄晶"
                 f"（{'已拥有' if own else '未拥有'}）")
         img = self._mount_image_md(name)
         if img:
@@ -8454,12 +8479,12 @@ class PetParkPlugin(Star):
         """定制坐骑：预留说明入口（本轮不接后台申请/录入）。"""
         return ("## 🎨 定制坐骑\n"
                 "定制坐骑需联系客服或群主申请：自定义名称 + 专属 GIF 立绘。\n"
-                "**起步 100 万积分**：第 1 只 100 万、第 2 只 500 万、第 3 只 1000 万、"
+                "**起步 100 万玄晶**：第 1 只 100 万、第 2 只 500 万、第 3 只 1000 万、"
                 "第 4 只 2000 万，此后每只 +1000 万，以此类推。\n"
-                "定制完成同样：入场奖励积分、进群自动登场、战力计入对战。")
+                "定制完成同样：入场奖励玄晶、进群自动登场、战力计入对战。")
 
     def _mount_upgrade(self, player: dict, tokens: list[str]) -> str:
-        """坐骑升级：耗 5000 钻石，Lv+1，战力 +500~1000 随机。"""
+        """坐骑升级：耗 5000 天晶，Lv+1，战力 +500~1000 随机。"""
         mounts = player.get("mounts") or {}
         if not mounts:
             return "你还没有坐骑。发送『坐骑市场』购买。"
@@ -8472,7 +8497,7 @@ class PetParkPlugin(Star):
         cost = data.MOUNT_UPGRADE_COST_DIAMOND
         diamond = self.store.get_currency(player, "钻石")
         if diamond < cost:
-            return f"升级『{name}』需 {cost} 钻石，钻石不足（当前 {diamond}）。"
+            return f"升级『{name}』需 {cost} 天晶，天晶不足（当前 {diamond}）。"
         inst = mounts[name]
         gain = random.randint(data.MOUNT_UPGRADE_POWER_MIN, data.MOUNT_UPGRADE_POWER_MAX)
         inst["level"] = inst.get("level", 1) + 1
@@ -8480,7 +8505,7 @@ class PetParkPlugin(Star):
         self.store.add_currency(player, "天晶", -cost)
         return (f"✅ **坐骑升级成功！**\n『{name}』升至 Lv.{inst['level']}"
                 f"（+{gain} 战力）→ 当前战力 {inst['power']}。\n"
-                f"本轮消耗 {cost} 钻石，战力已计入对战胜负。")
+                f"本轮消耗 {cost} 天晶，战力已计入对战胜负。")
 
     def _release(self, player: dict) -> str:
         p = self._need_pet(player)
@@ -8530,7 +8555,7 @@ class PetParkPlugin(Star):
         return None
 
     def _refine_pet(self, player: dict, tokens: list[str]) -> str:
-        """炼化：消耗积分，将宠物或「宠物卡」化作对应品质的卡/碎片。
+        """炼化：消耗玄晶，将宠物或「宠物卡」化作对应品质的卡/碎片。
 
         20% 概率炼出对应品质的品质卡；80% 概率炼出对应品质碎片（随机 3-8 个）。
         - `炼化宠物`：默认炼化当前活跃宠物，可用姓名/昵称/物种/序号指定其他宠物。
@@ -8555,7 +8580,7 @@ class PetParkPlugin(Star):
             return "⚠️ 这是你最后一只宠物，不能炼化（炼化会消耗宠物）。请先获取新宠物再炼化。"
         cost = data.REFINE_COST
         if self.store.get_currency(player, "积分") < cost:
-            return f"炼化需要 **{cost} 积分**，当前积分不足。"
+            return f"炼化需要 **{cost} 玄晶**，当前玄晶不足。"
         quality = target.get("quality", "普通") or "普通"
         nick = target.get("nickname", "?")
         self.store.add_currency(player, "玄晶", -cost)
@@ -8574,7 +8599,7 @@ class PetParkPlugin(Star):
             self.store.add_item(player, frag, n)
             out = f"🧩 **炼化成功！**『{nick}』化作 **{frag} ×{n}**。"
             hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{quality}卡】。"
-        return f"{out}\n\n💠 消耗 **{cost} 积分**。\n{hint}"
+        return f"{out}\n\n💠 消耗 **{cost} 玄晶**。\n{hint}"
 
     def _refine_pet_card(self, player: dict) -> str:
         """炼化「宠物卡」（神秘卡）：品质随机结算，20% 出对应品质卡，80% 出对应品质碎片 3-8。"""
@@ -8583,7 +8608,7 @@ class PetParkPlugin(Star):
             return f"背包里没有『{name}』，无法炼化。"
         cost = data.REFINE_COST
         if self.store.get_currency(player, "积分") < cost:
-            return f"炼化需要 **{cost} 积分**，当前积分不足。"
+            return f"炼化需要 **{cost} 玄晶**，当前玄晶不足。"
         self.store.add_currency(player, "玄晶", -cost)
         self.store.remove_item(player, name, 1)
         q = self._roll_quality()
@@ -8598,7 +8623,7 @@ class PetParkPlugin(Star):
             self.store.add_item(player, frag, n)
             out = f"🧩 **炼化成功！**『{name}』化作 **{frag} ×{n}**。"
             hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{q}卡】。"
-        return f"{out}\n\n💠 消耗 **{cost} 积分**。\n{hint}"
+        return f"{out}\n\n💠 消耗 **{cost} 玄晶**。\n{hint}"
 
     # ------------------------------------------------------------------
     # 多宠物系统：指令处理器
@@ -8977,6 +9002,42 @@ class PetParkPlugin(Star):
                 f"🔄 使用『{name}』×1：『{old_species}』变为『{ts}』！\n"
                 "> 等级/品质/属性均保留。"
             )
+        # 修士级道具：修为丹 / 力量·铁骨·气血·疾风丹 / 悟道丹 / 炼体丹 —— 作用于修士本体（无需宠物）。
+        _HERO_EFFECTS = ("add_cultivation", "buff_atk", "buff_def", "buff_hp", "buff_speed", "add_wudao", "add_gengu")
+        if it_check and any(k in it_check.get("effect", {}) for k in _HERO_EFFECTS):
+            if not self.store.has_item(player, name):
+                return f"背包里没有『{name}』。"
+            a = player.get("adventure")
+            if not a:
+                return f"你还没有修士，无法使用『{name}』。请先发送「踏入仙途 剑修 / 体修 / 灵修」。"
+            count = self._parse_count(tokens, 2)
+            if not self.store.has_item(player, name, count):
+                return f"背包里『{name}』数量不足。"
+            eff = it_check["effect"]
+            msgs = []
+            if "add_cultivation" in eff:
+                total = eff["add_cultivation"] * count
+                a["cultivation"] = a.get("cultivation", 0) + total
+                msgs.append(f"修为 +{total}")
+            buffs = {"buff_atk": ("atk", "攻击"), "buff_def": ("def", "防御"),
+                     "buff_hp": ("hp", "性命上限"), "buff_speed": ("speed", "速度")}
+            hit = {k: v for k, v in buffs.items() if k in eff}
+            if hit:
+                b = a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})
+                for k, (field, label) in hit.items():
+                    total = eff[k] * count
+                    b[field] = b.get(field, 0) + total
+                    msgs.append(f"{label} +{total}")
+            if "add_wudao" in eff:
+                total = eff["add_wudao"] * count
+                a["wudao"] = a.get("wudao", 0) + total
+                msgs.append(f"悟性 +{total}")
+            if "add_gengu" in eff:
+                total = eff["add_gengu"] * count
+                a["gengu"] = a.get("gengu", 0) + total
+                msgs.append(f"根骨 +{total}")
+            self.store.remove_item(player, name, count)
+            return f"✅ 使用『{name}』x{count}：{' · '.join(msgs)}"
         p = self._need_pet(player)
         if not p:
             return "你没有宠物，无法使用物品。"
@@ -9034,7 +9095,7 @@ class PetParkPlugin(Star):
                 return msg
             self.store.remove_item(player, name, 1)
             return f"使用『{name}』x1：{msg}" + self._quality_to_cultivation(player, p, target)
-        # 神秘宝箱：随机开出金币/积分/道具
+        # 神秘宝箱：随机开出灵石/玄晶/道具
         if "mystery_box" in eff:
             self.store.remove_item(player, name, count)
             results = []
@@ -9043,11 +9104,11 @@ class PetParkPlugin(Star):
                 if roll < 0.30:
                     amt = random.randint(500, 2000)
                     self.store.add_currency(player, "灵石", amt)
-                    results.append(f"金币 +{amt}")
+                    results.append(f"灵石 +{amt}")
                 elif roll < 0.60:
                     amt = random.randint(100, 500)
                     self.store.add_currency(player, "玄晶", amt)
-                    results.append(f"积分 +{amt}")
+                    results.append(f"玄晶 +{amt}")
                 elif roll < 0.80:
                     self.store.add_item(player, "普通经验书", 1)
                     results.append("普通经验书 ×1")
@@ -9179,7 +9240,8 @@ class PetParkPlugin(Star):
     ) -> str:
         # 赠送金币/积分/钻石 用户ID 数量
         currency = cmd.replace("赠送", "")
-        tx_type = {"金币": "coin", "积分": "jifen", "钻石": "diamond"}.get(currency, "coin")
+        tx_type = {"金币": "coin", "灵石": "coin", "积分": "jifen", "玄晶": "jifen",
+                   "钻石": "diamond", "天晶": "diamond"}.get(currency, "coin")
         if len(tokens) < 3:
             if self._group_is_infinite(group_id):
                 return f"用法：{cmd} 用户ID 数量"
@@ -9330,14 +9392,14 @@ class PetParkPlugin(Star):
         if not lucky and roll < 0.25:
             return "🌫 探险归来，这次什么也没找到……"
         kind = random.choices(
-            ["积分", "经验", "道具", "材料", "图纸", "神器", "秘技"],
+            ["玄晶", "经验", "道具", "材料", "图纸", "神器", "秘技"],
             weights=[30, 25, 18, 10, 7, 5, 5],
             k=1,
         )[0]
-        if kind == "积分":
+        if kind == "玄晶":
             g = random.randint(500, 3000)
             self.store.add_currency(player, "玄晶", g)
-            return f"🧭 探险发现宝箱，积分 +{g}！"
+            return f"🧭 探险发现宝箱，玄晶 +{g}！"
         if kind == "经验":
             g = random.randint(500, 4000)
             petmod.add_exp(p, g)
@@ -9432,7 +9494,7 @@ class PetParkPlugin(Star):
         if not self.store.has_item(player, "进化神石", 1):
             return (
                 "背包里没有『进化神石』，无法进化。\n"
-                "> 可在商城购买（7200 积分），"
+                "> 可在商城购买（7200 玄晶），"
                 "或通过剧情任务『探索秘境』获得。"
             )
         before = list(p.get("skills", [])) + (
@@ -9491,7 +9553,7 @@ class PetParkPlugin(Star):
         if random.random() < data.ASCEND_TREASURE.get("jifen_chance", 1.0):
             j = random.randint(*data.ASCEND_TREASURE["jifen"])
             self.store.add_currency(player, "玄晶", j)
-            jifen_text = f"积分 +{j}，"
+            jifen_text = f"玄晶 +{j}，"
         petmod.add_xianyuan(p, x)
         self._inc_stat(player, "ascended_fantasy_treasure")
         cooldown = random.randint(*data.ASCEND_TREASURE["cooldown"])
@@ -9555,7 +9617,7 @@ class PetParkPlugin(Star):
             return f"没有名为『{name}』的神器。"
         cost = data.ARTIFACT_FORGE_COST
         if self.store.get_currency(player, "积分") < cost["jifen"]:
-            return f"打造『{name}』需 {cost['jifen']} 积分。"
+            return f"打造『{name}』需 {cost['jifen']} 玄晶。"
         if not self.store.has_item(player, cost["material"], cost["material_count"]):
             return f"打造需要材料『{cost['material']}』x{cost['material_count']}。"
         if not self.store.has_item(
@@ -9573,7 +9635,7 @@ class PetParkPlugin(Star):
         self.store.add_item(player, name, 1)
         self._inc_stat(player, "forge_artifact")
         return (
-            f"⚒ 打造成功！消耗 {cost['jifen']} 积分、"
+            f"⚒ 打造成功！消耗 {cost['jifen']} 玄晶、"
             f"『{cost['material']}』x{cost['material_count']}、"
             f"『{cost.get('blueprint', '神器图纸')}』x{cost.get('blueprint_count', 1)}，"
             f"『{name}』已放入背包，可『佩戴神器 {name}』。"
@@ -9668,7 +9730,7 @@ class PetParkPlugin(Star):
         """
         parts = []
         if cost.get("jifen"):
-            parts.append(f"{cost['jifen']} 积分")
+            parts.append(f"{cost['jifen']} 玄晶")
         if cost.get("exp"):
             parts.append(f"{cost['exp']} 经验")
         if cost.get("xianyuan"):
@@ -9722,10 +9784,10 @@ class PetParkPlugin(Star):
             if p["exp"] < c["exp"]:
                 return f"觉醒要求 {c['exp']} 经验（当前 {p['exp']}）。"
             if self.store.get_currency(player, "积分") < c["jifen"]:
-                return f"觉醒要求 {c['jifen']} 积分。"
+                return f"觉醒要求 {c['jifen']} 玄晶。"
             p["exp"] -= c["exp"]
             self.store.add_currency(player, "玄晶", -c["jifen"])
-            cost_text = f"{c['exp']} 经验、{c['jifen']} 积分"
+            cost_text = f"{c['exp']} 经验、{c['jifen']} 玄晶"
         p["energy"] -= c["energy"]
         self.store.set_cooldown(
             player, "觉醒", random.randint(*data.CRAFT_COOLDOWN_RANGE)
@@ -10337,7 +10399,7 @@ class PetParkPlugin(Star):
         for n, d in data.DUNGEONS.items():
             lines.append(
                 f"- **{n}** `Lv{d['level_req']}`　🗡{d['monster']}（战力 {d['power']}）\n"
-                f"　　耗 {d['energy']} 精力 · 产出 经验约 {d['exp']}（±20%） / 积分约 {d['jifen']}（±20%）"
+                f"　　耗 {d['energy']} 精力 · 产出 经验约 {d['exp']}（±20%） / 玄晶约 {d['jifen']}（±20%）"
             )
         lines.append("\n> 战力 ≥ 怪物战力即可通关；经验满后自动升级。")
         return "\n".join(lines)
@@ -10365,6 +10427,14 @@ class PetParkPlugin(Star):
         gain = int(200 + pet.get("level", 1) * 20)
         a["cultivation"] = a.get("cultivation", 0) + gain
         return f"\n🧘 灵宠反哺：晋升【{quality}】品质，修为 +{gain}！"
+
+    def _add_cultivation(self, player: dict, gain: int, src: str = "") -> str:
+        """给修士增加一笔修为（走 adventure.cultivation，不进主钱包）。未入仙途返回空串。"""
+        a = player.get("adventure")
+        if not a or gain <= 0:
+            return ""
+        a["cultivation"] = a.get("cultivation", 0) + gain
+        return f"\n🧘 修为 +{gain}（{src or '仙途机缘'}）"
 
     def _auto_level_note(self, player: dict, p: dict) -> str:
         """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
@@ -10444,7 +10514,7 @@ class PetParkPlugin(Star):
             desc = f"您的{nick}在{name}遇见{monster}，激战{monster}结果**大胜**！"
             body = (
                 f"> ⏱️ 耗时 {minutes} 分钟 · 👹 怪物战力 **{power}**\n"
-                f"> 🎁 经验 **+{exp_gain}** · 积分 **+{jifen_gain}**{drop}\n"
+                f"> 🎁 经验 **+{exp_gain}** · 玄晶 **+{jifen_gain}**{drop}\n"
                 f"> 🔁 下次可挑战：{next_time}"
             )
             return f"{head}\n{desc}\n{body}{self._auto_level_note(player, p)}"
@@ -10471,7 +10541,7 @@ class PetParkPlugin(Star):
             low, high = d["xianyuan"]
             lines.append(
                 f"- **{d['name']}** `Lv{lv}`　战力 {d['power']}\n"
-                f"　　仙元 {low}~{high}　积分 {d['jifen']}"
+                f"　　仙元 {low}~{high}　玄晶 {d['jifen']}"
             )
         lines.append("\n> 使用 `挑战神仙 等级` 进入对应副本（如 `挑战神仙 120`）。")
         return "\n".join(lines)
@@ -10532,7 +10602,7 @@ class PetParkPlugin(Star):
                 drop_text = f"\n> 💎 掉落道具：**{drop['item']}** ×{drop.get('count', 1)}"
             body = (
                 f"> 👹 神仙战力 **{power}** · 我方发挥 **{roll}**\n"
-                f"> 🎁 仙元 **+{xianyuan_gain}** · 积分 **+{jifen_gain}**{drop_text}\n"
+                f"> 🎁 仙元 **+{xianyuan_gain}** · 玄晶 **+{jifen_gain}**{drop_text}\n"
                 f"> 🔁 下次可挑战：{next_time}"
             )
             return f"{head}\n✨ 你的『{nick}』击败『{monster}』，获得仙缘！\n{body}{self._auto_level_note(player, p)}"
@@ -10676,7 +10746,7 @@ class PetParkPlugin(Star):
                 reward_lines.extend(
                     [
                         f"经验 +{exp}",
-                        f"积分 +{jifen}",
+                        f"玄晶 +{jifen}",
                         f"深渊结晶 +{crystal}",
                     ]
                 )
@@ -10728,7 +10798,7 @@ class PetParkPlugin(Star):
             else:  # 异象
                 jifen = 20 + p["level"]
                 self.store.add_currency(player, "玄晶", jifen)
-                reward_lines.append(f"积分 +{jifen}（你看到了无法理解的景象）")
+                reward_lines.append(f"玄晶 +{jifen}（你看到了无法理解的景象）")
 
         elif event["id"] == "altar":
             lines.append(f"🌀 一座 **{event['name']}** 挡在面前，上面刻着献祭符文。")
@@ -10757,7 +10827,7 @@ class PetParkPlugin(Star):
             reward_lines.extend(
                 [
                     f"经验 +{exp}",
-                    f"积分 +{jifen}",
+                    f"玄晶 +{jifen}",
                     f"深渊结晶 +{crystal}",
                     "血量已回满",
                 ]
@@ -10831,7 +10901,7 @@ class PetParkPlugin(Star):
             "- 每次进入都会 +1 点侵蚀\n"
             "- 侵蚀越高：经验收益越低、怪物越强、你越容易获得负面状态\n"
             "- 侵蚀每 20 分钟自然 -1，每日 0 点清零\n"
-            "- 道具商城可用 **5000 积分** 购买『净化药水』，清除 5 点侵蚀\n"
+            "- 道具商城可用 **5000 玄晶** 购买『净化药水』，清除 5 点侵蚀\n"
             "- 深渊商店可用 **5 结晶** 购买『净化药水』\n"
             "\n"
             "**深渊结晶用途**\n"
@@ -10980,7 +11050,7 @@ class PetParkPlugin(Star):
         """把奖励字典转成可读文本。"""
         parts = []
         if "jifen" in reward:
-            parts.append(f"积分+{reward['jifen']}")
+            parts.append(f"玄晶+{reward['jifen']}")
         if "exp" in reward:
             parts.append(f"经验+{reward['exp']}")
         if "xianyuan" in reward:
@@ -13096,8 +13166,9 @@ class PetParkPlugin(Star):
             return msg
         petmod.add_exp(p, exp)
         level_note = self._auto_level_note(player, p)
+        cult = self._add_cultivation(player, max(50, exp // 200), "昨日摸金神榜")
         return (
-            f"🎁 昨日摸金神榜强者奖励到账！宠物经验 +{exp}。{level_note}"
+            f"🎁 昨日摸金神榜强者奖励到账！宠物经验 +{exp}。{level_note}{cult}"
         )
 
     def _tomb_redeem_exp(self, player: dict, tokens: list[str]) -> str:
@@ -13133,7 +13204,8 @@ class PetParkPlugin(Star):
         petmod.add_exp(p, actual)
         remain = self.store.get_tomb_pending_pet_exp(player)
         note = f"，还剩余 {remain} 点" if remain > 0 else "，已全部兑换"
-        return f"🎁 摸金经验兑换成功！当前群宠物 +{actual} 经验{note}。{self._auto_level_note(player, p)}"
+        cult = self._add_cultivation(player, max(20, actual // 200), "摸金兑换")
+        return f"🎁 摸金经验兑换成功！当前群宠物 +{actual} 经验{note}。{self._auto_level_note(player, p)}{cult}"
 
     # ---- 地图生成与绘图 ----
     @staticmethod
@@ -14174,35 +14246,35 @@ class PetParkPlugin(Star):
     def _homestead_tutorial(self) -> str:
         """家园介绍 / 家园教程 —— 新手指南。"""
         return (
-            "## 🏡 宠物家园 · 玩法教程\n"
+            "## 🏡 灵契洞天 · 玩法教程\n"
             "\n"
-            "> 建造建筑 → 随时间自动累积金币/积分 → 收取升级 → 更多产出\n"
+            "> 建造建筑 → 随时间自动累积灵石/玄晶 → 收取升级 → 更多产出\n"
             "\n"
             "### 🚀 快速入门\n"
-            "1. 发送「**建造 金币矿**」建第一座建筑（500金）\n"
-            "2. 等待一段时间，发送「**家园收取**」收获金币\n"
-            "3. 金币够了发送「**升级 金币矿**」提升产量\n"
+            "1. 发送「**建造 灵石矿**」建第一座建筑（500灵石）\n"
+            "2. 等待一段时间，发送「**家园收取**」收获灵石\n"
+            "3. 灵石够了发送「**升级 灵石矿**」提升产量\n"
             "4. 家园经验攒够自动升级，解锁更多建筑位\n"
             "\n"
             "### 🏗️ 7 种建筑（建筑位有限，需取舍）\n"
-            "💰 **金币矿** — 纯金币产出（500金建造）\n"
-            "🏭 **积分工坊** — 纯积分产出（500金建造）\n"
-            "🏛️ **聚宝盆** — 金币+积分双产，效率60%（1000金建造）\n"
-            "🌿 **经验泉** — 宠物经验产出，需Lv60（2000金建造）\n"
-            "📦 **仓库** — 离线累积上限+2h/级（800金建造）\n"
-            "🏹 **哨塔** — 防御偷菜，+25防御/级（1200金建造）\n"
-            "🕯️ **祈福坛** — 好事件概率↑（1500金建造）\n"
+            "💰 **灵石矿** — 纯灵石产出（500灵石建造）\n"
+            "🏭 **玄晶工坊** — 纯玄晶产出（500灵石建造）\n"
+            "🏛️ **聚宝盆** — 灵石+玄晶双产，效率60%（1000灵石建造）\n"
+            "🌿 **经验泉** — 宠物经验产出，需Lv60（2000灵石建造）\n"
+            "📦 **仓库** — 离线累积上限+2h/级（800灵石建造）\n"
+            "🏹 **哨塔** — 防御偷菜，+25防御/级（1200灵石建造）\n"
+            "🕯️ **祈福坛** — 好事件概率↑（1500灵石建造）\n"
             "\n"
             "### 🐾 宠物派遣\n"
             "发送「**派遣 建筑名**」让宠物驻扎建筑，产量倍率：\n"
             "`1.0 + 等级×0.006 + 品质×0.04 + 属性匹配0.10`\n"
-            "> 例：Lv100混沌金→金币矿 = ×2.06 产量！\n"
+            "> 例：Lv100混沌金→灵石矿 = ×2.06 产量！\n"
             "> 派遣每小时耗2精力，发送「**召回 建筑名**」取回\n"
             "\n"
             "### 💀 偷菜玩法\n"
             "发送「**顺手牵羊 QQ**」偷别人未收资源\n"
             "成功率 = 你的宠物Lv / (你的Lv + 对方防御 + 50)\n"
-            "成功偷10%~30%　失败赔50金　每日5次\n"
+            "成功偷10%~30%　失败赔50灵石　每日5次\n"
             "> 建哨塔+派宠物守家提升防御，或买护院符免疫12h\n"
             "\n"
             "### 🧳 流浪商人\n"
@@ -14211,7 +14283,7 @@ class PetParkPlugin(Star):
             "> 发送「**商人购买 编号**」购买，「0」跳过\n"
             "\n"
             "### 📊 排行\n"
-            "「**家园排行**」本周产出Top10，前三奖励金币\n"
+            "「**家园排行**」本周产出Top10，前三奖励灵石\n"
             "「**家园总排行**」累计产出Top10\n"
             "\n"
             "> 发送「**家园**」查看你的家园状态。"
@@ -14279,14 +14351,14 @@ class PetParkPlugin(Star):
                     parts.append(f"🐾 {self._display_uid(disp_qq)}({mult_str})")
                 else:
                     next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
-                    parts.append(f"⬆️{next_cost}金")
+                    parts.append(f"⬆️{next_cost}灵石")
                 lines.append("　".join(parts))
         lines.append("")
         summary_parts = []
         if total_coin:
-            summary_parts.append(f"💰 {total_coin} 金币")
+            summary_parts.append(f"💰 {total_coin} 灵石")
         if total_jifen:
-            summary_parts.append(f"💎 {total_jifen} 积分")
+            summary_parts.append(f"💎 {total_jifen} 玄晶")
         if total_exp:
             summary_parts.append(f"📖 {total_exp} 经验")
         if summary_parts:
@@ -14299,7 +14371,7 @@ class PetParkPlugin(Star):
         weekly = hs.get("weekly_coin", 0)
         total_life = hs.get("total_coin_earned", 0)
         if weekly or total_life:
-            lines.append(f"📊 本周产出 {weekly} 金 · 累计产出 {total_life} 金")
+            lines.append(f"📊 本周产出 {weekly} 灵石 · 累计产出 {total_life} 灵石")
         lines.append("")
         lines.append("> **家园收取** 收获 · **建造/升级 建筑名** · **派遣/召回 建筑名**")
         lines.append("> **拜访家园 QQ** 串门 · **顺手牵羊 QQ** 偷菜 · **家园排行**")
@@ -14329,7 +14401,7 @@ class PetParkPlugin(Star):
             if available:
                 return f"用法：建造 建筑名\n可选：{' · '.join(available)}"
             return "用法：建造 建筑名"
-        name = tokens[1]
+        name = data.homestead_resolve_building(tokens[1])
         cfg = data.HOMESTEAD_BUILDINGS.get(name)
         if not cfg:
             return f"没有『{name}』这种建筑。可选：{' · '.join(data.HOMESTEAD_BUILDINGS)}"
@@ -14344,7 +14416,7 @@ class PetParkPlugin(Star):
             return f"🔒 建造{cfg.get('icon','')}**{name}**需要宠物 Lv{req_lv}，当前 Lv{p.get('level', 1)}。"
         cost = cfg["build_cost"]
         if player.get("coin", 0) < cost:
-            return f"金币不足，建造{name}需要 **{cost}** 金币，当前仅有 {player['coin']}。"
+            return f"灵石不足，建造{name}需要 **{cost}** 灵石，当前仅有 {player['coin']}。"
         player["coin"] -= cost
         now = int(time.time())
         hs["buildings"][name] = {"level": 1, "last_collect": now}
@@ -14352,7 +14424,7 @@ class PetParkPlugin(Star):
         levelup = self._homestead_check_levelup(hs)
         icon = cfg.get("icon", "")
         lines = [
-            f"🏗️ 成功建造 {icon}**{name}** Lv1！消耗 {cost} 金币。",
+            f"🏗️ 成功建造 {icon}**{name}** Lv1！消耗 {cost} 灵石。",
             f"- 产量：{self._homestead_prod_text(name, 1)}",
         ]
         if levelup:
@@ -14368,7 +14440,7 @@ class PetParkPlugin(Star):
                 tips = " · ".join(f"{b}(Lv{hs['buildings'][b]['level']})" for b in built)
                 return f"用法：升级 建筑名\n当前：{tips}"
             return "你还没有任何建筑，发送「建造 建筑名」。"
-        name = tokens[1]
+        name = data.homestead_resolve_building(tokens[1])
         if name not in hs.get("buildings", {}):
             return f"还没有建造{name}，发送「**建造 {name}**」。"
         cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
@@ -14376,7 +14448,7 @@ class PetParkPlugin(Star):
         current_lv = b["level"]
         cost = data.homestead_upgrade_cost(current_lv, cfg.get("build_cost", 500))
         if player.get("coin", 0) < cost:
-            return f"金币不足，升级{name}到 Lv{current_lv + 1} 需要 **{cost}** 金币，当前仅有 {player['coin']}。"
+            return f"灵石不足，升级{name}到 Lv{current_lv + 1} 需要 **{cost}** 灵石，当前仅有 {player['coin']}。"
         player["coin"] -= cost
         b["level"] += 1
         new_lv = b["level"]
@@ -14384,7 +14456,7 @@ class PetParkPlugin(Star):
         levelup = self._homestead_check_levelup(hs)
         icon = cfg.get("icon", "")
         lines = [
-            f"⬆️ {icon}**{name}** Lv{current_lv} → **Lv{new_lv}**！消耗 {cost} 金币。",
+            f"⬆️ {icon}**{name}** Lv{current_lv} → **Lv{new_lv}**！消耗 {cost} 灵石。",
             f"- 产量：{self._homestead_prod_text(name, new_lv)}",
         ]
         if levelup:
@@ -14488,7 +14560,7 @@ class PetParkPlugin(Star):
             bonus_jifen = int(total_jifen * pet_bonus * pet_lv / 100)
             total_coin += bonus_coin
             total_jifen += bonus_jifen
-            pet_bonus_text = f"金币+{bonus_coin} 积分+{bonus_jifen}"
+            pet_bonus_text = f"灵石+{bonus_coin} 玄晶+{bonus_jifen}"
         # 幸运日额外金币
         extra_coin_range = event.get("extra_coin")
         extra_text = ""
@@ -14513,7 +14585,7 @@ class PetParkPlugin(Star):
             lines.append("")
             lines.append("🧳 **流浪商人**带来了货物！发送「**商人购买 编号**」购买：")
             for i, item in enumerate(hs["merchant_pending"], 1):
-                price_type = "金币" if item["price_type"] == "coin" else "积分"
+                price_type = "灵石" if item["price_type"] == "coin" else "玄晶"
                 lines.append(f"　{i}. {item['name']} — {item['price']} {price_type}（{item['desc']}）")
             lines.append("　发送「**商人购买 0**」不买。")
         # 发放
@@ -14533,9 +14605,9 @@ class PetParkPlugin(Star):
         hs["total_coin_earned"] = hs.get("total_coin_earned", 0) + total_coin
         summary = []
         if total_coin:
-            summary.append(f"💰 {total_coin} 金币")
+            summary.append(f"💰 {total_coin} 灵石")
         if total_jifen:
-            summary.append(f"💎 {total_jifen} 积分")
+            summary.append(f"💎 {total_jifen} 玄晶")
         if total_exp:
             summary.append(f"📖 {total_exp} 经验")
         lines.append("")
@@ -14555,7 +14627,7 @@ class PetParkPlugin(Star):
                 tips = " · ".join(f"{b}(Lv{buildings[b]['level']})" for b in built)
                 return f"用法：拆除 建筑名\n当前建筑：{tips}\n⚠️ 拆除仅返还 **20%** 费用！"
             return "你还没有任何建筑。"
-        name = tokens[1]
+        name = data.homestead_resolve_building(tokens[1])
         if name not in buildings:
             return f"没有找到建筑『{name}』。当前建筑：{' · '.join(buildings)}"
         cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
@@ -14576,7 +14648,7 @@ class PetParkPlugin(Star):
         icon = cfg.get("icon", "")
         return (
             f"🔨 已拆除 {icon}**{name}** Lv{current_lv}。\n"
-            f"- 累计投入 {total_cost} 金币，返还 **{refund}** 金币（20%）\n"
+            f"- 累计投入 {total_cost} 灵石，返还 **{refund}** 灵石（20%）\n"
             f"- 建筑位已释放（{len(buildings)}/{data.homestead_slots(hs['level'])}）"
         )
 
@@ -14604,13 +14676,13 @@ class PetParkPlugin(Star):
                 if disp_info:
                     mult = data.homestead_dispatch_multiplier(disp_info, name)
                     lines.append(f"　🐾 派遣：{self._display_uid(disp_info.get('qq','?'))} ×{mult}")
-                lines.append(f"　⬆️ 升级 Lv{lv + 1} 需 {next_cost} 金币")
+                lines.append(f"　⬆️ 升级 Lv{lv + 1} 需 {next_cost} 灵石")
             else:
                 req_lv = cfg.get("unlock_pet_level", 0)
                 if req_lv and pet_level < req_lv:
                     lines.append(f"{icon} **{name}**（🔒 需宠物 Lv{req_lv}）")
                 else:
-                    lines.append(f"{icon} **{name}**（可建造 · {cfg['build_cost']} 金币）")
+                    lines.append(f"{icon} **{name}**（可建造 · {cfg['build_cost']} 灵石）")
                 lines.append(f"　{cfg['desc']}")
                 lines.append(f"　Lv1 表现：{self._homestead_prod_text(name, 1)}")
             lines.append("")
@@ -14677,7 +14749,7 @@ class PetParkPlugin(Star):
             if built:
                 return f"用法：派遣 建筑名 [宠物序号]\n可选建筑：{' · '.join(built)}\n不指定序号默认派遣当前出战宠物"
             return "你还没有建筑，先发送「建造 建筑名」。"
-        name = tokens[1]
+        name = data.homestead_resolve_building(tokens[1])
         if name not in hs.get("buildings", {}):
             return f"你还没有建造{name}。"
         # 确定要派遣的宠物
@@ -14732,7 +14804,7 @@ class PetParkPlugin(Star):
             if my_dispatch:
                 return f"用法：召回 建筑名\n当前派遣：{' · '.join(my_dispatch)}"
             return "你的宠物当前没有派遣到任何建筑。"
-        name = tokens[1]
+        name = data.homestead_resolve_building(tokens[1])
         if name not in dispatch:
             return f"{name}上没有派遣宠物。"
         if dispatch[name].get("qq") != my_qq:
@@ -14846,7 +14918,7 @@ class PetParkPlugin(Star):
             ths["be_stolen_today"] = ths.get("be_stolen_today", 0) + 1
             return (
                 f"💀 **偷菜成功！**（成功率 {success_rate:.0%}）\n"
-                f"- 偷得 {self._display_uid(target_qq)} 的 💰{stolen_coin} 金币 + 💎{stolen_jifen} 积分\n"
+                f"- 偷得 {self._display_uid(target_qq)} 的 💰{stolen_coin} 灵石 + 💎{stolen_jifen} 玄晶\n"
                 f"- 目标防御力：{target_defense}　今日剩余偷取：{data.HOMESTEAD_STEAL_MAX_PER_DAY - hs['steal_today']} 次"
             )
         else:
@@ -14854,7 +14926,7 @@ class PetParkPlugin(Star):
             tp["coin"] = tp.get("coin", 0) + data.HOMESTEAD_STEAL_FAIL_PENALTY
             return (
                 f"🚨 **偷菜被抓！**（成功率 {success_rate:.0%}）\n"
-                f"- 被 {self._display_uid(target_qq)} 的哨塔发现了！赔偿 {data.HOMESTEAD_STEAL_FAIL_PENALTY} 金币\n"
+                f"- 被 {self._display_uid(target_qq)} 的哨塔发现了！赔偿 {data.HOMESTEAD_STEAL_FAIL_PENALTY} 灵石\n"
                 f"- 目标防御力：{target_defense}"
             )
 
@@ -14875,7 +14947,7 @@ class PetParkPlugin(Star):
         if len(tokens) < 2:
             lines = ["## 🧳 流浪商人", ""]
             for i, item in enumerate(merchant, 1):
-                price_type = "金币" if item["price_type"] == "coin" else "积分"
+                price_type = "灵石" if item["price_type"] == "coin" else "玄晶"
                 lines.append(f"{i}. {item['name']} — {item['price']} {price_type}（{item['desc']}）")
             lines.append("")
             lines.append("发送「**商人购买 编号**」购买，「**商人购买 0**」不买。")
@@ -14892,7 +14964,7 @@ class PetParkPlugin(Star):
         item = merchant[idx - 1]
         price_type = item["price_type"]
         price = item["price"]
-        currency = "金币" if price_type == "coin" else "积分"
+        currency = "灵石" if price_type == "coin" else "玄晶"
         wallet = player.get("coin" if price_type == "coin" else "jifen", 0)
         if wallet < price:
             return f"{currency}不足（需 {price}，当前 {wallet}）。"
@@ -14957,7 +15029,7 @@ class PetParkPlugin(Star):
         return [(k, str(k), v) for k, v in hps.items() if not self.store._is_isolated_state_key("hom", k)]
 
     def _homestead_rank(self, player: dict) -> str:
-        """家园排行 —— 本周金币产出排行（无限服=本群，官方=共享层）。"""
+        """家园排行 —— 本周灵石产出排行（无限服=本群，官方=共享层）。"""
         group_id = str(player.get("group", ""))
         is_inf = self._group_is_infinite(group_id)
         if is_inf:
@@ -14973,12 +15045,12 @@ class PetParkPlugin(Star):
                 entries.append({"qq": qq, "weekly": weekly, "level": hs.get("level", 1), "hs": hs, "key": key})
         entries.sort(key=lambda x: x["weekly"], reverse=True)
         top = entries[:data.HOMESTEAD_RANK_SIZE]
-        lines = ["## 🏆 家园排行（本周金币产出）" + (" · 本群（无限服）" if is_inf else ""), ""]
+        lines = ["## 🏆 家园排行（本周灵石产出）" + (" · 本群（无限服）" if is_inf else ""), ""]
         for i, e in enumerate(top):
             medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
             pnames = self._homestead_dispatch_pet_names(e["hs"], group_id)
             suffix = f"（{'、'.join(pnames)}）" if pnames else ""
-            lines.append(f"{medal} {self._display_uid(e['qq'])}{suffix} — 💰 {e['weekly']} 金（Lv{e['level']}）")
+            lines.append(f"{medal} {self._display_uid(e['qq'])}{suffix} — 💰 {e['weekly']} 灵石（Lv{e['level']}）")
         if not top and is_inf:
             lines.append("> 本群（无限服）暂无玩家产出。")
         # 我的排名
@@ -14986,16 +15058,16 @@ class PetParkPlugin(Star):
         my_rank = next((i + 1 for i, e in enumerate(entries) if e["key"] == my_key), None)
         lines.append("")
         if my_rank:
-            lines.append(f"📊 你的排名：第 {my_rank} 名（💰 {my_weekly} 金）")
+            lines.append(f"📊 你的排名：第 {my_rank} 名（💰 {my_weekly} 灵石）")
         else:
             lines.append(f"📊 你本周暂无产出。快去建造家园！")
         # 奖励预告
         if not is_inf:
-            lines.append(f"🏅 周榜前 3 奖励：🥇{data.HOMESTEAD_RANK_REWARD_COIN[1]} 🥈{data.HOMESTEAD_RANK_REWARD_COIN[2]} 🥉{data.HOMESTEAD_RANK_REWARD_COIN[3]} 金币")
+            lines.append(f"🏅 周榜前 3 奖励：🥇{data.HOMESTEAD_RANK_REWARD_COIN[1]} 🥈{data.HOMESTEAD_RANK_REWARD_COIN[2]} 🥉{data.HOMESTEAD_RANK_REWARD_COIN[3]} 灵石")
         return "\n".join(lines)
 
     def _homestead_total_rank(self, player: dict) -> str:
-        """家园总排行 —— 累计金币产出排行（无限服=本群，官方=共享层）。"""
+        """家园总排行 —— 累计灵石产出排行（无限服=本群，官方=共享层）。"""
         group_id = str(player.get("group", ""))
         is_inf = self._group_is_infinite(group_id)
         if is_inf:
@@ -15010,7 +15082,7 @@ class PetParkPlugin(Star):
                 entries.append({"qq": qq, "total": total, "level": hs.get("level", 1), "hs": hs, "key": key})
         entries.sort(key=lambda x: x["total"], reverse=True)
         top = entries[:data.HOMESTEAD_RANK_SIZE]
-        lines = ["## 🏆 家园总排行（累计金币产出）" + (" · 本群（无限服）" if is_inf else ""), ""]
+        lines = ["## 🏆 家园总排行（累计灵石产出）" + (" · 本群（无限服）" if is_inf else ""), ""]
         for i, e in enumerate(top):
             medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(i, f"{i + 1}.")
             pnames = self._homestead_dispatch_pet_names(e["hs"], group_id)

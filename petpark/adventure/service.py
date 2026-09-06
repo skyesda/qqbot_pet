@@ -7,7 +7,7 @@ import time
 import uuid
 from . import content as c
 from ..pet import new_pet
-from .combat import build_party, enemies, simulate
+from .combat import build_party, enemies, hero_sheet, simulate
 from .power import compute_unified_power, power_to_scale
 
 MENU = """## 灵契仙途
@@ -21,7 +21,7 @@ MENU = """## 灵契仙途
 ③ `修士装备` → `锻造 灵剑` 培养装备
 ④ `组队秘境 葬龙秘境` 邀请群友并肩作战
 
-`我的修士` · `修士配装 破阵` · `灵宠专长 辅助`
+`我的修士` · `修士配装 破阵` · `灵宠专长 辅助` · `道号` · `性别`
 `世界首领` · `仙途深渊` · `仙途切磋 @对方`
 `战斗详情` · `今日修行` · `仙途战绩`
 完整指令（含原宠物玩法）请发送 `灵契仙途` 查看菜单图。"""
@@ -193,12 +193,19 @@ class AdventureService:
                 "level": 1, "realm": 0, "cultivation": 0, "last_train": int(self.clock()) - 3600,
                 "equipment": {"weapon": 0, "robe": 0, "seal": 0}, "ore": 9,
                 "style": "均衡", "pet_role": "攻击", "companion_pet_id": pet.get("pet_id"),
+                "gender": random.choice(["男", "女"]), "bonus": {"atk": 0, "def": 0, "hp": 0, "speed": 0},
+                "wudao": 0, "gengu": 0, "name_customized": False,
                 "cleared": [], "history": [], "deep": None, "transfer_at": 0}
             p.pop("adventure_draft", None)
             return f"## 欢迎踏入灵契仙途\n你已成为{arg}！获赠9份灵材与一小时修炼积累。\n「修士修炼」→「历练 1」→「锻造 灵剑」\n下一步：结契灵宠 九尾狐 / 卡比兽 / 七夕青鸟（新玩家任选一只）；老玩家用「灵宠助战 序号」。"
         a = self.player(key)["adventure"]
         a.setdefault("heaven", 0)
         a.setdefault("milestones", [])
+        a.setdefault("gender", "男")
+        a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})
+        a.setdefault("wudao", 0)
+        a.setdefault("gengu", 0)
+        a.setdefault("name_customized", False)
         a["schema_version"] = c.VERSION
         self.daily(a)
         if cmd == "结契灵宠":
@@ -238,20 +245,45 @@ class AdventureService:
             return "## 仙途毕业进度\n" + "\n".join(("✓ " if ok else "○ ")+name for name,ok in goals.items()) + ("\n恭喜，完成当前版本全部毕业目标！" if all(goals.values()) else "\n按未完成目标继续修行。")
         if cmd in ("我的修士", "今日修行"):
             units = build_party(p, key)
-            h = units[0]
+            s = hero_sheet(a, p)
             pw = compute_unified_power(p, key)
             nxt = min(20, len(a["cleared"]) + 1)
-            return (f"## 灵契仙途 · {a['profession']}\n{c.REALMS[a['realm']][0]} Lv{a['level']} · 修为 {a['cultivation']}\n"
-                    f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n战力 {pw} · 生命 {h['max_hp']} · 攻击 {h['atk']} · 防御 {h['defense']}\n"
-                    f"功法：{a['style']} · 灵宠：{units[1]['name']}（{a['pet_role']}）\n"
+            return (f"## 灵契仙途 · {a['profession']}\n道号 {a['name']} · {a['gender']} · {c.REALMS[a['realm']][0]} Lv{a['level']} · 修为 {a['cultivation']}\n"
+                    f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n战力 {pw}\n性命 {s['hp']} · 攻击 {s['atk']} · 防御 {s['def']} · 速度 {s['speed']}\n"
+                    f"悟性 {s['wudao']} · 根骨 {s['gengu']}\n功法：{a['style']} · 灵宠：{units[1]['name']}（{a['pet_role']}）\n"
                     f"灵材 {a['ore']} · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3\n"
-                    f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备")
+                    f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备 · 道号 · 性别")
         if cmd == "修士转职":
             self.can_edit(key)
             self.require(arg in c.PROFESSIONS, "职业：剑修 / 体修 / 灵修")
             self.require(self.clock() >= a["transfer_at"], "转职间隔24小时，境界和装备不会丢失。")
-            a.update(profession=arg, name=f"{arg}修士", transfer_at=self.clock() + 86400)
-            return f"已转为{arg}，保留境界、装备和进度。"
+            a["profession"] = arg
+            if not a.get("name_customized"):
+                a["name"] = f"{arg}修士"
+            a["transfer_at"] = self.clock() + 86400
+            return f"已转为{arg}，保留境界、装备、道号与进度。"
+        if cmd == "道号":
+            self.can_edit(key)
+            if not arg:
+                return f"当前道号：{a['name']}。首次起名免费；再次修改消耗『改名符』（灵石商城）。用法：道号 新道号（≤12字）"
+            self.require(len(arg) <= 12, "道号最多12个字。")
+            self.require(arg != a["name"], "与当前道号相同。")
+            if not a.get("name_customized"):
+                a["name_customized"] = True
+                a["name"] = arg
+                return f"道号已定为：{a['name']}。以后修改需消耗『改名符』（灵石商城）。"
+            if not self.store.remove_item(p, "改名符"):
+                return "修改道号需要『改名符』×1（灵石商城购买）。"
+            a["name"] = arg
+            return f"道号已改：{a['name']}，消耗『改名符』×1。"
+        if cmd == "性别":
+            self.can_edit(key)
+            self.require(arg in ("男", "女"), "性别 男 / 女")
+            self.require(arg != a.get("gender"), f"当前已是{a.get('gender')}。")
+            if not self.store.remove_item(p, "变性丹"):
+                return "改变性别需要『变性丹』×1（灵石商城购买）。"
+            a["gender"] = arg
+            return f"已变性为{arg}修。" + ("攻击+5%" if arg == "男" else "防御与速度+5%")
         if cmd == "修士修炼":
             minutes = min(720, max(0, int((self.clock() - a["last_train"]) // 60)))
             self.require(minutes > 0, "每分钟积累1点修为，最多储存12小时，请稍后领取。")
@@ -263,13 +295,17 @@ class AdventureService:
             self.require(a["level"] < 80, "当前已达化神圆满，期待后续仙界篇章。")
             cost = 60 + a["level"] * 20
             self.require(a["cultivation"] >= cost, f"突破需要{cost}修为，当前{a['cultivation']}。")
-            note = ""
+            realmed = False
             if a["level"] >= c.REALMS[a["realm"]][1]:
                 self.require(a['heaven'] > a['realm'], "境界已达上限，请先发送「洞天突破」完成个人试炼，再继续修士突破。")
                 a["realm"] += 1
+                realmed = True
             a["cultivation"] -= cost
             a["level"] += 1
-            return note + f"突破成功：{c.REALMS[a['realm']][0]} Lv{a['level']}！"
+            gain = 3 if realmed else 1
+            a["wudao"] = a.get("wudao", 0) + gain
+            a["gengu"] = a.get("gengu", 0) + gain
+            return f"突破成功：{c.REALMS[a['realm']][0]} Lv{a['level']}！悟性+{gain} · 根骨+{gain}"
         if cmd == "修士配装":
             self.can_edit(key)
             self.require(arg in c.STYLES, "修士配装 均衡 / 破阵 / 守心\n" + "\n".join(f"{k}：{v}" for k,v in c.STYLES.items()))

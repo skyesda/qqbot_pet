@@ -448,7 +448,7 @@ ITEMS = {
         "currency": CURRENCY_JIFEN,
         "category": "道具",
         "usable": True,
-        "desc": "使用后随机开出金币/积分/道具。",
+        "desc": "使用后随机开出灵石/玄晶/道具。",
         "effect": {"mystery_box": True},
     },
     # ---- 属性符（永久增加属性，钻石计价）----
@@ -613,7 +613,7 @@ ITEMS = {
         "currency": CURRENCY_JIFEN,
         "category": "道具",
         "usable": False,
-        "desc": "喂给恋爱中的宠物可增加 50 点好感度（道具商城 2000 积分）。",
+        "desc": "喂给恋爱中的宠物可增加 50 点好感度（道具商城 2000 玄晶）。",
         "effect": {},
     },
     # ---- 品质提升卡（宠物每达到 60 级自动赠送史诗卡，其余可通过活动/奖品获得）----
@@ -801,7 +801,7 @@ TALENTS = {
     "起死回生": {"desc": "可随意复活死亡的宠物，指令：复活 QQ。", "need_custom": False},
     "事半功倍": {"desc": "精力恢复速度将提升至 2 倍。", "need_custom": False},
     "绝影丹心": {
-        "desc": "可提炼出各种各样的仙丹，每次炼丹消耗 20 万经验、20 万积分、50 点精力。",
+        "desc": "可提炼出各种各样的仙丹，每次炼丹消耗 20 万经验、20 万玄晶、50 点精力。",
         "need_custom": False,
     },
     "精力转移": {
@@ -964,6 +964,84 @@ ARTIFACTS = {
 }
 
 ARTIFACT_NAMES = list(ARTIFACTS.keys())
+
+# ---- 修士商城道具 ----
+# daily(灵石商城)：改名符 / 变性丹 —— 不直接 usable，由 service 道号/性别命令消耗。
+# 战力类走 玄晶/天晶商城：修为丹、属性丹、悟道丹、炼体丹 —— 在 main._use_item 修士级分支结算。
+ITEMS.update({
+    "改名符": {
+        "price": 2000,
+        "currency": CURRENCY_COIN,
+        "category": "道具",
+        "usable": False,
+        "desc": "修改修士道号所需道具（首次起名免费，之后每次消耗1张）。",
+        "effect": {},
+    },
+    "变性丹": {
+        "price": 3000,
+        "currency": CURRENCY_COIN,
+        "category": "道具",
+        "usable": False,
+        "desc": "改变修士性别所需道具（男修+攻击 / 女修+防御与速度）。",
+        "effect": {},
+    },
+    "修为丹": {
+        "price": 8000,
+        "currency": CURRENCY_JIFEN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士修为 +2000（需已踏入仙途）。",
+        "effect": {"add_cultivation": 2000},
+    },
+    "力量丹": {
+        "price": 6000,
+        "currency": CURRENCY_JIFEN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士攻击永久 +30（需已踏入仙途）。",
+        "effect": {"buff_atk": 30},
+    },
+    "铁骨丹": {
+        "price": 6000,
+        "currency": CURRENCY_JIFEN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士防御永久 +20（需已踏入仙途）。",
+        "effect": {"buff_def": 20},
+    },
+    "气血丹": {
+        "price": 6000,
+        "currency": CURRENCY_JIFEN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士性命上限永久 +100（需已踏入仙途）。",
+        "effect": {"buff_hp": 100},
+    },
+    "疾风丹": {
+        "price": 6000,
+        "currency": CURRENCY_JIFEN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士速度永久 +5（需已踏入仙途）。",
+        "effect": {"buff_speed": 5},
+    },
+    "悟道丹": {
+        "price": 150,
+        "currency": CURRENCY_DIAMOND,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士悟性永久 +5，悟性加成攻击（需已踏入仙途）。",
+        "effect": {"add_wudao": 5},
+    },
+    "炼体丹": {
+        "price": 150,
+        "currency": CURRENCY_DIAMOND,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士根骨永久 +5，根骨加成防御与速度（需已踏入仙途）。",
+        "effect": {"add_gengu": 5},
+    },
+})
 
 # 神器也作为可购买、可佩戴的背包物品（由「购买」入包，「佩戴神器」穿戴）。
 # 商城定价：最低 2 万（20000）积分起步，往上按 等级×1000 递增，最高 22 万。
@@ -1224,7 +1302,7 @@ DAILY_ACTIONS = {
     "约会": {"energy": 10, "desc": "增加好感度"},
     "修炼": {"energy": 10, "desc": "获得经验"},
     "双修": {"energy": 20, "desc": "获得 2 倍经验（需已婚）"},
-    "打工": {"energy": 10, "desc": "获得积分"},
+    "打工": {"energy": 10, "desc": "获得玄晶"},
     "闭关": {"energy": 5, "desc": "恢复血量"},
     "学习": {"energy": 10, "desc": "增加智力"},
     "玩耍": {"energy": 5, "desc": "恢复心情"},
@@ -1809,9 +1887,21 @@ def homestead_max_accumulate(warehouse_level: int = 0) -> int:
 # ============================================================================
 # 建筑定义（7 种 → 建筑位有限 → 战略取舍）
 # ============================================================================
+# 家园建筑在「仙途」语境下的旧名→新名映射：命令与显示均接受旧「金币矿/积分工坊」。
+HOMESTEAD_BUILDING_ALIASES = {
+    "金币矿": "灵石矿",
+    "积分工坊": "玄晶工坊",
+}
+
+
+def homestead_resolve_building(name: str) -> str:
+    """把玩家输入的（可能是旧名）建筑名解析为规范键名。"""
+    return HOMESTEAD_BUILDING_ALIASES.get(name, name)
+
+
 HOMESTEAD_BUILDINGS = {
-    "金币矿": {
-        "desc": "稳定产出金币，每小时自动累积。",
+    "灵石矿": {
+        "desc": "稳定产出灵石，每小时自动累积。",
         "icon": "💰",
         "build_cost": 500,
         "base_coin": 100,
@@ -1820,8 +1910,8 @@ HOMESTEAD_BUILDINGS = {
         "jifen_per_lv": 0,
         "prefer_element": "金",
     },
-    "积分工坊": {
-        "desc": "稳定产出积分，每小时自动累积。",
+    "玄晶工坊": {
+        "desc": "稳定产出玄晶，每小时自动累积。",
         "icon": "🏭",
         "build_cost": 500,
         "base_coin": 0,
@@ -1831,7 +1921,7 @@ HOMESTEAD_BUILDINGS = {
         "prefer_element": "水",
     },
     "聚宝盆": {
-        "desc": "同时产出金币+积分，单资源约为专精的 60%。",
+        "desc": "同时产出灵石+玄晶，单资源约为专精的 60%。",
         "icon": "🏛️",
         "build_cost": 1000,
         "base_coin": 60,
@@ -1987,7 +2077,7 @@ HOMESTEAD_EVENTS = [
     {"name": "丰收", "weight": 8, "mult": 2.0, "emoji": "🌟", "text": "大丰收！本次收获 ×2！", "good": True},
     {"name": "流浪商人", "weight": 10, "mult": 1.0, "emoji": "🧳", "merchant": True, "text": "一位流浪商人路过你的家园…", "good": True},
     {"name": "宠物帮忙", "weight": 10, "mult": 1.0, "emoji": "🐾", "pet_bonus": 0.08, "text": "宠物帮忙打理家园，额外产出 +{bonus}！", "good": True},
-    {"name": "幸运日", "weight": 12, "mult": 1.0, "emoji": "🍀", "extra_coin": (50, 300), "text": "幸运日！额外获得 {bonus} 金币！", "good": True},
+    {"name": "幸运日", "weight": 12, "mult": 1.0, "emoji": "🍀", "extra_coin": (50, 300), "text": "幸运日！额外获得 {bonus} 灵石！", "good": True},
     {"name": "地脉涌动", "weight": 8, "mult": 1.0, "emoji": "⛰️", "extra_all": 1.3, "text": "地脉涌动！所有建筑额外产出 30%！", "good": True},
     {"name": "正常", "weight": 35, "mult": 1.0, "emoji": "", "text": "", "good": False},
     {"name": "小偷", "weight": 8, "mult": 0.7, "emoji": "🐀", "text": "有小偷光顾！本次收获 -30%…", "good": False},

@@ -1618,9 +1618,9 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
         <div class="sec-title">我的财产</div>
         <div class="wallet">
-          <div class="coin"><div class="label">🪙 金币</div><div class="value">{{ fmt(data.coin) }}</div></div>
-          <div class="coin"><div class="label">✨ 积分</div><div class="value">{{ fmt(data.jifen) }}</div></div>
-          <div class="coin"><div class="label">💎 钻石</div><div class="value">{{ fmt(data.diamond) }}</div></div>
+          <div class="coin"><div class="label">🪙 灵石</div><div class="value">{{ fmt(data.coin) }}</div></div>
+          <div class="coin"><div class="label">✨ 玄晶</div><div class="value">{{ fmt(data.jifen) }}</div></div>
+          <div class="coin"><div class="label">💎 天晶</div><div class="value">{{ fmt(data.diamond) }}</div></div>
           <div class="coin"><div class="label">🔮 深渊结晶</div><div class="value">{{ fmt(data.abyss && data.abyss.crystal || 0) }}</div></div>
         </div>
 
@@ -1667,7 +1667,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
         <div class="sec-title">卡密兑换</div>
         <div class="card">
           <div class="redeem-row">
-            <el-input v-model="redeemCode" placeholder="输入卡密，可兑换金币 / 积分 / 钻石 / 道具" clearable @keyup.enter="redeem"></el-input>
+            <el-input v-model="redeemCode" placeholder="输入卡密，可兑换灵石 / 玄晶 / 天晶 / 道具" clearable @keyup.enter="redeem"></el-input>
             <el-button type="primary" round :loading="redeeming" @click="redeem">兑换</el-button>
           </div>
           <div v-if="redeemResult" class="redeem-result">{{ redeemResult }}</div>
@@ -3049,7 +3049,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
         <div class="ic">💎</div>
         <div>
           <div class="t">充值入口</div>
-          <div class="d">金币 / 积分 / 钻石卡密自助购买，兑换即时到账</div>
+          <div class="d">灵石 / 玄晶 / 天晶卡密自助购买，兑换即时到账</div>
         </div>
         <div class="go">前往充值 →</div>
       </a>
