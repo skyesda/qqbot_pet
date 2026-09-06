@@ -3972,8 +3972,8 @@ class PetParkPlugin(Star):
         ppl["pool_next"] = now if no_cd else now + cd_sec
         lines = ["## 🎂 瓜分成功！你获得："]
         for name, share in gained:
-            lines.append(f"- {name} × **{share:,}**")
-        remain_lines = [f"{n} {int(remain.get(n, 0)):,}" for n in cur if int(remain.get(n, 0)) > 0]
+            lines.append(f"- {_cur_disp(name)} × **{share:,}**")
+        remain_lines = [f"{_cur_disp(n)} {int(remain.get(n, 0)):,}" for n in cur if int(remain.get(n, 0)) > 0]
         lines.append(f"> 剩余：**{', '.join(remain_lines) or '已空'}**")
         return "\n".join(lines)
 
@@ -4025,7 +4025,7 @@ class PetParkPlugin(Star):
                 )
             remain[name] = 0
             lines.append(
-                f"• **{name}** 剩余 {r:,}：每人 {each:,} 份"
+                f"• **{_cur_disp(name)}** 剩余 {r:,}：每人 {each:,} 份"
                 + ("，余数随机补发若干活跃玩家" if extra else "（平均瓜分）")
             )
         return "\n".join(lines)
@@ -5539,7 +5539,7 @@ class PetParkPlugin(Star):
     def _format_event_rewards(self, reward_texts: dict) -> str:
         parts = []
         for k, v in reward_texts.items():
-            parts.append(f"{k} +{v}")
+            parts.append(f"{_cur_disp(k)} +{v}")
         return "、".join(parts) if parts else ""
 
     # =====================================================================
@@ -6398,8 +6398,8 @@ class PetParkPlugin(Star):
             f"🎟 **卡密**　`{code.upper()}`",
         ]
         for cur, amt in (rewards or {}).items():
-            lines.append(f"✅ **获得**　{cur} +{amt}")
-            lines.append(f"💼 **当前{cur}**　{self.store.get_currency(player, cur)}")
+            lines.append(f"✅ **获得**　{_cur_disp(cur)} +{amt}")
+            lines.append(f"💼 **当前{_cur_disp(cur)}**　{self.store.get_currency(player, cur)}")
         for name, cnt in (items or {}).items():
             lines.append(f"📦 **获得道具**　{name} ×{cnt}")
         lines.append("━━━━━━━━━━━━━━")
@@ -9275,7 +9275,7 @@ class PetParkPlugin(Star):
         gain = int(it["price"] * 0.2) * count
         self.store.remove_item(player, name, count)
         self.store.add_currency(player, it["currency"], gain)
-        return f"出售 {name} x{count}，获得 {gain} {it['currency']}（20% 回收价）。"
+        return f"出售 {name} x{count}，获得 {gain} {_cur_disp(it['currency'])}（20% 回收价）。"
 
     def _drop_item(self, player: dict, tokens: list[str]) -> str:
         if len(tokens) < 2:
@@ -9351,7 +9351,7 @@ class PetParkPlugin(Star):
             return limit_err
         have = self.store.get_currency(player, currency)
         if have < count:
-            return f"你的{currency}不足（需要 {count}，当前 {have}）。"
+            return f"你的{_cur_disp(currency)}不足（需要 {count}，当前 {have}）。"
         tax_amount = int(count * tax_rate) if tax_rate > 0 else 0
         receive_amount = count - tax_amount
         self.store.add_currency(player, currency, -count)
@@ -9365,7 +9365,7 @@ class PetParkPlugin(Star):
             tax_info = f"（税 {tax_amount}，{tax_rate:.0%} ⚠️ 高频同用户）"
         else:
             tax_info = f"（税 {tax_amount}，{tax_rate:.0%}）"
-        return f"💰 已向 `{self._display_uid(target)}` 赠送 {currency} ×{receive_amount}{tax_info}。"
+        return f"💰 已向 `{self._display_uid(target)}` 赠送 {_cur_disp(currency)} ×{receive_amount}{tax_info}。"
 
     def _bag_text(self, player: dict) -> str:
         bag = player.get("bag", {})
