@@ -1,4 +1,4 @@
-"""宠物乐园 —— AstrBot 群聊养成 / 对战插件。
+"""灵契仙途 —— AstrBot 群聊养成 / 对战插件。
 
 参考某 QQ 群"宠物联盟"玩法复刻：砸蛋抽宠、宠物商城、属性克制对战、繁殖姻缘、
 进化飞升渡劫、天赋觉醒、炼丹、神器/秘技、副本、剧情任务、跨群挑战、排行神榜等。
@@ -42,7 +42,7 @@ from .petpark.admin_reset import handle_group_reset, COMMANDS as GROUP_RESET_COM
 from .petpark.adventure.service import MENU as ADVENTURE_MENU
 from .petpark.boardgames import BoardGames, COMMANDS as BOARD_COMMANDS
 
-# 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响宠物乐园主程序。
+# 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响灵契仙途主程序。
 try:
     from .petpark.zhongyuan import COMMANDS as _ZY_COMMANDS, ZhongyuanActivity
 except Exception as _zy_err:  # pragma: no cover
@@ -80,7 +80,7 @@ _MENTION_RE = re.compile(r"<@!?([0-9A-Za-z_\-]+)>")
 # 强制绑定QQ模式下，未绑定用户仍可使用的指令（绑定相关 + 菜单/帮助）
 _BIND_ALWAYS_ALLOWED = {
     "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
-    "宠物乐园", "灵契仙途", "仙途帮助", "查看说明",
+    "灵契仙途", "仙途帮助", "查看说明",
 }
 
 # 本插件识别的指令首词（日常活动为整句匹配，见 data.DAILY_ACTIONS）。
@@ -88,10 +88,9 @@ KNOWN_COMMANDS = {
     *BOARD_COMMANDS,
     *ADVENTURE_COMMANDS,
     *GROUP_RESET_COMMANDS,
-    "旧版菜单",
     # 管理
-    "开启宠物乐园",
-    "关闭宠物乐园",
+    "开启灵契仙途",
+    "关闭灵契仙途",
     "开启宠物跨群",
     "关闭宠物跨群",
     # 信息查询
@@ -102,7 +101,7 @@ KNOWN_COMMANDS = {
     "仙丹",
     "天赋",
     "状态",
-    "宠物乐园",
+    "灵契仙途",
     "管理菜单",
     "官方网站",
     "我的信息",
@@ -416,8 +415,8 @@ WEB_BLOCKED_COMMANDS = {
     "十连砸蛋",
     "购买宠物",
     # 群管理 / 授权 / 广播类
-    "开启宠物乐园",
-    "关闭宠物乐园",
+    "开启灵契仙途",
+    "关闭灵契仙途",
     "开启宠物跨群",
     "关闭宠物跨群",
     "加金币",
@@ -498,7 +497,7 @@ class _WebEvent:
 @register(
     PLUGIN_NAME,
     "Devin",
-    "宠物乐园：群聊宠物养成与对战玩法（砸蛋/商城/对战/进化/姻缘/天赋/炼丹/副本）。",
+    "灵契仙途：群聊宠物养成与对战玩法（砸蛋/商城/对战/进化/姻缘/天赋/炼丹/副本）。",
     "1.0.0",
     "https://github.com/skyesda/qqbot_pet",
 )
@@ -566,7 +565,7 @@ class PetParkPlugin(Star):
         self.auto_approve = bool(self.config.get("auto_approve", True))
         self.welcome_push = bool(self.config.get("welcome_push", True))
         self.leave_push = bool(self.config.get("leave_push", True))
-        # 强制绑定QQ：开启后未绑定用户禁止游玩宠物乐园（安全阀，可在后台关闭）
+        # 强制绑定QQ：开启后未绑定用户禁止游玩灵契仙途（安全阀，可在后台关闭）
         self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
         self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
             "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
@@ -1146,7 +1145,7 @@ class PetParkPlugin(Star):
 
     def _keyboard_for_cmd(self, text: str, reply: str = "") -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。"""
-        if text in {"宠物乐园", "管理菜单", "灵契仙途", "仙途帮助"} or (text.split() and text.split()[0] in ADVENTURE_COMMANDS):
+        if text in {"灵契仙途", "管理菜单", "仙途帮助"} or (text.split() and text.split()[0] in ADVENTURE_COMMANDS):
             return self._main_menu_keyboard()
         if text.split() and text.split()[0] in BOARD_COMMANDS:
             context = text + "\n" + reply
@@ -1218,7 +1217,7 @@ class PetParkPlugin(Star):
                 reply = self.dispatch(event, qq, group_id, text)
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
-            reply = f"宠物乐园处理出错：{e}"
+            reply = f"灵契仙途处理出错：{e}"
         # AI 意图路由兜底：精确指令未命中时，尝试把自然语言翻译为标准指令
         effective_text = text
         if reply is None:
@@ -1238,7 +1237,7 @@ class PetParkPlugin(Star):
                     reply = self.dispatch(event, qq, group_id, routed)
                 except Exception as e:
                     logger.exception("[petpark] AI 路由指令执行出错")
-                    reply = f"宠物乐园处理出错：{e}"
+                    reply = f"灵契仙途处理出错：{e}"
                 if isinstance(reply, str):
                     reply = f"🤖 已识别：{routed}\n{reply}"
                 elif isinstance(reply, tuple):
@@ -1349,7 +1348,7 @@ class PetParkPlugin(Star):
             reply = self.dispatch(event, qq, group_id, text)
         except Exception as e:
             logger.exception("[petpark] 网页端指令执行出错")
-            return f"宠物乐园处理出错：{e}"
+            return f"灵契仙途处理出错：{e}"
         if reply is None:
             routed = None
             try:
@@ -1368,7 +1367,7 @@ class PetParkPlugin(Star):
                     reply = self.dispatch(event, qq, group_id, routed)
                 except Exception as e:
                     logger.exception("[petpark] 网页端 AI 路由指令执行出错")
-                    reply = f"宠物乐园处理出错：{e}"
+                    reply = f"灵契仙途处理出错：{e}"
                 if isinstance(reply, str):
                     reply = f"🤖 已识别：{routed}\n{reply}"
                 elif isinstance(reply, tuple):
@@ -1440,7 +1439,7 @@ class PetParkPlugin(Star):
         qq = self._resolve_user_token(qq)
         tp = self.store.get_player(qq, group_id, create=False)
         if not tp:
-            return None, f"❌ 用户 `{self._display_uid(qq)}` 在本群不存在（对方需先在本群参与宠物乐园）。"
+            return None, f"❌ 用户 `{self._display_uid(qq)}` 在本群不存在（对方需先在本群参与灵契仙途）。"
         return tp, None
 
     def _find_board_target(self, group_id: str, token: str):
@@ -1448,7 +1447,7 @@ class PetParkPlugin(Star):
         user = self._resolve_user_token(token)
         target = next((p for p in self.store.all_players().values() if str(p.get("qq", "")) == user), None)
         if target is None:
-            return None, "找不到该玩家，请对方先在任意群参与宠物乐园。"
+            return None, "找不到该玩家，请对方先在任意群参与灵契仙途。"
         return target, None
 
     def _resolve_user_token(self, token: str) -> str:
@@ -2638,10 +2637,10 @@ class PetParkPlugin(Star):
             from botpy.http import Route
         except Exception:
             return "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
-        # 授权范围：仅「已授权宠物乐园」的群可用（关闭宠物乐园后群管理指令一并禁用）
+        # 授权范围：仅「已授权灵契仙途」的群可用（关闭灵契仙途后群管理指令一并禁用）
         try:
             if not self.store.get_group(group_id).get("enabled", False):
-                return "❌ 本群未开启宠物乐园，无法使用群管理指令。"
+                return "❌ 本群未开启灵契仙途，无法使用群管理指令。"
         except Exception:
             pass
         # 权限：插件管理员白名单直接放行，否则查询群成员角色
@@ -2807,7 +2806,7 @@ class PetParkPlugin(Star):
             return "❌ 当前平台不支持群管理操作（需 QQ 官方机器人）。"
         try:
             if not self.store.get_group(group_id).get("enabled", False):
-                return "❌ 本群未开启宠物乐园，无法使用群管理指令。"
+                return "❌ 本群未开启灵契仙途，无法使用群管理指令。"
         except Exception:
             pass
         # 解析被 @ 的目标成员
@@ -3103,12 +3102,12 @@ class PetParkPlugin(Star):
         group = self.store.get_group(group_id)
 
         # ---- 管理开关（管理员） ----
-        if cmd in ("开启宠物乐园", "关闭宠物乐园"):
+        if cmd in ("开启灵契仙途", "关闭灵契仙途"):
             if not self._is_admin(event):
-                return "❌ 仅管理员可开关宠物乐园。"
+                return "❌ 仅管理员可开关灵契仙途。"
             group["enabled"] = cmd.startswith("开启")
             state = "已开启 ✅" if group["enabled"] else "已关闭 🚫"
-            return f"## 🐾 宠物乐园\n本群宠物乐园**{state}**。"
+            return f"## 🐾 灵契仙途\n本群灵契仙途**{state}**。"
         if cmd in ("开启宠物跨群", "关闭宠物跨群"):
             if not self._is_admin(event):
                 return "❌ 仅管理员可开关跨群功能。"
@@ -3161,7 +3160,7 @@ class PetParkPlugin(Star):
             if bb:
                 return bb
 
-        # ---- 中元活动（独立模块）：已授权且宠物乐园开启的群路由给活动引擎 ----
+        # ---- 中元活动（独立模块）：已授权且灵契仙途开启的群路由给活动引擎 ----
         if self.zhongyuan is not None and cmd in self._zy_commands:
             return self.zhongyuan.dispatch(event, qq, group_id, text)
 
@@ -3203,7 +3202,7 @@ class PetParkPlugin(Star):
             return AdventureService(self.store, config=getattr(self, "config", None)).handle(group_id, qq, tokens, request_id=request_id)
 
         # 银行逾期冻结检查（放行查看/还款类指令）
-        _bank_allow = {"银行信息", "银行还款", "宠物乐园",
+        _bank_allow = {"银行信息", "银行还款", "灵契仙途",
                         "管理菜单", "官方网站", "我的信息", "个人信息", "签到", "兑换", "卡密兑换",
                         "授权状态", "授权", "设为无限服", "设为官方服", "查看说明", "银行信息",
                         "重生", "购买重生宝石", "确认重生", "祭奠",
@@ -5501,7 +5500,7 @@ class PetParkPlugin(Star):
     CUSTOM_PUSH_CHECK_SEC = 15   # 每隔 15 秒检查一次是否到点
 
     async def _custom_push_loop(self) -> None:
-        """后台循环：扫描 custom_push.jobs，到点向所有授权且开启宠物乐园的群推送。"""
+        """后台循环：扫描 custom_push.jobs，到点向所有授权且开启灵契仙途的群推送。"""
         while True:
             try:
                 await self._custom_push_tick()
@@ -5543,7 +5542,7 @@ class PetParkPlugin(Star):
             await self.store.save()
 
     async def _fire_push_job(self, job: dict) -> None:
-        """向所有授权且开启宠物乐园玩法的群推送一次任务文案，并记录最近结果。"""
+        """向所有授权且开启灵契仙途玩法的群推送一次任务文案，并记录最近结果。"""
         text = str(job.get("text") or "").strip()
         if not text:
             job["last_result"] = {"ts": int(time.time()), "sent": 0, "failed": 0,
@@ -5568,7 +5567,7 @@ class PetParkPlugin(Star):
         """玩家输入口令即登记参与（按 openid 去重，全群共享）。"""
         g = self.store.get_group(group_id)
         if not g.get("enabled", True):
-            return "本群未开启宠物乐园，暂时无法参与口令抽奖。"
+            return "本群未开启灵契仙途，暂时无法参与口令抽奖。"
         if self._group_is_infinite(group_id):
             return "⚠️ 本群为无限服，不参与官方服全局口令抽奖。"
         if self._is_group(group_id) and not self._is_group_authorized(group_id):
@@ -5770,14 +5769,11 @@ class PetParkPlugin(Star):
     # 帮助 / 信息查询
     # =====================================================================
     def _handle_info(self, cmd: str, tokens: list[str]) -> str | tuple | None:
-        if cmd in ("宠物乐园", "灵契仙途", "仙途帮助"):
-            return ADVENTURE_MENU
-        if cmd == "旧版菜单":
+        if cmd in ("灵契仙途", "仙途帮助"):
             md = self._render_menu_image()
             if md:
-                return ("宠物乐园 · 指令菜单", md)
-            # 渲染万一失败：给一句提示，不提供文字版菜单
-            return "菜单图片暂时生成失败，请稍后重试。"
+                return ("灵契仙途 · 完整指令菜单", md)
+            return ADVENTURE_MENU
         if cmd == "管理菜单":
             return self._admin_menu_text()
         if cmd == "官方网站":
@@ -5955,7 +5951,7 @@ class PetParkPlugin(Star):
             "━━━━━━━━━━━━━━",
             f"🆔 **用户ID**　`{player['qq']}`",
             f"📱 **绑定QQ**　{self._bound_qq_text(player)}",
-            *(["> ⚠️ 未绑定QQ将无法游玩宠物乐园，请先绑定（发送「绑定QQ 你的QQ号」）"]
+            *(["> ⚠️ 未绑定QQ将无法游玩灵契仙途，请先绑定（发送「绑定QQ 你的QQ号」）"]
               if self.require_qq_bind and not self.store.get_bound_qq(player.get("qq", "")) else []),
             f"👥 **群号**　`{gid}`",
             f"🌐 **所处分服**　{self._server_label(group_id)}",
@@ -6009,7 +6005,7 @@ class PetParkPlugin(Star):
         if cmd in _BIND_ALWAYS_ALLOWED:
             return None
         return (
-            "🔒 绑定QQ后才能游玩宠物乐园\n"
+            "🔒 绑定QQ后才能游玩灵契仙途\n"
             "你还没绑定 QQ号，请先完成绑定：\n"
             "- 发送「绑定QQ 你的QQ号」（纯数字，如 `绑定QQ 123456789`）\n"
             "- 系统会向该QQ的 QQ 邮箱发送 6 位验证码\n"
@@ -6021,9 +6017,9 @@ class PetParkPlugin(Star):
         """绑定QQ完整教程（QQ Markdown：多行用 \\n\\n 分隔，避免单换行被吞）。"""
         return (
             "## 📱 绑定QQ教程\n"
-            "绑定后你将以**真实QQ号**作为宠物乐园身份，跨群通用，一次绑定全群生效。\n\n"
+            "绑定后你将以**真实QQ号**作为灵契仙途身份，跨群通用，一次绑定全群生效。\n\n"
             "**为什么要绑定**\n"
-            "- 宠物乐园已开启「强制绑定QQ」，未绑定无法游玩\n"
+            "- 灵契仙途已开启「强制绑定QQ」，未绑定无法游玩\n"
             "- 绑定后可用QQ号或「@对方」代替用户ID，赠送/转让/PK/拜访更方便\n\n"
             "**绑定步骤**\n"
             "1. 发送「绑定QQ 你的QQ号」（纯数字5~11位，如 `绑定QQ 123456789`）\n"
@@ -6101,8 +6097,8 @@ class PetParkPlugin(Star):
         username = cfg.get("username", "")
         auth_code = cfg.get("auth_code", "")
         from_email = cfg.get("from_email", username) or username
-        sender_name = cfg.get("sender_name", "宠物乐园")
-        subject = cfg.get("subject", "[宠物乐园] QQ绑定验证码")
+        sender_name = cfg.get("sender_name", "灵契仙途")
+        subject = cfg.get("subject", "[灵契仙途] QQ绑定验证码")
         body_tpl = cfg.get(
             "body_template",
             "您正在绑定QQ号，验证码为：{code}\n有效期 {minutes} 分钟，请勿泄露给他人。",
@@ -6336,7 +6332,7 @@ class PetParkPlugin(Star):
 
     def _pay_link(self) -> str:
         return (
-            "## 💎 宠物乐园 · 充值中心\n"
+            "## 💎 灵契仙途 · 充值中心\n"
             "━━━━━━━━━━━━━━\n"
             "🛒 **商店链接**：https://pay.ldxp.cn/shop/2P5XIVMD\n\n"
             "📌 **购买后请复制卡密，然后在本群发送**：\n"
@@ -6607,7 +6603,7 @@ class PetParkPlugin(Star):
         if until <= 0:
             return (
                 "## 🔐 本群授权状态\n状态：**未授权** ❌\n"
-                "> 宠物乐园需授权后使用。请发送『授权 卡密』激活，或联系管理员。"
+                "> 灵契仙途需授权后使用。请发送『授权 卡密』激活，或联系管理员。"
             )
         ok = until > int(time.time())
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
@@ -6792,8 +6788,8 @@ class PetParkPlugin(Star):
     @staticmethod
     def _auth_blocked_text() -> str:
         return (
-            "## 🔒 宠物乐园未授权\n"
-            "本群授权未激活或已到期，暂时无法使用宠物乐园。\n"
+            "## 🔒 灵契仙途未授权\n"
+            "本群授权未激活或已到期，暂时无法使用灵契仙途。\n"
             "> 发送『授权 卡密』激活，或『授权状态』查看；管理员可联系作者获取授权卡。"
         )
 
@@ -6809,8 +6805,21 @@ class PetParkPlugin(Star):
             event_lines.append("")
         return "\n".join(
             [
-                "## 🐾 宠物乐园 · 指令菜单",
+                "## 🐾 灵契仙途 · 指令菜单",
                 "> 指令**无需前缀**，直接发送即可；需指定对方时填 **用户ID** 或直接 **@对方**",
+                "",
+                "**【灵契仙途】**",
+                "> 修士问道灵宠同行：选职业→结契灵宠→历练→锻造，一条龙养成。",
+                "- 灵契仙途 查看本菜单/全程引导 · 创建角色 · 选择职业 剑修(体修/灵修) · 修士转职",
+                "- 结契灵宠 九尾狐 · 灵宠助战 序号 · 灵宠专长 辅助",
+                "- 修士修炼(领离线修为) · 修士突破(升境界) · 今日修行",
+                "- 仙途地图 · 历练 1 · 挑战秘境",
+                "- 修士装备 · 锻造 灵剑 · 修士配装 破阵",
+                "- 我的洞天 · 洞天突破(10/20/40/60级) · 仙途毕业",
+                "- 组队秘境 葬龙秘境 · 仙途队伍 · 加入/退出队伍 · 准备出发 · 队伍出发",
+                "- 世界首领 · 讨伐首领 · 首领奖励",
+                "- 仙途深渊 · 深渊抉择 · 深渊收手",
+                "- 仙途切磋 @对方 · 接受切磋 · 拒绝切磋 · 战斗详情 · 仙途战绩",
                 "",
                 "**【入门】**",
                 "- 砸蛋 · 宠物市场（品质卡/变种卡）· 我的宠物 · 宠物状态",
@@ -6980,7 +6989,7 @@ class PetParkPlugin(Star):
     def _menu_html(self) -> str:
         """把 _menu_text() 逐行解析成分区菜单 HTML——文本与图片永不漂移。"""
         menu = self._menu_text()
-        title_main, title_sub = "宠物乐园", "指令菜单"
+        title_main, title_sub = "灵契仙途", "指令菜单"
         intro: list[str] = []
         sections: list[dict] = []
         cur = None
@@ -7346,7 +7355,7 @@ class PetParkPlugin(Star):
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>{card_theme.stylesheet('pet')}</style></head><body>"
             '<div class="card"><div class="masthead"><div><div class="mast-title">宠物灵鉴</div>'
-            '<div class="mast-caption">宠物乐园 · 伙伴档案</div></div></div>'
+            '<div class="mast-caption">灵契仙途 · 伙伴档案</div></div></div>'
             f'<div class="pet-heading"><div><div class="name">{esc(pet["nickname"])}</div>'
             f'<div class="identity">{esc(species_display)} / {esc(element)}属性 / {esc(stage)}</div>'
             f'</div><div class="rank">{esc(quality)}</div></div>'
@@ -7357,7 +7366,7 @@ class PetParkPlugin(Star):
             f'<div class="attributes panel">{rows_html}</div>'
             f'<div class="stats">{stats_html}</div>'
             f'<div class="abilities panel">{abilities}{extra}</div></div></div>{tags_html}{frozen}'
-            '<div class="foot"><span>查看宠物：我的宠物</span><span>养成指引：宠物乐园</span></div>'
+            '<div class="foot"><span>查看宠物：我的宠物</span><span>养成指引：灵契仙途</span></div>'
             '</div></body></html>'
         )
 
@@ -7521,7 +7530,7 @@ class PetParkPlugin(Star):
             f"<style>{card_theme.stylesheet('mount')}</style></head><body>"
             '<div class="card"><div class="masthead"><div>'
             f'<div class="mast-title">骑兽灵鉴</div>'
-            f'<div class="mast-caption">{esc(theme_word)} · 宠物乐园 坐骑档案</div></div></div>'
+            f'<div class="mast-caption">{esc(theme_word)} · 灵契仙途 坐骑档案</div></div></div>'
             f'<div class="mount-heading"><div><div class="name">{esc(name)}</div>'
             f'<div class="identity">{esc(star_str)} · Lv.{level}</div></div>'
             f'<div class="rank">{esc(star_str)}</div></div>'
@@ -7641,7 +7650,7 @@ class PetParkPlugin(Star):
             f"<style>{card_theme.stylesheet('bag')}</style></head><body>"
             f'<div class="card">'
             '<div class="masthead"><div><div class="mast-title">随行百宝</div>'
-            '<div class="mast-caption">宠物乐园 · 我的背包</div></div></div>'
+            '<div class="mast-caption">灵契仙途 · 我的背包</div></div></div>'
             f'<div class="bag-summary"><span>物品种类 <strong>{len(items)}</strong></span>'
             f'<span>持有总数 <strong>{total_items}</strong></span></div>'
             f'<div class="inventory">{body}</div>'
@@ -7663,12 +7672,12 @@ class PetParkPlugin(Star):
         """官方网站介绍：官方主站 + 绑定宠物指引（QQ Markdown，用 \n\n 分隔避免被吞）。"""
         return "\n".join(
             [
-                "## 🌐 宠物乐园 · 官方主站",
+                "## 🌐 灵契仙途 · 官方主站",
                 "",
-                "🎉 这里是《宠物乐园》**官方主站**，手机/电脑随时可访问，与群内账号数据完全互通。",
+                "🎉 这里是《灵契仙途》**官方主站**，手机/电脑随时可访问，与群内账号数据完全互通。",
                 "登录注册**随便弄**（无需邀请码、无需繁琐验证），登录即自动同步你的宠物与资产。",
                 "",
-                "▶️ **点击直达**：[🎡 立即进入宠物乐园](https://bot.flyyye.cn/)",
+                "▶️ **点击直达**：[🎡 立即进入灵契仙途](https://bot.flyyye.cn/)",
                 "",
                 "**🐾 如何绑定宠物**",
                 "> 1. 打开官方主站并登录注册（随意）。",
@@ -7678,18 +7687,18 @@ class PetParkPlugin(Star):
                 "",
                 "> 💡 记不住用户ID？登录后也可绑定 QQ号（群内发送 `绑定QQ QQ号`）代替，跨群通用。",
                 "",
-                "❓ 更多玩法请发送 `宠物乐园` 查看。",
+                "❓ 更多玩法请发送 `灵契仙途` 查看。",
             ]
         )
 
     def _admin_menu_text(self) -> str:
         return "\n".join(
             [
-                "## 🛡️ 宠物乐园 · 管理菜单",
+                "## 🛡️ 灵契仙途 · 管理菜单",
                 "> 所有「用户ID」参数位均支持直接 **@对方**（如 `加金币 @某人 100`）",
                 "",
                 "**【群开关】**",
-                "- 开启宠物乐园 · 关闭宠物乐园",
+                "- 开启灵契仙途 · 关闭灵契仙途",
                 "- 开启宠物跨群 · 关闭宠物跨群",
                 "- 设为无限服 · 设为官方服（大管理员设定本群服类型）",
                 "> 无限服：宠物神榜/跨群挑战关闭、数据完全群独立、小管理员加币积分无每日上限",

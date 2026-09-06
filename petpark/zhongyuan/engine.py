@@ -1,11 +1,11 @@
 """中元节《青灯伴萌宠 · 幽影饲育馆》活动引擎。
 
-独立模块：本活动所有逻辑集中在 ``petpark/zhongyuan/``，与宠物乐园主玩法解耦。
+独立模块：本活动所有逻辑集中在 ``petpark/zhongyuan/``，与灵契仙途主玩法解耦。
 - 数据独立持久化到 ``<data>/plugin_data/astrbot_plugin_petpark/zhongyuan.json``；
 - 后台「活动总开关 / 一键关闭全部玩法 / 一键删除活动代码」三控制项；
   关闭 = 停玩法留数据；删除 = 清数据/卸载（见命令行 ``删除中元活动`` 与文档第九/十节）。
 
-对外接口（由宠物乐园 main.py 以最小钩子接入）：
+对外接口（由灵契仙途 main.py 以最小钩子接入）：
 - ``commands()``        -> 返回本活动的指令首词集合（供 KNOWN_COMMANDS / AI 路由）。
 - ``dispatch(event, qq, group_id, text)`` -> 处理一条指令，返回回复文本或 None。
 - ``async loop()``      -> 后台循环（每小时抽人、解密时限、活动结算、定时保存）。
@@ -84,7 +84,7 @@ _LANTERN_ECHOES = [
 
 
 class ZhongyuanActivity:
-    """中元活动引擎。``bot`` 为宠物乐园插件实例（提供 store / context / 权限与推送）。"""
+    """中元活动引擎。``bot`` 为灵契仙途插件实例（提供 store / context / 权限与推送）。"""
 
     def __init__(self, bot, data_dir: Path, config: dict | None = None):
         self.bot = bot

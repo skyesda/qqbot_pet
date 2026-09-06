@@ -1,4 +1,4 @@
-"""宠物乐园专属管理网站。
+"""灵契仙途专属管理网站。
 
 在 AstrBot 进程内启动一个独立端口的 aiohttp 网站，提供：
 - 账号密码登录（默认 admin / 2468080asd，可在插件配置修改）；
@@ -1188,7 +1188,7 @@ class WebAdmin:
 
 LOGIN_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>宠物乐园 · 管理登录</title>
+<title>灵契仙途 · 管理登录</title>
 <style>
 body{margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f6f8fd;color:#141a2a;display:flex;min-height:100vh;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
 body::before{content:'';position:fixed;top:-260px;left:-160px;width:640px;height:640px;border-radius:50%;background:radial-gradient(closest-side,rgba(47,107,255,.14),transparent);pointer-events:none}
@@ -1203,7 +1203,7 @@ button:hover{transform:translateY(-1px);box-shadow:0 12px 26px -6px rgba(47,107,
 .err{color:#e5484d;text-align:center;min-height:18px;font-size:13px}
 </style></head><body>
 <form class="box" method="post" action="/login">
-<h1>宠物乐园 · 管理后台</h1>
+<h1>灵契仙途 · 管理后台</h1>
 <div class="err"><!--ERR--></div>
 <input name="user" placeholder="账号" autocomplete="username">
 <input name="password" type="password" placeholder="密码" autocomplete="current-password">
@@ -1214,7 +1214,7 @@ button:hover{transform:translateY(-1px);box-shadow:0 12px 26px -6px rgba(47,107,
 
 DASHBOARD_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>宠物乐园 · 管理后台</title>
+<title>灵契仙途 · 管理后台</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f6f8fd;color:#141a2a;-webkit-font-smoothing:antialiased}
@@ -1278,7 +1278,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 .bagrow{margin:6px 0}
 .empty{padding:32px;text-align:center;color:#8a93a8;background:#fff;border:1px dashed #d8dfef;border-radius:14px}
 </style></head><body>
-<header><h1>宠物乐园 · 管理后台</h1><a href="/logout">退出登录</a></header>
+<header><h1>灵契仙途 · 管理后台</h1><a href="/logout">退出登录</a></header>
 <div class="tabs">
 <button data-t="players" class="active" onclick="tab('players')">玩家</button>
 <button data-t="groups" onclick="tab('groups')">群设置</button>
@@ -1892,7 +1892,7 @@ function renderPush(){
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:960px">
   <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
-   <h3 style="margin:0 0 16px">📣 自定义文本群推送 <span class="muted" style="font-weight:400">（推送到所有已授权且开启宠物乐园玩法的群）</span></h3>
+   <h3 style="margin:0 0 16px">📣 自定义文本群推送 <span class="muted" style="font-weight:400">（推送到所有已授权且开启灵契仙途玩法的群）</span></h3>
    <div class="row">
     <label class="fld">模式 <select id="push_mode" onchange="pushModeChange()">
       <option value="once">指定时间发送（一次性）</option>
@@ -2227,7 +2227,7 @@ function renderGroups(){
    <td><span class="tag ${v.cross?'on':'off'}">${v.cross?'允许':'禁止'}</span></td>
    <td class="num">${v.sign_count||0}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
- shell('<th>群号</th><th>宠物乐园</th><th>跨群挑战</th><th>今日签到数</th><th>操作</th>',rows);
+ shell('<th>群号</th><th>灵契仙途</th><th>跨群挑战</th><th>今日签到数</th><th>操作</th>',rows);
 }
 const CUR_CLS={'金币':'coin','积分':'jifen','钻石':'diamond'};
 function cardRewards(v){
@@ -2329,7 +2329,7 @@ function fieldHtml(){
   <button class="act ghost" type="button" onclick="bagAdd()" style="margin-top:6px">＋ 添加物品</button>`;
  if(cur==='groups')return `
   <div class="sec">基础设置</div>
-  <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启宠物乐园</label></div>
+  <div class="chk"><input id="f_enabled" type="checkbox"><label for="f_enabled">开启灵契仙途</label></div>
   <div class="chk"><input id="f_cross" type="checkbox"><label for="f_cross">允许跨群挑战</label></div>`;
  if(cur==='events')return `
   <div class="muted">ID 保存后不可修改；活动时间选择本地日期，后台自动转时间戳。</div>

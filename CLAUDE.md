@@ -1,6 +1,6 @@
-# 宠物乐园 · 项目开发与部署指南
+# 灵契仙途 · 项目开发与部署指南
 
-> 本项目：`astrbot_plugin_petpark`（宠物乐园）  
+> 本项目：`astrbot_plugin_petpark`（灵契仙途）  
 > 仓库：`https://github.com/skyesda/qqbot_pet`  
 > 适用：AstrBot QQ 群聊宠物养成插件
 
@@ -115,7 +115,7 @@ git pull
 
 1. 打开 AstrBot 管理面板。
 2. 进入「插件 / Extensions」。
-3. 找到「宠物乐园」，点击「重载 / Reload」。
+3. 找到「灵契仙途」，点击「重载 / Reload」。
 4. 观察日志确认无报错。
 
 > 不要自行通过 SSH 执行 kill / setsid 等命令重启 AstrBot。

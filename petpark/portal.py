@@ -168,7 +168,7 @@ class PlayerPortal:
             "plain",
             "utf-8",
         )
-        msg["Subject"] = Header(f"宠物乐园 · {purpose_label}验证码", "utf-8")
+        msg["Subject"] = Header(f"灵契仙途 · {purpose_label}验证码", "utf-8")
         msg["From"] = cfg["from_email"]
         msg["To"] = to_email
         if cfg.get("use_ssl"):
@@ -932,12 +932,12 @@ class PlayerPortal:
                     pet_nick = pet.get("nickname", "宠物") if pet else "宠物"
                     species = pet.get("custom_species_name") or pet.get("species", "神秘生物") if pet else "神秘生物"
                     text = (
-                        "🎉 **全服贺电！宠物乐园迎来全新混沌定制大师！** 🎉\n\n"
+                        "🎉 **全服贺电！灵契仙途迎来全新混沌定制大师！** 🎉\n\n"
                         f"👑 尊贵的训练家 **{nickname}**（QQ：{show_qq}）\n"
                         f"为心爱的 **{pet_nick}** 解锁了【混沌定制】权限！\n\n"
                         f"✨ **{pet_nick}** 已褪去凡躯，化身为独一无二的 **{species}**，\n"
                         "品质晋升为【混沌】，傲视群宠，闪耀全服！\n\n"
-                        "💎 这是实力与热爱的象征，让我们共同祝贺这位大师登上宠物乐园的巅峰！\n"
+                        "💎 这是实力与热爱的象征，让我们共同祝贺这位大师登上灵契仙途的巅峰！\n"
                         "🚀 各位训练家也快去努力，打造属于自己的专属传奇宠物吧！"
                     )
                     logger.info(f"[petpark] 准备发送定制解锁全服广播，训练家：{nickname}，宠物：{pet_nick}")
@@ -1140,7 +1140,7 @@ class PlayerPortal:
             reply = await gw.web_dispatch(qq, group_id, text)
         except Exception as e:
             logger.exception("[petpark] 网页对话执行出错")
-            return web.json_response({"ok": True, "reply": f"宠物乐园处理出错：{e}", "image_md": None})
+            return web.json_response({"ok": True, "reply": f"灵契仙途处理出错：{e}", "image_md": None})
         image_md = None
         if isinstance(reply, tuple):
             reply, image_md = reply
@@ -1708,7 +1708,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
       <el-input v-model="bind.group" placeholder="宠物所在的 QQ 群号" clearable></el-input>
     </el-form-item>
     <el-form-item label="绑定用户ID">
-      <el-input v-model="bind.qq" placeholder="你在该群使用宠物乐园的用户 ID" clearable @keyup.enter="doBind"></el-input>
+      <el-input v-model="bind.qq" placeholder="你在该群使用灵契仙途的用户 ID" clearable @keyup.enter="doBind"></el-input>
     </el-form-item>
   </el-form>
   <p class="muted">输入群号和用户 ID 后先查询宠物列表，再选择要绑定的宠物。</p>
@@ -2188,7 +2188,7 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>问题反馈 · 宠物乐园</title>
+<title>问题反馈 · 灵契仙途</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
 <style>
   :root{
@@ -3064,7 +3064,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <footer>宠物乐园 · 数据每 30 秒更新 · <a href="/portal">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">充值入口</a></footer>
+  <footer>灵契仙途 · 数据每 30 秒更新 · <a href="/portal">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">充值入口</a></footer>
 </div>
 
 <el-dialog v-model="auth.show" :title="authTitle" width="400px" class="auth-dialog" align-center>
