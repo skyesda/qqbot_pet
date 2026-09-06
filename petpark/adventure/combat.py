@@ -17,18 +17,20 @@ def projection(value, base, weight):
     return weight * math.log2(1 + max(0, int(value)) / base)
 
 
-def hero_sheet(a, player):
+def hero_sheet(a, player, include_mount=True):
     """修士完整属性面（战斗与战力共用的唯一事实源）。
 
     基础：职业基础属性 + 等级成长 + 洞天装备 + 坐骑攻击加成；
     进阶：装备/道具带来的 bonus（力量/铁骨/气血/疾风丹）、持久属性 悟性/根骨、性别微调。
     旧存档缺字段一律 setdefault 惰性补默认，零迁移。
+    include_mount=False 时排除坐骑攻击加成：用于修士「本体」战力归零坐骑项，
+    坐骑改由 power._mount_contrib 以独立 20% 占比计入，避免在英雄本体里双重计。
     """
     spec = PROFESSIONS[a["profession"]]
     growth = 1 + .16 * (a["level"] - 1)
     eq = a.get("equipment", {"weapon": 0, "robe": 0, "seal": 0})
-    mount = player.get("mounts", {}).get(player.get("active_mount"), {})
-    mount_atk = projection(mount.get("power", 0), 10000, 5)
+    mount = {} if not include_mount else player.get("mounts", {}).get(player.get("active_mount"), {})
+    mount_atk = 0 if not include_mount else projection(mount.get("power", 0), 10000, 5)
     b = a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})
     a.setdefault("gender", "男")
     wudao = a.get("wudao", 0)

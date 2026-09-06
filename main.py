@@ -267,6 +267,8 @@ KNOWN_COMMANDS = {
     "宠物神榜",
     "领取神榜奖励",
     "仙途战力榜",
+    "仙途战力榜全服",
+    "领取仙途奖励",
     # 副本 / 剧情
     "宠物副本",
     "进入副本",
@@ -3460,14 +3462,12 @@ class PetParkPlugin(Star):
             return self._attack(player, group_id, tokens)
         if cmd == "跨群挑战宠物":
             return self._cross_attack(player, group, tokens)
-        if cmd == "宠物排行":
+        if cmd in ("宠物排行", "仙途战力榜"):
             return self._rank(player, group_id, local=True)
-        if cmd == "宠物神榜":
+        if cmd in ("宠物神榜", "仙途战力榜全服"):
             return self._rank(player, group_id, local=False)
-        if cmd == "领取神榜奖励":
+        if cmd in ("领取神榜奖励", "领取仙途奖励"):
             return self._claim_rank_reward(player, group_id)
-        if cmd == "仙途战力榜":
-            return self._adventure_rank(player, group_id)
 
         # ---- 副本 ----
         if cmd == "宠物副本":
@@ -6548,7 +6548,7 @@ class PetParkPlugin(Star):
 
     # --------------------------- 群授权 ---------------------------
     def _group_is_infinite(self, group_id: str) -> bool:
-        """该群是否为无限服（跨群挑战/宠物神榜对其关闭，小管理员加币/积分无上限）。"""
+        """该群是否为无限服（跨群挑战/仙途战力榜全服对其关闭，小管理员加币/积分无上限）。"""
         if not self._is_group(group_id):
             return False  # 私聊不属于任何服
         group = self.store.get_group(self.store.resolve_group(group_id))
@@ -6728,12 +6728,12 @@ class PetParkPlugin(Star):
         if st == "infinite":
             return (
                 "## 🌐 已设为无限服\n"
-                "本群已退出跨群共享层：宠物神榜/跨群挑战对群关闭，数据完全群独立；"
+                "本群已退出跨群共享层：仙途战力榜全服/跨群挑战对群关闭，数据完全群独立；"
                 "群内小管理员加灵石/玄晶**无每日上限**。"
             )
         return (
             "## 🌐 已设为官方服\n"
-            "本群已回到跨群共享层：参与宠物神榜、可/可被跨群挑战；"
+            "本群已回到跨群共享层：参与仙途战力榜全服、可/可被跨群挑战；"
             "小管理员加灵石/玄晶按每日上限执行。"
         )
 
@@ -6849,7 +6849,7 @@ class PetParkPlugin(Star):
                 "- 世界首领 · 讨伐首领 · 首领奖励",
                 "- 仙途深渊 · 深渊抉择 · 深渊收手",
                 "- 仙途切磋 @对方 · 接受切磋 · 拒绝切磋 · 战斗详情 · 仙途战绩",
-                "- 我的修士(看战力) · 仙途战力榜(全服战力) · 领取神榜奖励",
+                "- 我的修士(看战力) · 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励",
                 "- 与灵宠结为道侣(追求/求婚/分手/离婚) · 道侣可加速修为与提供战力加成",
                 "",
                 "**【入门】**",
@@ -6902,7 +6902,7 @@ class PetParkPlugin(Star):
                 "",
                 "**【对战 / 排行】**",
                 "- 宠物攻击 用户ID · 跨群挑战宠物 群号 用户ID",
-                "- 宠物排行（本群）· 宠物神榜（全服）· 领取神榜奖励",
+                "- 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励（旧名 宠物排行/宠物神榜/领取神榜奖励 仍可用）",
                 "",
                 "**【副本 / 任务】**",
                 "> ⏳ 副本 15 分钟冷却",
@@ -7676,6 +7676,18 @@ class PetParkPlugin(Star):
                 for name, count in items
             )
         subtitle = "共 %d 种 · 共 %d 件" % (len(items), total_items) if items else "暂无物品"
+        adv = player.get("adventure")
+        adv_block = ""
+        if adv:
+            eq = adv.get("equipment", {})
+            adv_block = (
+                '<div class="adv-sack" style="margin:0 0 18px;padding:13px 18px;background:linear-gradient(110deg,#e8f0e2,#f6fbe9);'
+                'border:1px solid #9fb884;color:#37523e;font-size:15px;line-height:1.7">'
+                '<div style="font-weight:700;color:#2c4a3a;margin-bottom:5px">修士行囊</div>'
+                f'灵材 ×{esc(str(adv.get("ore", 0)))} · 修为 {esc(str(adv.get("cultivation", 0)))} · '
+                f'灵剑+{esc(str(eq.get("weapon", 0)))} · 法衣+{esc(str(eq.get("robe", 0)))} · 灵印+{esc(str(eq.get("seal", 0)))}'
+                '</div>'
+            )
         return (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>{card_theme.stylesheet('bag')}</style></head><body>"
@@ -7684,6 +7696,7 @@ class PetParkPlugin(Star):
             '<div class="mast-caption">灵契仙途 · 我的背包</div></div></div>'
             f'<div class="bag-summary"><span>物品种类 <strong>{len(items)}</strong></span>'
             f'<span>持有总数 <strong>{total_items}</strong></span></div>'
+            f'{adv_block}'
             f'<div class="inventory">{body}</div>'
             f'<div class="foot">使用物品：发送「使用 物品名」 · 选购物品：发送「商城」</div>'
             f'</div></body></html>'
@@ -7732,7 +7745,7 @@ class PetParkPlugin(Star):
                 "- 开启灵契仙途 · 关闭灵契仙途",
                 "- 开启宠物跨群 · 关闭宠物跨群",
                 "- 设为无限服 · 设为官方服（大管理员设定本群服类型）",
-                "> 无限服：宠物神榜/跨群挑战关闭、数据完全群独立、小管理员加灵石/玄晶无每日上限",
+                "> 无限服：仙途战力榜全服/跨群挑战关闭、数据完全群独立、小管理员加灵石/玄晶无每日上限",
                 "",
                 "**【货币管理】**（大/小管理员）",
                 "- 加金币 用户ID 数量 · 减金币 用户ID 数量",
@@ -9282,12 +9295,26 @@ class PetParkPlugin(Star):
 
     def _bag_text(self, player: dict) -> str:
         bag = player.get("bag", {})
-        head = "## 💼 我的背包"
-        if not bag:
-            return head + "\n> （空空如也，去商城逆选购吧）"
-        lines = [head, "━━━━━━━━━━━━━━"]
-        for n, c in bag.items():
-            lines.append(f"• **{n}** ×{c}")
+        lines = ["## 💼 我的背包"]
+        if bag:
+            lines.append("━━━━━━━━━━━━━━")
+            for n, c in bag.items():
+                lines.append(f"• **{n}** ×{c}")
+        else:
+            lines.append("> （背包里暂无普通物品，去商城选购吧）")
+        a = player.get("adventure")
+        if a:
+            eq = a.get("equipment", {})
+            lines += [
+                "━━━━━━━━━━━━━━",
+                "**【修士行囊】**",
+                f"• 灵材 ×{a.get('ore', 0)}",
+                f"• 修为 {a.get('cultivation', 0)} / {60 + a.get('level', 1) * 20}（升级需 60+等级×20）",
+                f"• 装备：灵剑+{eq.get('weapon', 0)} · 法衣+{eq.get('robe', 0)} · 灵印+{eq.get('seal', 0)}",
+                f"• 悟性 {a.get('wudao', 0)} · 根骨 {a.get('gengu', 0)}",
+                "",
+                "> 修士道具（修为丹/属性丹/悟道丹等）在上方背包里，用 `使用 道具名` 作用于修士本体。",
+            ]
         return "\n".join(lines)
 
     # =====================================================================
@@ -10358,12 +10385,8 @@ class PetParkPlugin(Star):
                 f"\n> 🎁 神榜前三每日可『领取神榜奖励』，随机天晶 💠 "
                 f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
             )
-        lines.append("\n> 仙途战力 = 修士境界/装备/洞天 + 结契灵宠贡献 + 道侣加成。")
+        lines.append("\n> 仙途战力 = 修士本体(境界/装备/洞天/悟性根骨) + 40%×结契灵宠 + 20%×坐骑，再乘道侣与洞天增益。")
         return "\n".join(lines)
-
-    def _adventure_rank(self, player: dict, group_id: str) -> str:
-        """仙途战力榜（本群）：即 `_rank` 的本地分支，逻辑已并入统一战力榜。"""
-        return self._rank(player, group_id, local=True)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:
         # 神榜为官方服跨群排行，以「群ID+用户ID」为唯一身份；无限服群不参与。
