@@ -8927,10 +8927,10 @@ class PetParkPlugin(Star):
             return f"『{name}』无法直接购买。"
         cost = it["price"] * count
         if self.store.get_currency(player, it["currency"]) < cost:
-            return f"购买 {count} 个『{name}』需 {cost} {it['currency']}，余额不足。"
+            return f"购买 {count} 个『{name}』需 {cost} {_cur_disp(it['currency'])}，余额不足。"
         self.store.add_currency(player, it["currency"], -cost)
         self.store.add_item(player, name, count)
-        return f"购买成功：{name} x{count}，花费 {cost} {it['currency']}。"
+        return f"购买成功：{name} x{count}，花费 {cost} {_cur_disp(it['currency'])}。"
 
     def _use_item(self, player: dict, tokens: list[str]) -> str:
         if len(tokens) < 2:
