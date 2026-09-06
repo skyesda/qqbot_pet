@@ -572,6 +572,10 @@ class PetParkPlugin(Star):
         self.song_enabled = bool(self.config.get("song_enabled", True))
         self.song_max_results = max(1, int(self.config.get("song_max_results", 50)))
         self.song_page_size = max(1, int(self.config.get("song_page_size", 10)))
+        # 单段语音时长上限（秒）：超长歌曲按此拆成多段分段发（允许为空/0 时默认 60）
+        self.song_max_seconds = max(1, int(self.config.get("song_max_seconds") or 60))
+        # 最长拆分段落数上限，防止极端长歌刷屏
+        self.song_max_segments = max(1, int(self.config.get("song_max_segments") or 8))
         self.alapi_token = str(self.config.get("alapi_token") or "").strip()
         if not self.alapi_token:
             # SkyeBot 运行时配置不合并 schema 默认值：新字段在已保存配置中缺失时兜底用默认密钥
@@ -4580,19 +4584,52 @@ class PetParkPlugin(Star):
             if not play_url:
                 await self._song_send(group_id, f"❌《{name}》暂无试听资源（可能是 VIP 曲目），换一首吧。")
                 return
-            silk_url = await self._song_make_silk(play_url)
-            if not silk_url:
+            mp3_bytes = await asyncio.to_thread(self._song_download, play_url)
+            if not mp3_bytes:
                 await self._song_send(group_id, "❌ 语音生成失败，请稍后再试。")
                 return
-            await self._song_send_voice(group_id, silk_url)
-            await self._song_send(group_id, f"🎵《{name}{by}》已用官方语音发出，请听～")
+            dur = await asyncio.to_thread(self._song_duration, mp3_bytes)
+            max_sec = max(1, int(self.song_max_seconds))
+            if dur <= 0 or dur <= max_sec:
+                # 时长未知或未超限：整段一次发出（原行为）
+                silk_url = await self._song_make_silk(mp3_bytes)
+                if not silk_url:
+                    await self._song_send(group_id, "❌ 语音生成失败，请稍后再试。")
+                    return
+                await self._song_send_voice(group_id, silk_url)
+                dur_txt = self._song_fmt_dur(dur) if dur > 0 else ""
+                tail = f"（时长 {dur_txt}）" if dur_txt else ""
+                await self._song_send(group_id, f"🎵《{name}{by}》已用官方语音发出，请听～{tail}")
+                return
+            # 超长：拆成多段，每段 ≤ max_sec 秒，逐段发送
+            n = int(dur // max_sec) + (1 if dur % max_sec else 0)
+            n = max(1, min(n, self.song_max_segments))
+            seg_sec = dur / n
+            ok = 0
+            for i in range(n):
+                ss = int(i * seg_sec)
+                t = int(min(seg_sec, dur - i * seg_sec))
+                silk_url = await self._song_make_silk(mp3_bytes, ss=ss, t=t)
+                if not silk_url:
+                    continue
+                await self._song_send_voice(group_id, silk_url)
+                ok += 1
+            if ok <= 0:
+                await self._song_send(group_id, "❌ 语音生成失败，请稍后再试。")
+            elif ok < n:
+                await self._song_send(group_id,
+                    f"🎵《{name}{by}》时长 {self._song_fmt_dur(dur)}，需分段发送，但第 {n - ok} 段生成失败，已发出 {ok} 段。")
+            else:
+                await self._song_send(group_id,
+                    f"🎵《{name}{by}》时长 {self._song_fmt_dur(dur)}，已分成 {n} 段发出，请依次收听～")
         except Exception as e:
             logger.warning(f"[petpark] 点歌选歌/发语音失败：{e}")
             await self._song_send(group_id, f"❌ 发送语音失败：{e}")
 
-    async def _song_make_silk(self, play_url: str) -> str | None:
-        """下载 mp3 → 转码 silk v3 → 放入临时目录，返回 QQ 可拉取的公网 URL。
+    async def _song_make_silk(self, mp3_bytes: bytes, ss: int = 0, t: int = -1) -> str | None:
+        """mp3 字节 → 转码 silk v3（可选按 ss/t 秒截取，用于分段）→ 写入临时目录，返回公网 URL。
 
+        ss/t 传给 graiax-silkcoder 的 ffmpeg 截取（t=-1 表示不截取整段）。
         优先用 graiax-silkcoder 在内存中转码（自带 ffmpeg，无需外部二进制）；
         库不可用时回退到外部二进制（需配置 silk_encoder_path）。
         silk 文件保留给 webadmin 对外供 QQ 拉取（由 TTL 清理）。
@@ -4600,24 +4637,11 @@ class PetParkPlugin(Star):
         name = uuid.uuid4().hex
         silk = self.song_silk_dir / f"{name}.silk"
         try:
-            # 1) 下载 mp3（读入内存）
-            req = urllib.request.Request(play_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                mp3_bytes = resp.read()
             if not mp3_bytes:
-                raise RuntimeError("mp3 下载为空")
-            # 2) mp3 → silk v3
-            silk_bytes = None
-            try:
-                import graiax.silkcoder as _sc  # 延迟导入，未安装时优雅降级
-                silk_bytes = _sc.encode(mp3_bytes, codec=_sc.Codec.ffmpeg, tencent=True,
-                                        audio_format="mp3", ffmpeg_para=["-ar", "24000"])
-            except ImportError:
-                silk_bytes = None
+                raise RuntimeError("mp3 内容为空")
+            silk_bytes = self._song_encode_silk(mp3_bytes, ss=ss, t=t)
             if not silk_bytes:
-                silk_bytes = self._song_encode_binary(mp3_bytes)
-                if not silk_bytes:
-                    raise RuntimeError("silk 转码失败（graiax-silkcoder 不可用且无外部编码器）")
+                raise RuntimeError("silk 转码失败（graiax-silkcoder 不可用且无外部编码器）")
             silk.write_bytes(silk_bytes)
             if not self.silk_url_base:
                 raise RuntimeError("未配置 silk_url_base")
@@ -4625,6 +4649,52 @@ class PetParkPlugin(Star):
         except Exception as e:
             logger.warning(f"[petpark] 点歌制作 silk 失败：{e}")
             return None
+
+    def _song_encode_silk(self, mp3_bytes: bytes, ss: int = 0, t: int = -1) -> bytes | None:
+        """mp3 字节 → silk v3 字节。优先 graiax-silkcoder（支持 ss/t 截段）；库不可用回退二进制整段转码。"""
+        try:
+            import graiax.silkcoder as _sc  # 延迟导入，未安装时优雅降级
+            try:
+                return _sc.encode(mp3_bytes, codec=_sc.Codec.ffmpeg, tencent=True,
+                                  audio_format="mp3", ss=ss, t=t, ffmpeg_para=["-ar", "24000"])
+            except TypeError:
+                # 旧版库无 ss/t 参数：退化为整段转码
+                return _sc.encode(mp3_bytes, codec=_sc.Codec.ffmpeg, tencent=True,
+                                  audio_format="mp3", ffmpeg_para=["-ar", "24000"])
+        except ImportError:
+            return self._song_encode_binary(mp3_bytes)
+
+    def _song_download(self, play_url: str) -> bytes:
+        """下载 mp3 并读入内存；为空抛 RuntimeError。"""
+        req = urllib.request.Request(play_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            mp3_bytes = resp.read()
+        if not mp3_bytes:
+            raise RuntimeError("mp3 下载为空")
+        return mp3_bytes
+
+    def _song_duration(self, mp3_bytes: bytes) -> float:
+        """用 ffprobe 读 mp3 精确时长（秒）；失败返回 0（视为未知长度 → 整段发，避免错误分段）。"""
+        try:
+            p = self.song_silk_dir / f"{uuid.uuid4().hex}.mp3"
+            p.write_bytes(mp3_bytes)
+            try:
+                r = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", str(p)],
+                    timeout=30, capture_output=True, text=True)
+                return float(r.stdout.strip())
+            finally:
+                p.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"[petpark] 点歌 ffprobe 测时长失败：{e}")
+            return 0.0
+
+    def _song_fmt_dur(self, sec: float) -> str:
+        """秒 → 中文时长，如 4m05s → \"4分05秒\"。"""
+        total = max(0, int(round(sec)))
+        m, s = divmod(total, 60)
+        return f"{m}分{s:02d}秒"
 
     def _song_encode_binary(self, mp3_bytes: bytes) -> bytes | None:
         """graiax-silkcoder 不可用时的兜底：ffmpeg→pcm→silk_v3_encoder（二进制需另行提供）。"""

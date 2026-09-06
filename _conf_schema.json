@@ -233,6 +233,18 @@
     "type": "int",
     "default": 10
   },
+  "song_max_seconds": {
+    "description": "点歌单段语音时长上限（秒）",
+    "hint": "QQ 官方语音单条有时长上限，默认 60。选中的歌曲超过该时长会自动拆成多段语音依次发出。",
+    "type": "int",
+    "default": 60
+  },
+  "song_max_segments": {
+    "description": "点歌超长拆分段落数上限",
+    "hint": "极端长曲最多拆成的语音段数，防止刷屏。默认 8。",
+    "type": "int",
+    "default": 8
+  },
   "silk_encoder_path": {
     "description": "silk 编码器绝对路径",
     "hint": "mp3→silk 的 silk_v3_encoder 二进制路径（服务器需预装 ffmpeg 与 silk_v3_encoder）。留空则自动回退为插件目录 bin/silk_v3_encoder。",
