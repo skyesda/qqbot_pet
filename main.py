@@ -6760,7 +6760,13 @@ class PetParkPlugin(Star):
         )
 
     def _apply_server_type(self, group_id: str, st: str) -> None:
-        """切换群服类型，并做家园数据迁移（官方↔无限）。"""
+        """切换群服类型，并做家园数据迁移（官方↔无限）。
+
+        group_id 统一先 resolve_group 到规范群：运行时 _is_infinite_group/_state_key
+        都按 resolve_group 后的键读取；若消息群 openid 被「绑定群」映射，直接写原始键
+        会把 server_type 写到映射前的孤儿键，导致切换永不生效（2026-09-06 修复）。
+        """
+        group_id = self.store.resolve_group(str(group_id))
         group = self.store.get_group(group_id)
         old = str(group.get("server_type", "official"))
         if old == st:
