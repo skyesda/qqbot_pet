@@ -8,6 +8,7 @@ import uuid
 from . import content as c
 from ..pet import new_pet
 from .combat import build_party, enemies, simulate
+from .power import compute_unified_power
 
 MENU = """## 灵契仙途
 修士问道，灵宠同行。
@@ -216,9 +217,10 @@ class AdventureService:
         if cmd in ("我的修士", "今日修行"):
             units = build_party(p, key)
             h = units[0]
+            pw = compute_unified_power(p, key)
             nxt = min(20, len(a["cleared"]) + 1)
             return (f"## 灵契仙途 · {a['profession']}\n{c.REALMS[a['realm']][0]} Lv{a['level']} · 修为 {a['cultivation']}\n"
-                    f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n生命 {h['max_hp']} · 攻击 {h['atk']} · 防御 {h['defense']}\n"
+                    f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n战力 {pw} · 生命 {h['max_hp']} · 攻击 {h['atk']} · 防御 {h['defense']}\n"
                     f"功法：{a['style']} · 灵宠：{units[1]['name']}（{a['pet_role']}）\n"
                     f"灵材 {a['ore']} · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3\n"
                     f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备")

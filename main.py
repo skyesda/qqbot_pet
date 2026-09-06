@@ -40,6 +40,8 @@ from .petpark.store import PetStore
 from .petpark.adventure import AdventureService, COMMANDS as ADVENTURE_COMMANDS
 from .petpark.admin_reset import handle_group_reset, COMMANDS as GROUP_RESET_COMMANDS
 from .petpark.adventure.service import MENU as ADVENTURE_MENU
+from .petpark.adventure.power import compute_unified_power
+from .petpark.adventure.content import REALMS as ADVENTURE_REALMS
 from .petpark.boardgames import BoardGames, COMMANDS as BOARD_COMMANDS
 
 # 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响灵契仙途主程序。
@@ -244,6 +246,7 @@ KNOWN_COMMANDS = {
     "宠物排行",
     "宠物神榜",
     "领取神榜奖励",
+    "仙途战力榜",
     # 副本 / 剧情
     "宠物副本",
     "进入副本",
@@ -3439,6 +3442,8 @@ class PetParkPlugin(Star):
             return self._rank(player, group_id, local=False)
         if cmd == "领取神榜奖励":
             return self._claim_rank_reward(player, group_id)
+        if cmd == "仙途战力榜":
+            return self._adventure_rank(player, group_id)
 
         # ---- 副本 ----
         if cmd == "宠物副本":
@@ -10296,6 +10301,35 @@ class PetParkPlugin(Star):
                 f"\n> 🎁 神榜前三每日可『领取神榜奖励』，随机钻石 💠 "
                 f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
             )
+        return "\n".join(lines)
+
+    def _adventure_rank(self, player: dict, group_id: str) -> str:
+        """仙途战力榜（加性）：按统一仙途战力排序本群修士。不动宠物排行。"""
+        source = self.store.players_in_group(group_id)
+        entries = []
+        for key, pl in source.items():
+            a = pl.get("adventure")
+            if not a:
+                continue
+            entries.append((pl.get("qq", "?"), a, compute_unified_power(pl, key)))
+        entries.sort(key=lambda x: x[2], reverse=True)
+        if not entries:
+            return "还没有道友登记战力。发送「踏入仙途」开始修行。"
+        my_pw = compute_unified_power(player, group_id)
+        my_rank = 1 + sum(1 for _, _, pw in entries if pw > my_pw)
+        lines = ["## 🏆 仙途战力榜（本群）",
+                 f"> 我的排名：**{my_rank}**　·　我的战力：**{self._fmt_power(my_pw)}**"]
+        top = entries[: self.rank_size]
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        lines.append("")
+        lines.append("| 排名 | 道友 | 职业 | 境界 | 战力 |")
+        lines.append("|:--:|:--:|:--:|:--:|--:|")
+        for i, (q, a, pw) in enumerate(top, 1):
+            rk = medals.get(i, str(i))
+            nick = str(a.get("name", q)).replace("|", "丨")
+            realm = ADVENTURE_REALMS[a["realm"]][0] if 0 <= a["realm"] < len(ADVENTURE_REALMS) else "?"
+            lines.append(f"| {rk} | {nick} | {a['profession']} | {realm} | {self._fmt_power(pw)} |")
+        lines.append("\n> 仙途战力 = 修士境界/装备/洞天 + 结契灵宠贡献 + 道侣加成。")
         return "\n".join(lines)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:
