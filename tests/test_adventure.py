@@ -26,10 +26,14 @@ class AdventureTests(unittest.TestCase):
 
     def create(self, profession='剑修', qq='a',group='g'):
         self.call('踏入仙途 '+profession,qq,group)
-        return self.store.get_player(qq,group)
+        p = self.store.get_player(qq,group)
+        # 默认为「杂灵根」（无属性、不参与克制）：让战斗类断言只测策略/数值，不被随机灵根属性影响。
+        p['adventure']['spirit_root'] = '杂灵根'
+        return p
 
     def test_onboarding_progress_equipment_and_legacy(self):
         p=self.store.get_player('a','g');pet=new_pet('狐狸','普通')
+        pet['element']='火'  # 固定属性，避免随机元素与土属性小猪发生克制，保证「历练1」稳定通关
         p.update(pets=[pet],active_pet=0,pet=pet,bag={'红药水':3})
         before=copy.deepcopy(pet)
         self.create()
@@ -258,6 +262,57 @@ class AdventureTests(unittest.TestCase):
         result=simulate(build_party(p,'a'),enemies(enc),0)
         self.assertTrue(result['won'])
         self.assertTrue(any('破阵削弱' in e for e in result['events']))
+
+    def _big_boss(self, element, hp=500000):
+        from qqbot_pet.petpark.adventure.combat import unit
+        b = unit('boss', '定桩', 1, hp, 0, 0, 70)
+        b.update(kind='boss', mechanic='strike', spawned=False, target='', element=element)
+        return [b]
+
+    def test_elemental_constants_and_single_line(self):
+        from qqbot_pet.petpark.adventure import content as c
+        from qqbot_pet.petpark.adventure.combat import counter_mult
+        self.assertEqual(c.hero_element({'spirit_root': '金灵根'}), '金')
+        self.assertIsNone(c.hero_element({'spirit_root': '杂灵根'}))   # 无属性
+        self.assertIsNone(c.hero_element({'spirit_root': '天灵根'}))
+        # 敌方：主题 boss 固定五行；合成敌方按强度轮换（永远有属性可克制）。
+        self.assertEqual(c.element_for({'boss': '森林狼王'}), '木')
+        self.assertEqual(c.element_for({'boss': '焚天金乌'}), '火')
+        self.assertIn(c.element_for({'boss': '渡劫天劫', 'scale': 10}), c._ELEM_CYCLE)
+        self.assertEqual(c.element_line('金'), '金 · 克木 · 畏火')
+        self.assertEqual(c.element_line('水'), '水 · 克火 · 畏土')
+        self.assertEqual(c.element_line(None), '无属性')
+        # 克制伤害系数：克敌×1.2 · 被克×0.85 · 无属性/无克制×1.0。
+        self.assertAlmostEqual(counter_mult({'element': '金'}, {'element': '木'}), 1.2)
+        self.assertAlmostEqual(counter_mult({'element': '金'}, {'element': '火'}), 0.85)
+        self.assertAlmostEqual(counter_mult({'element': '金'}, {'element': '土'}), 1.0)
+        self.assertAlmostEqual(counter_mult({'element': '金'}, {'element': None}), 1.0)
+        self.assertAlmostEqual(counter_mult({'element': None}, {'element': '木'}), 1.0)
+
+    def test_hero_element_counter_rates_damage(self):
+        p = self.create('剑修'); a = p['adventure']
+        a.update(level=30, spirit_root='金灵根', style='破阵')   # 金修；灵宠为无属性引路灵蝶
+        party = build_party(p, 'a')
+        total = {}
+        for elem in ('木', '土', '火'):
+            r = simulate(party, self._big_boss(elem), 3)
+            total[elem] = sum(m['damage'] for m in r['metrics'].values())
+        # 金克木 → 增益；火克金 → 减益；土 → 无克制。木 > 土 > 火。
+        self.assertGreater(total['木'], total['土'])
+        self.assertGreater(total['土'], total['火'])
+
+    def test_pet_element_counter_in_combat(self):
+        p = self.create('剑修'); a = p['adventure']
+        a.update(level=30, spirit_root='杂灵根')   # 修士无属性，排除干扰，只看灵宠
+        pet = new_pet('君主蛇', '普通'); pet['element'] = '木'   # SPECIES 默认即木
+        p['pets'] = [pet]; a['companion_pet_id'] = pet['pet_id']
+        party = build_party(p, 'a')
+        total = {}
+        for elem in ('土', '金'):
+            r = simulate(party, self._big_boss(elem), 3)
+            total[elem] = sum(m['damage'] for m in r['metrics'].values())
+        # 木克土 → 增益；金克木 → 减益。土 >> 金。
+        self.assertGreater(total['土'], total['金'])
 
     def test_tribulation_requires_material(self):
         p=self.create();a=p['adventure'];a.update(level=99)

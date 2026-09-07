@@ -1,5 +1,6 @@
 """Versioned, data-driven adventure content. No production player data required."""
-from ..data import _DUNGEON_DEFS, TRIBULATION_FAIL_COOLDOWN, MATERIAL_FRAGMENTS, MATERIAL_FRAGMENT_COMBINE
+from ..data import (_DUNGEON_DEFS, TRIBULATION_FAIL_COOLDOWN, MATERIAL_FRAGMENTS,
+                    MATERIAL_FRAGMENT_COMBINE, ELEMENT_RESTRAIN)
 
 VERSION = 6
 # Each tier is unlocked individually by a trial, never by another player.
@@ -53,6 +54,43 @@ SPIRIT_ROOTS = [
     {"name": "天灵根", "weight": 5, "atk": 0.12, "hp": 0.12, "def": 0.10, "speed": 0.08},
     {"name": "杂灵根", "weight": 20},
 ]
+
+# —— 灵根→五行属性：修士属性由灵根决定，参与战斗伤害克制（相克矩阵见 data.ELEMENT_RESTRAIN）。
+# 天/杂灵根为「无属性」：不克制别人、也不被克制，是稳定但无克制加成的选择。
+ELEMENT_OF_ROOT = {"金灵根": "金", "木灵根": "木", "水灵根": "水", "火灵根": "火", "土灵根": "土"}
+# 属性克制伤害系数：克制敌属伤害×(1+COUNTER_BONUS)，被敌属克制×(1-COUNTER_PENALTY)。
+COUNTER_BONUS = 0.20
+COUNTER_PENALTY = 0.15
+
+# 敌方五行映射：按 boss 主题指定；未命中的合成敌方（渡劫/器劫/试炼/深渊守卫…）按强度轮换，
+# 保证任何战斗都存在可被克制的属性，灵根/宠物属性不再「完全用不上」。
+_BOSS_ELEMENTS = {
+    "顽皮小猪": "土", "森林狼王": "木", "狂暴妖虎": "金", "骷髅守卫": "暗", "青铜傀儡": "金",
+    "怨灵鬼火": "火", "封印魔将": "暗", "堕落骨龙": "暗", "碧水蛟龙": "水", "暗月妖狐": "木",
+    "千年僵尸": "土", "炎狱魔犬": "火", "琉璃仙姬": "风", "织女星灵": "光", "深海巨鲲": "水",
+    "上古魔神": "暗", "虚空囚徒": "暗", "焚天火凤": "火", "噬神魔影": "暗", "陨落星神": "光",
+    "九幽骨龙": "暗", "焚天金乌": "火", "太古玄武": "土", "千机城主": "金",
+}
+_ELEM_CYCLE = ["金", "木", "水", "火", "土"]
+
+def hero_element(a):
+    """修士属性：由灵根决定；天/杂灵根返回 None（无属性，不参与克制）。"""
+    return ELEMENT_OF_ROOT.get(a.get("spirit_root", ""))
+
+def element_for(enc):
+    """敌方属性：主题 boss 固定五行；合成敌方按强度轮换，保证永远有克制可打。"""
+    name = enc.get("boss")
+    if name in _BOSS_ELEMENTS:
+        return _BOSS_ELEMENTS[name]
+    return _ELEM_CYCLE[int(float(enc.get("scale", 0)) * 100) % len(_ELEM_CYCLE)]
+
+def element_line(element):
+    """属性克制一句话：`金 · 克木 · 畏火`；无属性返回占位说明。"""
+    if not element:
+        return "无属性"
+    beats = "".join(ELEMENT_RESTRAIN.get(element, []))
+    feared = "".join(k for k, lst in ELEMENT_RESTRAIN.items() if element in lst)
+    return f"{element} · 克{beats or '—'} · 畏{feared or '—'}"
 # 渡劫材料：境界 realm r → r+1 消耗 TRIBULATION_MATERIALS[r]（9 个境界门槛）。
 TRIBULATION_MATERIALS = ["筑基丹", "结丹丹", "元婴丹", "化神丹", "炼虚草", "合体道果", "大乘舍利", "渡劫符", "真仙花"]
 

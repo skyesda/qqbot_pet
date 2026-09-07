@@ -2,7 +2,8 @@
 from copy import deepcopy
 import math
 import random
-from .content import PROFESSIONS, VERSION, TACTICS, SPIRIT_ROOTS, AFFIXES, tier_mult
+from .content import (PROFESSIONS, VERSION, TACTICS, SPIRIT_ROOTS, AFFIXES, tier_mult,
+                      hero_element, element_for, COUNTER_BONUS, COUNTER_PENALTY)
 from .. import data as legacy
 
 
@@ -15,6 +16,21 @@ def unit(uid, name, side, hp, atk, defense, speed=90, **extra):
 def projection(value, base, weight):
     # Monotonic per-stat compression: preserves growth direction, including reborn Lv1 pets.
     return weight * math.log2(1 + max(0, int(value)) / base)
+
+
+def counter_mult(source, target):
+    """属性克制伤害系数：克制敌属×1.2，被敌属克制×0.85，无/不相关则×1.0。
+
+    element 由修士灵根 / 宠物种类 / 敌方主题决定；双方皆无属性时恒为 1.0（不改变既有平衡）。
+    """
+    ea, ed = source.get("element"), target.get("element")
+    if not ea or not ed:
+        return 1.0
+    if legacy.restrains(ea, ed):
+        return 1 + COUNTER_BONUS
+    if legacy.restrains(ed, ea):
+        return 1 - COUNTER_PENALTY
+    return 1.0
 
 
 def hero_sheet(a, player, include_mount=True):
@@ -81,7 +97,7 @@ def build_party(player, key, side=0):
     a = player["adventure"]
     s = hero_sheet(a, player)
     hero = unit(key, a["name"], side, s["hp"], s["atk"], s["def"], s["speed"])
-    hero.update(role=a["profession"], style=a["style"])
+    hero.update(role=a["profession"], style=a["style"], element=hero_element(a))
     pet = next((p for p in player.get("pets", []) if p.get("pet_id") == a.get("companion_pet_id")), None)
     # A free guide makes the introduction playable without destroying/replacing legacy pets.
     pet = pet or {"nickname": "引路灵蝶", "hp_max": 800, "atk": 50, "def": 40, "intel": 30}
@@ -92,7 +108,7 @@ def build_party(player, key, side=0):
                      (12 + projection(pet.get("def", 0), 40, 8)) * pg, 95)
     companion.update(kind="pet", owner=key, role=a["pet_role"],
                      heal_power=(25 + projection(pet.get("intel", 0), 30, 12)) * pg,
-                     talent=pet.get("talent"), saved=False)
+                     talent=pet.get("talent"), saved=False, element=pet.get("element"))
     legacy_bonus = legacy.ARTIFACTS.get(pet.get('artifact'), {}).get('power', 0)
     legacy_bonus += sum(legacy.SKILLS.get(name, {}).get('power', 0) for name in pet.get('skills', []))
     companion['atk'] += int(projection(legacy_bonus, 10000, 6) * pg)
@@ -108,7 +124,8 @@ def enemies(encounter, members=1, scale_factor=1.0):
     s = encounter["scale"] * scale_factor
     boss = unit("boss", encounter["boss"], 1, 850 * s * members, 88 * s,
                 22 * s, 85)
-    boss.update(kind="boss", mechanic=encounter["mechanic"], spawned=False, target="")
+    boss.update(kind="boss", mechanic=encounter["mechanic"], spawned=False, target="",
+                element=element_for(encounter))
     return [boss]
 
 
@@ -129,6 +146,7 @@ def simulate(party, opposition, seed, max_rounds=24):
     def hit(source, target, raw, round_no, reflect=True, pierce=0):
         if target["hp"] <= 0:
             return 0
+        raw *= counter_mult(source, target)
         amount = max(1, int(raw * 100 / (100 + target["defense"] * (1 - pierce))))
         absorbed = min(target["shield"], amount)
         target["shield"] -= absorbed

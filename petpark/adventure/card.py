@@ -51,6 +51,14 @@ def card_html(player, key, equipment=False):
         + '</b></div>'
         for label, field in [("血量上限", "hp"), ("攻击", "atk"), ("防御", "def"),
                              ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
+    # 灵根／属性（五行相克）／神通：修士「道基」信息原图缺失，单独成行展示。
+    root = escape(str(a.get("spirit_root") or "无"))
+    element = escape(str(c.element_line(c.hero_element(a))))
+    tactics = escape(" · ".join(a.get("tactics", [])) or "无")
+    lineage = f'<div class="lineage">灵根 {root} · {element}<br>神通 {tactics}</div>'
+    # 结契灵宠属性：随战斗克制生效，原图未展示，补上并标出相克。
+    _companion = next((p for p in player.get("pets", []) if p.get("pet_id") == a.get("companion_pet_id")), None)
+    pet_element = c.element_line(_companion.get("element")) if _companion else "无属性"
     details = (f'本体 {bd["hero"]} ＋ 15%×灵宠 {bd["pet_contrib"]} ＋ 10%×坐骑 {bd["mount_contrib"]}'
                f'<br>道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}') if bd else ""
     # 升级进度：显示距下一级/破境还需多少修为，或已可突破/渡劫。
@@ -83,6 +91,7 @@ def card_html(player, key, equipment=False):
     .stats div{padding:9px 12px;background:#fcfaf0cc;border-bottom:1px solid #cabc98;display:flex;justify-content:space-between}
     .stats em{font-style:normal;font-size:12px;color:#3f8f4f;margin-left:6px}
     .resources,.details{font-size:14px;line-height:1.8;text-align:center;margin-top:13px;overflow-wrap:anywhere}
+    .lineage{font-size:13px;line-height:1.6;text-align:center;margin-top:11px;color:#6b5231;background:#fffaf0cc;border:1px solid #cabc98;padding:6px}
     .details{font-size:12px;color:#6c796e}.foot{display:block;font-size:13px;line-height:1.8;margin-top:16px;text-align:center}
     """
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'><style>" + card_theme.stylesheet("pet") + css +
@@ -96,7 +105,7 @@ def card_html(player, key, equipment=False):
             f'<div class="gear-column">{"".join(slots[3:])}</div></div>'
             f'<div class="stats">{stats}</div><div class="resources">修为 {a["cultivation"]} · 灵材 {a["ore"]}'
             f' · 体力 {a.get("stamina", 100)}/{a.get("stamina_max", 100)} · 功法 {escape(str(a["style"]))}<br>'
-            f'灵宠 {escape(str(bd["pet_name"] if bd else "引路灵蝶"))}'
+            f'灵宠 {escape(str(bd["pet_name"] if bd else "引路灵蝶"))}（{escape(str(pet_element))}）'
             f' · {escape(str(a.get("pet_role", "攻击")))} · 今日副本收益 {a.get("rewards", 0)}/8'
-            f' · 首领挑战 {a.get("world_hits", 0)}/3<br>{escape(str(level_msg))}<br>悟性点 {a.get("insight", 0)} 可用 · 属性上的 +N 为加点分配</div><div class="details">{details}</div>'
+            f' · 首领挑战 {a.get("world_hits", 0)}/3<br>{escape(str(level_msg))}<br>悟性点 {a.get("insight", 0)} 可用 · 属性上的 +N 为加点分配</div>{lineage}<div class="details">{details}</div>'
             f'<div class="foot">{footer}</div></div></body></html>')
