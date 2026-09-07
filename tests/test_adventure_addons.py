@@ -38,6 +38,7 @@ class AdventureAddonTests(unittest.TestCase):
         self.call('踏入仙途 ' + profession, qq, group)
         p = self.store.get_player(qq, group)
         p['adventure']['spirit_root'] = '杂灵根'  # 排除水灵根 cult 加速，保证数值可断言
+        p['diamond'] = 3000  # 保证可建宗
         return p
 
     # ---- 悟性点池：突破累积 + 加点 + 战力上升 + 不足拒绝 ----
@@ -133,7 +134,7 @@ class AdventureAddonTests(unittest.TestCase):
         a['last_train'] = self.now - 3600
         # 建宗升级练武堂，加入被动
         self.call('创建宗门 铁剑门')
-        s = self.store.sect_state('g')
+        s = self.store.my_sect('g', 'a')[1]
         s['level'] = 4
         s['buildings']['martial'] = 4
         self.assertIn('修为＋134', self.call('修士修炼'))  # 2*1.12*60 = 134.4 → 134

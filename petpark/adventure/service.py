@@ -22,7 +22,7 @@ MENU = """## 灵契仙途
 
 `我的修士`（看灵根/神通/战力）· `我的洞天` · `洞天突破`
 `修士配装 破阵` · `灵宠专长 辅助` · `道号` · `性别`
-`世界首领` · `仙途深渊` · `仙途切磋 @对方`
+`世界首领` · `仙途深渊` · `试炼秘境`（每日限次，掉落灵石/玄晶/材料碎片）· `仙途切磋 @对方`
 `战斗详情` · `今日修行` · `仙途战绩`
 完整指令（含原宠物玩法）请发送 `灵契仙途` 查看菜单图。"""
 
@@ -135,7 +135,7 @@ class AdventureService:
         pets = p.get("pets") or []
         return bool(pets and pets[0].get("love_state") == "已婚")
 
-    def reward(self, a, level, first=False, tier=None, partner=False):
+    def reward(self, a, level, first=False, tier=None, partner=False, player=None):
         self.daily(a)
         if a["rewards"] >= c.DAILY_REWARDS:
             return "今日8次副本收益已领取，仍可自由练习；首次通关记录保留。"
@@ -147,7 +147,20 @@ class AdventureService:
         if partner:
             cult = int(cult * 1.2)  # 道侣修为加速 +20%
         a["cultivation"] += cult
-        return f"获得灵材×{ore}、修为×{cult}{'（道侣加成）' if partner else ''}（今日收益 {a['rewards']}/8）。"
+        parts = [f"获得灵材×{ore}、修为×{cult}{'（道侣加成）' if partner else ''}"]
+        # 「副本+签到」附加渠道：通关给灵石/玄晶（随副本等级增长），并低概率掉材料碎片。
+        if player is not None:
+            coin = c.ADV_COIN_BASE + level * c.ADV_COIN_PER_LEVEL
+            jifen = c.ADV_JIFEN_BASE + level // c.ADV_JIFEN_PER_LEVEL
+            self.store.add_currency(player, "灵石", coin)
+            self.store.add_currency(player, "玄晶", jifen)
+            parts.append(f"灵石×{coin}、玄晶×{jifen}")
+            if random.random() < c.ADV_FRAGMENT_RATE:
+                frag = random.choice(list(c.MATERIAL_FRAGMENTS))
+                count = random.randint(*c.ADV_FRAGMENT_BUNDLE)
+                self.store.add_item(player, frag, count)
+                parts.append(f"『{frag}』×{count}")
+        return "、".join(parts) + f"（今日收益 {a['rewards']}/8）。"
 
     def _power_scale_factor(self, p, key):
         """统一战力→敌人数值缩放的灰度系数。开关为 0 时恒为 1.0（行为不变）。"""
@@ -495,7 +508,7 @@ class AdventureService:
                 if first:
                     a['cleared'].append(enc['id'])
                 eligible=a['rewards']<c.DAILY_REWARDS
-                text += "\n" + self.reward(a,enc['level'],first,partner=self._has_daolv(p))
+                text += "\n" + self.reward(a,enc['level'],first,partner=self._has_daolv(p), player=p)
                 if hard and eligible:
                     a['ore']+=2
                     text+=' 困难额外灵材＋2。'
@@ -518,14 +531,26 @@ class AdventureService:
             b['contributions'][key] = b['contributions'].get(key,0)+damage
             a['world_hits'] += 1
             a['ore'] += 3
-            return self.record(a,result,b['name']) + f"\n本次贡献{damage}伤害，获得3灵材。首领剩余{b['hp']}。" + ("\n首领已被击败！参与者可发送「首领奖励」。" if not b['hp'] else "")
+            self.store.add_currency(p, "灵石", c.BOSS_HIT_COIN)
+            self.store.add_currency(p, "玄晶", c.BOSS_HIT_JIFEN)
+            hit_pay = f"，灵石×{c.BOSS_HIT_COIN}、玄晶×{c.BOSS_HIT_JIFEN}"
+            if random.random() < c.BOSS_HIT_FRAGMENT_RATE:
+                frag = random.choice(list(c.MATERIAL_FRAGMENTS))
+                count = random.randint(*c.ADV_FRAGMENT_BUNDLE)
+                self.store.add_item(p, frag, count)
+                hit_pay += f"，『{frag}』×{count}"
+            return self.record(a,result,b['name']) + f"\n本次贡献{damage}伤害，获得3灵材{hit_pay}。首领剩余{b['hp']}。" + ("\n首领已被击败！参与者可发送「首领奖励」。" if not b['hp'] else "")
         if cmd == "首领奖励":
             b = self.world(group)
             self.require(b['hp']==0 and b['contributions'].get(key,0)>0, "需要参与并击败今日首领。")
             self.require(key not in b['claimed'], "今日首领奖励已领取。")
             b['claimed'].append(key)
             a['ore'] += 12
-            return "共同讨伐奖励：灵材×12，已到账。"
+            self.store.add_currency(p, "灵石", c.BOSS_KILL_COIN)
+            self.store.add_currency(p, "玄晶", c.BOSS_KILL_JIFEN)
+            return f"共同讨伐奖励：灵材×12、灵石×{c.BOSS_KILL_COIN}、玄晶×{c.BOSS_KILL_JIFEN}，已到账。"
+        if cmd == "试炼秘境":
+            return self.trial(p, key, arg)
         if cmd in ("仙途深渊", "深渊抉择", "深渊收手"):
             return self.deep(p,key,cmd,arg)
         if cmd in ("仙途切磋", "接受切磋", "拒绝切磋"):
@@ -582,15 +607,59 @@ class AdventureService:
         result = simulate(party,enemies(self.encounter(c.RAIDS[team['name']],team.get('tier',0)),len(team['members']),scale_factor=self._power_scale_factor(self.player(key),key)),random.randrange(2**32))
         messages=[]
         for k in team['members']:
-            member=self.player(k)['adventure']
+            pk=self.player(k)
+            member=pk['adventure']
             self.record(member,result,team['name'])
             if result['won']:
                 if 'raid:'+team['name'] not in member.setdefault('milestones',[]):
                     member['milestones'].append('raid:'+team['name'])
-                messages.append(member['profession']+'：'+self.reward(member,c.RAIDS[team['name']]['level'],tier=team.get('tier',0),partner=self._has_daolv(self.player(k))))
+                messages.append(member['profession']+'：'+self.reward(member,c.RAIDS[team['name']]['level'],tier=team.get('tier',0),partner=self._has_daolv(pk), player=pk))
         title=team['name']
         del teams[tid]
         return self.report({'title':title,'result':result})+'\n'+'\n'.join(messages)
+
+    def trial(self, p, key, arg):
+        """试炼秘境：每日限次（TRIAL_DAILY）的独立副本，通关给灵石/玄晶/修为 + 高碎片率。
+
+        与 8 次/日副本收益互不影响（累计上限各算各的），作为「额外渠道」保平衡。
+        """
+        a = p['adventure']
+        t = a.setdefault("trial", {})
+        day = self.today()
+        if t.get("day") != day:
+            t.clear()
+            t["day"] = day
+            t["used"] = 0
+        remain = c.TRIAL_DAILY - t.get("used", 0)
+        if remain <= 0:
+            return f"今日试炼秘境已挑战 {c.TRIAL_DAILY} 次，明日再来。"
+        a["trial"] = t
+        floor = int(arg) if arg.isdigit() else 1
+        self.require(1 <= floor <= 5, "试炼秘境 1—5 层。")
+        # 敌人强度随「仙缘天阶」层数缩放，比世界首领略温和一点，稳拿但有限。
+        enc = self.encounter(
+            dict(boss=f'试炼守卫·{floor}层', scale=1 + c.HEAVENS[a['heaven']]['level'] * .15 * floor,
+                 mechanic=['strike', 'shield', 'burn', 'pack', 'rage'][floor - 1]),
+            a['heaven'])
+        result = simulate(build_party(p, key), enemies(enc, scale_factor=self._power_scale_factor(p, key)),
+                          random.randrange(2 ** 32), max_rounds=14)
+        text = self.record(a, result, f'试炼秘境 {floor}层')
+        t['used'] = t.get('used', 0) + 1
+        if not result['won']:
+            return text + f'\n挑战失利，本次消耗 1 次（今日剩 {c.TRIAL_DAILY - t["used"]} 次）。'
+        coin = c.TRIAL_COIN_BASE + a['level'] * c.TRIAL_COIN_PER_LEVEL
+        jifen = c.TRIAL_JIFEN_BASE + a['level'] // c.TRIAL_JIFEN_PER_LEVEL
+        cult = c.TRIAL_CULT_BASE + a['level'] * c.TRIAL_CULT_PER_LEVEL
+        self.store.add_currency(p, "灵石", coin)
+        self.store.add_currency(p, "玄晶", jifen)
+        a['cultivation'] += cult
+        pay = f"灵石×{coin}、玄晶×{jifen}、修为×{cult}"
+        if random.random() < c.TRIAL_FRAGMENT_RATE:
+            frag = random.choice(list(c.MATERIAL_FRAGMENTS))
+            count = random.randint(*c.TRIAL_FRAGMENT_BUNDLE)
+            self.store.add_item(p, frag, count)
+            pay += f"，『{frag}』×{count}"
+        return text + f'\n🏆 试炼通关！获得{pay}（今日剩 {c.TRIAL_DAILY - t["used"]} 次）。'
 
     def deep(self,p,key,cmd,arg):
         a=p['adventure']
@@ -599,7 +668,7 @@ class AdventureService:
             floor=a['deep']['floor']
             tier=a['deep'].get('tier',0)
             a['deep']=None
-            return '已离开深渊。'+(self.reward(a,floor*3,tier=tier,partner=self._has_daolv(p)) if floor else '尚未通关，没有奖励。')
+            return '已离开深渊。'+(self.reward(a,floor*3,tier=tier,partner=self._has_daolv(p), player=p) if floor else '尚未通关，没有奖励。')
         if cmd=='仙途深渊' and not a['deep']:
             a['deep']={'tier':a['heaven'],'floor':0,'party':build_party(p,key),'seed':random.randrange(2**32)}
         self.require(a['deep'],'先发送「仙途深渊」。')
@@ -617,7 +686,7 @@ class AdventureService:
         text=self.record(a,result,f'仙途深渊 {floor}层')
         if not result['won']:
             passed=d['floor']; a['deep']=None
-            return text+'\n'+(self.reward(a,passed,tier=d.get("tier",0),partner=self._has_daolv(p)) if passed else '本轮结束，没有消耗收益次数。')
+            return text+'\n'+(self.reward(a,passed,tier=d.get("tier",0),partner=self._has_daolv(p), player=p) if passed else '本轮结束，没有消耗收益次数。')
         d['floor']=floor
         d['party']=[u for u in result['units'] if u['side']==0]
         for u in d['party']: u['burn']=0
@@ -625,7 +694,7 @@ class AdventureService:
             if 'deep:5' not in a['milestones']:
                 a['milestones'].append('deep:5')
             a['deep']=None
-            return text+'\n'+self.reward(a,20,tier=d.get("tier",0),partner=self._has_daolv(p))
+            return text+'\n'+self.reward(a,20,tier=d.get("tier",0),partner=self._has_daolv(p), player=p)
         return text+'\n深渊抉择 强攻 / 固守 / 回春，或深渊收手。'
 
     def duel(self,group,key,cmd,arg):

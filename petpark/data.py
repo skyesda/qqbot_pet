@@ -738,6 +738,28 @@ for _q in QUALITIES:
         "effect": {},
     }
 
+# 修士材料碎片（历练/副本/组队/深渊/洞天通关掉落，免费渠道）：每 N 片合成 1 份对应材料。
+# 不可直接使用，仅作合成素材。名字与品质碎片（XXX碎片）不同源，避免冲突。
+MATERIAL_FRAGMENT_COMBINE = 10  # 合成 1 份材料所需碎片数
+MATERIAL_FRAGMENTS = {          # 碎片名 → 对应材料
+    "体力丹碎片": "体力丹",
+    "聚灵丹碎片": "聚灵丹",
+    "蓄力丸碎片": "蓄力丸",
+    "醒神丹碎片": "醒神丹",
+    "涤魂散碎片": "涤魂散",
+    "小经验书碎片": "小经验书",
+    "中经验书碎片": "中经验书",
+}
+for _frag, _mat in MATERIAL_FRAGMENTS.items():
+    ITEMS[_frag] = {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "材料",
+        "usable": False,
+        "desc": f"【{_mat}】的材料碎片，{MATERIAL_FRAGMENT_COMBINE} 片可合成 1 份【{_mat}】。",
+        "effect": {},
+    }
+
 # 品质卡合成链（10 张低一级卡合成 1 张高一级卡；顶级创世→混沌需 20 张，刻意加码）。
 # 仅对实际存在的品质卡建立映射；缺少低级卡时链从第一个存在的卡开始。
 TOP_CARD_NAME = "混沌卡"
@@ -1150,17 +1172,17 @@ ITEMS.update({
         "effect": {},
     },
     "大乘舍利": {
-        "price": 1200000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "price": 800000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "合体破入大乘的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
     "渡劫符": {
-        "price": 2400000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "price": 900000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "大乘破入渡劫的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
     "真仙花": {
-        "price": 4800000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "price": 960000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "渡劫破入真仙的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
@@ -1195,17 +1217,17 @@ ITEMS.update({
         "effect": {},
     },
     "圣辉玉": {
-        "price": 1800000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "price": 950000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
         "desc": "神器破入圣器的装备进阶材料（装备进阶自动消耗）。",
         "effect": {},
     },
     "混沌精": {
-        "price": 3600000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "price": 975000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
         "desc": "圣器破入至宝的装备进阶材料（装备进阶自动消耗）。",
         "effect": {},
     },
     "鸿蒙紫气": {
-        "price": 6000000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "price": 990000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
         "desc": "至宝破入鸿蒙的装备进阶材料（装备进阶自动消耗）。",
         "effect": {},
     },

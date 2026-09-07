@@ -1,16 +1,24 @@
-"""群级共享宗门：任务楼 / 北秘境 / 南金库 / 西仓库 / 星辰阁 + 帮贡经济。
+"""群级多宗门：任务楼 / 北秘境 / 南金库 / 西仓库 / 星辰阁 + 帮贡经济 + 活跃度扩容。
 
-修士为主、灵宠为次。宗门是每群一个的共享组织，成员积累个人帮贡，
-宗门共享库存（treasury）用于升级与星辰阁合成。战斗复用 combat.simulate。
+修士为主、灵宠为次。一个群可立多个宗门；每人只能加入一个宗门。建宗消耗 2000 天晶。
+宗门人数上限=10 起步，每累计 40 活跃度扩招 1 人，封顶 20（活跃度来自成员做任务/探索/镇守）。
+成员积累个人帮贡，宗门共享库存（treasury）用于升级与星辰阁合成。战斗复用 combat.simulate。
 所有守卫经 service.require / RuleError，由 service.handle 深拷贝回滚兜底。
 """
 from __future__ import annotations
 
 import random
 from . import content as c
-from ..pet import new_pet
 
 SEC_MAX_LEVEL = 10
+
+# 人数上限：基础 10，每 ACTIVITY_PER_CAP 活跃度 +1，封顶 SECT_CAP_MAX。
+SECT_BASE_CAP = 10
+SECT_CAP_MAX = 20
+ACTIVITY_PER_CAP = 40
+
+# 活跃度加成：任务/探索/镇守（胜负不同）。
+_ACTIVITY = {"mission": 2, "explore": 3, "guard_win": 5, "guard_loss": 1}
 
 # 建筑：只有"交互类"单独做指令；被动类在数值结算点乘一个宗门系数。
 BUILDINGS = {
@@ -74,6 +82,19 @@ def _pay_treasury(s, amount):
     return True
 
 
+def sect_cap(s) -> int:
+    """当前人数上限：基础 10，每 ACTIVITY_PER_CAP 活跃度 +1，封顶。"""
+    return min(SECT_CAP_MAX, SECT_BASE_CAP + int(s.get("activity", 0)) // ACTIVITY_PER_CAP)
+
+
+def _new_sect_id(store) -> str:
+    sects = store._data.setdefault("sects", {})
+    n = 1
+    while f"sect{n}" in sects:
+        n += 1
+    return f"sect{n}"
+
+
 def _guard_encounter(service, s):
     """南金库镇守战：敌人数值随宗门等级上涨。"""
     lv = s.get("level", 1)
@@ -108,144 +129,43 @@ def _explore_reward(service, s, a):
 
 def handle(service, group, key, cmd, args, p, a):
     """宗门指令分发入口（由 service._handle 在 cmd in SECT_COMMANDS 时调用）。"""
-    s = service.store.sect_state(group)
     qq = str(p["qq"])
-    day = _today(service)
-    _reset_daily(s, day)
 
     if cmd == "创建宗门":
-        service.can_edit(key)
-        service.require(not s.get("name"), "本群已有宗门。请先「查看宗门」。")
-        name = args[0] if args else ""
-        service.require(name, "创建宗门 名称（1-8字）。")
-        service.require(len(name) <= 8, "宗门名最多8个字。")
-        s.update(name=name, founder=qq, created_at=int(service.clock()),
-                 members={qq: {"role": "帮主", "contribution": 0, "joined_at": int(service.clock())}},
-                 pending={})
-        return f"宗门「{name}」已创立！发送「申请入宗」让同修加入，或「宗门任务」开始赚帮贡。"
+        return _create(service, group, key, p, a, qq, args)
     if cmd == "申请入宗":
-        service.can_edit(key)
-        service.require(s.get("name"), "本群还没有宗门。可发送「创建宗门 名称」。")
-        service.require(not _role_of(s, qq), "你已是宗门成员。")
-        service.require(qq not in (s.get("pending") or {}), "申请已提交，请等待审批。")
-        s.setdefault("pending", {})[qq] = int(service.clock())
-        return f"已提交入宗申请，等待「{s['name']}」帮主/长老审批。"
-    if cmd == "同意入宗":
-        service.can_edit(key)
-        service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可审批申请。")
-        service.require(s.get("name"), "本群还没有宗门。")
-        target = args[0] if args else ""
-        service.require(target in (s.get("pending") or {}), "没有该成员的待审批申请。")
-        s["pending"].pop(target, None)
-        s["members"].setdefault(target, {"role": "帮众", "contribution": 0, "joined_at": int(service.clock())})
-        return f"已同意 {target} 入宗。"
-    if cmd == "拒绝入宗":
-        service.can_edit(key)
-        service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可审批申请。")
-        target = args[0] if args else ""
-        if target in (s.get("pending") or {}):
-            s["pending"].pop(target, None)
-            return f"已拒绝 {target} 的入宗申请。"
-        return "没有该成员的待审批申请。"
-    if cmd == "退出宗门":
-        service.can_edit(key)
-        service.require(_role_of(s, qq), "你还不是宗门成员。")
-        service.require(_role_of(s, qq) != "帮主", "帮主不可退出，请先转让/解散或被免职。")
-        s["members"].pop(qq, None)
-        return "你已退出宗门。"
-    if cmd == "查看宗门":
-        service.require(s.get("name"), "本群还没有宗门。可发送「创建宗门 名称」。")
-        lv = s.get("level", 1)
-        members = s.get("members", {})
-        pending = len(s.get("pending") or {})
-        building_names = "、".join(_building_name_sorted(s) + ["练武堂", "铁匠铺", "研究院"])
-        lines = [f"## 宗门 · {s['name']}（Lv{lv}）",
-                 f"帮贡库存 {s.get('treasury', 0)} · 成员 {len(members)} · 待审批 {pending}",
-                 f"公告：{s.get('announce') or '（暂无）'}",
-                 f"建筑：{building_names}",
-                 f"累计贡献 {s.get('total_contribution', 0)}"]
-        return "\n".join(lines)
-    if cmd == "宗门名册":
-        service.require(s.get("name"), "本群还没有宗门。")
-        members = sorted((s.get("members") or {}).items(),
-                         key=lambda kv: (-int(kv[1].get("contribution", 0))))
-        if not members:
-            return "宗门暂无成员。"
-        return "\n".join(f"- {qq} 【{m['role']}】贡献 {int(m.get('contribution', 0))}"
-                         for qq, m in members)
-    if cmd == "宗门公告":
-        service.can_edit(key)
-        service.require(_role_of(s, qq) == "帮主", "只有帮主可修改公告。")
-        service.require(s.get("name"), "本群还没有宗门。")
-        text = " ".join(args)
-        service.require(len(text) <= 100, "公告最多100字。")
-        s["announce"] = text
-        return f"宗门公告已更新：{text}"
-    if cmd == "宗门升级":
-        service.can_edit(key)
-        service.require(_role_of(s, qq) == "帮主", "只有帮主可升级宗门。")
-        service.require(s.get("name"), "本群还没有宗门。")
-        lv = s.get("level", 1)
-        service.require(lv < SEC_MAX_LEVEL, f"宗门已达最高 Lv{SEC_MAX_LEVEL}。")
-        cost = 500 + lv * 1000
-        service.require(s.get("treasury", 0) >= cost, f"升级到 Lv{lv+1} 需要 {cost} 帮贡，当前 {s.get('treasury', 0)}。")
-        s["treasury"] -= cost
-        s["level"] = lv + 1
-        return f"宗门升至 Lv{lv+1}！已解锁/强化对应建筑。"
-    if cmd == "宗门捐献":
-        service.can_edit(key)
-        service.require(_role_of(s, qq), "只有宗门成员可捐献。")
-        service.require(s.get("name"), "本群还没有宗门。")
-        count = 1
-        if args and args[0].isdigit():
-            count = max(1, int(args[0]))
-        have = a.get("ore", 0)
-        count = min(count, have)
-        service.require(count > 0, f"灵材不足，当前 {have}。")
-        a["ore"] = have - count
-        contrib = count * 10
-        _treasury_split(s, qq, contrib)
-        return f"捐献灵材×{count}，宗门帮贡 +{contrib}。"
-    if cmd == "封官":
-        service.can_edit(key)
-        service.require(_role_of(s, qq) == "帮主", "只有帮主可封官。")
-        service.require(s.get("name"), "本群还没有宗门。")
-        target = args[0] if args else ""
-        role = args[1] if len(args) > 1 else "长老"
-        service.require(target in (s.get("members") or {}), "该成员不在宗门。")
-        service.require(role in ("长老", "帮众"), "封官 QQ 长老 / 帮众。")
-        service.require(_role_of(s, target) != "帮主", "不可封免帮主。")
-        s["members"][target]["role"] = role
-        return f"已把 {target} 设为【{role}】。"
-    if cmd == "免职":
-        service.can_edit(key)
-        service.require(_role_of(s, qq) == "帮主", "只有帮主可免职。")
-        service.require(s.get("name"), "本群还没有宗门。")
-        target = args[0] if args else ""
-        service.require(target in (s.get("members") or {}), "该成员不在宗门。")
-        service.require(_role_of(s, target) != "帮主", "不可免职帮主。")
-        s["members"][target]["role"] = "帮众"
-        return f"已把 {target} 免职为帮众。"
-    if cmd == "踢出宗门":
-        service.can_edit(key)
-        service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可踢人。")
-        service.require(s.get("name"), "本群还没有宗门。")
-        target = args[0] if args else ""
-        service.require(target in (s.get("members") or {}), "该成员不在宗门。")
-        service.require(_role_of(s, target) != "帮主", "不可踢出帮主。")
-        s["members"].pop(target, None)
-        s.setdefault("pending", {}).pop(target, None)
-        return f"已把 {target} 移出宗门。"
+        return _apply(service, group, key, p, qq, args)
     if cmd == "宗门榜":
-        sects = service.store._data.setdefault("sects", {})
-        ranked = sorted((x for x in sects.values() if x.get("name")),
-                        key=lambda x: (-int(x.get("total_contribution", 0)), x.get("name", "")))[:10]
-        if not ranked:
-            return "暂无宗门上榜。"
-        return "\n".join(f"{i}. {x['name']}（Lv{x.get('level',1)}）· 贡献 {int(x.get('total_contribution',0))}"
-                         for i, x in enumerate(ranked, 1))
+        return _roster_all(service, group)
 
-    # ---- 以下为建筑交互（计体力/帮贡/每日） ----
+    # 其余指令都针对"我所在宗门"。
+    sid, s = service.store.my_sect(group, qq)
+    if not s or not s.get("name"):
+        return "本群还没有你加入的宗门。可「创建宗门 名称」或「申请入宗 宗名」。"
+    _reset_daily(s, _today(service))
+
+    if cmd == "同意入宗":
+        return _approve(service, group, key, p, qq, s, sid, args)
+    if cmd == "拒绝入宗":
+        return _reject(service, key, p, qq, s, args)
+    if cmd == "退出宗门":
+        return _quit(service, group, key, p, qq, s, sid)
+    if cmd == "查看宗门":
+        return _view(service, s)
+    if cmd == "宗门名册":
+        return _roster(service, s)
+    if cmd == "宗门公告":
+        return _announce(service, key, p, qq, s, args)
+    if cmd == "宗门升级":
+        return _upgrade(service, key, p, qq, s)
+    if cmd == "宗门捐献":
+        return _donate(service, key, p, a, qq, s, args)
+    if cmd == "封官":
+        return _promote(service, key, p, qq, s, args)
+    if cmd == "免职":
+        return _demote(service, key, p, qq, s, args)
+    if cmd == "踢出宗门":
+        return _kick(service, group, key, p, qq, s, sid, args)
     if cmd == "宗门任务":
         return _do_mission(service, key, p, a, s, qq)
     if cmd == "宗门探索":
@@ -259,6 +179,177 @@ def handle(service, group, key, cmd, args, p, a):
     return "未知宗门指令。"
 
 
+def _create(service, group, key, p, a, qq, args):
+    service.can_edit(key)
+    name = args[0] if args else ""
+    service.require(name, "创建宗门 名称（1-8字）。")
+    service.require(len(name) <= 8, "宗门名最多8个字。")
+    service.require(not service.store.my_sect(group, qq)[0], "你已在本群加入宗门，一人只能加入一个宗门。")
+    service.require(not service.store.sect_by_name(group, name)[0], f"本群已有宗门「{name}」，请换一个名字。")
+    service.require(service.store.get_currency(p, "天晶") >= 2000, "创建宗门需要 2000 天晶（天晶由生辰盛典/首领奖励等获得）。")
+    sid = _new_sect_id(service.store)
+    service.store.add_currency(p, "天晶", -2000)
+    s = service.store._default_sect_state(group=service.store.resolve_group(str(group)), name=name)
+    s["level"] = 1
+    s["treasury"] = 0
+    s.update(founder=qq, created_at=int(service.clock()),
+             members={qq: {"role": "帮主", "contribution": 0, "joined_at": int(service.clock())}},
+             pending={})
+    service.store._data.setdefault("sects", {})[sid] = s
+    service.store.bind_sect(group, qq, sid)
+    return f"宗门「{name}」已创立！发送「申请入宗 宗名」招同修，或「宗门任务」开始赚帮贡。"
+
+
+def _apply(service, group, key, p, qq, args):
+    service.can_edit(key)
+    name = args[0] if args else ""
+    service.require(name, "申请入宗 宗名（加哪个宗门）。发送「宗门榜」查看本群宗门。")
+    sid, s = service.store.sect_by_name(group, name)
+    service.require(sid, f"本群没有「{name}」这个宗门。可「宗门榜」查看现有宗门。")
+    service.require(not service.store.my_sect(group, qq)[0], "你已在本群加入宗门，一人只能加入一个宗门。")
+    service.require(qq not in (s.get("pending") or {}), "申请已提交，请等待审批。")
+    if len(s.get("members") or {}) >= sect_cap(s):
+        service.require(False, f"「{s['name']}」人数已满（{sect_cap(s)}人），可让宗门做任务/探索提升活跃度扩招，或另寻宗门。")
+    s.setdefault("pending", {})[qq] = int(service.clock())
+    return f"已提交入宗申请，等待「{s['name']}」帮主/长老审批。"
+
+
+def _approve(service, group, key, p, qq, s, sid, args):
+    service.can_edit(key)
+    service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可审批申请。")
+    target = args[0] if args else ""
+    service.require(target in (s.get("pending") or {}), "没有该成员的待审批申请。")
+    service.require(not service.store.my_sect(group, target)[0], f"{target} 已加入其他宗门。")
+    if len(s.get("members") or {}) >= sect_cap(s):
+        service.require(False, f"宗门人数已满（{sect_cap(s)}人），无法再招人。")
+    s["pending"].pop(target, None)
+    s["members"].setdefault(target, {"role": "帮众", "contribution": 0, "joined_at": int(service.clock())})
+    service.store.bind_sect(group, target, sid)
+    return f"已同意 {target} 入宗。"
+
+
+def _reject(service, key, p, qq, s, args):
+    service.can_edit(key)
+    service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可审批申请。")
+    target = args[0] if args else ""
+    if target in (s.get("pending") or {}):
+        s["pending"].pop(target, None)
+        return f"已拒绝 {target} 的入宗申请。"
+    return "没有该成员的待审批申请。"
+
+
+def _quit(service, group, key, p, qq, s, sid):
+    service.can_edit(key)
+    service.require(_role_of(s, qq), "你还不是宗门成员。")
+    service.require(_role_of(s, qq) != "帮主", "帮主不可退出，请先转让/解散或被免职。")
+    s["members"].pop(qq, None)
+    service.store.unbind_sect(group, qq)
+    return "你已退出宗门。"
+
+
+def _view(service, s):
+    lv = s.get("level", 1)
+    members = s.get("members") or {}
+    pending = len(s.get("pending") or {})
+    building_names = "、".join(_building_name_sorted(s))
+    return "\n".join([
+        f"## 宗门 · {s['name']}（Lv{lv}）",
+        f"帮贡库存 {s.get('treasury', 0)} · 成员 {len(members)}/{sect_cap(s)} · 待审批 {pending}",
+        f"活跃度 {int(s.get('activity', 0))}（每 {ACTIVITY_PER_CAP} 点扩招 1 人，封顶 {SECT_CAP_MAX}）",
+        f"公告：{s.get('announce') or '（暂无）'}",
+        f"建筑：{building_names}",
+        f"累计贡献 {s.get('total_contribution', 0)}",
+    ])
+
+
+def _roster(service, s):
+    members = sorted((s.get("members") or {}).items(),
+                     key=lambda kv: (-int(kv[1].get("contribution", 0))))
+    if not members:
+        return "宗门暂无成员。"
+    return "\n".join(f"- {qq} 【{m['role']}】贡献 {int(m.get('contribution', 0))}"
+                     for qq, m in members)
+
+
+def _roster_all(service, group):
+    sects = service.store.sects_in_group(group)
+    ranked = sorted(sects, key=lambda x: (-int(x.get("total_contribution", 0)), x.get("name", "")))[:10]
+    if not ranked:
+        return "本群暂无宗门。可「创建宗门 名称」立门。"
+    return "\n".join(f"{i}. {x['name']}（Lv{x.get('level', 1)}）· {len(x.get('members') or {})}人 · 贡献 {int(x.get('total_contribution', 0))}"
+                     for i, x in enumerate(ranked, 1))
+
+
+def _announce(service, key, p, qq, s, args):
+    service.can_edit(key)
+    service.require(_role_of(s, qq) == "帮主", "只有帮主可修改公告。")
+    text = " ".join(args)
+    service.require(len(text) <= 100, "公告最多100字。")
+    s["announce"] = text
+    return f"宗门公告已更新：{text}"
+
+
+def _upgrade(service, key, p, qq, s):
+    service.can_edit(key)
+    service.require(_role_of(s, qq) == "帮主", "只有帮主可升级宗门。")
+    lv = s.get("level", 1)
+    service.require(lv < SEC_MAX_LEVEL, f"宗门已达最高 Lv{SEC_MAX_LEVEL}。")
+    cost = 500 + lv * 1000
+    service.require(s.get("treasury", 0) >= cost, f"升级到 Lv{lv+1} 需要 {cost} 帮贡，当前 {s.get('treasury', 0)}。")
+    s["treasury"] -= cost
+    s["level"] = lv + 1
+    return f"宗门升至 Lv{lv+1}！已解锁/强化对应建筑。"
+
+
+def _donate(service, key, p, a, qq, s, args):
+    service.can_edit(key)
+    service.require(_role_of(s, qq), "只有宗门成员可捐献。")
+    count = 1
+    if args and args[0].isdigit():
+        count = max(1, int(args[0]))
+    have = a.get("ore", 0)
+    count = min(count, have)
+    service.require(count > 0, f"灵材不足，当前 {have}。")
+    a["ore"] = have - count
+    contrib = count * 10
+    _treasury_split(s, qq, contrib)
+    return f"捐献灵材×{count}，宗门帮贡 +{contrib}。"
+
+
+def _promote(service, key, p, qq, s, args):
+    service.can_edit(key)
+    service.require(_role_of(s, qq) == "帮主", "只有帮主可封官。")
+    target = args[0] if args else ""
+    role = args[1] if len(args) > 1 else "长老"
+    service.require(target in (s.get("members") or {}), "该成员不在宗门。")
+    service.require(role in ("长老", "帮众"), "封官 QQ 长老 / 帮众。")
+    service.require(_role_of(s, target) != "帮主", "不可封免帮主。")
+    s["members"][target]["role"] = role
+    return f"已把 {target} 设为【{role}】。"
+
+
+def _demote(service, key, p, qq, s, args):
+    service.can_edit(key)
+    service.require(_role_of(s, qq) == "帮主", "只有帮主可免职。")
+    target = args[0] if args else ""
+    service.require(target in (s.get("members") or {}), "该成员不在宗门。")
+    service.require(_role_of(s, target) != "帮主", "不可免职帮主。")
+    s["members"][target]["role"] = "帮众"
+    return f"已把 {target} 免职为帮众。"
+
+
+def _kick(service, group, key, p, qq, s, sid, args):
+    service.can_edit(key)
+    service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可踢人。")
+    target = args[0] if args else ""
+    service.require(target in (s.get("members") or {}), "该成员不在宗门。")
+    service.require(_role_of(s, target) != "帮主", "不可踢出帮主。")
+    s["members"].pop(target, None)
+    s.setdefault("pending", {}).pop(target, None)
+    service.store.unbind_sect(group, target)
+    return f"已把 {target} 移出宗门。"
+
+
 def _building_name_sorted(s):
     """已解锁的交互建筑名（按解锁顺序）。"""
     lv = s.get("level", 1)
@@ -269,9 +360,9 @@ def _building_name_sorted(s):
     return names
 
 
-def passive_level(service, group, building):
-    """返回某成员在宗门的被动建筑等级（未加入宗门=0，用于纯数值加成）。"""
-    s = service.store.sect_state(group, create=False)
+def passive_level(service, group, qq, building):
+    """某成员在其所在宗门的被动建筑等级（未加入/未解锁=0，用于纯数值加成）。"""
+    _, s = service.store.my_sect(group, qq)
     if not s or not s.get("name"):
         return 0
     b = (s.get("buildings") or {}).get(building, 1)
@@ -280,10 +371,7 @@ def passive_level(service, group, building):
 
 def member_passive(service, group, qq, building):
     """仅宗门成员享受被动加成，非成员返回0。"""
-    s = service.store.sect_state(group, create=False)
-    if not s or not _role_of(s, qq):
-        return 0
-    return passive_level(service, group, building)
+    return passive_level(service, group, qq, building)
 
 
 def _roll_stamina(service, a):
@@ -313,8 +401,6 @@ def _settle(service, a, cult, ore):
 
 
 def _do_mission(service, key, p, a, s, qq):
-    if not s.get("name"):
-        return "本群还没有宗门。可发送「创建宗门 名称」。"
     if not _role_of(s, qq):
         return "请先「申请入宗」加入宗门。"
     sect_lv = s.get("level", 1)
@@ -328,12 +414,11 @@ def _do_mission(service, key, p, a, s, qq):
     _bump(s, qq, "mission")
     _settle(service, a, cult, ore)
     _treasury_split(s, qq, contrib)
-    return f"完成宗门任务：修为×{cult} · 灵材×{ore} · 帮贡+{contrib}（今日 {_count(s, qq, 'mission')}/{DAILY_LIMITS['mission']}）。"
+    s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["mission"]
+    return f"完成宗门任务：修为×{cult} · 灵材×{ore} · 帮贡+{contrib} · 活跃度+{_ACTIVITY['mission']}（今日 {_count(s, qq, 'mission')}/{DAILY_LIMITS['mission']}）。"
 
 
 def _do_explore(service, key, p, a, s, qq):
-    if not s.get("name"):
-        return "本群还没有宗门。可发送「创建宗门 名称」。"
     if not _role_of(s, qq):
         return "请先「申请入宗」加入宗门。"
     sect_lv = s.get("level", 1)
@@ -349,12 +434,11 @@ def _do_explore(service, key, p, a, s, qq):
     if r.get("item"):
         service.store.add_item(p, r["item"], 1)
     _treasury_split(s, qq, r["contrib"])
-    return f"探秘北秘境：修为×{r['cult']} · 灵材×{r['ore']} · 帮贡+{r['contrib']}{r.get('bonus', '')}（今日 {_count(s, qq, 'explore')}/{DAILY_LIMITS['explore']}）。"
+    s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["explore"]
+    return f"探秘北秘境：修为×{r['cult']} · 灵材×{r['ore']} · 帮贡+{r['contrib']} · 活跃度+{_ACTIVITY['explore']}{r.get('bonus', '')}（今日 {_count(s, qq, 'explore')}/{DAILY_LIMITS['explore']}）。"
 
 
 def _do_guard(service, key, p, a, s, qq):
-    if not s.get("name"):
-        return "本群还没有宗门。可发送「创建宗门 名称」。"
     if not _role_of(s, qq):
         return "请先「申请入宗」加入宗门。"
     sect_lv = s.get("level", 1)
@@ -367,13 +451,15 @@ def _do_guard(service, key, p, a, s, qq):
     result = _simulate_guard(service, p, key, s)
     if not result["won"]:
         _bump(s, qq, "guard")
+        s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["guard_loss"]
         return service.record(a, result, "镇守宗门") + "\n镇守失利，明日再战。"
     _bump(s, qq, "guard")
     a["cultivation"] = a.get("cultivation", 0) + (30 + sect_lv * 10)
     a["ore"] = a.get("ore", 0) + 2
     contrib = 50 + 20 * sect_lv
     _treasury_split(s, qq, contrib)
-    return service.record(a, result, "镇守宗门") + f"\n镇守成功：修为×{30 + sect_lv * 10} · 灵材×2 · 帮贡+{contrib}。"
+    s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["guard_win"]
+    return service.record(a, result, "镇守宗门") + f"\n镇守成功：修为×{30 + sect_lv * 10} · 灵材×2 · 帮贡+{contrib} · 活跃度+{_ACTIVITY['guard_win']}。"
 
 
 def _simulate_guard(service, p, key, s):
@@ -383,8 +469,6 @@ def _simulate_guard(service, p, key, s):
 
 
 def _do_exchange(service, key, p, a, s, qq, args):
-    if not s.get("name"):
-        return "本群还没有宗门。可发送「创建宗门 名称」。"
     if not _role_of(s, qq):
         return "请先「申请入宗」加入宗门。"
     item = args[0] if args else ""
@@ -409,8 +493,6 @@ def _exchange_prices():
 
 
 def _do_star(service, key, p, a, s, qq, args):
-    if not s.get("name"):
-        return "本群还没有宗门。可发送「创建宗门 名称」。"
     if not _role_of(s, qq):
         return "请先「申请入宗」加入宗门。"
     sect_lv = s.get("level", 1)

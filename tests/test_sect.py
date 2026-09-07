@@ -1,13 +1,13 @@
-"""群级共享宗门（sect.py）核心交互与帮贡经济测试。
+"""多宗门（一个群可多门 + 2000天晶建宗 + 活跃度扩招人数上限 + 一人一宗）核心交互测试。
 
 完全复用 test_adventure.py 的 setUp/call/create + 假时钟模式，纯 AdventureService。
 
-注意两条测试硬约束：
-1. 任何想发宗门指令的人都必须先「踏入仙途」（_handle 在宗门 dispatch 前就要求 adventure）。
+注意两条硬约束：
+1. 任何发宗门指令的人都必须先「踏入仙途」（_handle 在宗门 dispatch 前就要求 adventure）。
 2. service.handle 遇 RuleError 会 deepcopy 回滚并替换 self.store._data，因此**不要跨回滚持有
    self.state()/get_player() 的引用**——一律在断言前重新取。
 
-构造了宗门创建/入宗审批/任务/探索/镇守/兑换/星辰阁/升级/权限边界/体力约束全链路。
+create() 已给玩家注入 3000 天晶（可建宗），多数断言用 state()（默认取角色 'a' 所在宗门）。
 """
 from pathlib import Path
 import tempfile
@@ -15,8 +15,20 @@ import unittest
 from unittest.mock import patch
 
 from qqbot_pet.petpark.adventure.service import AdventureService
-from qqbot_pet.petpark.adventure.sect import DAILY_LIMITS, SEC_MAX_LEVEL
+from qqbot_pet.petpark.adventure.sect import (
+    DAILY_LIMITS, SEC_MAX_LEVEL, SECT_BASE_CAP, SECT_CAP_MAX, ACTIVITY_PER_CAP, sect_cap,
+)
 from qqbot_pet.petpark.store import PetStore
+
+
+def _fake_member(qq):
+    return {"role": "帮众", "contribution": 0, "joined_at": 0}
+
+
+# 与 sect.py _ACTIVITY 对齐（任务/镇守胜/镇守负）。
+_MISSION_ACT = 2
+_GUARD_WIN_ACT = 5
+_GUARD_LOSS_ACT = 1
 
 
 class SectTests(unittest.TestCase):
@@ -33,15 +45,52 @@ class SectTests(unittest.TestCase):
 
     def create(self, profession='剑修', qq='a', group='g'):
         self.call('踏入仙途 ' + profession, qq, group)
-        return self.store.get_player(qq, group)
+        p = self.store.get_player(qq, group)
+        p['diamond'] = 3000        # 保证可建宗（创建一次扣 2000）
+        return p
 
-    def state(self, group='g'):
-        return self.store.sect_state(group)
+    def state(self, group='g', qq='a'):
+        return self.store.my_sect(group, qq)[1]
 
     def adv(self, qq='a'):
         return self.store.get_player(qq, 'g')['adventure']
 
-    # ---- 建宗 / 入宗 / 审批 / 名册 ----
+    # ---- 建宗：天晶门槛 / 扣费绑定 / 本群多门 / 一人一宗 ----
+    def test_create_requires_diamond(self):
+        p = self.create()
+        p['diamond'] = 0
+        self.assertIn('2000 天晶', self.call('创建宗门 青云门'))
+
+    def test_create_deducts_and_binds(self):
+        p = self.create()
+        self.assertIn('已创立', self.call('创建宗门 青云门'))
+        self.assertEqual(p['diamond'], 1000)
+        self.assertEqual(self.state()['name'], '青云门')
+        self.assertEqual(self.state()['founder'], 'a')
+        # 已入一宗，不能再建第二门
+        self.assertIn('一人只能加入一个宗门', self.call('创建宗门 别门'))
+
+    def test_multiple_sects_same_group(self):
+        self.create()
+        self.create(qq='b')
+        self.call('创建宗门 铁剑门')
+        self.call('创建宗门 青云门', qq='b')
+        self.assertEqual(len(self.store.sects_in_group('g')), 2)
+        self.assertEqual({x['name'] for x in self.store.sects_in_group('g')},
+                         {'青云门', '铁剑门'})
+        self.assertIn('铁剑门', self.call('宗门榜'))
+        self.assertIn('青云门', self.call('宗门榜'))
+
+    def test_one_person_one_sect(self):
+        self.create()
+        self.create(qq='b')
+        self.call('创建宗门 铁剑门')
+        self.call('创建宗门 青云门', qq='b')
+        # a 已在铁剑门，不能申请青云门；b 已在青云门，不能再建
+        self.assertIn('一人只能加入一个宗门', self.call('申请入宗 青云门'))
+        self.assertIn('一人只能加入一个宗门', self.call('创建宗门 第三门', qq='b'))
+
+    # ---- 入宗审批与权限 ----
     def test_create_join_approve_roster(self):
         self.create()
         self.create(qq='b')
@@ -49,58 +98,89 @@ class SectTests(unittest.TestCase):
         self.assertEqual(self.state()['name'], '铁剑门')
         self.assertEqual(self.state()['members']['a']['role'], '帮主')
         self.assertIn('宗', self.call('查看宗门'))
-        self.assertIn('已提交', self.call('申请入宗', qq='b'))
+        self.assertIn('已提交', self.call('申请入宗 铁剑门', qq='b'))
         self.assertIn('b', self.state()['pending'])
         self.assertIn('已同意', self.call('同意入宗 b'))
         self.assertEqual(self.state()['members']['b']['role'], '帮众')
         self.assertNotIn('b', self.state()['pending'])
         self.assertIn('【帮众】', self.call('宗门名册'))
 
+    def test_apply_requires_name_and_unknown(self):
+        self.create()
+        self.create(qq='b')
+        self.call('创建宗门 铁剑门')
+        self.assertIn('宗名', self.call('申请入宗', qq='b'))
+        self.assertIn('没有「无名门」', self.call('申请入宗 无名门', qq='b'))
+
     def test_membership_permissions(self):
         self.create()
         self.create(qq='b')
         self.create(qq='c')
-        # 未建宗申请 / 无宗任务
-        self.assertIn('本群还没有宗门', self.call('申请入宗', qq='c'))
-        self.assertIn('本群还没有宗门', self.call('宗门任务', qq='c'))
+        # 未建宗/非成员
+        self.assertIn('宗名', self.call('申请入宗', qq='c'))
+        self.assertIn('你加入的宗门', self.call('宗门任务', qq='c'))
         self.call('创建宗门 铁剑门')
         # 帮主不可退出
         self.assertIn('帮主不可退出', self.call('退出宗门'))
-        # 申请→审批权限
-        self.assertIn('已提交', self.call('申请入宗', qq='b'))
-        self.assertIn('只有帮主/长老', self.call('同意入宗 b', qq='c'))
-        self.assertIn('只有帮主/长老可审批申请', self.call('拒绝入宗 b', qq='c'))
-        # 非帮主不可封官/升级
-        self.assertIn('只有帮主', self.call('封官 b 长老', qq='b'))
-        self.assertIn('只有帮主', self.call('宗门升级', qq='b'))
-        # 正常审批后 b 可退出，非成员再退拒绝
+        # 申请→审批，b 成为帮众后可测权限（非帮主/长老）
+        self.assertIn('已提交', self.call('申请入宗 铁剑门', qq='b'))
         self.call('同意入宗 b')
+        self.assertIn('只有帮主/长老', self.call('同意入宗 x', qq='b'))
+        self.assertIn('只有帮主/长老可审批申请', self.call('拒绝入宗 x', qq='b'))
+        self.assertIn('只有帮主', self.call('封官 c 长老', qq='b'))
+        self.assertIn('只有帮主', self.call('宗门升级', qq='b'))
+        # b 退出；非成员再退拒绝
         self.assertIn('你已退出宗门', self.call('退出宗门', qq='b'))
-        self.assertIn('你还不是宗门成员', self.call('退出宗门', qq='b'))
+        self.assertIn('你加入的宗门', self.call('退出宗门', qq='b'))
 
     def test_announce_only_boss(self):
         self.create()
         self.create(qq='b')
         self.call('创建宗门 铁剑门')
-        self.call('申请入宗', qq='b')
+        self.call('申请入宗 铁剑门', qq='b')
         self.call('同意入宗 b')
         self.assertIn('只有帮主', self.call('宗门公告 欢迎加入', qq='b'))
         self.assertIn('已更新', self.call('宗门公告 欢迎加入'))
         self.assertEqual(self.state()['announce'], '欢迎加入')
 
-    # ---- 宗门任务（每日次数 + 帮贡分润 + 跨天重置） ----
+    # ---- 人数上限：基础10 / 活跃度每40扩招1人 / 封顶20 ----
+    def test_cap_formula(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        s = self.state()
+        self.assertEqual(sect_cap(s), SECT_BASE_CAP)          # 10
+        s['activity'] = ACTIVITY_PER_CAP                      # 40 → +1
+        self.assertEqual(sect_cap(s), SECT_BASE_CAP + 1)
+        s['activity'] = 400                                   # +10 → 封顶 20
+        self.assertEqual(sect_cap(s), SECT_CAP_MAX)
+
+    def test_full_sect_rejects_apply(self):
+        self.create()
+        self.create(qq='b')
+        self.call('创建宗门 铁剑门')
+        s = self.state()
+        for i in range(9):                                    # a + 9 = 10 满员
+            s['members'][f'x{i}'] = _fake_member(f'x{i}')
+        self.assertIn('人数已满', self.call('申请入宗 铁剑门', qq='b'))
+        # 活跃度提升后可扩招（40 点 → 上限11）。须在满员回滚后重取，否则引用已失效。
+        s = self.state()
+        s['activity'] = ACTIVITY_PER_CAP
+        self.assertIn('已提交', self.call('申请入宗 铁剑门', qq='b'))
+
+    # ---- 宗门任务（每日次数 + 帮贡分润 + 跨天重置 + 活跃度） ----
     def test_mission_daily_treasury_and_rollover(self):
         self.create()
         self.create(qq='b')
         self.call('创建宗门 铁剑门')
-        self.call('申请入宗', qq='b')
+        self.call('申请入宗 铁剑门', qq='b')
         self.call('同意入宗 b')
         for _ in range(DAILY_LIMITS['mission']):
             self.assertIn('帮贡+', self.call('宗门任务'))
         s = self.state()
-        # 帮贡分润 50% 入宗库；个人帮贡累计
+        # 帮贡分润 50% 入宗库；个人帮贡累计；（3 次任务 → 活跃度6）
         self.assertEqual(s['treasury'], 15 * DAILY_LIMITS['mission'])
         self.assertEqual(s['members']['a']['contribution'], 30 * DAILY_LIMITS['mission'])
+        self.assertEqual(s['activity'], _MISSION_ACT * DAILY_LIMITS['mission'])
         self.assertIn('已完成', self.call('宗门任务'))
         # 跨天重置后可再接
         self.now += 86400
@@ -142,10 +222,11 @@ class SectTests(unittest.TestCase):
         self.assertIn('帮贡+', out)
         self.assertNotIn('额外掉落', out)
 
-    # ---- 南金库（Lv3 + 战斗胜负 + 帮贡） ----
+    # ---- 南金库（Lv3 + 战斗胜负 + 帮贡 + 活跃度） ----
     def _guard_result(self, won):
         return {
-            "won": won, "winner": 0 if won else 1, "rounds": 3, "reason": "敌方全灭" if won else "我方倒下",
+            "won": won, "winner": 0 if won else 1, "rounds": 3,
+            "reason": "敌方全灭" if won else "我方倒下",
             "events": ["回合1：剑修修士出剑"],
             "units": [{"side": 0, "kind": "hero", "owner": "a", "name": "剑修修士"}],
             "metrics": {"a": {"damage": 120 if won else 40, "healing": 0, "absorbed": 0}},
@@ -161,9 +242,9 @@ class SectTests(unittest.TestCase):
         self.assertIn('镇守成功', out)
         self.assertIn('帮贡+', out)
         self.assertEqual(self.adv()['stamina'], 100 - 15)
-        self.assertIn('镇守成功', out)
         s = self.state()
         self.assertEqual(s['daily']['a']['guard'], 1)
+        self.assertEqual(s['activity'], _GUARD_WIN_ACT)
         self.assertIn('已完成', self.call('镇守宗门'))
 
     def test_guard_loss_bumps_daily(self):
@@ -174,6 +255,7 @@ class SectTests(unittest.TestCase):
             out = self.call('镇守宗门')
         self.assertIn('镇守失利', out)
         self.assertEqual(self.state()['daily']['a']['guard'], 1)
+        self.assertEqual(self.state()['activity'], _GUARD_LOSS_ACT)
         self.assertIn('已完成', self.call('镇守宗门'))
 
     # ---- 西仓库兑换 / 星辰阁 / 宗门升级 / 捐献 ----

@@ -91,7 +91,8 @@ class PetStore:
         self._data.setdefault("tomb_active_coop_index", {})
         self._data.setdefault("homestead_players", {})
         self._data.setdefault("bank_players", {})
-        self._data.setdefault("sects", {})             # 群级共享宗门：{resolve_group: sect_state}
+        self._data.setdefault("sects", {})             # 宗门：{sect_id: sect_state}（一个群可多门）
+        self._data.setdefault("sect_membership", {})   # {resolve_group: {qq: sect_id}} 一人一宗索引
         self._data.setdefault("qq_bindings", {})      # 平台用户ID -> QQ号（全局）
         self._data.setdefault("email_config", {})      # 邮箱服务配置（SMTP）
         self._data.setdefault("lottery", None)         # 口令抽奖（单例：一个进行中的口令抽奖）
@@ -120,6 +121,7 @@ class PetStore:
         self._migrate_bank_to_per_group()
         self._migrate_clear_cooldowns_once()
         self._migrate_purge_sect()
+        self._migrate_sect_v2()
         self._migrate_unified_v1()
         self._migrate_homestead_building_names()
         self._migrate_economy_v1()
@@ -2144,66 +2146,129 @@ class PetStore:
             return g
         return {}
 
-    # ----------------------------- 宗门（群级共享，每群一个） -----------------------------
+    # ----------------------------- 宗门（多宗门：一个群可立多门） -----------------------------
+    def _migrate_sect_v2(self) -> None:
+        """把 v3.1 的"每群一个宗门"（sects 键=resolve_group）迁移为"每群多宗"（键=宗id）。
+
+        旧档以规范群ID为键、单宗门；此处逐条重新派发稳定宗id，补 activity 字段，
+        并据已知成员重建 sect_membership 一键索引。幂等（_sect_v2 标记）。
+        """
+        if self._data.get("_sect_v2"):
+            return
+        sects = self._data.setdefault("sects", {})
+        membership = self._data.setdefault("sect_membership", {})
+        new_sects = {}
+        n = 0
+        for k, v in list(sects.items()):
+            if not isinstance(v, dict):
+                continue
+            v.setdefault("activity", 0)
+            gid = str(v.get("group") or k)
+            if not v.get("name"):
+                continue                     # 未创建的默认空宗，直接丢弃
+            n += 1
+            sid = f"sect{n}"
+            v["group"] = gid
+            v.setdefault("members", {})
+            v.setdefault("pending", {})
+            new_sects[sid] = v
+            for qq in v["members"]:
+                membership.setdefault(gid, {})[qq] = sid
+        self._data["sects"] = new_sects
+        self._data["_sect_v2"] = True
+
     @staticmethod
-    def _default_sect_state() -> dict:
-        """宗门默认状态（每群一个；键=resolve_group(group_id)）。
+    def _default_sect_state(group: str = "", name: str = "") -> dict:
+        """宗门默认状态（每宗一个；顶层 `sects` 以宗id为键）。
 
         注意：历史上有过 `sect` 子系统并被 ``_migrate_purge_sect`` 删除，
-        因此本表用复数 ``sects`` 且绝不写 player["sect"]/group["sect"]，
-        避免被 purge 迁移误清。
+        因此本表用复数 ``sects`` 且绝不写 player["sect"]/group["sect"]，避免被 purge 误清。
         """
         return {
-            "group": "",              # 规范群ID（resolve_group 后的键）
-            "name": "",               # 宗门名（空=未创建）
-            "level": 1,               # 宗门等级（1-10）
-            "treasury": 0,            # 宗门共享库存（帮贡，用于升级/星辰阁）
-            "founder": "",            # 创始成员 openid
-            "announce": "",           # 公告
+            "group": group,             # 规范群ID（resolve_group 后的键）
+            "name": name,               # 宗门名（空=未创建）
+            "level": 1,                 # 宗门等级（1-10）
+            "treasury": 0,              # 宗门共享库存（帮贡，用于升级/星辰阁）
+            "founder": "",              # 创始成员 openid
+            "announce": "",             # 公告
             "created_at": 0,
-            "total_contribution": 0,  # 累计贡献（排行分）
-            "members": {},            # {openid: {"role":"帮主/长老/帮众","contribution":int,"joined_at":int}}
-            "pending": {},            # {openid: joined_at}  待审批申请
-            "buildings": {            # 建筑等级（宗门等级解锁，不再单独升级）
+            "total_contribution": 0,    # 累计贡献（排行分）
+            "activity": 0,              # 活跃度（任务/探索/镇守累积，驱动人数上限）
+            "members": {},              # {openid: {"role":"帮主/长老/帮众","contribution":int,"joined_at":int}}
+            "pending": {},              # {openid: joined_at}  待审批申请
+            "buildings": {              # 建筑等级（宗门等级解锁，不再单独升级）
                 "mission": 1, "warehouse": 1, "north": 1, "gold": 1,
                 "star": 1, "martial": 1, "smith": 1, "research": 1,
             },
-            "daily": {},              # {日期: {openid: {"mission":n,"guard":n,"explore":n}}} 每日任务/镇守/探索计数
+            "daily": {},                # {日期: {openid: {"mission":n,"guard":n,"explore":n}}} 每日计数
         }
 
     @classmethod
-    def sect_state(cls, group_id: str, create: bool = True) -> dict | None:
-        """返回某（规范）群的宗门；无宗门且 create=False 时返回 None。
+    def sects_in_group(cls, group_id: str) -> list[dict]:
+        """该（规范）群的全部宗门 state 列表。"""
+        store = cls._active
+        if store is None:
+            return []
+        gid = store.resolve_group(str(group_id))
+        return [s for s in store._data.setdefault("sects", {}).values()
+                if s.get("group") == gid and s.get("name")]
 
-        一个物理群一个宗门（跨机器人按 resolve_group 统一），因此直接用
-        resolve_group(group_id) 作为键，而非按人隔离。
-        """
+    @classmethod
+    def sect_by_id(cls, sect_id: str) -> dict | None:
+        """按宗id取宗门 state；无返回 None。"""
+        store = cls._active
+        if store is None:
+            return None
+        return store._data.setdefault("sects", {}).get(sect_id)
+
+    @classmethod
+    def sect_by_name(cls, group_id: str, name: str) -> tuple[str | None, dict | None]:
+        """按名在（规范）群内找宗门，返回 (sect_id, state)；找不到返回 (None, None)。"""
+        store = cls._active
+        if store is None or not name:
+            return None, None
+        gid = store.resolve_group(str(group_id))
+        for sid, s in store._data.setdefault("sects", {}).items():
+            if s.get("group") == gid and s.get("name") == name:
+                return sid, s
+        return None, None
+
+    @classmethod
+    def sect_membership(cls, group_id: str, qq: str) -> str | None:
+        """某修士在某（规范）群的宗门id；未加入返回 None。"""
         store = cls._active
         if store is None:
             return None
         gid = store.resolve_group(str(group_id))
-        sects = store._data.setdefault("sects", {})
-        if not create:
-            return sects.get(gid)
-        s = sects.setdefault(gid, cls._default_sect_state())
-        for field, default in cls._default_sect_state().items():
-            if field not in s:
-                s[field] = default
-        # 内层嵌套字段惰性补齐
-        members = s.setdefault("members", {})
-        for openid, m in list(members.items()):
-            if not isinstance(m, dict):
-                continue
-            m.setdefault("role", "帮众")
-            m.setdefault("contribution", 0)
-            m.setdefault("joined_at", 0)
-        s.setdefault("pending", {})
-        buildings = s.setdefault("buildings", {})
-        for b, lv in cls._default_sect_state()["buildings"].items():
-            buildings.setdefault(b, lv)
-        s.setdefault("daily", {})
-        s.setdefault("group", gid)
-        return s
+        return store._data.setdefault("sect_membership", {}).get(gid, {}).get(qq)
+
+    @classmethod
+    def my_sect(cls, group_id: str, qq: str) -> tuple[str | None, dict | None]:
+        """某修士在某群的宗门 (sect_id, state)；未加入返回 (None, None)。"""
+        sid = cls.sect_membership(group_id, qq)
+        if sid:
+            return sid, cls.sect_by_id(sid)
+        return None, None
+
+    @classmethod
+    def bind_sect(cls, group_id: str, qq: str, sect_id: str) -> None:
+        """把 qq 绑定到某宗（一人一宗索引写入）。"""
+        store = cls._active
+        if store is None:
+            return
+        gid = store.resolve_group(str(group_id))
+        store._data.setdefault("sect_membership", {}).setdefault(gid, {})[qq] = sect_id
+
+    @classmethod
+    def unbind_sect(cls, group_id: str, qq: str) -> None:
+        """解除 qq 的一人一宗绑定。"""
+        store = cls._active
+        if store is None:
+            return
+        gid = store.resolve_group(str(group_id))
+        m = store._data.setdefault("sect_membership", {}).get(gid)
+        if m:
+            m.pop(qq, None)
 
     # ----------------------------- QQ 绑定 -----------------------------
     def qq_bindings(self) -> dict:

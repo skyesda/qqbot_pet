@@ -255,6 +255,9 @@ KNOWN_COMMANDS = {
     "一键卡合成",
     "批量碎片转卡",
     "批量卡合成",
+    "材料碎片",
+    "合成材料",
+    "一键合成材料",
     "赠送金币",
     "赠送积分",
     "赠送钻石",
@@ -3406,6 +3409,10 @@ class PetParkPlugin(Star):
             return self._batch_exchange_fragments(player)
         if cmd in ("一键合成品质卡", "一键卡合成", "批量卡合成"):
             return self._batch_compose_cards(player)
+        if cmd == "材料碎片":
+            return self._view_material_fragments(player)
+        if cmd in ("合成材料", "一键合成材料"):
+            return self._compose_material(player, tokens, batch=cmd == "一键合成材料")
         if cmd in ("赠送金币", "赠送积分", "赠送钻石", "赠送灵石", "赠送玄晶", "赠送天晶"):
             return self._gift_currency(player, group_id, cmd, tokens)
 
@@ -6953,15 +6960,16 @@ class PetParkPlugin(Star):
                 "- 我的洞天 · 洞天突破(自选难度收益) · 仙途毕业",
                 "- 组队秘境 葬龙秘境 · 仙途队伍 · 加入/退出队伍 · 准备出发 · 队伍出发",
                 "- 世界首领 · 讨伐首领 · 首领奖励",
-                "- 仙途深渊 · 深渊抉择 · 深渊收手",
+                "- 仙途深渊 · 深渊抉择 · 深渊收手 · 试炼秘境(每日限次)",
+                "> 💰 货币渠道：历练/副本/组队/深渊/洞天通关给灵石+玄晶并几率掉材料碎片；世界首领讨伐+击杀也给灵石玄晶；材料碎片每 10 片可用「合成材料 材料名」换成对应丹药/经验书，无需购买。",
                 "- 仙途切磋 @对方 · 接受切磋 · 拒绝切磋 · 战斗详情 · 仙途战绩",
                 "- 我的修士(看战力) · 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励",
                 "- 与对方修士结为道侣(结道侣/求婚/了断道侣/离缘) · 双方结契灵宠为见证 · 道侣可加速修为与提供战力加成",
                 "",
-                "**【宗门】** 群级共享 · 一宗一界",
-                "> 修士同心共建宗门：建宗→加入→每日任务/北秘境/镇守赚帮贡，等级越高奖励越丰厚。",
-                "- 创建宗门 名称 · 申请入宗 · 同意/拒绝入宗 QQ · 退出宗门 · 宗门名册",
-                "- 查看宗门 · 宗门公告 文本 · 宗门升级 · 宗门捐献 数量 · 宗门榜",
+                "**【宗门】** 一界多门 · 各立山头",
+                "> 本群可立多个宗门，每人仅能加入一门；建宗需 2000 天晶。人数上限 10 起步，靠成员做任务/北秘境/镇守累积活跃度提升，封顶 20。",
+                "- 创建宗门 名称(2000天晶) · 申请入宗 宗名 · 同意/拒绝入宗 QQ · 退出宗门 · 宗门名册",
+                "- 查看宗门(看活跃度/人数上限) · 宗门公告 文本 · 宗门升级 · 宗门捐献 数量 · 宗门榜(本群)",
                 "- 宗门任务(每日悬赏) · 宗门探索(北秘境) · 镇守宗门(南金库) · 宗门兑换(西仓库) · 星辰阁",
                 "- 封官 QQ 长老 · 免职 QQ · 踢出宗门 QQ ｜ 悟性加点 攻/防/血/速 数量",
                 "",
@@ -7057,6 +7065,7 @@ class PetParkPlugin(Star):
                 "- 结道侣 用户ID · 同意道侣 用户ID",
                 "- 求婚 用户ID · 同意求婚 用户ID",
                 "- 了断道侣 · 离缘 · 道侣情缘",
+                "> 即原「宠物结婚」：宠物追求/同意追求/宠物求婚/同意求婚/宠物离婚/宠物恋情 仍可用，等同结道侣/求婚/离缘/道侣情缘",
                 "",
                 "**【个人】**",
                 "- 我的信息 · 签到 · 我要氪金",
@@ -8194,6 +8203,74 @@ class PetParkPlugin(Star):
             elif final < orig:
                 self.store.remove_item(player, card, orig - final)
         return "✅ **一键合成品质卡完成！**\n" + "\n".join(f"- {d}" for d in done)
+
+    # ---- 修士材料碎片（免费渠道：历练/副本/组队/深渊/洞天掉落，每 N 片合成 1 份材料）----
+    @staticmethod
+    def _frag_of(raw: str):
+        """把『合成材料 X』的 X 解析成碎片名；X 可以是材料名或碎片名。返回 (frag, mat)。"""
+        if raw in data.MATERIAL_FRAGMENTS:
+            return raw, data.MATERIAL_FRAGMENTS[raw]
+        for frag, mat in data.MATERIAL_FRAGMENTS.items():
+            if mat == raw:
+                return frag, mat
+        return None, None
+
+    def _material_frag_help(self) -> str:
+        return "、".join(data.MATERIAL_FRAGMENTS.values())
+
+    def _view_material_fragments(self, player: dict) -> str:
+        """材料碎片：查看已持碎片及可合成数量。"""
+        bag = player.get("bag", {})
+        need = data.MATERIAL_FRAGMENT_COMBINE
+        lines = []
+        any_have = False
+        for frag, mat in data.MATERIAL_FRAGMENTS.items():
+            have = bag.get(frag, 0)
+            if have:
+                any_have = True
+            notes = f"（可合成 {have // need} 份）" if have >= need else ""
+            lines.append(f"- **{mat}**：碎片×{have}{notes}")
+        head = "## 材料碎片\n碎片随历练 / 副本 / 组队秘境 / 仙途深渊 / 洞天通关几率掉落，"
+        head += f"每 {need} 片可合成 1 份对应材料（体/材/丹/书）。"
+        if not any_have:
+            return head + f"\n\n你还没有任何材料碎片。可合成材料：{self._material_frag_help()}。"
+        return head + "\n\n" + "\n".join(lines) + f"\n\n发送 `合成材料 <材料名>` 合成{need}片→1份，" \
+            "`一键合成材料` 批量合成。"
+
+    def _compose_material(self, player: dict, tokens: list[str], batch: bool = False) -> str:
+        """合成材料：材料碎片 N 片 → 1 份材料。batch=True 时批量合成所有可凑材料。"""
+        need = data.MATERIAL_FRAGMENT_COMBINE
+        if batch:
+            bag = player.get("bag", {})
+            done: list[str] = []
+            for frag, mat in data.MATERIAL_FRAGMENTS.items():
+                have = bag.get(frag, 0)
+                if have < need:
+                    continue
+                n = have // need
+                consume = n * need
+                self.store.remove_item(player, frag, consume)
+                self.store.add_item(player, mat, n)
+                note = "" if have % need == 0 else f"（余 {have % need} 片）"
+                done.append(f"**{frag}** ×{consume} → **{mat}** ×{n}{note}")
+            if not done:
+                hold = "、".join(f"{f}×{bag.get(f, 0)}" for f in data.MATERIAL_FRAGMENTS if bag.get(f, 0) > 0)
+                if not hold:
+                    return "你背包里没有任何『材料碎片』，无法合成。"
+                return f"材料碎片不足（每种需 {need} 片），当前持有：{hold}。"
+            return "✅ **一键合成材料完成！**\n" + "\n".join(f"- {d}" for d in done)
+        if len(tokens) < 2:
+            return (f"用法：合成材料 <材料名>（例如：合成材料 体力丹）\n"
+                    f"当前可合成：{self._material_frag_help()}。")
+        frag, mat = self._frag_of(tokens[1])
+        if not frag:
+            return f"没有『{tokens[1]}』对应的材料碎片。当前可合成：{self._material_frag_help()}。"
+        have = player.get("bag", {}).get(frag, 0)
+        if have < need:
+            return f"合成 1 份【{mat}】需要 {frag} ×{need}，你当前只有 {have} 片。"
+        self.store.remove_item(player, frag, need)
+        self.store.add_item(player, mat, 1)
+        return f"✅ **合成成功！** 消耗 {frag} ×{need}，获得 **{mat}** ×1。"
 
     # =====================================================================
     # 宠物查看 / 管理

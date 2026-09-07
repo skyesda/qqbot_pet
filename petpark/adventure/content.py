@@ -1,5 +1,5 @@
 """Versioned, data-driven adventure content. No production player data required."""
-from ..data import _DUNGEON_DEFS, TRIBULATION_FAIL_COOLDOWN
+from ..data import _DUNGEON_DEFS, TRIBULATION_FAIL_COOLDOWN, MATERIAL_FRAGMENTS, MATERIAL_FRAGMENT_COMBINE
 
 VERSION = 6
 # Each tier is unlocked individually by a trial, never by another player.
@@ -184,9 +184,36 @@ COMMANDS |= SECT_COMMANDS
 READ_COMMANDS = {"灵契仙途", "仙途帮助", "我的修士", "今日修行", "仙途地图", "修士装备", "仙途队伍", "世界首领", "战斗详情", "仙途战绩"}
 READ_COMMANDS |= {"查看宗门", "宗门名册", "宗门榜", "宗门任务", "镇守宗门", "宗门兑换"}
 # 修士轴补充指令：悟性加点 / 查看体力（幻世仙魔收编）。
-COMMANDS |= {"悟性加点", "我的体力", "修士体力", "宗门帮助"}
+COMMANDS |= {"悟性加点", "我的体力", "修士体力", "宗门帮助", "试炼秘境"}
 READ_COMMANDS |= {"我的体力", "宗门帮助"}
 DAILY_REWARDS = 8
+
+# —— 副本/历练货币（在 reward() 结算，平衡可调；灵石=coin、玄晶=jifen）——
+ADV_COIN_BASE = 30        # 副本胜利灵石基准
+ADV_COIN_PER_LEVEL = 6    # 每个副本等级额外灵石
+ADV_JIFEN_BASE = 10       # 副本胜利玄晶基准
+ADV_JIFEN_PER_LEVEL = 3   # 每个副本等级额外玄晶（level//3 取整）
+# —— 材料碎片（免费渠道）：副本胜利低概率掉落，每 MATERIAL_FRAGMENT_COMBINE 片合成 1 份材料 ——
+ADV_FRAGMENT_RATE = 0.30  # 胜利时掉材料碎片的概率
+ADV_FRAGMENT_BUNDLE = (1, 3)  # 每次掉落碎片数量区间
+
+# —— 世界首领附加货币（每次讨伐 + 击杀奖励，平衡可调）——
+BOSS_HIT_COIN = 15     # 每次讨伐额外灵石
+BOSS_HIT_JIFEN = 5     # 每次讨伐额外玄晶
+BOSS_HIT_FRAGMENT_RATE = 0.20  # 每次讨伐掉材料碎片概率
+BOSS_KILL_COIN = 120   # 击杀后共同奖励灵石
+BOSS_KILL_JIFEN = 40   # 击杀后共同奖励玄晶
+
+# —— 试炼秘境（每日限次玩法，额外灵石/玄晶 + 高碎片率，平衡可调）——
+TRIAL_DAILY = 2               # 每日可挑战次数
+TRIAL_COIN_BASE = 60          # 通关灵石基准
+TRIAL_COIN_PER_LEVEL = 10     # 每修士等级额外灵石
+TRIAL_JIFEN_BASE = 20         # 通关玄晶基准
+TRIAL_JIFEN_PER_LEVEL = 5     # 每修士等级额外玄晶
+TRIAL_CULT_BASE = 50          # 通关修为基准
+TRIAL_CULT_PER_LEVEL = 8      # 每修士等级额外修为
+TRIAL_FRAGMENT_RATE = 0.5     # 通关掉材料碎片概率（高于普通副本）
+TRIAL_FRAGMENT_BUNDLE = (2, 5)  # 通关掉碎片数量区间
 
 # 悟性点可分配上限（随境界提高，防无脑堆一项）：min(INSIGHT_CAP_MAX, INSIGHT_CAP_BASE + realm*INSIGHT_CAP_PER_REALM)
 INSIGHT_CAP_MAX = 200
