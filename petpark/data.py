@@ -295,7 +295,7 @@ ITEMS = {
         "currency": CURRENCY_JIFEN,
         "category": "道具",
         "usable": False,
-        "desc": "改名所需道具（首次改名免费）。",
+        "desc": "给宠物改名所需（首次改名免费）；修士道号另需「改名符」，指令『道号 新名』。",
         "effect": {},
     },
     "变性药水": {
@@ -997,7 +997,7 @@ ITEMS.update({
         "currency": CURRENCY_COIN,
         "category": "道具",
         "usable": False,
-        "desc": "修改修士道号所需道具（首次起名免费，之后每次消耗1张）。",
+        "desc": "修改修士道号所需（首次起名免费，之后每次1张）；宠物改名用「改名卡」，指令『宠物改名 昵称』。",
         "effect": {},
     },
     "变性丹": {

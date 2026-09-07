@@ -373,11 +373,13 @@ class SectTests(unittest.TestCase):
     def test_donate(self):
         self.create()
         self.call('创建宗门 铁剑门')
-        self.adv()['ore'] = 20
-        self.assertIn('帮贡 +', self.call('宗门捐献 5'))
-        self.assertEqual(self.adv()['ore'], 15)
-        self.assertEqual(self.state()['members']['a']['contribution'], 50)
-        self.assertEqual(self.state()['treasury'], 25)
-        # 灵材不足拒绝（捐献到 0 才触发守卫）
-        self.adv()['ore'] = 0
-        self.assertIn('灵材不足', self.call('宗门捐献 10'))
+        # 捐献改吸灵石（10灵石=1帮贡），灵材不再被捐献分流、专用于锻造/洗炼。
+        before = self.store.get_currency(self.store.get_player('a', 'g'), '灵石')
+        self.store.add_currency(self.store.get_player('a', 'g'), '灵石', 1000)
+        self.assertIn('帮贡 +', self.call('宗门捐献 100'))
+        self.assertEqual(self.store.get_currency(self.store.get_player('a', 'g'), '灵石'), before + 900)
+        self.assertEqual(self.state()['members']['a']['contribution'], 10)
+        self.assertEqual(self.state()['treasury'], 5)
+        # 灵石不足拒绝（不足10灵石时守卫触发）
+        self.store.add_currency(self.store.get_player('a', 'g'), '灵石', -(before + 1000))
+        self.assertIn('灵石不足', self.call('宗门捐献 10'))

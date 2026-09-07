@@ -353,13 +353,14 @@ def _donate(service, key, p, a, qq, s, args):
     count = 1
     if args and args[0].isdigit():
         count = max(1, int(args[0]))
-    have = a.get("ore", 0)
+    have = service.store.get_currency(p, "灵石")
     count = min(count, have)
-    service.require(count > 0, f"灵材不足，当前 {have}。")
-    a["ore"] = have - count
-    contrib = count * 10
+    contrib = count // 10
+    service.require(contrib > 0, f"灵石不足，需至少10灵石（当前 {have}；10灵石=1帮贡）。")
+    used = contrib * 10
+    service.store.add_currency(p, "灵石", -used)
     _treasury_split(s, qq, contrib)
-    return f"捐献灵材×{count}，宗门帮贡 +{contrib}。"
+    return f"捐献灵石×{used}，宗门帮贡 +{contrib}（当前灵石 {have - used}）。"
 
 
 def _promote(service, key, p, qq, s, args):

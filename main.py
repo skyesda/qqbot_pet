@@ -6981,6 +6981,7 @@ class PetParkPlugin(Star):
                 "- 结契灵宠 九尾狐 · 灵宠助战 序号 · 灵宠专长 辅助",
                 "- 修士修炼(领离线修为) · 修士突破 数量(连升N级·上限999) · 渡劫(破境解锁神通)",
                 "- 悟性加点 攻/防/血/速 数量(突破/渡劫得悟性点，无需入宗) · 我的体力/修士体力(查看行动力) · 外出历练(免费随机掉修为/灵材/灵石/玄晶，约15分钟冷却)",
+                "- 改名：修士道号用「道号 新名」(消耗改名符·灵石商城)；宠物名用「宠物改名 昵称」(消耗改名卡·玄晶商城)，两者不同，别用错",
                 "- 仙途地图 · 历练 1 · 挑战秘境",
                 "- 修士装备 · 锻造 灵剑 · 修士配装 破阵",
                 "- 我的洞天 · 洞天突破(自选难度收益) · 仙途毕业",
@@ -7965,6 +7966,8 @@ class PetParkPlugin(Star):
             ),
         ):
             lines.append(f"**【{cat}】**")
+            if cat == "锻造材料":
+                lines.append("> 进阶装备用：先「锻造 灵剑」把装备灵材到等级上限 → 再用这些材料「装备进阶」升品阶、成功后「洗炼」觉醒词条。")
             lines.append("| 物品 | 价格 |")
             lines.append("| --- | --- |")
             for n, it in sorted(groups[cat], key=lambda kv: kv[1]["price"]):
@@ -8957,7 +8960,7 @@ class PetParkPlugin(Star):
         first = p["nickname"] == p["species"]
         if not first:
             if not self.store.has_item(player, "改名卡"):
-                return "改名需要『改名卡』（首次改名免费）。"
+                return "改名需要『改名卡』（首次改名免费；此卡只用于宠物改名，修士道号请用『道号 新名』消耗改名符）。"
             if p["energy"] < 10:
                 return "改名需要 10 点精力。"
             self.store.remove_item(player, "改名卡")
