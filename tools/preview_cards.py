@@ -82,7 +82,9 @@ if __name__ == '__main__':
                 # complete bottom border and spare canvas instead of identical height.
                 assert produced.width == width and 100 < produced.height < canvas_height - 50
                 for x, y in [(0,0), (width-1,0), (0,produced.height-1), (width-1,produced.height-1)]:
-                    assert produced.getpixel((x,y)) == (185,149,82), (name, x, y, produced.getpixel((x,y)))
+                    r, g, b = produced.getpixel((x, y))
+                    # 卡片图现走 JPEG 有损压缩，金色边框允许颜色容差（±31）。
+                    assert abs(r - 185) < 32 and abs(g - 149) < 32 and abs(b - 82) < 32, (name, x, y, (r, g, b))
             print(name, 'production crop verified; all four corners are gold, no canvas border')
             page.close()
         browser.close()

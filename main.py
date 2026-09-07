@@ -7225,7 +7225,8 @@ class PetParkPlugin(Star):
         """保留至少 256 张/类；24 小时内图片不删除，避免 QQ 延迟拉图失效。"""
         try:
             d = self.store.custom_images_dir
-            rows = sorted(d.glob(f"{prefix}_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+            rows = sorted(list(d.glob(f"{prefix}_*.png")) + list(d.glob(f"{prefix}_*.jpg")),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
             for p in rows[max(keep, 256):]:
                 try:
                     if time.time() - p.stat().st_mtime < 86400:
@@ -7279,7 +7280,7 @@ class PetParkPlugin(Star):
         html = card_theme.finish_html(html)
         layout = f"renderer-v2:{win_w}:{win_h}:{getattr(crop, '__name__', 'none')}:"
         key = hashlib.sha256((layout + html).encode("utf-8")).hexdigest()[:24]
-        fname = f"{tag}_{key}.png"
+        fname = f"{tag}_{key}.jpg"
         target = Path(self.store.custom_images_dir) / fname
         cache_hit = self._html_png_ok(target)
         if cache_hit:

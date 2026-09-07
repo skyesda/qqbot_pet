@@ -154,7 +154,9 @@ class ImageRenderer:
             with Image.open(io.BytesIO(raw)) as image:
                 rgb = image.convert('RGB')
             output = crop(rgb) if crop else rgb
-            output.save(temp, 'PNG', compress_level=1)
+            # 卡片图走有损 JPEG 大幅压缩体积（QQ 需从公网下载，PNG 无损体积达 2MB+，
+            # 上传/拉图是「发送到 QQ 慢」的主因）；质量 88 文字仍清晰，体积降 80%+。
+            output.save(temp, 'JPEG', quality=88, optimize=True)
             if temp.stat().st_size < 1000:
                 return False
             os.replace(temp, target)
