@@ -179,6 +179,20 @@ def handle(service, group, key, cmd, args, p, a):
     return "未知宗门指令。"
 
 
+def _pid(service, raw):
+    """把用户输入解析为存档内存储的平台用户ID：是已绑定QQ号则反查 openid，否则原样（无绑定回退用户ID）。"""
+    raw = str(raw).strip()
+    if not raw:
+        return raw
+    return service.store.find_platform_id_by_qq(raw) or raw
+
+
+def _name(service, uid):
+    """显示成员时优先用已绑定QQ号，未绑定回退显示用户ID。"""
+    uid = str(uid)
+    return service.store.get_bound_qq(uid) or uid
+
+
 def _create(service, group, key, p, a, qq, args):
     service.can_edit(key)
     name = args[0] if args else ""
@@ -217,24 +231,24 @@ def _apply(service, group, key, p, qq, args):
 def _approve(service, group, key, p, qq, s, sid, args):
     service.can_edit(key)
     service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可审批申请。")
-    target = args[0] if args else ""
+    target = _pid(service, args[0] if args else "")
     service.require(target in (s.get("pending") or {}), "没有该成员的待审批申请。")
-    service.require(not service.store.my_sect(group, target)[0], f"{target} 已加入其他宗门。")
+    service.require(not service.store.my_sect(group, target)[0], f"{_name(service, target)} 已加入其他宗门。")
     if len(s.get("members") or {}) >= sect_cap(s):
         service.require(False, f"宗门人数已满（{sect_cap(s)}人），无法再招人。")
     s["pending"].pop(target, None)
     s["members"].setdefault(target, {"role": "帮众", "contribution": 0, "joined_at": int(service.clock())})
     service.store.bind_sect(group, target, sid)
-    return f"已同意 {target} 入宗。"
+    return f"已同意 {_name(service, target)} 入宗。"
 
 
 def _reject(service, key, p, qq, s, args):
     service.can_edit(key)
     service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可审批申请。")
-    target = args[0] if args else ""
+    target = _pid(service, args[0] if args else "")
     if target in (s.get("pending") or {}):
         s["pending"].pop(target, None)
-        return f"已拒绝 {target} 的入宗申请。"
+        return f"已拒绝 {_name(service, target)} 的入宗申请。"
     return "没有该成员的待审批申请。"
 
 
@@ -267,7 +281,7 @@ def _roster(service, s):
                      key=lambda kv: (-int(kv[1].get("contribution", 0))))
     if not members:
         return "宗门暂无成员。"
-    return "\n".join(f"- {qq} 【{m['role']}】贡献 {int(m.get('contribution', 0))}"
+    return "\n".join(f"- {_name(service, qq)} 【{m['role']}】贡献 {int(m.get('contribution', 0))}"
                      for qq, m in members)
 
 
@@ -326,35 +340,35 @@ def _donate(service, key, p, a, qq, s, args):
 def _promote(service, key, p, qq, s, args):
     service.can_edit(key)
     service.require(_role_of(s, qq) == "帮主", "只有帮主可封官。")
-    target = args[0] if args else ""
+    target = _pid(service, args[0] if args else "")
     role = args[1] if len(args) > 1 else "长老"
     service.require(target in (s.get("members") or {}), "该成员不在宗门。")
     service.require(role in ("长老", "帮众"), "封官 QQ 长老 / 帮众。")
     service.require(_role_of(s, target) != "帮主", "不可封免帮主。")
     s["members"][target]["role"] = role
-    return f"已把 {target} 设为【{role}】。"
+    return f"已把 {_name(service, target)} 设为【{role}】。"
 
 
 def _demote(service, key, p, qq, s, args):
     service.can_edit(key)
     service.require(_role_of(s, qq) == "帮主", "只有帮主可免职。")
-    target = args[0] if args else ""
+    target = _pid(service, args[0] if args else "")
     service.require(target in (s.get("members") or {}), "该成员不在宗门。")
     service.require(_role_of(s, target) != "帮主", "不可免职帮主。")
     s["members"][target]["role"] = "帮众"
-    return f"已把 {target} 免职为帮众。"
+    return f"已把 {_name(service, target)} 免职为帮众。"
 
 
 def _kick(service, group, key, p, qq, s, sid, args):
     service.can_edit(key)
     service.require(_is_officer(_role_of(s, qq)), "只有帮主/长老可踢人。")
-    target = args[0] if args else ""
+    target = _pid(service, args[0] if args else "")
     service.require(target in (s.get("members") or {}), "该成员不在宗门。")
     service.require(_role_of(s, target) != "帮主", "不可踢出帮主。")
     s["members"].pop(target, None)
     s.setdefault("pending", {}).pop(target, None)
     service.store.unbind_sect(group, target)
-    return f"已把 {target} 移出宗门。"
+    return f"已把 {_name(service, target)} 移出宗门。"
 
 
 def _building_name_sorted(s):
