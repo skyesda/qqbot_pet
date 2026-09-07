@@ -41,6 +41,11 @@ from .petpark.image_renderer import ImageRenderer, image_reply, pending_images
 from .petpark.store import PetStore
 from .renderfarm.client import FarmClient
 from .renderfarm.coordinator import Coordinator as RenderFarmCoordinator
+
+# 本地常驻浏览器(~150ms)与远程农场同时竞速「取最快」用的小线程池。
+from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
+
+_render_race_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="petpark-render-race")
 from .petpark.adventure import AdventureService, COMMANDS as ADVENTURE_COMMANDS
 from .petpark.adventure.card import card_html as cultivator_card_html, equipment_summary
 from .petpark.adventure.map_card import map_html as adventure_map_html
@@ -7391,14 +7396,48 @@ class PetParkPlugin(Star):
 
     def _write_html_via_farm_or_local(self, html: str, key: str, target, crop=None,
                                       win_w: int = 900, win_h: int = 5200) -> bool:
-        """农场先行：有 worker 在线就走农场（跨网截图），否则/失败回落本地浏览器。"""
+        """本地常驻浏览器（~150ms）是快车道，只在它偏慢时才拉农场对冲——取最快。
+
+        改动前是「有 worker 就农场先行」，而矿机每单冷启 Chrome CLI 至少数千 ms，
+        反而把原本 ~150ms 的常驻渲染拖到 3s+。这里先给本地一个 ~0.3s 窗口：
+        - 本地够快 → 直接用，绝不惊动农场（不浪费矿机算力）；
+        - 本地偏慢/崩溃 → 同时启动农场竞速，谁先成功用谁（真正的「取最快」）。
+        失败方照常跑完也无妨：同一 sha 结果会写好，缓存命中即秒回。
+        """
         farm = getattr(self, "_render_farm", None)
-        if farm is not None and farm.any_worker():
-            if self._render_via_farm(key, html, crop, target, win_w, win_h):
-                logger.info("[petpark] image_render backend=farm key=%s", key)
-                return True
-        # 回落本地：无农场 / 无 worker / 农场失败
-        return self._write_html_png(html, key, target, crop=crop, win_w=win_w, win_h=win_h)
+        use_farm = farm is not None and farm.any_worker()
+        local = _render_race_pool.submit(self._write_html_png, html, key, target,
+                                         crop=crop, win_w=win_w, win_h=win_h)
+        if not use_farm:
+            return bool(local.result())
+        # 快车道窗口：本地够快就直接赢，不惊动农场。
+        done, _ = wait([local], timeout=0.30)
+        if done:
+            try:
+                if local.result():
+                    return True
+            except Exception:
+                pass          # 本地够快但崩了 → 不能判负，落下去拉农场对冲
+            # 本地快但失败/产出过小：同样落到农场竞速兜底
+        # 本地慢/失败：农场加入竞速，取最先成功者。
+        fr = _render_race_pool.submit(self._render_via_farm, key, html, crop, target,
+                                      win_w, win_h)
+        done, pending = wait([local, fr], return_when=FIRST_COMPLETED)
+        for fut in done:
+            try:
+                if fut.result():
+                    return True
+            except Exception:
+                pass
+        if pending:
+            more, _ = wait(list(pending), return_when=FIRST_COMPLETED)
+            for fut in more:
+                try:
+                    if fut.result():
+                        return True
+                except Exception:
+                    pass
+        return False
 
     def _render_html_image(self, html: str, tag: str, disp_w: int, crop=None,
                            win_w: int = 900, win_h: int = 5200, keep: int = 5) -> str | None:
