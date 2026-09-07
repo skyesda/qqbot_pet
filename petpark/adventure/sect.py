@@ -35,6 +35,21 @@ BUILDINGS = {
 # 每日次数上限（已计入数值平衡，勿随意调大以防刷爆主线）。
 DAILY_LIMITS = {"mission": 3, "guard": 1, "explore": 2}
 
+# 宗门操作冷却（秒）：与宠物侧「副本/修行」的冷却节奏对齐，防连点刷取，但不叠在主线限次之外。
+_SECT_CD = {"mission": 60, "explore": 300, "guard": 600, "star": 300}
+
+# 宗门任务目标池：从「今日真实活动」里挑一个需要实际完成的任务，而不是一键白拿。
+# read 读当前进度（随今日各活动计数变化），cap 为当日上限；接取时按剩余余量裁剪，保证任务必可完成。
+_MISSION_SOURCES = {
+    "rewards":    ("历练 / 刷副本", lambda a, s, qq: int(a.get("rewards", 0)), 8),
+    "world_hits": ("讨伐世界首领", lambda a, s, qq: int(a.get("world_hits", 0)), 3),
+    "trial":      ("挑战试炼秘境", lambda a, s, qq: int((a.get("trial") or {}).get("used", 0)), 2),
+    "guard":      ("镇守宗门", lambda a, s, qq: int(_count(s, qq, "guard")), 1),
+    "explore":    ("探秘北秘境", lambda a, s, qq: int(_count(s, qq, "explore")), 2),
+}
+_MISSION_POOL = [("rewards", 2), ("rewards", 3), ("world_hits", 1), ("world_hits", 2),
+                 ("trial", 1), ("guard", 1), ("explore", 1), ("explore", 2)]
+
 
 def _today(service):
     return service.today()
@@ -64,6 +79,16 @@ def _count(s, qq, key):
 def _bump(s, qq, key):
     s.setdefault("daily", {}).setdefault(qq, {})
     s["daily"][qq][key] = _count(s, qq, key) + 1
+
+
+def _cd_until(service, a, kind, seconds):
+    """登记某类宗门操作的冷却（同一类共享一个时钟，读 service.clock()）。"""
+    a.setdefault("sect_cds", {})[kind] = int(service.clock()) + seconds
+
+
+def _cd_wait(service, a, kind):
+    """返回某类宗门操作剩余冷却秒数，0 表示可执行。"""
+    return max(0, int(a.setdefault("sect_cds", {}).get(kind, 0)) - int(service.clock()))
 
 
 def _treasury_split(s, qq, contribution, split=0.5):
@@ -429,14 +454,49 @@ def _do_mission(service, key, p, a, s, qq):
         return "宗门等级不足，任务楼尚未开放。"
     if _count(s, qq, "mission") >= DAILY_LIMITS["mission"]:
         return f"今日宗门任务已完成 {DAILY_LIMITS['mission']} 次，明日再来。"
+    member = s.setdefault("members", {}).setdefault(qq, {"role": "帮众", "contribution": 0})
+    mission = member.get("mission")
+    # 有进行中的任务：校验是否已达标，达标即交付领赏（可加时长由任务本身决定，不额外消耗体力）。
+    if mission and mission.get("accepted"):
+        if mission.get("day") != service.today():
+            member.pop("mission", None)
+            return "昨日委托已过期（各活动计数已刷新），请重新「宗门任务」接取。"
+        key_name, target = mission["key"], mission["target"]
+        label, read, cap = _MISSION_SOURCES[key_name]
+        prog = min(read(a, s, qq), cap) - mission["base"]
+        if prog >= target:
+            cult, ore, contrib = _mission_reward(service, s, a)
+            _bump(s, qq, "mission")
+            _settle(service, a, cult, ore)
+            _treasury_split(s, qq, contrib)
+            s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["mission"]
+            member.pop("mission", None)
+            _cd_until(service, a, "mission", _SECT_CD["mission"])
+            return (f"任务达成！归还「{label} ×{target}」：修为×{cult} · 灵材×{ore} · 帮贡+{contrib}"
+                    f" · 活跃度+{_ACTIVITY['mission']}（今日 {_count(s, qq, 'mission')}/{DAILY_LIMITS['mission']}）。")
+        return f"任务进行中：还需完成 {label} ×{target - prog}。完成后再次「宗门任务」归还。"
+    # 没有进行中任务：从任务池里接取一个（按剩余余量裁剪，保证必可完成）。
+    cd = _cd_wait(service, a, "mission")
+    if cd > 0:
+        return f"任务楼冷却中，还需 {cd} 秒再接新委托。"
+    picked = None
+    for key_name, want in _MISSION_POOL:
+        label, read, cap = _MISSION_SOURCES[key_name]
+        base = read(a, s, qq)
+        target = min(want, cap - base)
+        if target >= 1:
+            picked = (key_name, label, base, target)
+            break
+    if not picked:
+        return ("任务楼今日已无适合你的委托——你今日的历练/首领/秘境/镇守/探索均已达标。"
+                "各项活动明日会刷新，请明日再来。")
+    key_name, label, base, target = picked
     if not _spend_stamina(service, a, 10):
-        return "体力不足（任务需10体力），可用『体力丹』补充后重试。"
-    cult, ore, contrib = _mission_reward(service, s, a)
-    _bump(s, qq, "mission")
-    _settle(service, a, cult, ore)
-    _treasury_split(s, qq, contrib)
-    s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["mission"]
-    return f"完成宗门任务：修为×{cult} · 灵材×{ore} · 帮贡+{contrib} · 活跃度+{_ACTIVITY['mission']}（今日 {_count(s, qq, 'mission')}/{DAILY_LIMITS['mission']}）。"
+        return "体力不足（接取宗门任务需10体力），可用『体力丹』补充后重试。"
+    member["mission"] = {"key": key_name, "label": label, "base": base, "target": target,
+                         "accepted": int(service.clock()), "day": service.today()}
+    return (f"接取宗门任务：今日完成【{label} ×{target}】！完成后发送「宗门任务」归还领赏。"
+            f"（今日还可交付 {DAILY_LIMITS['mission'] - _count(s, qq, 'mission')} 次）")
 
 
 def _do_explore(service, key, p, a, s, qq):
@@ -447,10 +507,14 @@ def _do_explore(service, key, p, a, s, qq):
         return "北秘境需宗门 Lv2 解锁。"
     if _count(s, qq, "explore") >= DAILY_LIMITS["explore"]:
         return f"今日北秘境已探索 {DAILY_LIMITS['explore']} 次，明日再来。"
+    cd = _cd_wait(service, a, "explore")
+    if cd > 0:
+        return f"北秘境冷却中，还需 {cd} 秒。"
     if not _spend_stamina(service, a, 20):
         return "体力不足（探索需20体力）。"
     r = _explore_reward(service, s, a)
     _bump(s, qq, "explore")
+    _cd_until(service, a, "explore", _SECT_CD["explore"])
     _settle(service, a, r["cult"], r["ore"])
     if r.get("item"):
         service.store.add_item(p, r["item"], 1)
@@ -467,14 +531,19 @@ def _do_guard(service, key, p, a, s, qq):
         return "南金库需宗门 Lv3 解锁。"
     if _count(s, qq, "guard") > 0:
         return "今日镇守已完成，明日再来。"
+    cd = _cd_wait(service, a, "guard")
+    if cd > 0:
+        return f"镇守冷却中，还需 {cd} 秒。"
     if not _spend_stamina(service, a, 15):
         return "体力不足（镇守需15体力）。"
     result = _simulate_guard(service, p, key, s)
     if not result["won"]:
         _bump(s, qq, "guard")
+        _cd_until(service, a, "guard", _SECT_CD["guard"])
         s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["guard_loss"]
         return service.record(a, result, "镇守宗门") + "\n镇守失利，明日再战。"
     _bump(s, qq, "guard")
+    _cd_until(service, a, "guard", _SECT_CD["guard"])
     a["cultivation"] = a.get("cultivation", 0) + (30 + sect_lv * 10)
     a["ore"] = a.get("ore", 0) + 2
     contrib = 50 + 20 * sect_lv
@@ -489,28 +558,58 @@ def _simulate_guard(service, p, key, s):
     return simulate(build_party(p, key), enemies(enc), random.randrange(2 ** 32))
 
 
+def _exchange_catalog():
+    """西仓库可兑换目录：以体力/材料/货币等「非养成主线加速类」为主，避免帮贡直接兑换经验/战力。
+
+    灵石/玄晶/灵材为资源搬运（不直接加战力）；体力类为续航；涤魂散为深渊清理；无经验书/聚灵丹。
+    """
+    return [
+        {"name": "体力丹", "cost": 30, "desc": "恢复30点修士体力"},
+        {"name": "扩体散", "cost": 60, "desc": "体力上限永久+20"},
+        {"name": "醒神丹", "cost": 50, "desc": "体力回复翻倍1天"},
+        {"name": "涤魂散", "cost": 80, "desc": "清除深渊侵蚀5点"},
+        {"name": "灵材包", "cost": 50, "desc": "灵材×20"},
+        {"name": "灵石袋", "cost": 50, "desc": "灵石×3000"},
+        {"name": "玄晶袋", "cost": 60, "desc": "玄晶×500"},
+    ]
+
+
+def _exchange_table(entries):
+    lines = ["| 物品 | 帮贡 | 效果 |", "| --- | --- | --- |"]
+    for e in entries:
+        lines.append(f"| {e['name']} | {e['cost']} | {e['desc']} |")
+    lines += ["", "> 发送 `宗门兑换 物品名 数量` 兑换；帮贡来自宗门任务·北秘境·镇守。"]
+    return "\n".join(lines)
+
+
 def _do_exchange(service, key, p, a, s, qq, args):
     if not _role_of(s, qq):
         return "请先「申请入宗」加入宗门。"
+    cat = _exchange_catalog()
     item = args[0] if args else ""
+    if not item or item in ("目录", "列表", "清单"):
+        return _exchange_table(cat)
     count = 1
     if len(args) > 1 and args[1].isdigit():
         count = max(1, int(args[1]))
-    prices = _exchange_prices()
-    if item not in prices:
-        return "宗门可兑换：" + "、".join(f"{k}({v}帮贡)" for k, v in prices.items())
-    cost = prices[item] * count
+    entry = next((e for e in cat if e["name"] == item), None)
+    if not entry:
+        return _exchange_table(cat)
+    cost = entry["cost"] * count
     member = s["members"][qq]
     if int(member.get("contribution", 0)) < cost:
         return f"『{item}』需要 {cost} 帮贡，当前 {member.get('contribution', 0)}。"
     member["contribution"] = int(member.get("contribution", 0)) - cost
-    # 西仓库兑换的物品进玩家背包。
-    service.store.add_item(p, item, count)
+    if item == "灵石袋":
+        service.store.add_currency(p, "灵石", 3000 * count)
+    elif item == "玄晶袋":
+        service.store.add_currency(p, "玄晶", 500 * count)
+    elif item == "灵材包":
+        a["ore"] = a.get("ore", 0) + 20 * count
+    else:
+        # 体力/上限/回复/净化等，进玩家背包后用「使用」生效。
+        service.store.add_item(p, item, count)
     return f"已用帮贡兑换『{item}』×{count}（-{cost} 贡献）。"
-
-
-def _exchange_prices():
-    return {"体力丹": 30, "小经验书": 20, "聚灵丹": 50}
 
 
 def _do_star(service, key, p, a, s, qq, args):
@@ -522,17 +621,22 @@ def _do_star(service, key, p, a, s, qq, args):
     action = args[0] if args else ""
     if not action:
         return "星辰阁：消耗宗门帮贡合成。可用 `星辰阁 星盘大阵`（3天修为翻倍）或 `星辰阁 灵材`（灵材×50）。"
+    cd = _cd_wait(service, a, "star")
+    if cd > 0:
+        return f"星辰阁冷却中，还需 {cd} 秒。"
     if action in ("星盘大阵", "星盘"):
         cost = 300
         if not _pay_treasury(s, cost):
             return f"宗门帮贡不足（需 {cost}）。"
         a["exp_buff_until"] = _extend_buff_until(service, a, 3 * 86400)
+        _cd_until(service, a, "star", _SECT_CD["star"])
         return "星盘大阵开光成功：修为翻倍 3 天！"
     if action in ("灵材",):
         cost = 100
         if not _pay_treasury(s, cost):
             return f"宗门帮贡不足（需 {cost}）。"
         a["ore"] = a.get("ore", 0) + 50
+        _cd_until(service, a, "star", _SECT_CD["star"])
         return "星辰阁炼材：灵材×50。"
     return "星辰阁：`星辰阁 星盘大阵` / `星辰阁 灵材`。"
 

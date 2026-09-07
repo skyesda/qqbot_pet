@@ -167,24 +167,40 @@ class SectTests(unittest.TestCase):
         s['activity'] = ACTIVITY_PER_CAP
         self.assertIn('已提交', self.call('申请入宗 铁剑门', qq='b'))
 
-    # ---- 宗门任务（每日次数 + 帮贡分润 + 跨天重置 + 活跃度） ----
-    def test_mission_daily_treasury_and_rollover(self):
+    # ---- 宗门任务：需完成指定目标才发奖励（非一键白拿） + 冷却 + 每日上限 + 跨天重置 ----
+    def test_mission_requires_completed_objective_then_rewards(self):
         self.create()
         self.create(qq='b')
         self.call('创建宗门 铁剑门')
         self.call('申请入宗 铁剑门', qq='b')
         self.call('同意入宗 b')
-        for _ in range(DAILY_LIMITS['mission']):
-            self.assertIn('帮贡+', self.call('宗门任务'))
+        # 接取：a 今日无任何活动 → 必然抽到「历练 / 刷副本 ×2」
+        out = self.call('宗门任务')
+        self.assertIn('接取宗门任务', out)
+        self.assertIn('历练', out)
+        # 未达标时归还被拒；达标后一次性领赏，且不重复发。
+        self.assertIn('任务进行中', self.call('宗门任务'))
+        self.assertEqual(self.state()['members']['a']['mission']['target'], 2)
+        self.adv()['rewards'] = 2   # 模拟已完成 2 次历练
+        self.assertIn('任务达成', self.call('宗门任务'))
         s = self.state()
-        # 帮贡分润 50% 入宗库；个人帮贡累计；（3 次任务 → 活跃度6）
-        self.assertEqual(s['treasury'], 15 * DAILY_LIMITS['mission'])
-        self.assertEqual(s['members']['a']['contribution'], 30 * DAILY_LIMITS['mission'])
-        self.assertEqual(s['activity'], _MISSION_ACT * DAILY_LIMITS['mission'])
+        # 帮贡分润 50% 入库；个人帮贡累计；活跃度 +2；任务已清除。
+        self.assertEqual(s['treasury'], 15)
+        self.assertEqual(s['members']['a']['contribution'], 30)
+        self.assertEqual(s['activity'], _MISSION_ACT)
+        self.assertNotIn('mission', s['members']['a'])
+        self.assertEqual(int(self.adv()['stamina']), 90)   # 接取消耗 10 体力
+
+    def test_mission_daily_cap_and_rollover(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        s = self.state()
+        s['daily_date'] = self.service.today()
+        s['daily'] = {'a': {'mission': DAILY_LIMITS['mission']}}
         self.assertIn('已完成', self.call('宗门任务'))
-        # 跨天重置后可再接
+        # 跨天重置后任务计数清零，可再接。
         self.now += 86400
-        self.assertIn('帮贡+', self.call('宗门任务'))
+        self.assertIn('接取宗门任务', self.call('宗门任务'))
 
     def test_mission_stamina_shortfall_rolls_back(self):
         p = self.create()
@@ -194,6 +210,17 @@ class SectTests(unittest.TestCase):
         self.assertIn('体力不足', out)
         self.assertEqual(int(self.adv()['stamina']), 5)
         self.assertEqual(int(self.adv()['cultivation']), int(p['adventure']['cultivation']))
+
+    def test_mission_claim_cooldown(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        # 接取（rewards=0 → base=0）→ 完成后领赏 → 纳入短冷却，不能秒建新委托。
+        self.assertIn('接取', self.call('宗门任务'))
+        self.adv()['rewards'] = 2
+        self.assertIn('任务达成', self.call('宗门任务'))
+        self.assertIn('冷却中', self.call('宗门任务'))
+        self.now += 60
+        self.assertIn('接取', self.call('宗门任务'))
 
     # ---- 北秘境（Lv2 + 消耗体力 + 概率掉落） ----
     def test_explore_level_gate_stamina_and_item(self):
@@ -209,7 +236,9 @@ class SectTests(unittest.TestCase):
         self.assertIn('『小经验书』', out)
         self.assertEqual(self.adv()['stamina'], 100 - 20)
         self.assertTrue(self.store.has_item(p, '小经验书', 1))
-        # 每日上限
+        # 冷却（300s）先拦截；重置后再探索一次达 2 次，第 3 次触发每日上限。
+        self.assertIn('冷却中', self.call('宗门探索'))
+        self.now += 300
         self.call('宗门探索')
         self.assertIn('明日再来', self.call('宗门探索'))
 
@@ -270,6 +299,49 @@ class SectTests(unittest.TestCase):
         self.assertTrue(self.store.has_item(p, '体力丹', 1))
         self.assertEqual(self.state()['members']['a']['contribution'], 20)
 
+    def test_sect_action_cooldowns(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        self.state()['level'] = 2
+        # 北秘境：成功后进入 5 分钟冷却，期间不能连点。
+        with patch('qqbot_pet.petpark.adventure.sect.random.random', return_value=0.9):
+            self.assertIn('帮贡+', self.call('宗门探索'))
+        self.assertIn('冷却中', self.call('宗门探索'))
+        self.now += 300
+        with patch('qqbot_pet.petpark.adventure.sect.random.random', return_value=0.9):
+            self.assertIn('帮贡+', self.call('宗门探索'))     # 冷却重置后成功（今日第2次）
+        self.assertIn('明日再来', self.call('宗门探索'))        # 第3次 → 每日上限
+
+    def test_star_cooldown(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        self.state()['level'] = 4
+        self.state()['treasury'] = 500
+        self.assertIn('修为翻倍', self.call('星辰阁 星盘大阵'))
+        self.assertIn('冷却中', self.call('星辰阁 灵材'))    # 星辰阁共用冷却
+
+    def test_exchange_catalog_no_progression_items(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        out = self.call('宗门兑换')
+        self.assertIn('| 物品 | 帮贡 | 效果 |', out)
+        self.assertIn('体力丹', out)
+        self.assertNotIn('聚灵丹', out)        # 不再直接兑换经验/战力
+        self.assertNotIn('经验书', out)
+
+    def test_exchange_currency_and_ore(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        s = self.state()
+        s['members']['a']['contribution'] = 200
+        before_coin = self.store.get_currency(self.store.get_player('a', 'g'), '灵石')
+        self.call('宗门兑换 灵石袋')
+        self.assertEqual(self.store.get_currency(self.store.get_player('a', 'g'), '灵石'), before_coin + 3000)
+        before_ore = int(self.adv()['ore'])
+        self.call('宗门兑换 灵材包')
+        self.assertEqual(int(self.adv()['ore']), before_ore + 20)
+        self.assertEqual(self.state()['members']['a']['contribution'], 200 - 50 - 50)
+
     def test_star_gate_and_buff(self):
         self.create()
         self.call('创建宗门 铁剑门')
@@ -280,6 +352,7 @@ class SectTests(unittest.TestCase):
         self.assertGreater(self.adv()['exp_buff_until'], self.now)
         self.assertLessEqual(self.adv()['exp_buff_until'], self.now + 3 * 86400 + 60)
         self.assertEqual(self.state()['treasury'], 200)
+        self.now += 300   # 等星辰阁冷却（300s）结束，再测帮贡不足
         self.state()['treasury'] = 10
         self.assertIn('帮贡不足', self.call('星辰阁 星盘大阵'))
 

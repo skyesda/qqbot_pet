@@ -7893,11 +7893,12 @@ class PetParkPlugin(Star):
                 "## 📜 秘技商城",
                 "> 购买后发送『使用 秘技名』参悟（需满足等级/智力）",
                 "",
+                "| 秘技 | 价格 | 需求 |",
+                "| --- | --- | --- |",
             ]
             for n, v in data.SKILLS.items():
                 lines.append(
-                    f"- **{n}** — {data.ITEMS[n]['price']} 玄晶　"
-                    f"（Lv{v['level_req']}/智力{v['intel_req']}·战力+{v['power']}）"
+                    f"| {n} | {data.ITEMS[n]['price']} 玄晶 | Lv{v['level_req']}｜智力{v['intel_req']} · 战力+{v['power']} |"
                 )
             return "\n".join(lines)
         if which == "神器商城":
@@ -7905,11 +7906,12 @@ class PetParkPlugin(Star):
                 "## 🗡️ 神器商城",
                 "> 购买后发送『佩戴神器 名称』穿戴（需满足等级，飞升可跨级佩戴）",
                 "",
+                "| 神器 | 价格 | 需求 |",
+                "| --- | --- | --- |",
             ]
             for n, v in data.ARTIFACTS.items():
                 lines.append(
-                    f"- **{n}** — {data.ITEMS[n]['price']} 玄晶　"
-                    f"（Lv{v['level_req']}·战力+{v['power']}）"
+                    f"| {n} | {data.ITEMS[n]['price']} 玄晶 | Lv{v['level_req']} · 战力+{v['power']} |"
                 )
             return "\n".join(lines)
 
@@ -7939,8 +7941,10 @@ class PetParkPlugin(Star):
             ),
         ):
             lines.append(f"**【{cat}】**")
+            lines.append("| 物品 | 价格 |")
+            lines.append("| --- | --- |")
             for n, it in sorted(groups[cat], key=lambda kv: kv[1]["price"]):
-                lines.append(f"- **{n}** — {it['price']} {_cur_disp(it['currency'])}")
+                lines.append(f"| {n} | {it['price']} {_cur_disp(it['currency'])} |")
             lines.append("")
         return "\n".join(lines).rstrip()
 
