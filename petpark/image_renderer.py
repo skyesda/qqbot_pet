@@ -7,6 +7,8 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -60,8 +62,8 @@ class ImageRenderer:
 
     def __init__(self):
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='petpark-chrome')
+        self._cli_lock = threading.Lock()
         self._playwright = self._browser = self._page = None
-        self._retry_at = 0.0
 
     def write(self, html, target, crop, width, height):
         return self._worker.submit(self._write, html, Path(target), crop, width, height).result()
@@ -75,7 +77,6 @@ class ImageRenderer:
         except Exception as exc:
             log.warning('[petpark] 图片浏览器预热失败: %s', exc)
             self._reset()
-            self._retry_at = time.monotonic() + 60
 
     def _reset(self):
         for obj, method in ((self._browser, 'close'), (self._playwright, 'stop')):
@@ -95,7 +96,13 @@ class ImageRenderer:
             self._reset()
             from playwright.sync_api import sync_playwright
             self._playwright = sync_playwright().start()
-            options = {'headless': True, 'args': ['--no-sandbox', '--disable-dev-shm-usage']}
+            options = {'headless': True, 'args': [
+                '--no-sandbox', '--disable-dev-shm-usage',
+                # 这台 2 核/1.9GB 且已明显 swap 的机器上，Chrome 必须自带内存上限，
+                # 否则后台频繁 GC/膨胀会把 V8 堆顶到交换区，正是图片 p90 11s 的元凶。
+                '--js-flags=--max-old-space-size=256',
+                '--disk-cache-size=10485760',
+            ]}
             executable = chrome_path()
             if executable:
                 options['executable_path'] = executable
@@ -128,29 +135,11 @@ class ImageRenderer:
         started = time.perf_counter()
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name('.' + target.name + '.' + uuid.uuid4().hex + '.tmp.png')
-        html_file = temp.with_suffix('.html')
-        backend = 'persistent'
         try:
-            raw = None
-            if time.monotonic() >= self._retry_at:
-                try:
-                    raw = self._screenshot(html, width, height,
-                                           getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu'))
-                except Exception as exc:
-                    log.warning('[petpark] 常驻浏览器不可用，临时回退 Chrome CLI: %s', exc)
-                    self._reset()
-                    self._retry_at = time.monotonic() + 60
+            raw = self._capture(html, width, height,
+                                getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu'))
             if raw is None:
-                backend = 'cli'
-                html_file.write_text(html, encoding='utf-8')
-                subprocess.run(
-                    [chrome_path() or 'google-chrome', '--headless=new', '--no-sandbox',
-                     '--disable-dev-shm-usage', '--hide-scrollbars', '--disable-extensions',
-                     '--force-device-scale-factor=1', f'--window-size={width},{height}',
-                     f'--screenshot={temp}', html_file.resolve().as_uri()],
-                    timeout=60, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                raw = temp.read_bytes()
+                return False
             with Image.open(io.BytesIO(raw)) as image:
                 rgb = image.convert('RGB')
             output = crop(rgb) if crop else rgb
@@ -160,12 +149,44 @@ class ImageRenderer:
             if temp.stat().st_size < 1000:
                 return False
             os.replace(temp, target)
-            log.info('[petpark] image_render backend=%s elapsed_ms=%.1f bytes=%d',
-                     backend, (time.perf_counter() - started) * 1000, target.stat().st_size)
+            log.info('[petpark] image_render backend=persistent elapsed_ms=%.1f bytes=%d',
+                     (time.perf_counter() - started) * 1000, target.stat().st_size)
             return True
         except Exception:
             log.exception('[petpark] 图片渲染失败')
             return False
         finally:
             temp.unlink(missing_ok=True)
-            html_file.unlink(missing_ok=True)
+
+    def _capture(self, html, width, height, clip_panel):
+        """从常驻浏览器截图。崩溃后重置自愈（下次调用自动重启），
+        绝不在这台内存吃紧的机器上「每请求冷启一个独立 Chrome」——那是
+        p90 11s / max 79s 名单外的根源。仅在显式开启 PETPARK_CLI_FALLBACK 时
+        才允许一次性 CLI 兜底，且用锁保证最多 1 个 CLI 并发。"""
+        try:
+            return self._screenshot(html, width, height, clip_panel)
+        except Exception as exc:
+            log.warning('[petpark] 常驻浏览器渲染失败，重置自愈: %s', exc)
+            self._reset()
+        if os.environ.get('PETPARK_CLI_FALLBACK'):
+            with self._cli_lock:
+                try:
+                    return self._screenshot_cli(html, width, height)
+                except Exception as exc:
+                    log.warning('[petpark] CLI 兜底截图失败: %s', exc)
+        return None
+
+    def _screenshot_cli(self, html, width, height):
+        """一次性 headless Chrome CLI 截图（仅兜底，默认关闭，常驻浏览器自愈后无需它）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            html_file = Path(tmp) / 'render.html'
+            png_file = Path(tmp) / 'render.png'
+            html_file.write_text(html, encoding='utf-8')
+            subprocess.run(
+                [chrome_path() or 'google-chrome', '--headless=new', '--no-sandbox',
+                 '--disable-dev-shm-usage', '--hide-scrollbars', '--disable-extensions',
+                 '--force-device-scale-factor=1', f'--window-size={width},{height}',
+                 f'--screenshot={png_file}', html_file.resolve().as_uri()],
+                timeout=60, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            return png_file.read_bytes()
