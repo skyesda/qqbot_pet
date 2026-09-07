@@ -122,6 +122,7 @@ class PetStore:
         self._migrate_unified_v1()
         self._migrate_homestead_building_names()
         self._migrate_economy_v1()
+        self._migrate_bank_overflow()
 
     def _migrate_homestead_building_names(self) -> None:
         """家园建筑键改名：金币矿→灵石矿、积分工坊→玄晶工坊（仙途语境，重命名不删数据）。
@@ -179,6 +180,26 @@ class PetStore:
         for pl in self._data.get("players", {}).values():
             if isinstance(pl, dict):
                 pl.setdefault("economy_v1", True)
+
+    def _migrate_bank_overflow(self) -> None:
+        """一次性修正银行账户天文数字存款/贷款（数据损坏溢出），幂等。
+
+        某账户 deposit_jifen 曾被写成 ~1e500，乘以周利率转 float 触发 OverflowError，
+        拖垮整轮利息结算（main._bank_interest_tick）。此处把各账户 deposit_*/loan_*
+        异常超大值（>10^15）归零；正常运行期间再由 tick 的 try/except 兜底。
+        """
+        if self._data.get("bank_overflow_fixed_v1"):
+            return
+        self._data["bank_overflow_fixed_v1"] = True
+        log = logging.getLogger(__name__)
+        for qq, bk in list(self._data.get("bank_players", {}).items()):
+            if not isinstance(bk, dict):
+                continue
+            for key in ("deposit_coin", "deposit_jifen", "loan_coin", "loan_jifen"):
+                value = bk.get(key, 0)
+                if isinstance(value, int) and value > 10 ** 15:
+                    log.warning("[petpark] 银行账户 %s 的 %s 数值异常，已归零", qq, key)
+                    bk[key] = 0
 
     def _migrate_clear_cooldowns_once(self) -> None:
         """一次性清空所有玩家冷却（修复时区后重置）。仅在未标记时执行一次。"""

@@ -757,28 +757,32 @@ class PetParkPlugin(Star):
                 continue
             if bk.get("last_interest_week") == week_key:
                 continue
-            # 存款利息
-            dep_coin = bk.get("deposit_coin", 0)
-            dep_jifen = bk.get("deposit_jifen", 0)
-            if dep_coin > 0:
-                interest = max(1, int(dep_coin * data.BANK_INTEREST_WEEKLY))
-                bk["deposit_coin"] += interest
-                bk["total_interest_earned"] = bk.get("total_interest_earned", 0) + interest
-            if dep_jifen > 0:
-                interest = max(1, int(dep_jifen * data.BANK_INTEREST_WEEKLY))
-                bk["deposit_jifen"] += interest
-                bk["total_interest_earned"] = bk.get("total_interest_earned", 0) + interest
-            # 贷款利息（复利）
-            loan_coin = bk.get("loan_coin", 0)
-            loan_jifen = bk.get("loan_jifen", 0)
-            if loan_coin > 0:
-                interest = max(1, int(loan_coin * data.BANK_INTEREST_WEEKLY))
-                bk["loan_coin"] += interest
-                bk["total_interest_paid"] = bk.get("total_interest_paid", 0) + interest
-            if loan_jifen > 0:
-                interest = max(1, int(loan_jifen * data.BANK_INTEREST_WEEKLY))
-                bk["loan_jifen"] += interest
-                bk["total_interest_paid"] = bk.get("total_interest_paid", 0) + interest
+            # 存款利息（单账户异常不拖垮整体：数据损坏溢出时跳过该账户）
+            try:
+                dep_coin = bk.get("deposit_coin", 0)
+                dep_jifen = bk.get("deposit_jifen", 0)
+                if dep_coin > 0:
+                    interest = max(1, int(dep_coin * data.BANK_INTEREST_WEEKLY))
+                    bk["deposit_coin"] += interest
+                    bk["total_interest_earned"] = bk.get("total_interest_earned", 0) + interest
+                if dep_jifen > 0:
+                    interest = max(1, int(dep_jifen * data.BANK_INTEREST_WEEKLY))
+                    bk["deposit_jifen"] += interest
+                    bk["total_interest_earned"] = bk.get("total_interest_earned", 0) + interest
+                # 贷款利息（复利）
+                loan_coin = bk.get("loan_coin", 0)
+                loan_jifen = bk.get("loan_jifen", 0)
+                if loan_coin > 0:
+                    interest = max(1, int(loan_coin * data.BANK_INTEREST_WEEKLY))
+                    bk["loan_coin"] += interest
+                    bk["total_interest_paid"] = bk.get("total_interest_paid", 0) + interest
+                if loan_jifen > 0:
+                    interest = max(1, int(loan_jifen * data.BANK_INTEREST_WEEKLY))
+                    bk["loan_jifen"] += interest
+                    bk["total_interest_paid"] = bk.get("total_interest_paid", 0) + interest
+            except (OverflowError, TypeError, ValueError):
+                logger.warning("[petpark] 银行账户 %s 利息结算异常，跳过", qq)
+                continue
             bk["last_interest_week"] = week_key
             any_changed = True
         if any_changed:
