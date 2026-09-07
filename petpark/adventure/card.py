@@ -41,7 +41,7 @@ def card_html(player, key, equipment=False):
                      f'<small>{"尚未强化" if rank == 0 else "提升" + label}</small></div>')
     stats = "".join(f'<div><span>{label}</span><b>{s[field]}</b></div>' for label, field in
                     [("性命", "hp"), ("攻击", "atk"), ("防御", "def"), ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
-    details = (f'本体 {bd["hero"]} · 灵宠贡献 {bd["pet_contrib"]} ×40% · 坐骑贡献 {bd["mount_contrib"]} ×20%'
+    details = (f'本体 {bd["hero"]} ＋ 15%×灵宠 {bd["pet_contrib"]} ＋ 10%×坐骑 {bd["mount_contrib"]}'
                f'<br>道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}') if bd else ""
     footer = ('锻造 ' + c.GEAR_NAMES + '<br>每级消耗 3＋当前等级×2 灵材，强化上限为修士等级。') if equipment else (
         '修士修炼 · 修士突破 · 修士装备 · 道号 · 性别')

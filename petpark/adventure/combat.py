@@ -24,7 +24,7 @@ def hero_sheet(a, player, include_mount=True):
     进阶：装备/道具带来的 bonus（力量/铁骨/气血/疾风丹）、持久属性 悟性/根骨、性别微调。
     旧存档缺字段一律 setdefault 惰性补默认，零迁移。
     include_mount=False 时排除坐骑攻击加成：用于修士「本体」战力归零坐骑项，
-    坐骑改由 power._mount_contrib 以独立 20% 占比计入，避免在英雄本体里双重计。
+    坐骑改由 power._mount_contrib 以独立 10% 占比计入，避免在英雄本体里双重计。
     """
     spec = PROFESSIONS[a["profession"]]
     # 成长曲线：Lv1~80 保持原线性（不破坏既有副本/洞天平衡），80 级后对数压缩，

@@ -1211,7 +1211,11 @@ DUNGEONS = {
         "monster": monster,
         "power": lv * 950,
         "exp": int((200 + lv * 100) * 0.25),
-        "jifen": 100 + lv * 8,
+        # 三币降级：玄晶退居商城/兑换币，成长主线副产 -40%（差额已折算进下方修为/灵材主产）。
+        "jifen": int((100 + lv * 8) * 0.6),
+        # 修士轴：修士+灵宠历练副本的修为/灵材主产（随副本等级增长）
+        "ore": 3 + lv // 3,
+        "cult": 35 + lv * 3,
     }
     for name, lv, monster in _DUNGEON_DEFS
 }
@@ -1224,62 +1228,62 @@ DUNGEONS = {
 # reward: 支持 jifen（积分）、xianyuan（仙元）、exp（经验）、item（物品）、item_count（数量，默认 1）。
 QUESTS = {
     # ---- 非飞升新手任务（保留给早期玩家） ----
-    "初入江湖": {"need": {"battle_win": 1}, "reward": {"jifen": 2000, "exp": 1000}},
-    "降妖除魔": {"need": {"battle_win": 10}, "reward": {"jifen": 20000, "exp": 10000}},
+    "初入江湖": {"need": {"battle_win": 1}, "reward": {"jifen": 2000, "exp": 1000, "cult": 200, "ore": 10}},
+    "降妖除魔": {"need": {"battle_win": 10}, "reward": {"jifen": 20000, "exp": 10000, "cult": 500, "ore": 30}},
     "探索秘境": {
         "need": {"explore": 20},
-        "reward": {"jifen": 30000, "item": "进化神石"},
+        "reward": {"jifen": 30000, "item": "进化神石", "cult": 300, "ore": 20},
     },
     # ---- 飞升后专属剧情任务「登仙之路」 ----
     "初入飞升": {
         "req": {"stage": "飞升"},
         "need": {},
-        "reward": {"jifen": 5000, "xianyuan": 20, "item": "小精力瓶", "item_count": 1},
+        "reward": {"jifen": 5000, "xianyuan": 20, "item": "小精力瓶", "item_count": 1, "cult": 300, "ore": 15},
     },
     "仙元初聚": {
         "req": {"stage": "飞升"},
         "need": {"ascended_fantasy_treasure": 5},
-        "reward": {"jifen": 8000, "xianyuan": 40},
+        "reward": {"jifen": 8000, "xianyuan": 40, "cult": 400, "ore": 20},
     },
     "劫火炼心": {
         "req": {"stage": "飞升"},
         "need": {"ascended_immortal_calamity": 3},
-        "reward": {"jifen": 10000, "xianyuan": 50, "item": "生命宝符", "item_count": 1},
+        "reward": {"jifen": 10000, "xianyuan": 50, "item": "生命宝符", "item_count": 1, "cult": 500, "ore": 25},
     },
     "飞升·斩妖除魔": {
         "req": {"stage": "飞升"},
         "need": {"ascended_battle_win": 10},
-        "reward": {"jifen": 15000, "xianyuan": 80, "item": "攻击宝符", "item_count": 1},
+        "reward": {"jifen": 15000, "xianyuan": 80, "item": "攻击宝符", "item_count": 1, "cult": 600, "ore": 30},
     },
     "秘境探险家": {
         "req": {"stage": "飞升"},
         "need": {"ascended_dungeon_clear": 10},
-        "reward": {"jifen": 15000, "xianyuan": 60, "item": "防御宝符", "item_count": 1},
+        "reward": {"jifen": 15000, "xianyuan": 60, "item": "防御宝符", "item_count": 1, "cult": 600, "ore": 30},
     },
     "深渊行者": {
         "req": {"stage": "飞升"},
         "need": {"ascended_abyss": 10},
-        "reward": {"jifen": 20000, "xianyuan": 100},
+        "reward": {"jifen": 20000, "xianyuan": 100, "cult": 800, "ore": 40},
     },
     "神器再铸": {
         "req": {"stage": "飞升"},
         "need": {"forge_artifact": 1},
-        "reward": {"jifen": 25000, "xianyuan": 100, "item": "万能宝石", "item_count": 2},
+        "reward": {"jifen": 25000, "xianyuan": 100, "item": "万能宝石", "item_count": 2, "cult": 800, "ore": 40},
     },
     "问道姻缘": {
         "req": {"stage": "飞升"},
         "need": {"shuangxiu": 5},
-        "reward": {"jifen": 10000, "xianyuan": 50, "item": "相思豆", "item_count": 3},
+        "reward": {"jifen": 10000, "xianyuan": 50, "item": "相思豆", "item_count": 3, "cult": 500, "ore": 25},
     },
     "百炼成钢": {
         "req": {"stage": "飞升", "level": 50},
         "need": {},
-        "reward": {"jifen": 30000, "xianyuan": 150},
+        "reward": {"jifen": 30000, "xianyuan": 150, "cult": 1000, "ore": 50},
     },
     "飞升圆满": {
         "req": {"stage": "飞升", "level": 100},
         "need": {},
-        "reward": {"jifen": 50000, "xianyuan": 200, "item": "生命仙符", "item_count": 1},
+        "reward": {"jifen": 50000, "xianyuan": 200, "item": "生命仙符", "item_count": 1, "cult": 1500, "ore": 80},
     },
 }
 
@@ -1314,7 +1318,7 @@ def ascend_xianyuan_to_next(level: int) -> int:
 # 飞升后才能用的幻境寻宝 / 神仙劫奖励范围
 ASCEND_TREASURE = {
     "energy": 60,
-    "jifen": (500, 3000),  # 积分基础范围
+    "jifen": (300, 1800),  # 积分基础范围（三币降级：玄晶副产 -40%）
     "jifen_chance": 0.5,   # 50% 概率获得积分
     "xianyuan": (0.8, 1.5),    # 每级系数，实际 = 等级 × 系数 + 基础
     "xianyuan_base": 5,
@@ -1365,7 +1369,11 @@ ASCEND_DUNGEONS = {
         "xianyuan": (max(1, (25 + lv * 3) // 15), max(2, (25 + lv * 3) // 10)),
         # 飞升后经验自动折算为仙元，作为小额添头
         "exp": int((100 + lv * 80) * 0.3),
-        "jifen": 200 + lv * 10,
+        # 三币降级：玄晶副产 -40%（差额折算进下方修为/灵材）。
+        "jifen": int((200 + lv * 10) * 0.6),
+        # 修士轴：飞升历练的修为/灵材主产（仙元仍为灵宠轴，保留）
+        "cult": 60 + lv * 4,
+        "ore": 4 + lv // 2,
         # 小概率掉落飞升常用道具
         "drop": {"item": "小精力瓶", "chance": 0.15, "count": 1},
     }
@@ -1449,6 +1457,41 @@ def daily_display(key: str) -> str:
 def daily_tokens() -> frozenset:
     """所有可被用户识别的日常活动指令词（内部 key + 修士叫法别名）。"""
     return frozenset(DAILY_ACTIONS) | frozenset(DAILY_CMD_ALIASES)
+
+# ----------------------------------------------------------------------------
+# 全面收编：宠物独立玩法 → 修士+灵宠「协作/历练」指令别名
+# ----------------------------------------------------------------------------
+# 新名（修士视角）→ 内部旧名。旧名仍进 KNOWN_COMMANDS 作隐藏别名（可输入、不进菜单）。
+# 战斗/副本/剧情收编为「修士+灵宠协作出征」，养成/列表/状态改为「灵宠」主语，银行改「灵石银行」。
+PET_CMD_ALIASES = {
+    # 战斗/副本/剧情：宠物独立玩法 → 修士+灵宠协作出征
+    "协同出战": "宠物攻击",
+    "跨群协同出战": "跨群挑战宠物",
+    "历练副本": "宠物副本",
+    "灵宠剧情任务": "宠物剧情任务",
+    # 列表/状态/信息：宠物 → 灵宠
+    "灵宠列表": "宠物列表",
+    "灵宠信息": "宠物信息",
+    "灵宠状态": "宠物状态",
+    "我的灵宠": "我的宠物",
+    # 商城/市场/图鉴：宠物 → 灵宠
+    "灵宠商城": "宠物商城",
+    "灵宠市场": "宠物市场",
+    "灵宠种类": "宠物种类",
+    # 养成操作：改名/变性/侦查/赠送/放生/锁定/解锁/切换/炼化/复活
+    "灵宠改名": "宠物改名",
+    "灵宠变性": "宠物变性",
+    "灵宠侦查": "宠物侦查",
+    "赠送灵宠": "赠送宠物",
+    "放生灵宠": "放生宠物",
+    "锁定灵宠": "锁定宠物",
+    "解锁灵宠": "解锁宠物",
+    "切换灵宠": "切换宠物",
+    "炼化灵宠": "炼化宠物",
+    "灵宠复活": "宠物复活",
+    # 银行（灵石银行 为修士视角新名）
+    "灵石银行": "宠物银行",
+}
 
 # ----------------------------------------------------------------------------
 # 深渊秘境
@@ -2396,6 +2439,16 @@ REBIRTH_GEM_COST_DIAMOND = 10000    # 重生宝石钻石价格
 REBIRTH_GEM_COST_JIFEN = 100000     # 重生宝石积分价格
 REBIRTH_SACRIFICE_MIN_JIFEN = 10000 # 祭奠积分最低
 REBIRTH_SACRIFICE_MIN_DIAMOND = 1000# 祭奠钻石最低
+# ============================================================================
+# 修士轴兑换出口（全面收编后新增）
+# ============================================================================
+# 子玩法内循环币 → 修士轴(灵材/修为) 的兑换汇率。per 为每档所需内循环币数量。
+# 经验/仙元绝不折算为修为（否则会架空灵宠轴），故此处只开放内循环币 → 灵材/修为。
+EXCHANGE_RATES = {
+    "深渊结晶": {"per": 10, "ore": 1, "cult": 30},   # 每 10 深渊结晶 = 1 灵材 + 30 修为
+    "冥币": {"per": 1000, "ore": 1, "cult": 0},      # 每 1000 冥币 = 1 灵材
+}
+
 REBIRTH_KEEP_ITEMS = {              # 重生后保留的物品（长期养成投入，不随重生清零）
     *(f"{q}卡" for q in QUALITIES),  # 全部品质卡（普通碎片→混沌卡）
     *(f"{q}碎片" for q in QUALITIES),  # 全部品质碎片

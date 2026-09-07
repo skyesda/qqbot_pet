@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 import secrets
 import time
@@ -120,6 +121,7 @@ class PetStore:
         self._migrate_purge_sect()
         self._migrate_unified_v1()
         self._migrate_homestead_building_names()
+        self._migrate_economy_v1()
 
     def _migrate_homestead_building_names(self) -> None:
         """家园建筑键改名：金币矿→灵石矿、积分工坊→玄晶工坊（仙途语境，重命名不删数据）。
@@ -163,6 +165,20 @@ class PetStore:
         # 统一战力 v1：schema 提升到 2（v2.1.0 融合）；adventure 侧 schema 由 service 按 VERSION=3 写入。
         if self._data.get("schema_version", 1) < 2:
             self._data["schema_version"] = 2
+
+    def _migrate_economy_v1(self) -> None:
+        """收编经济 v1：给所有存量玩家补 economy_v1 标记（只打标记、不折算财富）。
+
+        「全面收编」后双成长轴（修士修为/灵材 + 灵宠经验/仙元）并行，三币降级为
+        商城/兑换币。此迁移只补标记、不做任何折算，老玩家财富零缩水；新玩家在
+        get_player 里惰性 setdefault 同名字段，故此处幂等、无副作用。
+        """
+        if self._data.get("economy_migrated_v1"):
+            return
+        self._data["economy_migrated_v1"] = True
+        for pl in self._data.get("players", {}).values():
+            if isinstance(pl, dict):
+                pl.setdefault("economy_v1", True)
 
     def _migrate_clear_cooldowns_once(self) -> None:
         """一次性清空所有玩家冷却（修复时区后重置）。仅在未标记时执行一次。"""
@@ -382,7 +398,8 @@ class PetStore:
         for pl in self._data["players"].values():
             pl.pop("pet", None)
         try:
-            payload = json.dumps(self._data, ensure_ascii=False, indent=2)
+            # Whitespace is not game data. Compact JSON reduces encoding and disk I/O.
+            payload = json.dumps(self._data, ensure_ascii=False, separators=(",", ":"))
         finally:
             # 无论如何都要恢复运行时引用
             self._restore_pet_refs()
@@ -404,8 +421,11 @@ class PetStore:
         tmp.replace(self.path)
 
     async def save(self) -> None:
+        started = time.perf_counter()
         async with self._lock:
             self._flush()
+        logging.getLogger(__name__).info(
+            "[petpark] store_save elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
 
     # ----------------------------- 玩家 -----------------------------
     def get_player(
@@ -466,6 +486,7 @@ class PetStore:
             pl.setdefault("last_msg_ts", 0)
             pl.setdefault("mount_enter_notify", True)
             pl.setdefault("mount_leave_notify", True)
+            pl.setdefault("economy_v1", True)
         return pl
 
     def all_players(self) -> dict[str, dict]:
@@ -562,6 +583,24 @@ class PetStore:
     def get_currency(cls, player: dict, currency: str) -> int:
         key = cls.currency_key(currency)
         return player.get(key, 0)
+
+    @classmethod
+    def add_cultivation(cls, player: dict, amount: int) -> int:
+        """修士轴：给修士增加修为（写 adventure.cultivation，不进三币钱包）。未入仙途则无操作，返回当前修为。"""
+        a = player.get("adventure")
+        if not a:
+            return 0
+        a["cultivation"] = a.get("cultivation", 0) + amount
+        return a["cultivation"]
+
+    @classmethod
+    def add_ore(cls, player: dict, amount: int) -> int:
+        """修士轴：给修士增加灵材（写 adventure.ore，不进三币钱包）。未入仙途则无操作，返回当前灵材。"""
+        a = player.get("adventure")
+        if not a:
+            return 0
+        a["ore"] = a.get("ore", 0) + amount
+        return a["ore"]
 
     @staticmethod
     def add_item(player: dict, name: str, count: int = 1) -> None:

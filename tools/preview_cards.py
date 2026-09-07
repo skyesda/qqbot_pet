@@ -10,11 +10,12 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from petpark import card_theme, data, images, pet as petmod
+from petpark.image_renderer import ImageRenderer
 
 
 def templates():
     tree = ast.parse((ROOT / 'main.py').read_text(encoding='utf-8'))
-    names = {'_menu_text', '_menu_html', '_menu_purify', '_menu_esc',
+    names = {'_menu_text', '_menu_html', '_menu_purify', '_menu_esc', '_short_num',
              '_pet_card_html', '_bag_card_html', '_pet_portrait_uri', '_pct',
              '_bar_row', '_card_row', '_card_crop', '_crop_menu', '_write_html_png'}
     constants = {'_MENU_CSS', '_MENU_EMOJI_RE', '_PET_CARD_CSS', '_BAG_CARD_CSS'}
@@ -30,7 +31,7 @@ def templates():
             args[0] = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
         return subprocess.run(args, **kwargs)
     env = dict(re=re, Path=Path, base64=base64, data=data, images=images, petmod=petmod,
-               card_theme=card_theme, Image=Image, logger=SimpleNamespace(warning=print),
+               card_theme=card_theme, Image=Image, ImageRenderer=ImageRenderer, logger=SimpleNamespace(warning=print),
                subprocess=SimpleNamespace(run=chrome_run, DEVNULL=subprocess.DEVNULL))
     exec(compile(module, str(ROOT / 'main.py'), 'exec'), env)
     return env['Cards']()
@@ -85,3 +86,5 @@ if __name__ == '__main__':
             print(name, 'production crop verified; all four corners are gold, no canvas border')
             page.close()
         browser.close()
+    if getattr(cards, '_image_renderer', None):
+        cards._image_renderer.close()

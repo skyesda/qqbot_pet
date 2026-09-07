@@ -214,6 +214,7 @@ class AdventureService:
         for slot, _ in c.GEAR.values():
             a.setdefault("equipment", {}).setdefault(slot, 0)
         a.setdefault("forge_cd", 0)
+        a.setdefault("companion_pet_id", None)
         for slot, _ in c.GEAR.values():
             # 老档回填：品阶按已有等级推断（min(9, 等级//100)），不追溯锁定。
             a.setdefault("equip_tier", {}).setdefault(slot, min(9, a["equipment"].get(slot, 0) // 100))
@@ -268,7 +269,7 @@ class AdventureService:
             if bd:
                 power_lines = (
                     f"总战力 {bd['total']}\n"
-                    f"　构成：本体 {bd['hero']} ＋ 40%×灵宠『{bd['pet_name']}』{bd['pet_contrib']} ＋ 20%×坐骑 {bd['mount_contrib']} ＝ {bd['base']:.1f}\n"
+                    f"　构成：本体 {bd['hero']} ＋ 15%×灵宠『{bd['pet_name']}』{bd['pet_contrib']} ＋ 10%×坐骑 {bd['mount_contrib']} ＝ {bd['base']:.1f}\n"
                     f"　再乘：道侣×{bd['partner']:.2f} · 洞天×{bd['heaven_margin']:.2f} → {bd['total']}"
                 )
             else:

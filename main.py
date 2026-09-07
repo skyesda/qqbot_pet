@@ -36,6 +36,7 @@ from astrbot.api.star import Context, Star, register
 
 from .petpark import card_theme, data, images, pet as petmod
 from .petpark.ai_router import AIRouter
+from .petpark.image_renderer import ImageRenderer, image_reply, pending_images
 from .petpark.store import PetStore
 from .petpark.adventure import AdventureService, COMMANDS as ADVENTURE_COMMANDS
 from .petpark.adventure.card import card_html as cultivator_card_html, equipment_summary
@@ -302,6 +303,7 @@ KNOWN_COMMANDS = {
     "深渊商店",
     "深渊购买",
     "深渊祝福",
+    "深渊结晶兑换",
     "宠物剧情任务",
     "我的剧情任务",
     "取消剧情任务",
@@ -381,6 +383,9 @@ KNOWN_COMMANDS = {
     # 摸金经验兑换
     "摸金兑换",
     "摸兑",
+    # 冥币 → 灵材 兑换出口（修士轴）
+    "冥币兑换",
+    "冥兑",
     # 摸金双排
     "摸金组队",
     "摸金准备",
@@ -705,6 +710,8 @@ class PetParkPlugin(Star):
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
         self._patch_qqofficial_message_extensions()
+        self._image_renderer = ImageRenderer()
+        self._image_renderer.warmup()
         # 启动后台循环：任务引用存到 self（实例属性）。重载插件时 terminate()
         # 会先取消旧实例的全部后台任务再走到这里，避免旧任务和新任务并存、重复触发。
         self._auto_cultivation_task_ref = asyncio.create_task(self._auto_cultivation_loop())
@@ -1227,6 +1234,7 @@ class PetParkPlugin(Star):
     # =====================================================================
     @filter.event_message_type(filter.EventMessageType.ALL, priority=1)
     async def on_message(self, event: AstrMessageEvent):
+        reply_started = time.perf_counter()
         text = (event.message_str or "").strip()
         if not text:
             return
@@ -1272,7 +1280,7 @@ class PetParkPlugin(Star):
             elif re.match(r"^(踢出|移除成员|踢人)(\s|<@|$)", text):
                 reply = await self._cmd_kick(event, qq, group_id, text)
             else:
-                reply = self.dispatch(event, qq, group_id, text)
+                reply = await image_reply(self.dispatch, event, qq, group_id, text)
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
             reply = f"灵契仙途处理出错：{e}"
@@ -1292,7 +1300,7 @@ class PetParkPlugin(Star):
             if routed and routed != text:
                 effective_text = routed
                 try:
-                    reply = self.dispatch(event, qq, group_id, routed)
+                    reply = await image_reply(self.dispatch, event, qq, group_id, routed)
                 except Exception as e:
                     logger.exception("[petpark] AI 路由指令执行出错")
                     reply = f"灵契仙途处理出错：{e}"
@@ -1320,6 +1328,11 @@ class PetParkPlugin(Star):
             reply = f"{image_md}\n{reply}"
         # 在合适的地方附加 QQ 官方消息按钮，方便用户快捷发送指令
         keyboard = self._keyboard_for_cmd(effective_text, reply)
+        logger.info(
+            "[petpark] reply_ready msg_id=%s elapsed_ms=%.1f",
+            getattr(getattr(event, "message_obj", None), "message_id", ""),
+            (time.perf_counter() - reply_started) * 1000,
+        )
         # 群聊里 @ 触发者，便于多人同时游玩时分辨各自的消息；私聊不 @。
         if self._is_group(group_id):
             # 真正的艾特：QQ 官方消息内嵌 <qqbot-at-user id="openid" />，客户端
@@ -1403,7 +1416,7 @@ class PetParkPlugin(Star):
             return self.WEB_BLOCKED_TIP
         event = _WebEvent(qq)
         try:
-            reply = self.dispatch(event, qq, group_id, text)
+            reply = await image_reply(self.dispatch, event, qq, group_id, text)
         except Exception as e:
             logger.exception("[petpark] 网页端指令执行出错")
             return f"灵契仙途处理出错：{e}"
@@ -1422,7 +1435,7 @@ class PetParkPlugin(Star):
                 if routed.split()[0] in WEB_BLOCKED_COMMANDS:
                     return self.WEB_BLOCKED_TIP
                 try:
-                    reply = self.dispatch(event, qq, group_id, routed)
+                    reply = await image_reply(self.dispatch, event, qq, group_id, routed)
                 except Exception as e:
                     logger.exception("[petpark] 网页端 AI 路由指令执行出错")
                     reply = f"灵契仙途处理出错：{e}"
@@ -1455,6 +1468,10 @@ class PetParkPlugin(Star):
         await self.store.save()
         if self._web is not None:
             await self._web.stop()
+        renderer = getattr(self, "_image_renderer", None)
+        if renderer is not None:
+            await asyncio.to_thread(renderer.close)
+            self._image_renderer = None
 
     async def _board_clock_loop(self):
         while True:
@@ -2225,18 +2242,7 @@ class PetParkPlugin(Star):
         p["skills"] = []
         # 天赋消失：重生后回到未觉醒状态，需重新天赋觉醒
         p["talent"] = None
-        # 清空背包，只保留长期养成投入（品质卡/定制卡/宠物卡/品质碎片/自动修炼卡）
-        bag = player.get("bag", {})
-        kept = {}
-        cleared_count = 0
-        for item_name, count in list(bag.items()):
-            if item_name in data.REBIRTH_KEEP_ITEMS or "卡" in item_name and any(
-                q in item_name for q in ["史诗", "圣灵", "洪荒", "创世", "混沌", "定制"]
-            ):
-                kept[item_name] = count
-            else:
-                cleared_count += count
-        player["bag"] = kept
+        # 收编后：重生不再清空背包，玩家背包资产（含品质卡/定制卡/宠物卡等）完整保留。
         # 清除重生相关标记
         p.pop("rebirth_gem", None)
         p.pop("rebirth_sacrifice", None)
@@ -2272,8 +2278,7 @@ class PetParkPlugin(Star):
             lines.append(f"**任务重置：** 剧情任务 ×{quest_cleared} 已清空，重生后可重新完成")
         if dropped:
             lines.append(f"**脱落：** {'、'.join(dropped)}（已入背包）")
-        if cleared_count > 0:
-            lines.append(f"**清空：** 背包物品 ×{cleared_count}（品质卡/定制卡/宠物卡/碎片/自动修炼卡已保留）")
+        lines.append("**背包保留：** 重生不清空背包，全部物品原样保留。")
         lines.append("")
         lines.append(slot_msg)
         lines.append("> 🐣 宠物获得新生，重新踏上成长之路！")
@@ -3132,6 +3137,10 @@ class PetParkPlugin(Star):
         if cmd in _GROWTH_ALIASES:
             cmd = _GROWTH_ALIASES[cmd]
             tokens[0] = cmd
+        # 全面收编：宠物独立玩法 → 修士+灵宠「协作/历练」别名归一化（新名→内部旧名）
+        if cmd in data.PET_CMD_ALIASES:
+            cmd = data.PET_CMD_ALIASES[cmd]
+            tokens[0] = cmd
         # 非本插件指令直接放行，避免为每条普通聊天创建玩家/群档案
         event_cmds = self._active_event_commands()
         # 家园指令白名单直通（绕过可能的模块缓存问题）
@@ -3543,6 +3552,8 @@ class PetParkPlugin(Star):
             return self._abyss_buy(player, tokens)
         if cmd == "深渊祝福":
             return self._abyss_blessing(player, tokens)
+        if cmd == "深渊结晶兑换":
+            return self._abyss_crystal_redeem(player, tokens)
 
         # ---- 剧情任务 ----
         if cmd == "宠物剧情任务":
@@ -3634,6 +3645,9 @@ class PetParkPlugin(Star):
         # 摸金经验兑换
         if cmd in ("摸金兑换", "摸兑"):
             return self._tomb_redeem_exp(player, tokens)
+        # 冥币 → 灵材 兑换出口（修士轴）
+        if cmd in ("冥币兑换", "冥兑"):
+            return self._tomb_redeem_mingbi(player, tokens)
 
         # ---- 宠物扫雷 ----
         if cmd in BOARD_COMMANDS:
@@ -6925,7 +6939,7 @@ class PetParkPlugin(Star):
                 "## 🐾 灵契仙途 · 指令菜单",
                 "> 指令**无需前缀**，直接发送即可；需指定对方时填 **用户ID** 或直接 **@对方**",
                 "",
-                "**【灵契仙途】**",
+                "**【灵契仙途】** 修士主线",
                 "> 修士问道灵宠同行：选职业→结契灵宠→历练→锻造，一条龙养成。",
                 "- 灵契仙途 查看本菜单/全程引导 · 创建角色 · 选择职业 剑修(体修/灵修) · 修士转职",
                 "- 结契灵宠 九尾狐 · 灵宠助战 序号 · 灵宠专长 辅助",
@@ -6940,83 +6954,57 @@ class PetParkPlugin(Star):
                 "- 我的修士(看战力) · 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励",
                 "- 与对方修士结为道侣(结道侣/求婚/了断道侣/离缘) · 双方结契灵宠为见证 · 道侣可加速修为与提供战力加成",
                 "",
-                "**【入门】**",
-                "- 砸蛋 · 宠物市场（品质卡/变种卡）· 我的宠物 · 宠物状态",
-                "- 宠物改名 · 宠物变性 · 赠送宠物 QQ · 放生宠物",
-                "- 锁定宠物 · 解锁宠物（锁定后无法放生/赠送，防误操作）",
-                "- 宠物侦查 用户ID",
+                "**【灵宠助战】** 灵宠养成",
+                "> 灵宠是修士的助战伙伴：孵化、养成、进化、飞升，成长反哺修士修为。",
+                "- 砸蛋 · 灵宠市场（品质卡/变种卡）· 我的灵宠 · 灵宠状态",
+                "- 灵宠改名 · 灵宠变性 · 赠送灵宠 QQ · 放生灵宠",
+                "- 锁定灵宠 · 解锁灵宠（锁定后无法放生/赠送，防误操作）",
+                "- 灵宠侦查 用户ID",
+                "> 💡 席位：默认 2 ｜ 最多 10 ｜ 重生 +1 ｜ 宠物席位卡 +1",
+                "- 灵宠列表（查看所有灵宠概要）· 切换灵宠 序号 · 灵宠信息 序号",
+                "- 炼化灵宠（消耗 1000 玄晶，化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化灵宠 宠物卡` 可炼化神秘宠物卡）",
+                "- 一键升级灵宠 · 灵宠升级 次数 · 灵宠进化（旧名 宠物升级/宠物进化 仍可用）",
+                "- 开启自动升级 · 关闭自动升级（经验满自动升级开关，默认开启）",
+                "- 灵宠飞升 · 灵宠渡劫 · 幻境寻宝 · 灵宠神仙劫（旧名 宠物飞升/渡劫/神仙劫 仍可用）",
+                "- 合成卡 目标卡名 · 一键合成品质卡（自动级联升到最高）· 一键合成品质碎片（把所有碎片批量转卡）",
+                "- 打造神器 名称 · 佩戴神器 名称 · 卸下神器 · 参悟秘技 名称 · 遗忘秘技",
+                "- 灵宠觉醒 · 制作天赋符 · 使用天赋符 天赋（旧名 宠物觉醒 仍可用）",
+                "- 炼丹 · 使用仙丹 名称 用户ID 数量 · 治愈 用户ID · 复活 用户ID · 精力转移 用户ID 值",
+                "- 复活他人灵宠：『起死回生』天赋免费，无天赋耗『九转还魂丹』",
+                "> 每突破 60 级赠史诗卡；10 张低品质卡可合成为高一级卡，碎片 10 片兑 1 张同品质卡",
                 "",
-                "**【多宠物】**",
-                "> 💡 默认 2 席位 ｜ 最多 10 ｜ 重生 +1 ｜ 宠物席位卡 +1",
-                "- 宠物列表 · 查看所有宠物（查看所有宠物概要）",
-                "- 切换宠物 序号（切换到指定宠物）",
-                "- 宠物信息 序号（查看指定宠物详情）",
-                "- 放生宠物（放生当前宠物，最后一只不可放生）",
-                "- 赠送宠物 QQ（赠送当前宠物）",
-                "- 炼化宠物（消耗 1000 玄晶，将宠物化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化宠物 宠物卡` 可炼化神秘宠物卡）",
+                "**【历练征伐】** 协同出战 · 副本 · 深渊 · 剧情",
+                "- 协同出战 用户ID · 跨群协同出战 群号 用户ID（修士+灵宠协作）",
+                "- 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励（旧名 宠物排行/宠物神榜/领取神榜奖励 仍可用）",
+                "> ⏳ 副本 15 分钟冷却",
+                "- 历练副本 · 进入副本 名称（旧名 宠物副本 仍可用）",
+                "- 深渊秘境 · 深渊介绍 · 深渊商店 · 深渊祝福 · 深渊结晶兑换 数量",
+                "- 灵宠剧情任务 · 领取任务 名称 · 提交任务 名称",
+                "- 我的剧情任务 · 取消剧情任务（`取消剧情任务 任务名` 只取消单个）",
                 "",
-                "**【商城 / 背包】**",
-                "- 宠物商城（总览）· 道具商城 · 天晶商城",
-                "- 秘技商城 · 神器商城 · 宠物市场",
+                "**【商城背包】**",
+                "- 灵宠商城（总览）· 道具商城 · 天晶商城",
+                "- 秘技商城 · 神器商城 · 灵宠市场",
                 "- 查看背包 · 购买 物品 数量 · 使用 物品",
                 "- 出售 物品 数量 · 丢弃 物品 数量",
-                "- 转让 用户ID 物品 数量 · 清空背包",
-                "- 查看说明 物品名",
+                "- 转让 用户ID 物品 数量 · 清空背包 · 查看说明 物品名",
                 "",
-                "**【修行 / 日常】**",
+                "**【修行日常】**",
                 "> ⏳ 各 10~20 分钟冷却｜修士指点灵宠修行，道侣双修更高效",
                 "- 喂食 物品 · " + " · ".join(data.daily_display(k) for k in data.DAILY_ACTIONS),
                 "",
             ]
             + event_lines
             + [
-                "**【成长】**",
-                "- 一键升级灵宠 · 灵宠升级 次数 · 灵宠进化（旧名 宠物升级/宠物进化 仍可用）",
-                "- 开启自动升级 · 关闭自动升级（经验满自动升级开关，默认开启）",
-                "- 灵宠飞升 · 灵宠渡劫 · 幻境寻宝 · 灵宠神仙劫（旧名 宠物飞升/渡劫/神仙劫 仍可用）",
-                "- 合成卡 目标卡名 · 一键合成品质卡（自动级联升到最高）",
-                "- 一键合成品质碎片（把所有碎片批量转卡）",
-                "> 每突破 60 级赠史诗卡；10 张低品质卡可合成为高一级卡，碎片 10 片兑 1 张同品质卡",
-                "",
-                "**【神器 / 秘技】**",
-                "- 打造神器 名称 · 佩戴神器 名称 · 卸下神器",
-                "- 参悟秘技 名称 · 遗忘秘技",
-                "",
-                "**【天赋 / 炼丹】**",
-                "- 灵宠觉醒 · 制作天赋符 · 使用天赋符 天赋（旧名 宠物觉醒 仍可用）",
-                "- 炼丹 · 使用仙丹 名称 用户ID 数量",
-                "- 治愈 用户ID · 复活 用户ID · 精力转移 用户ID 值",
-                "- 复活他人宠物：『起死回生』天赋免费，无天赋耗『九转还魂丹』",
-                "",
-                "**【对战 / 排行】**",
-                "- 宠物攻击 用户ID · 跨群挑战宠物 群号 用户ID",
-                "- 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励（旧名 宠物排行/宠物神榜/领取神榜奖励 仍可用）",
-                "",
-                "**【副本 / 任务】**",
-                "> ⏳ 副本 15 分钟冷却",
-                "- 宠物副本 · 进入副本 名称",
-                "- 深渊秘境 · 深渊介绍 · 深渊商店 · 深渊祝福",
-                "- 宠物剧情任务 · 领取任务 名称 · 提交任务 名称",
-                "- 我的剧情任务 · 取消剧情任务（`取消剧情任务 任务名` 只取消单个）",
-                "",
-                "**【宠物摸金】**（独立财富系统）",
+                "**【宠物摸金】**（独立财富系统 · 冥币可兑换灵材）",
                 "- 摸金 · 摸金商店 · 购买摸金道具 名称",
                 "- 我的摸金 · 进入摸金 难度(1~4)",
                 "- 摸金移动 方向 · 摸金探索 · 摸金开箱",
                 "- 摸金使用 名称 · 摸金撤离 · 放弃摸金",
                 "- 摸金排行 · 今日摸金神榜 · 昨日摸金神榜",
-                "- 领取摸金奖励 · 摸金兑换",
+                "- 领取摸金奖励 · 摸金兑换 · 冥币兑换 数量",
                 "- 摸金组队 用户ID · 摸金准备 · 摸金队伍 · 摸金取消组队（双排）",
                 "- 摸金救援 · 摸金捡取 · 摸金传送（双排互动）",
-                "",
-                "**【棋类对弈】** 五子棋 · 中国象棋 · 军棋 · 围棋",
-                "- 五子棋单人 1~4 · 象棋单人 1~4 · 军棋单人 1~4 · 围棋单人 1~4",
-                "- 五子棋双人 @对方 · 象棋双人 @对方 · 军棋双人 @对方 · 围棋双人 @对方 · 接受棋局",
-                "- 棋类帮助 · 棋局 · 棋局统计（每步10分钟，超时判放弃）",
-                "**【宠物扫雷】**（全服积分排行）",
-                "- 扫雷介绍 · 开始扫雷 难度(1~4)",
-                "- 扫 坐标（支持多扫，如：扫a1b2）· 插旗 坐标",
-                "- 扫雷地图 · 放弃扫雷 · 扫雷排行 · 扫雷兑换",
                 "",
                 "**【洞天家园】**（放置建造 · 离线产出）",
                 "> 在家园中建造建筑，随时间自动累积灵石和玄晶，离线也产。",
@@ -7027,7 +7015,7 @@ class PetParkPlugin(Star):
                 "- 拜访家园 QQ · 顺手牵羊 QQ（偷菜）",
                 "- 家园排行 · 家园总排行",
                 "> 🏗️ 7种建筑：灵石矿/玄晶工坊/聚宝盆/经验泉/仓库/哨塔/祈福坛",
-                "> 🐾 宠物派遣：驻扎建筑提升产量，等级品质越高加成越多",
+                "> 🐾 灵宠派遣：驻扎建筑提升产量，等级品质越高加成越多",
                 "> 💀 偷菜：拼成功率偷别人未收资源，建哨塔可防御",
                 "> 🧳 流浪商人：收取时概率出现，可买加速券/护院符/双倍券",
                 "",
@@ -7042,7 +7030,7 @@ class PetParkPlugin(Star):
                 "> 📋 信用贷款：初始额度 10 万，信用分越高额度越大",
                 "> ⭐ 信用分：初始 500，按时还款 +10~30，逾期扣分",
                 "> 🚫 逾期超 7 天：冻结所有游戏功能，还清自动解冻",
-                "> ⚠️ 有贷款期间：无法赠送宠物、转让物品和货币",
+                "> ⚠️ 有贷款期间：无法赠送灵宠、转让物品和货币",
                 "",
                 "**【涅槃重生】**（涅槃新生 · 属性暴击）",
                 "> 渡劫 Lv800 进入准备期，Lv999 可重生。",
@@ -7052,7 +7040,7 @@ class PetParkPlugin(Star):
                 "> 🔥 祭奠：消耗玄晶/天晶提升高倍率概率",
                 "> 🎲 属性暴击：2~10×随机（2×最高概率）",
                 "> ⛔ 准备期（Lv800+）：禁止出售/转让/丢弃物品",
-                "> 📦 重生后保留：品质卡/定制卡/宠物卡/品质碎片/自动修炼卡（其余清空）",
+                "> 📦 重生不清空背包，全部物品原样保留",
                 "",
                 "**【修士道侣】**（你与对方修士结为道侣，以双方结契灵宠为见证，可加速修为与提供战力加成）",
                 "- 结道侣 用户ID · 同意道侣 用户ID",
@@ -7068,7 +7056,7 @@ class PetParkPlugin(Star):
                 "> 也可直接 @ 对方代替输入 用户ID（赠送/转让/PK/拜访等均支持）",
                 "",
                 "**【图鉴】**",
-                "- 宠物种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋",
+                "- 灵宠种类 · 属性 · 状态 · 神器 · 秘技 · 仙丹 · 天赋",
                 "- 查看说明 名称",
                 "",
                 "**【坐骑】**",
@@ -7077,6 +7065,15 @@ class PetParkPlugin(Star):
                 "- 坐骑市场 · 购买坐骑 名称 · 坐骑图鉴 名称",
                 "- 赠送坐骑 用户ID · 丢弃坐骑 名称 · 定制坐骑",
                 "- 开启/关闭坐骑系统 · 开启/关闭入场提示 · 开启/关闭离场提示",
+                "",
+                "**【棋类对弈】** 五子棋 · 中国象棋 · 军棋 · 围棋",
+                "- 五子棋单人 1~4 · 象棋单人 1~4 · 军棋单人 1~4 · 围棋单人 1~4",
+                "- 五子棋双人 @对方 · 象棋双人 @对方 · 军棋双人 @对方 · 围棋双人 @对方 · 接受棋局",
+                "- 棋类帮助 · 棋局 · 棋局统计（每步10分钟，超时判放弃）",
+                "**【宠物扫雷】**（全服积分排行）",
+                "- 扫雷介绍 · 开始扫雷 难度(1~4)",
+                "- 扫 坐标（支持多扫，如：扫a1b2）· 插旗 坐标",
+                "- 扫雷地图 · 放弃扫雷 · 扫雷排行 · 扫雷兑换",
                 "",
                 "> 管理员指令请发送 `管理菜单` 查看。",
             ]
@@ -7221,12 +7218,14 @@ class PetParkPlugin(Star):
 
     # ---- 通用 HTML -> PNG 渲染管线（菜单 / 宠物卡 / 背包卡共用） ----
     def _prune_images(self, prefix: str, keep: int = 5) -> None:
-        """清理旧缓存图，只保留最近 keep 张（按前缀分开清理）。"""
+        """保留至少 256 张/类；24 小时内图片不删除，避免 QQ 延迟拉图失效。"""
         try:
             d = self.store.custom_images_dir
             rows = sorted(d.glob(f"{prefix}_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
-            for p in rows[keep:]:
+            for p in rows[max(keep, 256):]:
                 try:
+                    if time.time() - p.stat().st_mtime < 86400:
+                        continue
                     p.unlink()
                 except OSError:
                     pass
@@ -7253,50 +7252,47 @@ class PetParkPlugin(Star):
 
     def _write_html_png(self, html: str, key: str, target, crop=None,
                         win_w: int = 900, win_h: int = 5200) -> bool:
-        """用无头 Chrome 把 HTML 渲染成 PNG，可选 crop 后写回；成功返回 True。"""
-        html_file = None
-        try:
-            rdir = Path(self.store.custom_images_dir) / ".render_tmp"
-            rdir.mkdir(parents=True, exist_ok=True)
-            html_file = rdir / f"{key}.html"
-            html_file.write_text(html, encoding="utf-8")
-            subprocess.run(
-                ["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
-                 "--disable-dev-shm-usage", "--hide-scrollbars", "--disable-extensions",
-                 "--force-device-scale-factor=1", f"--window-size={win_w},{win_h}",
-                 f"--screenshot={target}", html_file.resolve().as_uri()],
-                timeout=60, check=False,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            with Image.open(target) as im:
-                rgb = im.convert("RGB")
-            out = crop(rgb) if crop else rgb
-            out.save(target, "PNG")
-        except Exception as e:
-            logger.warning(f"[petpark] 图片渲染失败：{e}")
-            return False
-        finally:
-            if html_file is not None:
-                try:
-                    html_file.unlink()
-                except OSError:
-                    pass
-        return True
+        """复用独立线程中的浏览器；并发相同内容只生成一次，原子发布 PNG。"""
+        renderer = getattr(self, "_image_renderer", None)
+        if renderer is None:
+            renderer = self._image_renderer = ImageRenderer()
+        return renderer.write(html, target, crop, win_w, win_h)
 
     def _render_html_image(self, html: str, tag: str, disp_w: int, crop=None,
                            win_w: int = 900, win_h: int = 5200, keep: int = 5) -> str | None:
         """渲染 HTML 为图片并以 Markdown 返回；内容未变则复用缓存图，失败返回 None。"""
+        jobs = pending_images.get()
+        if jobs is not None:
+            # HTML is already a snapshot. Never move mutable game state to a worker.
+            # Allocate the renderer here on the event loop to avoid lazy-init races.
+            if getattr(self, "_image_renderer", None) is None:
+                self._image_renderer = ImageRenderer()
+            marker = "__PETPARK_IMAGE_" + uuid.uuid4().hex + "__"
+            jobs.append((marker, lambda: self._render_html_image(
+                html, tag, disp_w, crop, win_w, win_h, keep)))
+            return marker
+        started = time.perf_counter()
         html = card_theme.finish_html(html)
-        key = hashlib.md5(html.encode("utf-8")).hexdigest()[:16]
+        layout = f"renderer-v2:{win_w}:{win_h}:{getattr(crop, '__name__', 'none')}:"
+        key = hashlib.sha256((layout + html).encode("utf-8")).hexdigest()[:24]
         fname = f"{tag}_{key}.png"
         target = Path(self.store.custom_images_dir) / fname
-        if not target.exists():
+        cache_hit = self._html_png_ok(target)
+        if cache_hit:
+            # Keep recently reused URLs alive for delayed QQ fetches.
+            try:
+                target.touch()
+            except OSError:
+                pass
+        if not cache_hit:
             rendered = self._write_html_png(html, key, target, crop=crop, win_w=win_w, win_h=win_h)
             if not rendered or not self._html_png_ok(target):
                 logger.warning(f"[petpark] {tag} 图片渲染输出异常")
                 return None
             self._prune_images(tag, keep)
         w, h = self._image_dims(target, disp_w)
+        logger.info("[petpark] image_ready tag=%s cache_hit=%s elapsed_ms=%.1f",
+                    tag, cache_hit, (time.perf_counter() - started) * 1000)
         return f"![{tag} #{w} #{h}]({self._tomb_image_url(fname)})"
 
     def _render_menu_image(self) -> str | None:
@@ -7708,7 +7704,7 @@ class PetParkPlugin(Star):
             self.store.add_currency(player, "玄晶", reward)
         await self.store.save()
         if player.get("mount_enter_notify", True):
-            await self._send_group_text(group_id, self._mount_full_message(chosen, player, "enter", reward=reward))
+            await self._send_group_text(group_id, await image_reply(self._mount_full_message, chosen, player, "enter", reward=reward))
 
     async def _mount_idle_tick(self) -> None:
         """后台扫描：在场但超过 30 分钟无消息的玩家自动离场。"""
@@ -7728,7 +7724,7 @@ class PetParkPlugin(Star):
             player["mount_enter_ts"] = 0
             changed = True
             if player.get("mount_leave_notify", True) and gid:
-                await self._send_group_text(gid, self._mount_full_message(name, player, "leave"))
+                await self._send_group_text(gid, await image_reply(self._mount_full_message, name, player, "leave"))
         if changed:
             await self.store.save()
 
@@ -10329,6 +10325,13 @@ class PetParkPlugin(Star):
         if attacker.get("talent") == "七星化海":
             exp = int(exp * (1 + random.uniform(0.1, 0.3)))
         petmod.add_exp(attacker, exp)
+        # 修士轴：修士与灵宠协同出战告捷，修士同步获得修为 + 灵材（按灵宠等级折算）。
+        collab = self._collab_reward(
+            ap_player,
+            cult=30 + attacker["level"] * 4,
+            ore=2 + attacker["level"] // 10,
+            src="协同出战",
+        )
         ap_player.setdefault("stats", {})["battle_win"] = (
             ap_player["stats"].get("battle_win", 0) + 1
         )
@@ -10376,7 +10379,7 @@ class PetParkPlugin(Star):
             f"**📊 战后状态**\n\n"
             f"『{attacker['nickname']}』{pw}{a_line}{a_note}\n\n"
             f"『{defender['nickname']}』{pw2}{self._hp_line(defender, pre_dhp)}{d_note}\n\n"
-            f"💠 **经验 +{exp}**{steal}{kill_txt}。"
+            f"💠 **经验 +{exp}**{steal}{kill_txt}。{collab}"
         )
 
     def _attack(self, player: dict, group_id: str, tokens: list[str]) -> str:
@@ -10389,23 +10392,23 @@ class PetParkPlugin(Star):
             return f"宠物假死/惊魂中，约 {petmod.frozen_remain_min(p)} 分钟后才能战斗。"
         target = self._arg(tokens, 1)
         if not target:
-            return "用法：宠物攻击 用户ID"
+            return "用法：协同出战 用户ID"
         if target == player["qq"]:
             return "不能攻击自己。"
         tp, err = self._find_target(group_id, target)
         if err:
             return err
         if not tp.get("pet"):
-            return "对方没有宠物。"
+            return "对方没有灵宠。"
         tpet = tp["pet"]
         if petmod.is_dead(tpet):
-            return "对方宠物已死亡。"
-        cd = self._cooldown_block(player, "对战", "宠物攻击")
+            return "对方灵宠已死亡。"
+        cd = self._cooldown_block(player, "对战", "协同出战")
         if cd:
             return cd
         petmod.refresh_energy(p)
         if p["energy"] < self.attack_energy:
-            return f"发起攻击需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
+            return f"协同出战需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
         p["energy"] -= self.attack_energy
         self.store.set_cooldown(
             player, "对战", random.randint(*data.BATTLE_COOLDOWN_RANGE)
@@ -10509,7 +10512,7 @@ class PetParkPlugin(Star):
                 f"\n> 🎁 神榜前三每日可『领取神榜奖励』，随机天晶 💠 "
                 f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
             )
-        lines.append("\n> 仙途战力 = 修士本体(境界/装备/洞天/悟性根骨) + 40%×结契灵宠 + 20%×坐骑，再乘道侣与洞天增益。")
+        lines.append("\n> 仙途战力 = 修士本体(境界/装备/洞天/悟性根骨) + 15%×结契灵宠 + 10%×坐骑，再乘道侣与洞天增益。")
         return "\n".join(lines)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:
@@ -10583,6 +10586,27 @@ class PetParkPlugin(Star):
         a["cultivation"] = a.get("cultivation", 0) + gain
         return f"\n🧘 修为 +{gain}（{src or '仙途机缘'}）"
 
+    def _add_ore(self, player: dict, gain: int, src: str = "") -> str:
+        """给修士增加一笔灵材（走 adventure.ore，不进主钱包）。未入仙途返回空串。"""
+        a = player.get("adventure")
+        if not a or gain <= 0:
+            return ""
+        a["ore"] = a.get("ore", 0) + gain
+        return f"\n⛰ 灵材 +{gain}（{src or '仙途机缘'}）"
+
+    def _collab_reward(self, player: dict, *, cult: int = 0, ore: int = 0, src: str = "") -> str:
+        """修士+灵宠「协作出征」的修士轴结算：修为 + 灵材。返回追加提示（无产出则空串）。
+
+        与 _pet_to_cultivation（灵宠升级反哺）不同，这是修士作为主角从征伐中直接获得的
+        修为/灵材，属主线主产；灵宠轴经验仍由各结算点的 petmod.add_exp/add_xianyuan 发放。
+        """
+        parts = []
+        if cult > 0:
+            parts.append(self._add_cultivation(player, cult, src).strip("\n"))
+        if ore > 0:
+            parts.append(self._add_ore(player, ore, src).strip("\n"))
+        return ("\n" + "\n".join(parts)) if parts else ""
+
     def _auto_level_note(self, player: dict, p: dict) -> str:
         """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
         if not petmod.exp_enough_to_level(p):
@@ -10652,6 +10676,10 @@ class PetParkPlugin(Star):
             jifen_gain = max(1, int(d["jifen"] * random.uniform(0.8, 1.2)))
             petmod.add_exp(p, exp_gain)
             self.store.add_currency(player, "玄晶", jifen_gain)
+            # 修士轴：修士+灵宠历练副本告捷，修士同步获得修为 + 灵材。
+            collab = self._collab_reward(
+                player, cult=d.get("cult", 0), ore=d.get("ore", 0), src="历练副本"
+            )
             if petmod._is_ascended(p):
                 self._inc_stat(player, "ascended_dungeon_clear")
             drop = ""
@@ -10664,7 +10692,7 @@ class PetParkPlugin(Star):
                 f"> 🎁 经验 **+{exp_gain}** · 玄晶 **+{jifen_gain}**{drop}\n"
                 f"> 🔁 下次可挑战：{next_time}"
             )
-            return f"{head}\n{desc}\n{body}{self._auto_level_note(player, p)}"
+            return f"{head}\n{desc}\n{body}{collab}{self._auto_level_note(player, p)}"
         desc = f"您的{nick}在{name}遇见{monster}，力战{monster}结果**惨败**！"
         body = (
             f"> ⏱️ 耗时 {minutes} 分钟 · 👹 怪物战力 **{power}**\n"
@@ -10741,6 +10769,10 @@ class PetParkPlugin(Star):
             jifen_gain = d["jifen"]
             petmod.add_xianyuan(p, xianyuan_gain)
             self.store.add_currency(player, "玄晶", jifen_gain)
+            # 修士轴：修士+灵宠飞升历练告捷，修士同步获得修为 + 灵材。
+            collab = self._collab_reward(
+                player, cult=d.get("cult", 0), ore=d.get("ore", 0), src="飞升历练"
+            )
             self._inc_stat(player, "ascended_dungeon_clear")
             drop_text = ""
             drop = d.get("drop")
@@ -10752,7 +10784,7 @@ class PetParkPlugin(Star):
                 f"> 🎁 仙元 **+{xianyuan_gain}** · 玄晶 **+{jifen_gain}**{drop_text}\n"
                 f"> 🔁 下次可挑战：{next_time}"
             )
-            return f"{head}\n✨ 你的『{nick}』击败『{monster}』，获得仙缘！\n{body}{self._auto_level_note(player, p)}"
+            return f"{head}\n✨ 你的『{nick}』击败『{monster}』，获得仙缘！\n{body}{collab}{self._auto_level_note(player, p)}"
         # 失败惩罚：损失一半血量
         p["hp"] = max(1, p["hp"] // 2)
         body = (
@@ -10886,7 +10918,7 @@ class PetParkPlugin(Star):
             lines.append(f"- 你的战力：{roll}　VS　守卫战力：{monster_power}")
             if roll >= monster_power:
                 exp = _add_exp(event["exp_mult"])
-                jifen = 50 + p["level"] * 2
+                jifen = int((50 + p["level"] * 2) * 0.6)  # 三币降级：玄晶副产 -40%
                 crystal = random.randint(*event.get("crystal", (1, 3)))
                 self.store.add_currency(player, "玄晶", jifen)
                 self.store.add_abyss_crystal(player, crystal)
@@ -10943,7 +10975,7 @@ class PetParkPlugin(Star):
                 exp = _add_exp(0.1)
                 reward_lines.append(f"经验 +{exp}（乱流中捕捉到一丝能量）")
             else:  # 异象
-                jifen = 20 + p["level"]
+                jifen = int((20 + p["level"]) * 0.6)  # 三币降级：玄晶副产 -40%
                 self.store.add_currency(player, "玄晶", jifen)
                 reward_lines.append(f"玄晶 +{jifen}（你看到了无法理解的景象）")
 
@@ -10966,7 +10998,7 @@ class PetParkPlugin(Star):
             lines.append(f"✨ **{event['name']}** 降临！深渊意志向你微笑。")
             exp = _add_exp(event["exp_mult"])
             crystal = random.randint(*event.get("crystal", (2, 4)))
-            jifen = 100 + p["level"] * 3
+            jifen = int((100 + p["level"] * 3) * 0.6)  # 三币降级：玄晶副产 -40%
             p["hp"] = p["hp_max"]
             self.store.add_currency(player, "玄晶", jifen)
             self.store.add_abyss_crystal(player, crystal)
@@ -11002,6 +11034,17 @@ class PetParkPlugin(Star):
         # 怜悯值结算：只有大奖事件会清零
         if event["id"] not in ("blessing", "lord"):
             self.store.add_abyss_pity(player, 1)
+
+        # 修士轴：修士与灵宠共赴深渊历练，无论战果均有所感悟（侵蚀越深、感悟越薄）。
+        cult_txt = self._add_cultivation(
+            player, max(1, int((30 + p["level"] * 3) * corruption_factor)), "深渊历练"
+        ).strip("\n")
+        ore_txt = self._add_ore(
+            player, max(1, int((2 + p["level"] // 5) * corruption_factor)), "深渊历练"
+        ).strip("\n")
+        for _t in (cult_txt, ore_txt):
+            if _t:
+                reward_lines.append(_t)
 
         # 组装奖励展示
         if reward_lines:
@@ -11166,6 +11209,44 @@ class PetParkPlugin(Star):
             f"下一次 `深渊秘境` 自动生效。剩余结晶 {self.store.get_abyss_crystal(player)}。"
         )
 
+    def _abyss_crystal_redeem(self, player: dict, tokens: list[str]) -> str:
+        """深渊结晶 → 灵材 + 修为 兑换出口（收编后新增，走修士轴）。
+
+        用法：深渊结晶兑换 [数量]（每 10 结晶 = 1 灵材 + 30 修为，按 10 的整数倍兑换）。
+        """
+        if not player.get("adventure"):
+            return "❌ 你尚未踏入仙途（发送 `创建角色` → `选择职业 剑修/体修/灵修`），无法将深渊结晶兑换为修为/灵材。"
+        rate = data.EXCHANGE_RATES["深渊结晶"]
+        crystal = self.store.get_abyss_crystal(player)
+        if len(tokens) < 2:
+            return (
+                f"用法：`深渊结晶兑换 数量`（每 {rate['per']} 深渊结晶 = "
+                f"{rate['ore']} 灵材 + {rate['cult']} 修为）。\n"
+                f"当前深渊结晶：**{crystal}**。"
+            )
+        try:
+            n = int(tokens[1])
+        except ValueError:
+            return "用法：`深渊结晶兑换 数量`，数量请填写整数。"
+        if n <= 0:
+            return "兑换数量必须大于 0。"
+        batches = n // rate["per"]
+        if batches <= 0:
+            return f"至少需要 {rate['per']} 枚深渊结晶才能兑换（每 {rate['per']} 枚 = {rate['ore']} 灵材 + {rate['cult']} 修为）。"
+        spend = batches * rate["per"]
+        if crystal < spend:
+            return f"❌ 深渊结晶不足（需要 {spend}，当前 {crystal}）。"
+        self.store.add_abyss_crystal(player, -spend)
+        ore_gain = rate["ore"] * batches
+        cult_gain = rate["cult"] * batches
+        self.store.add_cultivation(player, cult_gain)
+        self.store.add_ore(player, ore_gain)
+        return (
+            f"✅ 兑换成功！花费 **{spend}** 深渊结晶，获得：\n"
+            f"🧘 修为 +{cult_gain} · ⛰ 灵材 +{ore_gain}。\n"
+            f"剩余深渊结晶：**{self.store.get_abyss_crystal(player)}**。"
+        )
+
     @staticmethod
     def _quest_req_met(player: dict, quest: dict) -> bool:
         """检查玩家是否满足任务的领取/提交前提。"""
@@ -11205,6 +11286,10 @@ class PetParkPlugin(Star):
         if "item" in reward:
             count = reward.get("item_count", 1)
             parts.append(f"{reward['item']}×{count}")
+        if "cult" in reward:
+            parts.append(f"修为+{reward['cult']}")
+        if "ore" in reward:
+            parts.append(f"灵材+{reward['ore']}")
         return "、".join(parts) if parts else "无"
 
     def _quest_list(self, player: dict) -> str:
@@ -11298,6 +11383,10 @@ class PetParkPlugin(Star):
                 petmod.add_xianyuan(player["pet"], v)
             elif k == "item":
                 self.store.add_item(player, v, reward.get("item_count", 1))
+            elif k == "cult":
+                self._add_cultivation(player, v, "剧情任务")
+            elif k == "ore":
+                self._add_ore(player, v, "剧情任务")
         player["quests"].pop(name, None)
         # 记为已完成：每个剧情任务只能完成一次，重生后才可重做
         player.setdefault("quest_done", []).append(name)
@@ -13353,6 +13442,40 @@ class PetParkPlugin(Star):
         note = f"，还剩余 {remain} 点" if remain > 0 else "，已全部兑换"
         cult = self._add_cultivation(player, max(20, actual // 200), "摸金兑换")
         return f"🎁 摸金经验兑换成功！当前群宠物 +{actual} 经验{note}。{self._auto_level_note(player, p)}{cult}"
+
+    def _tomb_redeem_mingbi(self, player: dict, tokens: list[str]) -> str:
+        """冥币 → 灵材 兑换出口（收编后新增，走修士轴）。
+
+        用法：冥币兑换 [数量]（每 1000 冥币 = 1 灵材，按 1000 的整数倍兑换）。
+        """
+        if not player.get("adventure"):
+            return "❌ 你尚未踏入仙途（发送 `创建角色` → `选择职业 剑修/体修/灵修`），无法将冥币兑换为灵材。"
+        rate = data.EXCHANGE_RATES["冥币"]
+        mingbi = self.store.get_tomb_mingbi(player)
+        if len(tokens) < 2:
+            return (
+                f"用法：`冥币兑换 数量`（每 {rate['per']} 冥币 = {rate['ore']} 灵材）。\n"
+                f"当前冥币：**{mingbi}**。"
+            )
+        try:
+            n = int(tokens[1])
+        except ValueError:
+            return "用法：`冥币兑换 数量`，数量请填写整数。"
+        if n <= 0:
+            return "兑换数量必须大于 0。"
+        batches = n // rate["per"]
+        if batches <= 0:
+            return f"至少需要 {rate['per']} 冥币才能兑换（每 {rate['per']} 冥币 = {rate['ore']} 灵材）。"
+        spend = batches * rate["per"]
+        if mingbi < spend:
+            return f"❌ 冥币不足（需要 {spend}，当前 {mingbi}）。"
+        self.store.add_tomb_mingbi(player, -spend)
+        ore_gain = rate["ore"] * batches
+        self.store.add_ore(player, ore_gain)
+        return (
+            f"✅ 兑换成功！花费 **{spend}** 冥币，获得 ⛰ 灵材 +{ore_gain}。\n"
+            f"剩余冥币：**{self.store.get_tomb_mingbi(player)}**。"
+        )
 
     # ---- 地图生成与绘图 ----
     @staticmethod

@@ -1,2 +1,5 @@
 # 管理网站使用 aiohttp（AstrBot 已内置该依赖）。其余功能仅依赖 Python 标准库与 AstrBot 内置 API。
 aiohttp
+
+# 常驻浏览器截图（优先复用系统 Chrome，否则安装 playwright install chromium）
+playwright>=1.40,<2
