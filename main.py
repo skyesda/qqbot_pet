@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import io
 import json
 import random
 import re
@@ -38,6 +39,8 @@ from .petpark import card_theme, data, images, pet as petmod
 from .petpark.ai_router import AIRouter
 from .petpark.image_renderer import ImageRenderer, image_reply, pending_images
 from .petpark.store import PetStore
+from .renderfarm.client import FarmClient
+from .renderfarm.coordinator import Coordinator as RenderFarmCoordinator
 from .petpark.adventure import AdventureService, COMMANDS as ADVENTURE_COMMANDS
 from .petpark.adventure.card import card_html as cultivator_card_html, equipment_summary
 from .petpark.adventure.map_card import map_html as adventure_map_html
@@ -678,6 +681,11 @@ class PetParkPlugin(Star):
         self._member_api_ok = True
         # 专属管理网站（卡密生成 + 数据增删改查）
         self._web = None
+        # 渲染农场：只在服务器上显式设置了 PETPARK_FARM_TOKEN 才启用；
+        # 无 token 就完全关闭（本地 ImageRenderer 照常工作）。见 renderfarm/。
+        self._render_farm = None
+        self._render_farm_coord = None
+        self._init_render_farm(data_dir)
         # 全服广播任务引用，防止被 GC
         self._broadcast_tasks: set = set()
         # 宠物摸金当局运行时状态（持久化到 store，插件重载后自动恢复）
@@ -7311,6 +7319,87 @@ class PetParkPlugin(Star):
             renderer = self._image_renderer = ImageRenderer()
         return renderer.write(html, target, crop, win_w, win_h)
 
+    def _init_render_farm(self, data_dir) -> None:
+        """按环境变量启用渲染农场。
+
+        随插件在「主事件循环」上以 asyncio 任务启动 aiohttp 协调器（与 webadmin 同款，
+        避免 Windows/proactor 在非主线程跑 aiohttp 的坑），配一个同步客户端供渲染回调使用。
+        需在服务器设置：PETPARK_FARM_TOKEN（所有 worker 共享的秘密）；可选用
+        PETPARK_FARM_URL（bot→协调器，默认 http://127.0.0.1:8091）、
+        PETPARK_FARM_LISTEN（默认 0.0.0.0:8091，供外部矿机经公网 IP 接入）。
+        不设 token 则整条农场关闭，本地 ImageRenderer 照常。
+        """
+        token = str(_os.environ.get("PETPARK_FARM_TOKEN") or "").strip()
+        if not token:
+            return
+        farm_url = str(_os.environ.get("PETPARK_FARM_URL") or "http://127.0.0.1:8091").strip()
+        listen = str(_os.environ.get("PETPARK_FARM_LISTEN") or "0.0.0.0:8091")
+        if ":" in listen:
+            host, _, port = listen.partition(":")
+        else:
+            host, port = listen, "8091"
+        try:
+            coord = RenderFarmCoordinator(token, str(Path(data_dir) / "renderfarm_cache"))
+        except Exception:
+            coord = None
+        self._render_farm_coord = coord
+        self._render_farm = FarmClient(farm_url, token) if coord else None
+        self._render_farm_runner = None
+        try:
+            asyncio.get_event_loop().create_task(
+                self._serve_render_farm(coord, host, int(port or "8091")))
+            logger.info("[petpark] 渲染农场已启用 url=%s listen=%s:%s 在其它电脑跑 rendermine.exe 接入",
+                        farm_url, host, port)
+        except RuntimeError as exc:
+            logger.warning("[petpark] 渲染农场需在事件循环上下文启动，本次跳过：%s", exc)
+            self._render_farm = None
+
+    async def _serve_render_farm(self, coord, host: str, port: int) -> None:
+        """在插件主事件循环上启动 aiohttp 协调器（与 webadmin.start 同款流程）。"""
+        if coord is None:
+            return
+        try:
+            from aiohttp import web
+            runner = web.AppRunner(coord.make_app())
+            await runner.setup()
+            site = web.TCPSite(runner, host, port)
+            await site.start()
+            self._render_farm_runner = runner
+            logger.info("[petpark] 渲染农场协调器已启动 http://%s:%s", host, port)
+        except Exception:
+            logger.exception("[petpark] 渲染农场协调器启动失败，回退本地渲染；请检查端口占用/防火墙")
+
+    def _render_via_farm(self, sha: str, html: str, crop, target,
+                         win_w: int, win_h: int) -> bool:
+        """只用农场渲染出 PNG 落到 target（JPEG）；失败返回 False。"""
+        farm = getattr(self, "_render_farm", None)
+        if farm is None:
+            return False
+        clip = getattr(crop, "__name__", "")
+        raw = farm.render(sha, html, win_w, win_h, clip)
+        if not raw:
+            return False
+        try:
+            with Image.open(io.BytesIO(raw)) as im:
+                rgb = im.convert("RGB")
+            output = crop(rgb) if crop else rgb
+            output.save(target, "JPEG", quality=88, optimize=True)
+            return self._html_png_ok(target)
+        except Exception:
+            logger.warning("[petpark] 农场返回图片无法解析，回退本地渲染")
+            return False
+
+    def _write_html_via_farm_or_local(self, html: str, key: str, target, crop=None,
+                                      win_w: int = 900, win_h: int = 5200) -> bool:
+        """农场先行：有 worker 在线就走农场（跨网截图），否则/失败回落本地浏览器。"""
+        farm = getattr(self, "_render_farm", None)
+        if farm is not None and farm.any_worker():
+            if self._render_via_farm(key, html, crop, target, win_w, win_h):
+                logger.info("[petpark] image_render backend=farm key=%s", key)
+                return True
+        # 回落本地：无农场 / 无 worker / 农场失败
+        return self._write_html_png(html, key, target, crop=crop, win_w=win_w, win_h=win_h)
+
     def _render_html_image(self, html: str, tag: str, disp_w: int, crop=None,
                            win_w: int = 900, win_h: int = 5200, keep: int = 5) -> str | None:
         """渲染 HTML 为图片并以 Markdown 返回；内容未变则复用缓存图，失败返回 None。"""
@@ -7338,7 +7427,8 @@ class PetParkPlugin(Star):
             except OSError:
                 pass
         if not cache_hit:
-            rendered = self._write_html_png(html, key, target, crop=crop, win_w=win_w, win_h=win_h)
+            rendered = self._write_html_via_farm_or_local(html, key, target, crop=crop,
+                                                          win_w=win_w, win_h=win_h)
             if not rendered or not self._html_png_ok(target):
                 logger.warning(f"[petpark] {tag} 图片渲染输出异常")
                 return None
