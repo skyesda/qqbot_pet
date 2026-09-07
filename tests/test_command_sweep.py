@@ -147,6 +147,13 @@ class CommandSweepTests(unittest.TestCase):
         self.assertIsNotNone(menu, '菜单指令应附主菜单按钮')
         self.assertIsNotNone(card, '卡片图指令应附主菜单按钮')
         self.assertIn('rows', menu or {})
+        def labels(kb):
+            return [b.get('action', {}).get('data') for r in (kb or {}).get('rows', []) for b in r.get('buttons', [])]
+        # 我要氪金/官方网站只在「灵契仙途」菜单图下方；其它卡片视图不再带底部按钮。
+        self.assertIn('我要氪金', labels(menu))
+        self.assertIn('官方网站', labels(menu))
+        self.assertNotIn('我要氪金', labels(card))
+        self.assertNotIn('官方网站', labels(card))
         # 纯文本/战利品/战斗结果 → 不加按钮
         for text, reply in [('历练', '获得灵材、修为'), ('修士修炼', '修炼归来'), ('挑战秘境', '## 通关'),
                             ('讨伐首领', '造成伤害'), ('收获', '银杏叶 +6'), ('我的体力', '体力 80/100')]:

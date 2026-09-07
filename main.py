@@ -1174,16 +1174,16 @@ class PetParkPlugin(Star):
             out_rows.append({"buttons": buttons})
         return {"rows": out_rows}
 
-    def _main_menu_keyboard(self) -> dict:
-        return self._build_qq_keyboard(
-            [
-                [("✨ 我的修士", "我的修士"), ("🐾 我的宠物", "我的宠物")],
-                [("🗺 山海历练", "仙途地图"), ("⚔️ 组队秘境", "组队秘境")],
-                [("📜 灵契仙途", "灵契仙途"), ("👹 世界首领", "世界首领")],
-                [("💎 我要氪金", "我要氪金")],
-                [("🌐 官方网站", "官方网站")],
-            ]
-        )
+    def _main_menu_keyboard(self, include_extra: bool = False) -> dict:
+        rows = [
+            [("✨ 我的修士", "我的修士"), ("🐾 我的宠物", "我的宠物")],
+            [("🗺 山海历练", "仙途地图"), ("⚔️ 组队秘境", "组队秘境")],
+            [("📜 灵契仙途", "灵契仙途"), ("👹 世界首领", "世界首领")],
+        ]
+        # 我要氪金 / 官方网站 仅在「灵契仙途」菜单图下方附带，其它卡片/文本回复一律不加。
+        if include_extra:
+            rows += [[("💎 我要氪金", "我要氪金")], [("🌐 官方网站", "官方网站")]]
+        return self._build_qq_keyboard(rows)
 
     def _event_menu_keyboard(self, cfg: dict) -> dict:
         rows: list[list[tuple[str, str]]] = []
@@ -1245,7 +1245,8 @@ class PetParkPlugin(Star):
                 return self._event_menu_keyboard(cfg)
         # 主菜单按钮：只有菜单/卡片视图指令才附带，其余文本回复一律不加。
         if cmd in self._MENU_CARD_CMDS:
-            return self._main_menu_keyboard()
+            # 只有「灵契仙途」菜单图附带 我要氪金/官方网站 底部按钮，其余卡片视图仅给导航按钮。
+            return self._main_menu_keyboard(include_extra=(cmd == "灵契仙途"))
         return None
 
     # =====================================================================
