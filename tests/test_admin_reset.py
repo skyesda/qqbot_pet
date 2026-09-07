@@ -53,6 +53,8 @@ class ResetTests(unittest.TestCase):
             'bosses':{'official:today':{'hp':77,'contributions':{'g\x1fa':9,'g2\x1fa':8},'claimed':['g\x1fa']}}}
         data['adventure_receipts']={'g:a:1':'old','g2:a:1':'other'}
         data['tomb_active_sessions']={'g\x1fa':{'floor':3},'g2\x1fa':{'floor':2}}
+        data['tomb_players']={'a':{'mingbi':9},'b':{'mingbi':4}}
+        data['ms_players']={'a':{'level':6},'b':{'level':2}}
         self.plugin._tomb_sessions=copy.deepcopy(data['tomb_active_sessions'])
         other=copy.deepcopy(self.store.get_player('a','g2'))
         code=self.token()
@@ -61,8 +63,11 @@ class ResetTests(unittest.TestCase):
         self.assertEqual(self.store.get_player('a','g2'),other)
         self.assertEqual(data['bank_players'],{'g2\x1fa':{'balance':8}})
         self.assertEqual(data['homestead_players'],{'a':{'level':7}})
-        self.assertEqual(data['tomb_active_sessions'],{'g2\x1fa':{'floor':2}})
-        self.assertEqual(self.plugin._tomb_sessions,{'g2\x1fa':{'floor':2}})
+        # 摸金(全局按QQ)与行进中摸金快照跨群共享，本群重置不清理。
+        self.assertEqual(data['tomb_active_sessions'],{'g\x1fa':{'floor':3},'g2\x1fa':{'floor':2}})
+        self.assertEqual(self.plugin._tomb_sessions,{'g\x1fa':{'floor':3},'g2\x1fa':{'floor':2}})
+        self.assertEqual(data['tomb_players'],{'a':{'mingbi':9},'b':{'mingbi':4}})
+        self.assertEqual(data['ms_players'],{'a':{'level':6},'b':{'level':2}})
         self.assertEqual(data['qq_bindings'],{'a':'123'})
         self.assertEqual(data['adventure_world']['teams'],{})
         self.assertEqual(data['adventure_world']['duels'],{})
@@ -91,3 +96,26 @@ class ResetTests(unittest.TestCase):
         code=self.plugin._group_reset_pending[('g','root')]['code']
         self.assertIn('已清空本群 2',self.call('确认清空本群用户数据 '+code,group='alias'))
         self.assertEqual(len(self.store.all_players()),2)
+
+    def test_homestead_group_isolated_and_tomb_global_kept(self):
+        # 无限服：家园按群隔离（hom\x1f<群>\x1f<QQ>），本群重置只清本群那份，不跨群共享。
+        self.store.get_group('g')['server_type']='infinite'
+        self.store.get_group('g2')['server_type']='infinite'
+        data=self.store._data
+        data['homestead_players']={
+            'hom\x1fg\x1fa':{'level':3},
+            'hom\x1fg2\x1fa':{'level':9},
+            'a':{'level':5},           # 官方共享键（跨群共享），本群重置不应清它
+        }
+        data['tomb_active_sessions']={'g\x1fa':{'floor':3},'g2\x1fa':{'floor':4}}
+        data['tomb_players']={'a':{'mingbi':7},'b':{'mingbi':1}}
+        self.plugin._tomb_sessions=copy.deepcopy(data['tomb_active_sessions'])
+        code=self.token()
+        self.assertIn('已清空本群 2',self.call('确认清空本群用户数据 '+code))
+        # 家园：本群隔离键被清空，他群隔离键与官方共享键保留 → 群隔离且不共享。
+        self.assertEqual(data['homestead_players'],{'hom\x1fg2\x1fa':{'level':9},'a':{'level':5}})
+        # 摸金：全局财富与行进中快照均为按QQ共享，本群分组不清理。
+        self.assertEqual(data['tomb_active_sessions'],{'g\x1fa':{'floor':3},'g2\x1fa':{'floor':4}})
+        self.assertEqual(self.plugin._tomb_sessions,{'g\x1fa':{'floor':3},'g2\x1fa':{'floor':4}})
+        self.assertEqual(data['tomb_players'],{'a':{'mingbi':7},'b':{'mingbi':1}})
+        self.assertIsNone(self.store.get_player('a','g',create=False))

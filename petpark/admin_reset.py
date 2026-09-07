@@ -28,16 +28,18 @@ def purge(store, group, actor, expected_keys):
     def in_group(value):
         return bool(value) and store.resolve_group(str(value)) == group
     try:
-        for table in ('players','bank_players','tomb_active_sessions','tomb_active_coops','tomb_active_coop_index'):
+        # 玩家/银行是群隔离的；摸金(全局按QQ)、下棋(boardgames.json)、扫雷(全局按QQ)
+        # 属跨群共享数据，不应被本群重置清空（2026-09-07 用户反馈修正）。
+        for table in ('players','bank_players'):
             values=store._data.get(table,{})
             for key in list(values):
                 if '\x1f' in key and in_group(key.split('\x1f',1)[0]): del values[key]
-        # Official shared minigame identities are deliberately not group-owned.
-        for table,game in (('homestead_players','hom'),('tomb_players','tomb'),('ms_players','ms')):
-            values=store._data.get(table,{})
-            for key in list(values):
-                parts=key.split('\x1f')
-                if len(parts)==3 and parts[0]==game and in_group(parts[1]): del values[key]
+        # 家园是群隔离的（无限服隔离键 hom\x1f<群>\x1f<QQ>），本群重置仅清本群那份；
+        # 摸金/扫雷按 QQ 全局共享（tomb_players[qq]/ms_players[qq]，键不带 \x1f 隔离），故显式排除。
+        hps=store._data.get('homestead_players',{})
+        for key in list(hps):
+            parts=str(key).split('\x1f')
+            if len(parts)==3 and parts[0]=='hom' and in_group(parts[1]): del hps[key]
         reviews=store._data.get('custom_reviews',{})
         for key,value in list(reviews.items()):
             if in_group(value.get('group')): del reviews[key]
@@ -66,7 +68,8 @@ def purge(store, group, actor, expected_keys):
         store._data=before
         store._restore_pet_refs()
         raise
-    return f"已清空本群 {len(keys)} 名用户的群内游戏档案及关联仙途队伍、银行和群隔离小游戏数据。\n已保留备份，编号 {backup.stem}。群授权、群配置、QQ绑定及跨群共享账户数据保留。"
+    return (f"已清空本群 {len(keys)} 名用户的宠物、货币、背包、修士职业、洞天/家园、装备及群内仙途队伍等群隔离数据。\n"
+            "已保留备份，编号 "+backup.stem+"。摸金（跨群共享）、下棋、扫雷及群授权/配置/QQ绑定均保留。")
 
 
 def handle_group_reset(plugin, event, group, tokens):
@@ -92,8 +95,8 @@ def handle_group_reset(plugin, event, group, tokens):
         if not keys: return '本群暂无用户档案，无需清空。'
         code=secrets.token_hex(4)
         pending[scope]=dict(code=code,keys=keys,expires=now+300)
-        return (f"本群将删除 {len(keys)} 名用户（含管理员自身）的宠物、货币、背包、修士职业、洞天、装备及群内进度。\n"
-                "保留群授权、QQ绑定和跨群共享账户数据，执行前自动备份。\n"
+        return (f"本群将删除 {len(keys)} 名用户（含管理员自身）的宠物、货币、背包、修士职业、洞天/家园、装备及群内进度。\n"
+                "保留群授权、QQ绑定、摸金/下棋/扫雷等跨群共享数据，执行前自动备份。\n"
                 f"请由你本人在本群5分钟内发送「确认清空本群用户数据 {code}」。取消：取消清空本群用户数据。")
     request=pending.get(scope)
     if not request or len(tokens)!=2 or not secrets.compare_digest(tokens[1],request['code']):
@@ -103,12 +106,8 @@ def handle_group_reset(plugin, event, group, tokens):
     except OSError:
         return '备份或保存失败，本次清空未完成，请检查存储后重试。'
     if result.startswith('已清空本群'):
-        # Remove live snapshots as well, otherwise later persistence could revive them.
-        for attr in ('_tomb_sessions','_tomb_coop_teams','_tomb_coop_index'):
-            values=getattr(plugin,attr,{})
-            for key in list(values):
-                if '\x1f' in key and plugin.store.resolve_group(key.split('\x1f',1)[0])==group:
-                    del values[key]
+        # 摸金(全局按QQ)跨群共享：保留行进中摸金快照，避免本群重置误清用户跨群共有的摸金进度（2026-09-07 反馈修正）。
+        # 仅清理本群的行进中扫雷对局；扫雷玩家全局记录保留在 ms_players，不在本群重置范围。
         sessions=getattr(plugin,'_ms_sessions',{})
         for key,value in list(sessions.items()):
             if plugin.store.resolve_group(str(value.get('group_id','')))==group:
