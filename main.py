@@ -1215,11 +1215,20 @@ class PetParkPlugin(Star):
             ]
         )
 
+    # 附加主菜单快捷按钮的指令：只有「主菜单文本」和「卡片/地图图」类视图指令。
+    # 历练/修炼/战利品/收成等纯文本回复一律不加按钮，避免每条消息都贴一个主菜单面板。
+    _MENU_CARD_CMDS = {"灵契仙途", "管理菜单", "仙途帮助", "我的修士", "今日修行", "修士装备",
+                       "仙途地图", "我的宠物", "宠物图", "查看宠物"}
+
     def _keyboard_for_cmd(self, text: str, reply: str = "") -> dict | None:
-        """根据用户发送的指令决定要不要附带快捷按钮。"""
-        if text in {"灵契仙途", "管理菜单", "仙途帮助"} or (text.split() and text.split()[0] in ADVENTURE_COMMANDS):
-            return self._main_menu_keyboard()
-        if text.split() and text.split()[0] in BOARD_COMMANDS:
+        """根据用户发送的指令决定要不要附带快捷按钮。
+
+        主菜单按钮只在「菜单文本」或「卡片/地图图」视图指令下附带；棋类/扫雷/活动按钮按各自需要保留，
+        其余纯文本回复（战利品/战斗/修炼/收成等）一律不加。
+        """
+        tokens = text.split()
+        cmd = tokens[0] if tokens else text
+        if cmd in BOARD_COMMANDS:
             context = text + "\n" + reply
             board_kind = "斗兽棋" if "斗兽棋" in context else "围棋" if "围棋" in context else "军棋" if "军棋" in context else "象棋" if "象棋" in context else "五子棋"
             return self._build_qq_keyboard([
@@ -1229,13 +1238,15 @@ class PetParkPlugin(Star):
                 [("✍️ 填落子", "落 ", False), ("查看棋局", "棋局"), ("接受邀请", "接受棋局")] + ([("停一手", "围棋停一手")] if board_kind == "围棋" else []),
                 [("玩法帮助", "棋类帮助"), ("棋局统计", "棋局统计")],
             ])
-        if text in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
+        if cmd in {"扫雷", "扫雷介绍", "扫雷帮助", "扫雷游戏", "扫雷地图", "扫雷状态"} or text.startswith("开始扫雷"):
             return self._ms_menu_keyboard()
         for cfg in self.store.active_events().values():
             if text == cfg.get("menu_cmd"):
                 return self._event_menu_keyboard(cfg)
-        # 兜底：其它文本回复也附带主菜单快捷按钮，方便随时一键跳转（棋类/扫雷/活动按钮优先）。
-        return self._main_menu_keyboard()
+        # 主菜单按钮：只有菜单/卡片视图指令才附带，其余文本回复一律不加。
+        if cmd in self._MENU_CARD_CMDS:
+            return self._main_menu_keyboard()
+        return None
 
     # =====================================================================
     # 消息入口：监听全部消息，解析无前缀中文指令
