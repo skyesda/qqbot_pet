@@ -119,3 +119,16 @@ class ResetTests(unittest.TestCase):
         self.assertEqual(self.plugin._tomb_sessions,{'g\x1fa':{'floor':3},'g2\x1fa':{'floor':4}})
         self.assertEqual(data['tomb_players'],{'a':{'mingbi':7},'b':{'mingbi':1}})
         self.assertIsNone(self.store.get_player('a','g',create=False))
+
+    def test_set_server_type_registered_and_flips(self):
+        """设为无限服/设为官方服/宠物解锁/宠物锁定 必须注册进 KNOWN_COMMANDS，
+        且「设为无限服」经真实 dispatch 分发应真正翻转群 server_type（回归：
+        此四指令此前只存在于 dispatch 分支，未进 KNOWN_COMMANDS，被过滤层 return None 吞掉，看似无效果）。"""
+        for c in ('设为无限服', '设为官方服', '宠物解锁', '宠物锁定'):
+            self.assertIn(c, KNOWN_COMMANDS, f'{c} 未注册进 KNOWN_COMMANDS，群聊分发会被吞掉')
+        self.store.get_group('g')
+        self.assertEqual(self.store.get_group('g').get('server_type'), 'official')
+        self.assertIn('已设为无限服', self.call('设为无限服'))
+        self.assertEqual(self.store.get_group('g').get('server_type'), 'infinite')
+        self.assertIn('已设为官方服', self.call('设为官方服'))
+        self.assertEqual(self.store.get_group('g').get('server_type'), 'official')

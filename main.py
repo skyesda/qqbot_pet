@@ -460,6 +460,10 @@ KNOWN_COMMANDS |= _ZY_COMMANDS
 # 生辰盛典（独立庆典活动）：生日抽奖 / 生日快乐 / 活动菜单
 KNOWN_COMMANDS |= {"生辰活动", "生日抽奖", "生日快乐"}
 
+# 服类型与宠物锁定别名：此前仅存在于 dispatch 分支或 WEB_BLOCKED_COMMANDS，未注册进
+# KNOWN_COMMANDS，导致群聊分发在过滤层被 `return None` 吞掉（指令看似无效果，2026-09-07 反馈修正）。
+KNOWN_COMMANDS |= {"设为无限服", "设为官方服", "宠物解锁", "宠物锁定"}
+
 # 网页端宠物对话不支持的指令：不可逆操作、获取/转移宠物与资产、群管理/授权类
 WEB_BLOCKED_COMMANDS = {
     # 不可逆 / 资产转移
