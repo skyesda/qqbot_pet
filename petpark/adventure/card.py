@@ -95,7 +95,8 @@ def card_html(player, key, equipment=False):
             f'<div class="portrait"><img src="{asset_uri(portrait_name(a))}" alt="修士立绘"></div>'
             f'<div class="gear-column">{"".join(slots[3:])}</div></div>'
             f'<div class="stats">{stats}</div><div class="resources">修为 {a["cultivation"]} · 灵材 {a["ore"]}'
-            f' · 功法 {escape(str(a["style"]))}<br>灵宠 {escape(str(bd["pet_name"] if bd else "引路灵蝶"))}'
+            f' · 体力 {a.get("stamina", 100)}/{a.get("stamina_max", 100)} · 功法 {escape(str(a["style"]))}<br>'
+            f'灵宠 {escape(str(bd["pet_name"] if bd else "引路灵蝶"))}'
             f' · {escape(str(a.get("pet_role", "攻击")))} · 今日副本收益 {a.get("rewards", 0)}/8'
             f' · 首领挑战 {a.get("world_hits", 0)}/3<br>{escape(str(level_msg))}<br>悟性点 {a.get("insight", 0)} 可用 · 属性上的 +N 为加点分配</div><div class="details">{details}</div>'
             f'<div class="foot">{footer}</div></div></body></html>')

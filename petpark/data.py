@@ -1082,12 +1082,12 @@ ITEMS.update({
     },
     # 幻世仙魔收编：体力 / 经验书 / 加速Buff / 形象（修士级，走 main._use_item 玩家分支）。
     "体力丹": {
-        "price": 400, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "price": 8, "currency": CURRENCY_DIAMOND, "category": "仙丹", "usable": True,
         "desc": "使用后恢复30点修士体力（用于宗门任务/探索/镇守）。",
         "effect": {"heal_stamina": 30},
     },
     "扩体散": {
-        "price": 800, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "price": 20, "currency": CURRENCY_DIAMOND, "category": "仙丹", "usable": True,
         "desc": "使用后永久提升20点修士体力上限。",
         "effect": {"add_stamina_max": 20},
     },
@@ -1107,22 +1107,22 @@ ITEMS.update({
         "effect": {"companion_exp": 10000},
     },
     "蓄力丸": {
-        "price": 300, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "price": 10, "currency": CURRENCY_DIAMOND, "category": "仙丹", "usable": True,
         "desc": "使用后修为翻倍1天（适用于离线修炼）。",
         "effect": {"exp_buff_days": 1},
     },
     "提神丹": {
-        "price": 600, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "price": 10, "currency": CURRENCY_DIAMOND, "category": "仙丹", "usable": True,
         "desc": "使用后修为翻倍1天。",
         "effect": {"exp_buff_days": 1},
     },
     "神龙果": {
-        "price": 8000, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "price": 200, "currency": CURRENCY_DIAMOND, "category": "仙丹", "usable": True,
         "desc": "使用后修为翻倍30天。",
         "effect": {"exp_buff_days": 30},
     },
     "醒神丹": {
-        "price": 500, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "price": 10, "currency": CURRENCY_DIAMOND, "category": "仙丹", "usable": True,
         "desc": "使用后体力回复速度翻倍1天。",
         "effect": {"stamina_buff_days": 1},
     },

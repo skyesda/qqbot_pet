@@ -6063,6 +6063,19 @@ class PetParkPlugin(Star):
                 parts.append("定制宠物")
             elif k == "summon_pet_card":
                 parts.append("召唤宠物卡")
+            # 修士体力/翻倍/灵宠经验/形象（幻世仙魔收编的修士级道具）——中文，避免键名外泄
+            elif k == "heal_stamina":
+                parts.append(f"恢复 {v} 点修士体力")
+            elif k == "add_stamina_max":
+                parts.append(f"修士体力上限 +{v}")
+            elif k == "exp_buff_days":
+                parts.append(f"修为翻倍 {v} 天")
+            elif k == "stamina_buff_days":
+                parts.append(f"体力回复翻倍 {v} 天")
+            elif k == "companion_exp":
+                parts.append(f"结契灵宠经验 +{v}")
+            elif k == "change_appearance":
+                parts.append("随机重塑修士形象（性别与立绘）")
             else:
                 parts.append(f"{k}:{v}")
         return "、".join(parts) if parts else "无"
