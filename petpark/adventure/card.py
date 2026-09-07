@@ -39,12 +39,16 @@ def card_html(player, key, equipment=False):
         slots.append(f'<div class="gear"><img src="{asset_uri(slot)}" alt="{name}">'
                      f'<div class="gear-name">{name}<b>Lv{rank}</b></div>'
                      f'<small>{"尚未强化" if rank == 0 else "提升" + label}</small></div>')
-    stats = "".join(f'<div><span>{label}</span><b>{s[field]}</b></div>' for label, field in
-                    [("血量上限", "hp"), ("攻击", "atk"), ("防御", "def"), ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
+    bonus = a.get("bonus") or {}
+    # 悟性加点分配（攻/防/血/速）直接以 +N 徽标附着在各属性后，直观呈现。
+    stats = "".join(
+        f'<div><span>{label}</span><b>{s[field]}'
+        + (f'<em>+{int(bonus.get(field, 0))}</em>' if bonus.get(field, 0) else '')
+        + '</b></div>'
+        for label, field in [("血量上限", "hp"), ("攻击", "atk"), ("防御", "def"),
+                             ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
     details = (f'本体 {bd["hero"]} ＋ 15%×灵宠 {bd["pet_contrib"]} ＋ 10%×坐骑 {bd["mount_contrib"]}'
                f'<br>道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}') if bd else ""
-    bonus = a.get("bonus") or {}
-    focus = " · ".join(f"{l}+{bonus.get(f, 0)}" for l, f in [("攻", "atk"), ("防", "def"), ("血", "hp"), ("速", "speed")])
     # 升级进度：显示距下一级/破境还需多少修为，或已可突破/渡劫。
     lv_cap = c.realm_cap(a["realm"])
     if a["level"] >= c.MAX_LEVEL:
@@ -55,8 +59,8 @@ def card_html(player, key, equipment=False):
         cost = 60 + a["level"] * 20
         need = cost - int(a["cultivation"])
         level_msg = f"可突破 → Lv{a['level'] + 1}" if need <= 0 else f"距突破还需 {need} 修为"
-    footer = ('锻造 ' + c.GEAR_NAMES + '<br>每级消耗 3＋当前等级×2 灵材，强化上限为修士等级。') if equipment else (
-        '修士修炼 · 修士突破 · 悟性加点 · 修士装备 · 道号 · 性别')
+    footer = ('锻造 ' + c.GEAR_NAMES + '（每级 3＋等级×2 灵材，强化上限=修士等级）<br>'
+              '修士修炼 · 修士突破 · 悟性加点 · 道号 · 性别')
     css = """
     .card{width:720px;padding:26px;box-sizing:border-box;color:#304c48;background:linear-gradient(145deg,#fcf8ed,#e6ece2)}
     .identity{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;color:#304c48}
@@ -73,12 +77,13 @@ def card_html(player, key, equipment=False):
     .portrait img{width:100%;height:100%;object-fit:contain;display:block;position:absolute}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
     .stats div{padding:9px 12px;background:#fcfaf0cc;border-bottom:1px solid #cabc98;display:flex;justify-content:space-between}
+    .stats em{font-style:normal;font-size:12px;color:#3f8f4f;margin-left:6px}
     .resources,.details{font-size:14px;line-height:1.8;text-align:center;margin-top:13px;overflow-wrap:anywhere}
     .details{font-size:12px;color:#6c796e}.foot{display:block;font-size:13px;line-height:1.8;margin-top:16px;text-align:center}
     """
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'><style>" + card_theme.stylesheet("pet") + css +
             '</style></head><body><div class="card"><div class="identity"><div>'
-            f'<div class="eyebrow">灵契仙途 · {"修士装备" if equipment else "我的修士"}</div>'
+            f'<div class="eyebrow">灵契仙途 · 我的修士</div>'
             f'<h1>{escape(str(a["name"]))}</h1><p>{escape(str(a["profession"]))} · {escape(str(a.get("gender", "男")))} · '
             f'{c.REALMS[a["realm"]]} Lv{a["level"]} · {c.HEAVENS[a.get("heaven", 0)]["name"]}洞天</p></div>'
             f'<div class="power">总战力<strong>{bd["total"] if bd else 0}</strong></div></div>'
@@ -88,5 +93,5 @@ def card_html(player, key, equipment=False):
             f'<div class="stats">{stats}</div><div class="resources">修为 {a["cultivation"]} · 灵材 {a["ore"]}'
             f' · 功法 {escape(str(a["style"]))}<br>灵宠 {escape(str(bd["pet_name"] if bd else "引路灵蝶"))}'
             f' · {escape(str(a.get("pet_role", "攻击")))} · 今日副本收益 {a.get("rewards", 0)}/8'
-            f' · 首领挑战 {a.get("world_hits", 0)}/3<br>{escape(str(level_msg))}<br>悟性点 {a.get("insight", 0)} 可用 · 已分配 {focus}</div><div class="details">{details}</div>'
+            f' · 首领挑战 {a.get("world_hits", 0)}/3<br>{escape(str(level_msg))}<br>悟性点 {a.get("insight", 0)} 可用 · 属性上的 +N 为加点分配</div><div class="details">{details}</div>'
             f'<div class="foot">{footer}</div></div></body></html>')

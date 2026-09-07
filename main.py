@@ -3292,7 +3292,7 @@ class PetParkPlugin(Star):
                     logger.warning(f"[petpark] 仙途地图生成失败，回退文字：{exc}")
             if cmd in ("我的修士", "今日修行", "修士装备") and player.get("adventure"):
                 try:
-                    html = cultivator_card_html(player, service.key(group_id, qq), equipment=cmd == "修士装备")
+                    html = cultivator_card_html(player, service.key(group_id, qq))
                     image = self._render_html_image(html, "cultivator", 720, crop=self._card_crop,
                                                     win_w=760, win_h=1800)
                     if image:
