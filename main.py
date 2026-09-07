@@ -5222,7 +5222,7 @@ class PetParkPlugin(Star):
             got = "、".join(granted.get(sk, [])) or "无"
             top3.append(f"| {len(top3)+1} | `{self._display_uid(qq)}` {nick} | {dmg} | {got} |")
         return (
-            "**本轮回伤害榜与奖励分配**\n"
+            "**本轮回伤害榜与奖励分配**\n\n"
             "| 排名 | 玩家 | 伤害 | 获得奖励 |\n"
             "|---|---|---|---|\n"
             + "\n".join(top3)
@@ -6638,6 +6638,7 @@ class PetParkPlugin(Star):
         groups = self.store._data.get("groups", {})
         lines = [
             "## 🛡️ 小管理员一览（全服）",
+            "",
             "| 群 | 服类型 | 小管理员 |",
             "|---|---|---|",
         ]
@@ -7973,6 +7974,8 @@ class PetParkPlugin(Star):
             lines.append(f"**【{cat}】**")
             if cat == "锻造材料":
                 lines.append("> 进阶装备用：先「锻造 灵剑」把装备灵材到等级上限 → 再用这些材料「装备进阶」升品阶、成功后「洗炼」觉醒词条。")
+            # QQ官方 Markdown 需空白行隔出表格块，否则紧跟分类名的表格会被当成 md 区块（吞成一块）
+            lines.append("")
             lines.append("| 物品 | 价格 |")
             lines.append("| --- | --- |")
             for n, it in sorted(groups[cat], key=lambda kv: kv[1]["price"]):
@@ -11301,6 +11304,7 @@ class PetParkPlugin(Star):
             f"> 当前拥有深渊结晶：**{crystal}**",
             "",
             "**一次性道具**（购买后自动生效/入包）",
+            "",
             "| 商品 | 结晶 | 说明 |",
             "|---|---|---|",
         ]
@@ -11308,6 +11312,7 @@ class PetParkPlugin(Star):
             lines.append(f"| {name} | {info['cost']} | {info['desc']} |")
         lines.append("")
         lines.append("**战前祝福**（购买后下一次挑战生效）")
+        lines.append("")
         lines.append("| 祝福 | 结晶 | 说明 |")
         lines.append("|---|---|---|")
         for name, info in data.ABYSS_BLESSINGS.items():
