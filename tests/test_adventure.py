@@ -73,7 +73,7 @@ class AdventureTests(unittest.TestCase):
             for gender in ('男', '女'):
                 p['adventure'].update(profession=profession, gender=gender)
                 portraits.add(portrait_name(p['adventure']))
-        self.assertEqual(len(portraits), 6)
+        self.assertEqual(len(portraits), 8)
         p['adventure']['name'] = '<script>坏</script>'
         with patch('qqbot_pet.petpark.adventure.card.asset_uri', return_value='data:image/png;base64,'):
             html = card_html(p, self.service.key('g', 'a'))
@@ -483,8 +483,22 @@ class AdventureTests(unittest.TestCase):
         self.assertEqual(gear_name('剑修','weapon',0),'凡铁剑')
         self.assertEqual(gear_name('体修','weapon',0),'铁砂拳套')
         self.assertEqual(gear_name('灵修','weapon',0),'桃木杖')
+        self.assertEqual(gear_name('魔修','weapon',0),'噬魂魔刃')
         self.assertEqual(gear_name('剑修','weapon',9),'鸿蒙剑')
         self.assertNotEqual(gear_name('剑修','robe',2),gear_name('体修','robe',2))
+        self.assertEqual(len({gear_name(p, 'weapon', 0) for p in ('剑修', '体修', '灵修', '魔修')}), 4)
+        from qqbot_pet.petpark.adventure.content import GEAR, GEAR_NAME_BY_PROF
+        for slot, _label in GEAR.values():
+            names = [name for slots in GEAR_NAME_BY_PROF.values() for name in slots[slot]]
+            self.assertEqual(len(names), len(set(names)))
+
+    def test_demon_profession_and_named_forging(self):
+        p = self.create('魔修')
+        a = p['adventure']
+        a.update(level=2, ore=20)
+        self.assertIn('魔修', self.call('我的修士'))
+        self.assertIn('锻造成功', self.call('锻造 噬魂魔刃'))
+        self.assertEqual(a['equipment']['weapon'], 1)
 
     def test_legacy_equip_tier_backfill_allows_continuing(self):
         p=self.create();a=p['adventure']

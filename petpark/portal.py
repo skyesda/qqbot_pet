@@ -2697,7 +2697,7 @@ createApp({
     const sending = ref(false);
     const bodyEl = ref(null);
     const inputEl = ref(null);
-    const quickCmds = ['灵契仙途','创建角色','选择职业 剑修','结契灵宠 九尾狐','我的洞天','洞天突破','仙途毕业','踏入仙途 体修','踏入仙途 灵修','我的修士','修士修炼','仙途地图','历练 1','修士装备','世界首领','战斗详情','我的宠物'];
+    const quickCmds = ['灵契仙途','创建角色','选择职业 剑修','结契灵宠 九尾狐','我的洞天','洞天突破','仙途毕业','踏入仙途 体修','踏入仙途 灵修','踏入仙途 魔修','我的修士','修士修炼','仙途地图','历练 1','修士装备','世界首领','战斗详情','我的宠物'];
 
     const current = computed(()=> pets.value[petIdx.value] || null);
     const myName = computed(()=> account.value ? 'QQ ' + account.value.qq : '我');

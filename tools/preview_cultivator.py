@@ -1,4 +1,4 @@
-"""Verify all six portrait selections and the real card screenshot pipeline."""
+"""Verify all eight portrait selections and the real card screenshot pipeline."""
 import sys
 import tempfile
 from pathlib import Path
@@ -37,6 +37,7 @@ def main():
                 assert page.locator('.gear').count() == 6
                 assert page.locator('img').evaluate_all('(els) => els.every(e => e.complete && e.naturalWidth > 0)')
                 assert page.locator('.gear-name').evaluate_all('(els) => els.every(e => e.scrollWidth <= e.clientWidth)')
+                assert page.locator('.card').evaluate('(el) => el.scrollWidth <= el.clientWidth')
                 portrait = page.locator('.portrait').bounding_box()
                 assert portrait['height'] > 450
                 page.locator('.card').screenshot(path=str(out / f'{name}.png'))
@@ -44,6 +45,9 @@ def main():
         a.update(name='甲乙丙丁戊己庚辛壬癸子丑')
         html = card_html(player, service.key('preview', 'sample'), equipment=True)
         page.set_content(card_theme.finish_html(html), wait_until='load')
+        assert page.locator('.card').evaluate('(el) => el.scrollWidth <= el.clientWidth')
+        assert page.locator('.identity').evaluate('(el) => el.scrollWidth <= el.clientWidth')
+        assert page.locator('.gear-name').evaluate_all('(els) => els.every(e => e.scrollWidth <= e.clientWidth)')
         page.locator('.card').screenshot(path=str(out / 'equipment.png'))
         cards = templates()
         cards.store = SimpleNamespace(custom_images_dir=out)

@@ -163,6 +163,12 @@ def simulate(party, opposition, seed, max_rounds=24):
         metrics[target["owner"]]["taken"] += dealt
         if target["hp"] == 0:
             log(round_no, f"{target['name']}倒下")
+        if source.get("role") == "魔修" and source.get("kind") == "hero" and dealt:
+            restored = min(source["max_hp"] - source["hp"], max(1, int(dealt * .16)))
+            source["hp"] += restored
+            metrics[source["owner"]]["healing"] += restored
+            if restored:
+                log(round_no, f"{source['name']}以血煞汲取{restored}生命")
         if reflect and target["role"] == "体修" and target["hp"] > 0 and dealt:
             hit(target, source, dealt * .3, round_no, reflect=False)
         return dealt

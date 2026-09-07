@@ -13,7 +13,7 @@ from .power import compute_unified_power, power_breakdown, power_to_scale
 MENU = """## 灵契仙途
 修士问道，灵宠同行。
 
-初次游玩：`创建角色` → `选择职业 剑修`（体修 / 灵修）→ `结契灵宠 九尾狐`
+初次游玩：`创建角色` → `选择职业 剑修`（体修 / 灵修 / 魔修）→ `结契灵宠 九尾狐`
 老玩家可用 `灵宠助战 序号` 选择已有宠物。
 ① `修士修炼` 领取离线修为 → `修士突破` 提升等级（上限 999）
 ② 每个境界满级后 `渡劫` 破境（需天材地宝 + 天劫战斗），解锁「神通」
@@ -88,7 +88,7 @@ class AdventureService:
 
     def player(self, key):
         p = self.store._data["players"].get(key)
-        self.require(p and p.get("adventure"), "请先发送「踏入仙途 剑修 / 体修 / 灵修」。")
+        self.require(p and p.get("adventure"), "请先发送「踏入仙途 剑修 / 体修 / 灵修 / 魔修」。")
         return p
 
     def today(self):
@@ -199,10 +199,10 @@ class AdventureService:
         if cmd == "创建角色":
             self.require(not p.get("adventure"), "角色已存在，请查看「我的修士」。")
             p.setdefault("adventure_draft", {"created_at": int(self.clock())})
-            return "角色已创建。请选择职业：选择职业 剑修 / 体修 / 灵修。剑修爆发、体修护卫、灵修治疗。"
+            return "角色已创建。请选择职业：选择职业 剑修 / 体修 / 灵修 / 魔修。剑修爆发、体修护卫、灵修治疗、魔修吸血。"
         if cmd in ("踏入仙途", "选择职业"):
             self.require(not p.get("adventure"), "你已踏入仙途。查看「我的修士」，更换职业使用「修士转职 职业」。")
-            self.require(arg in c.PROFESSIONS, "请选择：踏入仙途 剑修 / 体修 / 灵修")
+            self.require(arg in c.PROFESSIONS, "请选择：踏入仙途 剑修 / 体修 / 灵修 / 魔修")
             pet = p.get("pet") or {}
             root = random.choices(c.SPIRIT_ROOTS, weights=[r["weight"] for r in c.SPIRIT_ROOTS], k=1)[0]["name"]
             p["adventure"] = {"schema_version": c.VERSION, "heaven": 0, "milestones": [], "name": f"{arg}修士", "profession": arg,
@@ -314,7 +314,7 @@ class AdventureService:
                     f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备 · 渡劫 · 道号 · 性别")
         if cmd == "修士转职":
             self.can_edit(key)
-            self.require(arg in c.PROFESSIONS, "职业：剑修 / 体修 / 灵修")
+            self.require(arg in c.PROFESSIONS, "职业：剑修 / 体修 / 灵修 / 魔修")
             self.require(self.clock() >= a["transfer_at"], "转职间隔24小时，境界和装备不会丢失。")
             a["profession"] = arg
             if not a.get("name_customized"):
@@ -496,8 +496,8 @@ class AdventureService:
                 + "\n装备进阶 装备名：消耗进阶材料＋器劫试炼，成功晋升品阶并觉醒词条；洗炼 装备名：30灵材重roll词条。")
         if cmd == "锻造":
             self.can_edit(key)
-            self.require(arg in c.GEAR, "用法：锻造 " + c.GEAR_NAMES)
-            slot = c.GEAR[arg][0]
+            slot = c.gear_slot(a['profession'], arg)
+            self.require(slot, "用法：锻造 " + c.gear_command_names(a['profession'], a['equip_tier']))
             rank = a["equipment"][slot]
             tier = a["equip_tier"][slot]
             cap = min(a["level"], c.tier_cap(tier))
@@ -509,8 +509,8 @@ class AdventureService:
             return f"锻造成功：{c.gear_name(a['profession'], slot, tier)}＋{rank + 1}。"
         if cmd == "装备进阶":
             self.can_edit(key)
-            self.require(arg in c.GEAR, "用法：装备进阶 " + c.GEAR_NAMES)
-            slot = c.GEAR[arg][0]
+            slot = c.gear_slot(a['profession'], arg)
+            self.require(slot, "用法：装备进阶 " + c.gear_command_names(a['profession'], a['equip_tier']))
             rank = a["equipment"][slot]
             tier = a["equip_tier"][slot]
             self.require(tier < len(c.GEAR_TIERS) - 1, "该装备已臻鸿蒙，无可进阶。")
@@ -531,8 +531,8 @@ class AdventureService:
             return text + f"\n⚒ 进阶失败：器劫加身，品阶未退，『{mat}』已消耗。30分钟内不可再进阶。"
         if cmd == "洗炼":
             self.can_edit(key)
-            self.require(arg in c.GEAR, "用法：洗炼 " + c.GEAR_NAMES)
-            slot = c.GEAR[arg][0]
+            slot = c.gear_slot(a['profession'], arg)
+            self.require(slot, "用法：洗炼 " + c.gear_command_names(a['profession'], a['equip_tier']))
             self.require(a["equip_affix"].get(slot), "该装备尚无词条，先「装备进阶」成功觉醒词条。")
             self.require(a["ore"] >= 30, "洗炼需要30灵材。")
             a["ore"] -= 30
