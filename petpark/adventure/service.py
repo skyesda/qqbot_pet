@@ -20,8 +20,8 @@ MENU = """## 灵契仙途
 ③ `仙途地图` → `历练 1` 挑战首领 · `锻造 灵剑` 培养装备
 ④ `组队秘境 葬龙秘境` 邀请群友并肩作战
 
-`我的修士`（看灵根/神通/战力）· `我的洞天` · `洞天突破`
-`修士配装 破阵` · `灵宠专长 辅助` · `道号` · `性别`
+`我的修士`（看灵根/神通/战力/体力）· `我的洞天` · `洞天突破`
+`修士配装 破阵` · `灵宠专长 辅助` · `悟性加点 攻 5` · `我的体力` · `道号` · `性别`
 `世界首领` · `仙途深渊` · `试炼秘境`（每日限次，掉落灵石/玄晶/材料碎片）· `仙途切磋 @对方`
 `战斗详情` · `今日修行` · `仙途战绩`
 完整指令（含原宠物玩法）请发送 `灵契仙途` 查看菜单图。"""
@@ -298,14 +298,17 @@ class AdventureService:
                 )
             else:
                 power_lines = "总战力 0"
-            tactics = " · ".join(a.get("tactics", [])) or "无"
+            _tactics = a.get("tactics", [])
+            tactics = " · ".join(t + (f"（{c.tactic_effect(t)}）" if c.tactic_effect(t) else "") for t in _tactics) or "无"
+            _root = a.get("spirit_root") or "无"
+            _stamina = f"{a.get('stamina', 100)}/{a.get('stamina_max', 100)}"
             cap = c.realm_cap(a["realm"])
             cap_hint = "" if a["realm"] >= len(c.REALMS) - 1 else f"\n境界封顶 Lv{cap}（满级后「渡劫」破境）"
             return (f"## 灵契仙途 · {a['profession']}\n道号 {a['name']} · {a['gender']} · {c.REALMS[a['realm']]} Lv{a['level']} · 修为 {a['cultivation']}\n"
-                    f"灵根：{a.get('spirit_root') or '无'} · 属性：{c.element_line(c.hero_element(a))} · 神通：{tactics}\n"
+                    f"灵根：{_root}（{c.root_bonus(a.get('spirit_root') or '')}） · 属性：{c.element_line(c.hero_element(a))} · 神通：{tactics}\n"
                     f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n{power_lines}\n性命 {s['hp']} · 攻击 {s['atk']} · 防御 {s['def']} · 速度 {s['speed']}\n"
                     f"悟性 {s['wudao']} · 根骨 {s['gengu']}\n功法：{a['style']} · 灵宠：{units[1]['name']}（{c.element_line(units[1].get('element'))} · {a['pet_role']}）\n"
-                    f"灵材 {a['ore']} · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3"
+                    f"灵材 {a['ore']} · 体力 {_stamina}（每5分钟回1，宗门任务/探索/镇守消耗） · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3"
                     f"{cap_hint}\n"
                     f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备 · 渡劫 · 道号 · 性别")
         if cmd == "修士转职":

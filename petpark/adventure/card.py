@@ -52,10 +52,19 @@ def card_html(player, key, equipment=False):
         for label, field in [("血量上限", "hp"), ("攻击", "atk"), ("防御", "def"),
                              ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
     # 灵根／属性（五行相克）／神通：修士「道基」信息原图缺失，单独成行展示。
+    # 灵根补实际加成（金→攻+10%）、神通补被动效果（灵台清明→攻+4%/防+4%），不再只给名字。
     root = escape(str(a.get("spirit_root") or "无"))
+    root_bonus = escape(c.root_bonus(a.get("spirit_root") or ""))
     element = escape(str(c.element_line(c.hero_element(a))))
-    tactics = escape(" · ".join(a.get("tactics", [])) or "无")
-    lineage = f'<div class="lineage">灵根 {root} · {element}<br>神通 {tactics}</div>'
+    _tactics = a.get("tactics", [])
+    tactics = escape(" · ".join(
+        t + (f"（{c.tactic_effect(t)}）" if c.tactic_effect(t) else "") for t in _tactics) or "无")
+    lineage = f'<div class="lineage">灵根 {root}（{root_bonus}） · {element}<br>神通 {tactics}</div>'
+    # 体力条：宗门任务/探索/镇守消耗，画成一根进度条让玩家一眼看懂。
+    _st = int(a.get("stamina", 100)); _mx = int(a.get("stamina_max", 100)) or 100
+    _pct = max(0, min(100, int(_st / _mx * 100)))
+    _stamina_bar = (f'<span class="barwrap"><span class="bar" style="width:{_pct}%"></span></span>'
+                    f' 体力 {_st}/{_mx}')
     # 结契灵宠属性：随战斗克制生效，原图未展示，补上并标出相克。
     _companion = next((p for p in player.get("pets", []) if p.get("pet_id") == a.get("companion_pet_id")), None)
     pet_element = c.element_line(_companion.get("element")) if _companion else "无属性"
@@ -91,6 +100,8 @@ def card_html(player, key, equipment=False):
     .stats div{padding:9px 12px;background:#fcfaf0cc;border-bottom:1px solid #cabc98;display:flex;justify-content:space-between}
     .stats em{font-style:normal;font-size:12px;color:#3f8f4f;margin-left:6px}
     .resources,.details{font-size:14px;line-height:1.8;text-align:center;margin-top:13px;overflow-wrap:anywhere}
+    .barwrap{display:inline-block;width:120px;height:11px;background:#e7e3d0;border-radius:6px;vertical-align:-1px;overflow:hidden;border:1px solid #cabc98}
+    .bar{display:block;height:100%;background:linear-gradient(90deg,#6fae5f,#4e8d43);border-radius:6px}
     .lineage{font-size:13px;line-height:1.6;text-align:center;margin-top:11px;color:#6b5231;background:#fffaf0cc;border:1px solid #cabc98;padding:6px}
     .details{font-size:12px;color:#6c796e}.foot{display:block;font-size:13px;line-height:1.8;margin-top:16px;text-align:center}
     """
@@ -104,7 +115,7 @@ def card_html(player, key, equipment=False):
             f'<div class="portrait"><img src="{asset_uri(portrait_name(a))}" alt="修士立绘"></div>'
             f'<div class="gear-column">{"".join(slots[3:])}</div></div>'
             f'<div class="stats">{stats}</div><div class="resources">修为 {a["cultivation"]} · 灵材 {a["ore"]}'
-            f' · 体力 {a.get("stamina", 100)}/{a.get("stamina_max", 100)} · 功法 {escape(str(a["style"]))}<br>'
+            f' · {_stamina_bar} · 功法 {escape(str(a["style"]))}<br>'
             f'灵宠 {escape(str(bd["pet_name"] if bd else "引路灵蝶"))}（{escape(str(pet_element))}）'
             f' · {escape(str(a.get("pet_role", "攻击")))} · 今日副本收益 {a.get("rewards", 0)}/8'
             f' · 首领挑战 {a.get("world_hits", 0)}/3<br>{escape(str(level_msg))}<br>悟性点 {a.get("insight", 0)} 可用 · 属性上的 +N 为加点分配</div>{lineage}<div class="details">{details}</div>'

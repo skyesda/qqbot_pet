@@ -152,6 +152,30 @@ def tactic_by_name(name):
     return next((t for t in TACTICS if t["name"] == name), None)
 
 
+def root_bonus(root_name):
+    """灵根实际加成一句话：金灵根→攻+10%，水灵根→修炼+20%，杂灵根→无加成。"""
+    root = spirit_root_by_name(root_name)
+    if not root:
+        return "无加成"
+    parts = []
+    for key, label in (("atk", "攻"), ("def", "防"), ("hp", "血"), ("speed", "速"), ("cult", "修炼")):
+        if root.get(key):
+            parts.append(f"{label}+{int(root[key] * 100)}%")
+    return "、".join(parts) or "无加成"
+
+
+def tactic_effect(name):
+    """神通被动效果一句话：灵台清明→攻+4%/防+4%；无该神通返回空串。"""
+    t = tactic_by_name(name)
+    if not t:
+        return ""
+    parts = []
+    for key, label in (("atk", "攻"), ("def", "防"), ("hp", "血"), ("speed", "速")):
+        if t.get(key):
+            parts.append(f"{label}+{int(t[key] * 100)}%")
+    return "、".join(parts)
+
+
 def tier_cap(tier):
     """装备品阶 tier 的等级封顶：凡器 99、灵器 199 … 鸿蒙 999。"""
     return min(MAX_LEVEL, (tier + 1) * REALM_SIZE - 1)
