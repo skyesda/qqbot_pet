@@ -1103,6 +1103,51 @@ ITEMS.update({
         "desc": "渡劫破入真仙的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
+    "玄铁": {
+        "price": 8000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "凡器破入灵器的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "精金": {
+        "price": 30000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "灵器破入法器的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "星辰沙": {
+        "price": 80000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "法器破入宝器的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "悟道石": {
+        "price": 200000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "宝器破入道器的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "仙晶": {
+        "price": 450000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "道器破入仙器的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "神血石": {
+        "price": 900000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "仙器破入神器的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "圣辉玉": {
+        "price": 1800000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "神器破入圣器的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "混沌精": {
+        "price": 3600000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "圣器破入至宝的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
+    "鸿蒙紫气": {
+        "price": 6000000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "desc": "至宝破入鸿蒙的装备进阶材料（装备进阶自动消耗）。",
+        "effect": {},
+    },
 })
 
 # 神器也作为可购买、可佩戴的背包物品（由「购买」入包，「佩戴神器」穿戴）。

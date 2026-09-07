@@ -47,7 +47,7 @@ class AdventureTests(unittest.TestCase):
         self.assertEqual(len(a['equipment']), 6)
         a.update(level=5, ore=100, equipment={'weapon': 3, 'robe': 2, 'seal': 1})
         before = hero_sheet(a, p)
-        self.assertIn('玉佩 Lv0', self.call('修士装备'))
+        self.assertIn('铜佩 Lv0', self.call('修士装备'))
         self.assertEqual(a['equipment']['weapon'], 3)
         for name in ('灵冠', '灵靴', '玉佩'):
             self.assertIn('锻造成功', self.call('锻造 ' + name))
@@ -57,7 +57,7 @@ class AdventureTests(unittest.TestCase):
         self.assertEqual(a['ore'], 91)
         self.assertEqual(after['atk'], before['atk'])
         a['equipment']['boots'] = 5
-        self.assertIn('等级上限', self.call('锻造 灵靴'))
+        self.assertIn('当前上限', self.call('锻造 灵靴'))
         self.assertEqual(self.store.get_player('a', 'g')['adventure']['ore'], 91)
 
     def test_portrait_selection_and_safe_card_text(self):
@@ -153,6 +153,7 @@ class AdventureTests(unittest.TestCase):
 
     def test_strategy_changes_hard_boss_outcome(self):
         p=self.create('体修');a=p['adventure'];a['level']=3
+        a['gender']='女'  # 固定性别：男修+5%攻会让均衡形态也获胜，掩盖「策略改变战局」的断言
         a['equipment']={k:1 for k in a['equipment']}
         enc=dict(content.MAPS['2']);enc['scale']*=1.65
         a['style']='均衡'
@@ -324,5 +325,83 @@ class AdventureTests(unittest.TestCase):
         self.assertIn('499',info)
         self.assertIn('突破成功',self.call('修士突破'))
         self.assertEqual(self.store.get_player('a','g')['adventure']['level'],81)
+
+    def test_forge_locks_at_tier_cap(self):
+        p=self.create();a=p['adventure']
+        a.update(level=120,ore=100000,equipment={'weapon':99,'robe':0,'seal':0,'crown':0,'boots':0,'pendant':0})
+        self.assertIn('品阶巅峰',self.call('锻造 灵剑'))
+        self.assertEqual(a['equipment']['weapon'],99)
+
+    def test_equip_advance_requires_material(self):
+        p=self.create();a=p['adventure']
+        a.update(level=120,equipment={'weapon':99,'robe':0,'seal':0,'crown':0,'boots':0,'pendant':0})
+        self.assertIn('进阶需',self.call('装备进阶 灵剑'))
+        self.assertEqual(a['equip_tier']['weapon'],0)
+
+    def test_equip_advance_success_upgrades_and_rolls_affix(self):
+        p=self.create();a=p['adventure']
+        a.update(level=120,equipment={'weapon':99,'robe':0,'seal':0,'crown':0,'boots':0,'pendant':0})
+        p['bag']={'玄铁':1}
+        won=dict(won=True,winner=0,rounds=2,reason='test',events=[],units=[],metrics={})
+        with patch('qqbot_pet.petpark.adventure.service.simulate',return_value=won):
+            result=self.call('装备进阶 灵剑')
+        self.assertIn('进阶成功',result)
+        self.assertIn('灵器',result)
+        self.assertEqual(a['equip_tier']['weapon'],1)
+        self.assertIn(a['equip_affix']['weapon'],content.AFFIXES)
+        self.assertNotIn('玄铁',p['bag'])
+
+    def test_equip_advance_failure_costs_material_and_cools_down(self):
+        p=self.create();a=p['adventure']
+        a.update(level=120,equipment={'weapon':99,'robe':0,'seal':0,'crown':0,'boots':0,'pendant':0})
+        p['bag']={'玄铁':1}
+        lost=dict(won=False,winner=1,rounds=2,reason='test',events=[],units=[],metrics={})
+        with patch('qqbot_pet.petpark.adventure.service.simulate',return_value=lost):
+            result=self.call('装备进阶 灵剑')
+        self.assertIn('进阶失败',result)
+        self.assertEqual(a['equip_tier']['weapon'],0)
+        self.assertNotIn('玄铁',p['bag'])
+        self.assertGreater(a['forge_cd'],self.now)
+        p['bag']={'玄铁':1}
+        self.assertIn('静养',self.call('装备进阶 灵剑'))
+
+    def test_refine_requires_affix_and_rerolls(self):
+        p=self.create();a=p['adventure']
+        a.update(level=120,equipment={'weapon':99,'robe':0,'seal':0,'crown':0,'boots':0,'pendant':0})
+        self.assertIn('尚无词条',self.call('洗炼 灵剑'))
+        a=self.store.get_player('a','g')['adventure']  # 失败回滚后重新取引用
+        a['equip_affix']['weapon']='破军'
+        a['ore']=30
+        self.assertIn('洗炼成功',self.call('洗炼 灵剑'))
+        self.assertIn(a['equip_affix']['weapon'],content.AFFIXES)
+        self.assertEqual(a['ore'],0)
+
+    def test_affix_and_tier_mult_change_hero_sheet(self):
+        from qqbot_pet.petpark.adventure.combat import hero_sheet
+        p=self.create('剑修');a=p['adventure']
+        a.update(level=20,equipment={'weapon':10,'robe':0,'seal':0,'crown':0,'boots':0,'pendant':0})
+        base=hero_sheet(a,p)
+        a['equip_tier']['weapon']=1  # 灵器系数 1.12
+        self.assertGreater(hero_sheet(a,p)['atk'],base['atk'])
+        a['equip_tier']['weapon']=0
+        a['equip_affix']['weapon']='破军'  # 攻击 +6%
+        self.assertGreater(hero_sheet(a,p)['atk'],base['atk'])
+
+    def test_profession_gear_names_differ(self):
+        from qqbot_pet.petpark.adventure.content import gear_name
+        self.assertEqual(gear_name('剑修','weapon',0),'凡铁剑')
+        self.assertEqual(gear_name('体修','weapon',0),'铁砂拳套')
+        self.assertEqual(gear_name('灵修','weapon',0),'桃木杖')
+        self.assertEqual(gear_name('剑修','weapon',9),'鸿蒙剑')
+        self.assertNotEqual(gear_name('剑修','robe',2),gear_name('体修','robe',2))
+
+    def test_legacy_equip_tier_backfill_allows_continuing(self):
+        p=self.create();a=p['adventure']
+        a.update(level=160,realm=1,ore=100000,equipment={'weapon':150,'robe':0,'seal':0,'crown':0,'boots':0,'pendant':0})
+        a['equip_tier'].pop('weapon')  # 模拟老档缺 tier 字段
+        self.call('我的修士')  # 触发 setdefault 惰性回填
+        self.assertEqual(a['equip_tier']['weapon'],1)
+        self.assertIn('锻造成功',self.call('锻造 灵剑'))
+        self.assertEqual(a['equipment']['weapon'],151)
 
 if __name__=='__main__':unittest.main()

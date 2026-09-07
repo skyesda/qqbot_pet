@@ -2,7 +2,7 @@
 from copy import deepcopy
 import math
 import random
-from .content import PROFESSIONS, VERSION, TACTICS, SPIRIT_ROOTS
+from .content import PROFESSIONS, VERSION, TACTICS, SPIRIT_ROOTS, AFFIXES, tier_mult
 from .. import data as legacy
 
 
@@ -35,16 +35,17 @@ def hero_sheet(a, player, include_mount=True):
     else:
         growth = 1 + 0.16 * 79 + 2.5 * math.log2(1 + (lv - 79) / 100)
     eq = a.get("equipment", {"weapon": 0, "robe": 0, "seal": 0})
+    tiers = a.get("equip_tier", {})
     mount = {} if not include_mount else player.get("mounts", {}).get(player.get("active_mount"), {})
     mount_atk = 0 if not include_mount else projection(mount.get("power", 0), 10000, 5)
     b = a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})
     a.setdefault("gender", "男")
     wudao = a.get("wudao", 0)
     gengu = a.get("gengu", 0)
-    hp = (spec["hp"] + eq.get("robe", 0) * 55 + eq.get("pendant", 0) * 35 + b.get("hp", 0)) * growth
-    atk = (spec["atk"] + eq.get("weapon", 0) * 7 + mount_atk + b.get("atk", 0) + wudao) * growth
-    dfn = (spec["def"] + eq.get("seal", 0) * 5 + eq.get("crown", 0) * 3 + b.get("def", 0) + gengu) * growth
-    spd = spec["speed"] + eq.get("boots", 0) * 2 + b.get("speed", 0) + gengu
+    hp = (spec["hp"] + eq.get("robe", 0) * 55 * tier_mult(tiers.get("robe", 0)) + eq.get("pendant", 0) * 35 * tier_mult(tiers.get("pendant", 0)) + b.get("hp", 0)) * growth
+    atk = (spec["atk"] + eq.get("weapon", 0) * 7 * tier_mult(tiers.get("weapon", 0)) + mount_atk + b.get("atk", 0) + wudao) * growth
+    dfn = (spec["def"] + eq.get("seal", 0) * 5 * tier_mult(tiers.get("seal", 0)) + eq.get("crown", 0) * 3 * tier_mult(tiers.get("crown", 0)) + b.get("def", 0) + gengu) * growth
+    spd = spec["speed"] + eq.get("boots", 0) * 2 * tier_mult(tiers.get("boots", 0)) + b.get("speed", 0) + gengu
     # 性别微调：男修 +5% 攻击；女修 +5% 防御与速度。
     if a.get("gender") == "男":
         atk = int(atk * 1.05)
@@ -62,6 +63,12 @@ def hero_sheet(a, player, include_mount=True):
     if root:
         for k in mult:
             mult[k] += root.get(k, 0.0)
+    # 词条（装备进阶 roll）百分比乘区，与神通/灵根同通道。
+    for name in a.get("equip_affix", {}).values():
+        af = AFFIXES.get(name) if name else None
+        if af:
+            for k in mult:
+                mult[k] += af.get(k, 0.0)
     atk = int(atk * (1 + mult["atk"]))
     hp = int(hp * (1 + mult["hp"]))
     dfn = int(dfn * (1 + mult["def"]))

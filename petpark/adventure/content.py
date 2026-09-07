@@ -1,7 +1,7 @@
 """Versioned, data-driven adventure content. No production player data required."""
 from ..data import _DUNGEON_DEFS, TRIBULATION_FAIL_COOLDOWN
 
-VERSION = 5
+VERSION = 6
 # Each tier is unlocked individually by a trial, never by another player.
 HEAVENS = [
     {"name": "初识", "level": 1, "enemy": 1.0, "bonus": 0},
@@ -56,6 +56,45 @@ SPIRIT_ROOTS = [
 # 渡劫材料：境界 realm r → r+1 消耗 TRIBULATION_MATERIALS[r]（9 个境界门槛）。
 TRIBULATION_MATERIALS = ["筑基丹", "结丹丹", "元婴丹", "化神丹", "炼虚草", "合体道果", "大乘舍利", "渡劫符", "真仙花"]
 
+# 装备品阶：10 品阶对齐 10 境界，品阶靠「装备进阶」解锁、等级不能超过品阶封顶。
+GEAR_TIERS = ["凡器", "灵器", "法器", "宝器", "道器", "仙器", "神器", "圣器", "至宝", "鸿蒙"]
+# 进阶材料：品阶 t → t+1 消耗 FORGE_MATERIALS[t]（9 个品阶门槛）。
+FORGE_MATERIALS = ["玄铁", "精金", "星辰沙", "悟道石", "仙晶", "神血石", "圣辉玉", "混沌精", "鸿蒙紫气"]
+FORGE_FAIL_COOLDOWN = 1800  # 与渡劫同 30 分钟；失败不降品阶，仅消耗材料＋冷却。
+# 词条：装备进阶随机 roll 一条，属性百分比乘区（与神通/灵根同通道，见 combat.hero_sheet）。
+AFFIXES = {
+    "破军": {"atk": 0.06}, "御守": {"def": 0.06}, "气血": {"hp": 0.06},
+    "疾风": {"speed": 0.06}, "混元": {"atk": 0.02, "hp": 0.02, "def": 0.02, "speed": 0.02},
+    "锐金": {"atk": 0.04, "def": 0.02}, "木华": {"hp": 0.04, "speed": 0.02}, "水火": {"atk": 0.03, "hp": 0.03},
+}
+# 职业差异化装备命名：GEAR_NAME_BY_PROF[职业][slot_key][品阶0..9]，末品阶统一「鸿蒙」前缀。
+GEAR_NAME_BY_PROF = {
+    "剑修": {
+        "weapon": ["凡铁剑", "青霜剑", "紫电剑", "赤霄剑", "龙渊剑", "诛仙剑", "弑神剑", "轩辕剑", "开天剑", "鸿蒙剑"],
+        "robe": ["粗布袍", "青丝袍", "云纹袍", "紫绶袍", "玄武袍", "太极袍", "太乙袍", "混沌袍", "万法袍", "鸿蒙袍"],
+        "seal": ["石印", "青玉印", "云纹印", "紫金印", "玄武印", "太极印", "太乙印", "混沌印", "万法印", "鸿蒙印"],
+        "crown": ["竹冠", "青玉冠", "云纹冠", "紫金冠", "玄武冠", "太极冠", "太乙冠", "混沌冠", "万法冠", "鸿蒙冠"],
+        "boots": ["草鞋", "青云靴", "流云靴", "紫金靴", "玄武靴", "太极靴", "太乙靴", "混沌靴", "万法靴", "鸿蒙靴"],
+        "pendant": ["铜佩", "青玉佩", "云纹佩", "紫金佩", "玄武佩", "太极佩", "太乙佩", "混沌佩", "万法佩", "鸿蒙佩"],
+    },
+    "体修": {
+        "weapon": ["铁砂拳套", "玄铁拳套", "精金拳套", "赤铜护腕", "龙鳞护腕", "荒古护腕", "不灭护腕", "混沌拳套", "万劫拳套", "鸿蒙拳套"],
+        "robe": ["粗布战甲", "青铁战甲", "云纹战甲", "紫铜战甲", "玄龟战甲", "荒古战甲", "不灭战甲", "混沌战甲", "万劫战甲", "鸿蒙战甲"],
+        "seal": ["石印", "铁印", "精铁印", "玄铁印", "荒古印", "不灭印", "金刚印", "混沌印", "万劫印", "鸿蒙印"],
+        "crown": ["布帽", "铁冠", "铜冠", "玄铁冠", "荒古冠", "不灭冠", "金刚冠", "混沌冠", "万劫冠", "鸿蒙冠"],
+        "boots": ["草鞋", "铁靴", "铜靴", "玄铁靴", "荒古靴", "不灭靴", "金刚靴", "混沌靴", "万劫靴", "鸿蒙靴"],
+        "pendant": ["铜佩", "铁佩", "精铁佩", "玄铁佩", "荒古佩", "不灭佩", "金刚佩", "混沌佩", "万劫佩", "鸿蒙佩"],
+    },
+    "灵修": {
+        "weapon": ["桃木杖", "青藤杖", "云纹杖", "紫檀杖", "玄冥杖", "太玄杖", "太乙杖", "混沌杖", "万灵杖", "鸿蒙杖"],
+        "robe": ["粗布法袍", "青丝法袍", "云纹法袍", "紫绶法袍", "玄冥法袍", "太玄法袍", "太乙法袍", "混沌法袍", "万灵法袍", "鸿蒙法袍"],
+        "seal": ["石印", "青玉印", "云纹印", "紫檀印", "玄冥印", "太玄印", "太乙印", "混沌印", "万灵印", "鸿蒙印"],
+        "crown": ["竹冠", "青玉冠", "云纹冠", "紫檀冠", "玄冥冠", "太玄冠", "太乙冠", "混沌冠", "万灵冠", "鸿蒙冠"],
+        "boots": ["草鞋", "青云靴", "流云靴", "紫檀靴", "玄冥靴", "太玄靴", "太乙靴", "混沌靴", "万灵靴", "鸿蒙靴"],
+        "pendant": ["铜佩", "青玉佩", "云纹佩", "紫檀佩", "玄冥佩", "太玄佩", "太乙佩", "混沌佩", "万灵佩", "鸿蒙佩"],
+    },
+}
+
 
 def realm_cap(realm):
     """境界(realm 0~9)对应的等级上限：炼气封顶99，真仙封顶999。"""
@@ -73,6 +112,36 @@ def spirit_root_by_name(name):
 
 def tactic_by_name(name):
     return next((t for t in TACTICS if t["name"] == name), None)
+
+
+def tier_cap(tier):
+    """装备品阶 tier 的等级封顶：凡器 99、灵器 199 … 鸿蒙 999。"""
+    return min(MAX_LEVEL, (tier + 1) * REALM_SIZE - 1)
+
+
+def forge_scale(tier):
+    """装备进阶试炼强度：比渡劫弱（门不是主战场），随品阶线性抬升。"""
+    return 6 + tier * 6
+
+
+def tier_mult(tier):
+    """装备品阶每级属性系数：凡器 1.0 → 鸿蒙 2.08，进阶带来质变。"""
+    return 1 + 0.12 * tier
+
+
+def gear_name(profession, slot, tier):
+    """职业差异化装备名；未知职业/槽位回退到通用中文名。"""
+    names = GEAR_NAME_BY_PROF.get(profession, {}).get(slot)
+    if names:
+        return names[min(max(int(tier), 0), len(names) - 1)]
+    for name, (s, _label) in GEAR.items():
+        if s == slot:
+            return name
+    return slot
+
+
+def affix_by_name(name):
+    return AFFIXES.get(name)
 MECHANICS = {
     "strike": ("蓄力重击", "第三回合重击：护盾和治疗有助于生存。"),
     "pack": ("召唤狼群", "第二回合召唤小怪：破阵会优先清理小怪。"),
@@ -101,7 +170,7 @@ WORLD_BOSSES = [
 ]
 COMMANDS = {
     "创建角色", "结契灵宠", "我的洞天", "洞天突破", "仙途毕业", "灵契仙途", "仙途帮助", "我的修士", "踏入仙途", "选择职业", "修士转职", "修士修炼", "修士突破", "道号", "性别",
-    "今日修行", "仙途地图", "历练", "挑战秘境", "修士装备", "锻造", "修士配装", "灵宠助战", "灵宠专长", "渡劫",
+    "今日修行", "仙途地图", "历练", "挑战秘境", "修士装备", "锻造", "装备进阶", "洗炼", "修士配装", "灵宠助战", "灵宠专长", "渡劫",
     "组队秘境", "仙途队伍", "加入队伍", "准备出发", "队伍出发", "退出队伍", "世界首领", "讨伐首领",
     "首领奖励", "仙途深渊", "深渊抉择", "深渊收手", "仙途切磋", "接受切磋", "拒绝切磋", "战斗详情", "仙途战绩",
 }
@@ -119,6 +188,12 @@ def validate_content():
     assert len(TACTICS) == len(REALMS)
     assert len(TRIBULATION_MATERIALS) == len(REALMS) - 1
     assert MAX_LEVEL == realm_cap(len(REALMS) - 1)
+    assert len(GEAR_TIERS) == 10 and len(FORGE_MATERIALS) == len(GEAR_TIERS) - 1
+    assert set(GEAR_NAME_BY_PROF) == set(PROFESSIONS)
+    for _prof, slots in GEAR_NAME_BY_PROF.items():
+        assert set(slots) == {slot for slot, _ in GEAR.values()}
+        assert all(len(v) == len(GEAR_TIERS) for v in slots.values())
+    assert len(AFFIXES) >= 4
     for encounter in [*MAPS.values(), *RAIDS.values()]:
         assert encounter["scale"] > 0 and encounter["level"] > 0
         assert encounter["mechanic"] in MECHANICS

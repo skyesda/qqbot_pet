@@ -194,6 +194,7 @@ class AdventureService:
             p["adventure"] = {"schema_version": c.VERSION, "heaven": 0, "milestones": [], "name": f"{arg}修士", "profession": arg,
                 "level": 1, "realm": 0, "cultivation": 0, "last_train": int(self.clock()) - 3600,
                 "equipment": {slot: 0 for slot, _ in c.GEAR.values()}, "ore": 9,
+                "equip_tier": {slot: 0 for slot, _ in c.GEAR.values()}, "equip_affix": {slot: None for slot, _ in c.GEAR.values()}, "forge_cd": 0,
                 "style": "均衡", "pet_role": "攻击", "companion_pet_id": pet.get("pet_id"),
                 "gender": random.choice(["男", "女"]), "bonus": {"atk": 0, "def": 0, "hp": 0, "speed": 0},
                 "wudao": 0, "gengu": 0, "name_customized": False,
@@ -212,6 +213,11 @@ class AdventureService:
         a.setdefault("tribulation_cd", 0)
         for slot, _ in c.GEAR.values():
             a.setdefault("equipment", {}).setdefault(slot, 0)
+        a.setdefault("forge_cd", 0)
+        for slot, _ in c.GEAR.values():
+            # 老档回填：品阶按已有等级推断（min(9, 等级//100)），不追溯锁定。
+            a.setdefault("equip_tier", {}).setdefault(slot, min(9, a["equipment"].get(slot, 0) // 100))
+            a.setdefault("equip_affix", {}).setdefault(slot, None)
         # 惰性补齐：老玩家无灵根则补随机一个；无神通则按当前境界补发已解锁神通（炼气期必得灵台清明）。
         if not a.get("spirit_root"):
             a["spirit_root"] = random.choices(c.SPIRIT_ROOTS, weights=[r["weight"] for r in c.SPIRIT_ROOTS], k=1)[0]["name"]
@@ -370,18 +376,56 @@ class AdventureService:
             a["companion_pet_id"] = pet["pet_id"]
             return f"已与{pet['nickname']}结契。"
         if cmd == "修士装备":
-            return "## 修士装备\n" + "\n".join(f"{name} Lv{a['equipment'][slot]} · 提升{label}" for name,(slot,label) in c.GEAR.items()) + f"\n灵材 {a['ore']}\n锻造 {c.GEAR_NAMES}：每级消耗 3＋当前等级×2 灵材，强化上限为角色等级。"
+            return ("## 修士装备\n" + "\n".join(
+                f"{c.gear_name(a['profession'], slot, a['equip_tier'][slot])} Lv{a['equipment'][slot]} · {c.GEAR_TIERS[a['equip_tier'][slot]]} · 词条「{a['equip_affix'][slot] or '无'}」 · 提升{label}"
+                for name, (slot, label) in c.GEAR.items())
+                + f"\n灵材 {a['ore']}"
+                + "\n锻造 装备名：每级 3＋当前等级×2 灵材，品阶巅峰须「装备进阶」。"
+                + "\n装备进阶 装备名：消耗进阶材料＋器劫试炼，成功晋升品阶并觉醒词条；洗炼 装备名：30灵材重roll词条。")
         if cmd == "锻造":
             self.can_edit(key)
             self.require(arg in c.GEAR, "用法：锻造 " + c.GEAR_NAMES)
             slot = c.GEAR[arg][0]
             rank = a["equipment"][slot]
+            tier = a["equip_tier"][slot]
+            cap = min(a["level"], c.tier_cap(tier))
+            self.require(rank < cap, "该装备已达当前上限（角色等级或品阶巅峰），先「修士突破」或「装备进阶」。")
             cost = 3 + rank * 2
-            self.require(rank < a["level"], "该装备已达当前角色等级上限，先突破。")
             self.require(a["ore"] >= cost, f"需要{cost}灵材，可通过历练获得。")
             a["ore"] -= cost
             a["equipment"][slot] += 1
-            return f"锻造成功：{arg}＋{rank+1}。"
+            return f"锻造成功：{c.gear_name(a['profession'], slot, tier)}＋{rank + 1}。"
+        if cmd == "装备进阶":
+            self.can_edit(key)
+            self.require(arg in c.GEAR, "用法：装备进阶 " + c.GEAR_NAMES)
+            slot = c.GEAR[arg][0]
+            rank = a["equipment"][slot]
+            tier = a["equip_tier"][slot]
+            self.require(tier < len(c.GEAR_TIERS) - 1, "该装备已臻鸿蒙，无可进阶。")
+            self.require(rank >= c.tier_cap(tier), f"需先将{c.gear_name(a['profession'], slot, tier)}锻造至{c.GEAR_TIERS[tier]}巅峰Lv{c.tier_cap(tier)}，方可进阶。")
+            self.require(self.clock() >= a.get("forge_cd", 0), "进阶失利，需静养30分钟方可再试。")
+            mat = c.FORGE_MATERIALS[tier]
+            self.require(self.store.remove_item(p, mat), f"进阶需『{mat}』×1（灵石商城购买，或历练/首领低概率掉落）。")
+            enc = dict(boss=f"{c.GEAR_TIERS[tier]}器劫", scale=c.forge_scale(tier), mechanic="strike")
+            result = simulate(build_party(p, key), enemies(enc), random.randrange(2**32))
+            text = self.record(a, result, "装备进阶")
+            if result["won"]:
+                a["equip_tier"][slot] += 1
+                a["equip_affix"][slot] = random.choice(list(c.AFFIXES))
+                a["forge_cd"] = 0
+                new_tier = a["equip_tier"][slot]
+                return text + f"\n⚒ 进阶成功：{c.gear_name(a['profession'], slot, new_tier)}晋升{c.GEAR_TIERS[new_tier]}！\n觉醒词条「{a['equip_affix'][slot]}」"
+            a["forge_cd"] = self.clock() + c.FORGE_FAIL_COOLDOWN
+            return text + f"\n⚒ 进阶失败：器劫加身，品阶未退，『{mat}』已消耗。30分钟内不可再进阶。"
+        if cmd == "洗炼":
+            self.can_edit(key)
+            self.require(arg in c.GEAR, "用法：洗炼 " + c.GEAR_NAMES)
+            slot = c.GEAR[arg][0]
+            self.require(a["equip_affix"].get(slot), "该装备尚无词条，先「装备进阶」成功觉醒词条。")
+            self.require(a["ore"] >= 30, "洗炼需要30灵材。")
+            a["ore"] -= 30
+            a["equip_affix"][slot] = random.choice(list(c.AFFIXES))
+            return f"洗炼成功：{c.gear_name(a['profession'], slot, a['equip_tier'][slot])} 新词条「{a['equip_affix'][slot]}」。"
         if cmd == "仙途地图":
             return f"## 山海历练 · {c.HEAVENS[a['heaven']]['name']}洞天 · 敌人×{c.HEAVENS[a['heaven']]['enemy']}\n" + "\n".join(f"{m['id']}. {m['name']} · Lv{m['level']} · {m['boss']} {'✓' if m['id'] in a['cleared'] else ''}" for m in c.MAPS.values()) + "\n历练 序号 · 首关直接开放，之后逐关解锁。通关后可「历练 序号 困难」：敌人加强，灵材额外＋2，同样占一次收益。"
         if cmd in ("历练", "挑战秘境"):
