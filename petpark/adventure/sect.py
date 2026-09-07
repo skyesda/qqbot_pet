@@ -41,14 +41,14 @@ _SECT_CD = {"mission": 60, "explore": 300, "guard": 600, "star": 300}
 # 宗门任务目标池：从「今日真实活动」里挑一个需要实际完成的任务，而不是一键白拿。
 # read 读当前进度（随今日各活动计数变化），cap 为当日上限；接取时按剩余余量裁剪，保证任务必可完成。
 _MISSION_SOURCES = {
-    "rewards":    ("历练 / 刷副本", lambda a, s, qq: int(a.get("rewards", 0)), 8),
+    "rewards":    ("打怪（历练/副本）", lambda a, s, qq: int(a.get("rewards", 0)), 8),
     "world_hits": ("讨伐世界首领", lambda a, s, qq: int(a.get("world_hits", 0)), 3),
-    "trial":      ("挑战试炼秘境", lambda a, s, qq: int((a.get("trial") or {}).get("used", 0)), 2),
+    "trial":      ("通关地图（试炼秘境）", lambda a, s, qq: int((a.get("trial") or {}).get("used", 0)), 2),
     "guard":      ("镇守宗门", lambda a, s, qq: int(_count(s, qq, "guard")), 1),
     "explore":    ("探秘北秘境", lambda a, s, qq: int(_count(s, qq, "explore")), 2),
 }
-_MISSION_POOL = [("rewards", 2), ("rewards", 3), ("world_hits", 1), ("world_hits", 2),
-                 ("trial", 1), ("guard", 1), ("explore", 1), ("explore", 2)]
+# 宗门每日任务：每次接取随机 二选一（打怪两次 / 通关地图一次），接取后须真正去打才能达成。
+_MISSION_CHOICES = [("rewards", 2), ("trial", 1)]
 
 
 def _today(service):
@@ -421,14 +421,14 @@ def member_passive(service, group, qq, building):
 
 
 def _roll_stamina(service, a):
-    """惰性回算修士体力：1点/5分钟，醒神丹期间翻倍。"""
+    """惰性回算修士体力：1点/分钟，醒神丹期间翻倍。"""
     now = int(service.clock())
     stamina_ts = int(a.get("stamina_ts", now))
     elapsed = max(0, now - stamina_ts)
-    if elapsed < 5:
+    if elapsed < 60:
         return
     rate = 2 if now < int(a.get("stamina_buff_until", 0)) else 1
-    gained = elapsed // 300 * rate
+    gained = elapsed // 60 * rate
     a["stamina"] = min(a.get("stamina_max", 100), a.get("stamina", 100) + gained)
     a["stamina_ts"] = now
 
@@ -479,24 +479,22 @@ def _do_mission(service, key, p, a, s, qq):
     cd = _cd_wait(service, a, "mission")
     if cd > 0:
         return f"任务楼冷却中，还需 {cd} 秒再接新委托。"
-    picked = None
-    for key_name, want in _MISSION_POOL:
+    feasible = []
+    for key_name, want in _MISSION_CHOICES:
         label, read, cap = _MISSION_SOURCES[key_name]
         base = read(a, s, qq)
         target = min(want, cap - base)
         if target >= 1:
-            picked = (key_name, label, base, target)
-            break
-    if not picked:
-        return ("任务楼今日已无适合你的委托——你今日的历练/首领/秘境/镇守/探索均已达标。"
-                "各项活动明日会刷新，请明日再来。")
-    key_name, label, base, target = picked
+            feasible.append((key_name, label, base, target))
+    if not feasible:
+        return ("今日宗门委托均已无法推进——你的历练/试炼已达标，明日刷新后再来。")
+    key_name, label, base, target = random.choice(feasible)
     if not _spend_stamina(service, a, 10):
         return "体力不足（接取宗门任务需10体力），可用『体力丹』补充后重试。"
     member["mission"] = {"key": key_name, "label": label, "base": base, "target": target,
                          "accepted": int(service.clock()), "day": service.today()}
     return (f"接取宗门任务：今日完成【{label} ×{target}】！完成后发送「宗门任务」归还领赏。"
-            f"（今日还可交付 {DAILY_LIMITS['mission'] - _count(s, qq, 'mission')} 次）")
+            f"（接取消耗10体力，今日还可交付 {DAILY_LIMITS['mission'] - _count(s, qq, 'mission')} 次）")
 
 
 def _do_explore(service, key, p, a, s, qq):
@@ -520,7 +518,7 @@ def _do_explore(service, key, p, a, s, qq):
         service.store.add_item(p, r["item"], 1)
     _treasury_split(s, qq, r["contrib"])
     s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["explore"]
-    return f"探秘北秘境：修为×{r['cult']} · 灵材×{r['ore']} · 帮贡+{r['contrib']} · 活跃度+{_ACTIVITY['explore']}{r.get('bonus', '')}（今日 {_count(s, qq, 'explore')}/{DAILY_LIMITS['explore']}）。"
+    return f"探秘北秘境：修为×{r['cult']} · 灵材×{r['ore']} · 帮贡+{r['contrib']} · 活跃度+{_ACTIVITY['explore']}{r.get('bonus', '')}（消耗20体力，今日 {_count(s, qq, 'explore')}/{DAILY_LIMITS['explore']}）。"
 
 
 def _do_guard(service, key, p, a, s, qq):
@@ -541,7 +539,7 @@ def _do_guard(service, key, p, a, s, qq):
         _bump(s, qq, "guard")
         _cd_until(service, a, "guard", _SECT_CD["guard"])
         s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["guard_loss"]
-        return service.record(a, result, "镇守宗门") + "\n镇守失利，明日再战。"
+        return service.record(a, result, "镇守宗门") + "\n镇守失利，明日再战（消耗15体力）。"
     _bump(s, qq, "guard")
     _cd_until(service, a, "guard", _SECT_CD["guard"])
     a["cultivation"] = a.get("cultivation", 0) + (30 + sect_lv * 10)
@@ -549,7 +547,7 @@ def _do_guard(service, key, p, a, s, qq):
     contrib = 50 + 20 * sect_lv
     _treasury_split(s, qq, contrib)
     s["activity"] = int(s.get("activity", 0)) + _ACTIVITY["guard_win"]
-    return service.record(a, result, "镇守宗门") + f"\n镇守成功：修为×{30 + sect_lv * 10} · 灵材×2 · 帮贡+{contrib} · 活跃度+{_ACTIVITY['guard_win']}。"
+    return service.record(a, result, "镇守宗门") + f"\n镇守成功：修为×{30 + sect_lv * 10} · 灵材×2 · 帮贡+{contrib} · 活跃度+{_ACTIVITY['guard_win']}（消耗15体力）。"
 
 
 def _simulate_guard(service, p, key, s):

@@ -81,6 +81,7 @@ def card_html(player, key, equipment=False):
         need = cost - int(a["cultivation"])
         level_msg = f"可突破 → Lv{a['level'] + 1}" if need <= 0 else f"距突破还需 {need} 修为"
     footer = ('锻造 ' + c.GEAR_NAMES + '（每级 3＋等级×2 灵材，强化上限=修士等级）<br>'
+              '体力每1分钟回1；消耗：宗门任务10 · 北秘境探索20 · 镇守15。「我的体力」查看<br>'
               '修士修炼 · 修士突破 · 悟性加点 · 道号 · 性别')
     css = """
     .card{width:720px;padding:26px;box-sizing:border-box;color:#304c48;background:linear-gradient(145deg,#fcf8ed,#e6ece2)}

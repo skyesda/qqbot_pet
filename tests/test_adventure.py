@@ -379,8 +379,43 @@ class AdventureTests(unittest.TestCase):
         info=self.call('我的修士')
         self.assertIn('化神',info)
         self.assertIn('499',info)
-        self.assertIn('突破成功',self.call('修士突破'))
+        self.assertIn('境界+1',self.call('修士突破'))
         self.assertEqual(self.store.get_player('a','g')['adventure']['level'],81)
+
+    def test_breakthrough_batch_clamps_to_realm_cap(self):
+        p = self.create()
+        a = p['adventure']
+        a.update(realm=0, level=5, cultivation=1000000)
+        out = self.call('修士突破 999')
+        # 一重天(realm=0)封顶 Lv99（(0+1)*100-1），应从 Lv5 连突到 99 并提示可渡劫。
+        self.assertIn('境界+94', out)
+        self.assertIn('渡劫', out)
+        self.assertEqual(a['level'], 99)
+        self.assertEqual(int(a['insight']), 94)  # 每级+1 悟性点
+
+    def test_breakthrough_batch_stops_when_insufficient(self):
+        p = self.create()
+        a = p['adventure']
+        a.update(realm=0, level=5, cultivation=160)  # 只够 Lv5→6（需 60+5*20=160）
+        out = self.call('修士突破 10')
+        self.assertIn('境界+1', out)
+        self.assertEqual(a['level'], 6)
+
+    def test_external_explore_reward_and_cooldown(self):
+        p = self.create()
+        a = p['adventure']
+        cult0, ore0 = a['cultivation'], a['ore']
+        won = dict(won=True, winner=0, rounds=2, reason='test', events=[], units=[], metrics={})
+        with patch('qqbot_pet.petpark.adventure.service.simulate', return_value=won):
+            out = self.call('外出历练')
+        self.assertIn('历练得手', out)
+        self.assertGreater(a['cultivation'], cult0)
+        self.assertGreater(a['ore'], ore0)
+        # 未过冷却立刻再试被拒；过冷却后可再历练。
+        self.assertIn('冷却中', self.call('外出历练'))
+        self.now += 901
+        with patch('qqbot_pet.petpark.adventure.service.simulate', return_value=won):
+            self.assertIn('历练得手', self.call('外出历练'))
 
     def test_forge_locks_at_tier_cap(self):
         p=self.create();a=p['adventure']

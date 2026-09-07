@@ -174,10 +174,12 @@ class SectTests(unittest.TestCase):
         self.call('创建宗门 铁剑门')
         self.call('申请入宗 铁剑门', qq='b')
         self.call('同意入宗 b')
-        # 接取：a 今日无任何活动 → 必然抽到「历练 / 刷副本 ×2」
-        out = self.call('宗门任务')
+        # 接取：a 今日无任何活动 → 随机二选一（打怪×2 / 通关地图×1）；这里强制抽「打怪（历练/副本）×2」。
+        with patch('qqbot_pet.petpark.adventure.sect.random.choice',
+                   return_value=('rewards', '打怪（历练/副本）', 0, 2)):
+            out = self.call('宗门任务')
         self.assertIn('接取宗门任务', out)
-        self.assertIn('历练', out)
+        self.assertIn('打怪', out)
         # 未达标时归还被拒；达标后一次性领赏，且不重复发。
         self.assertIn('任务进行中', self.call('宗门任务'))
         self.assertEqual(self.state()['members']['a']['mission']['target'], 2)
@@ -214,9 +216,11 @@ class SectTests(unittest.TestCase):
     def test_mission_claim_cooldown(self):
         self.create()
         self.call('创建宗门 铁剑门')
-        # 接取（rewards=0 → base=0）→ 完成后领赏 → 纳入短冷却，不能秒建新委托。
+        # 接取（base=0）→ 完成后领赏 → 纳入短冷却，不能秒建新委托。
+        # 宗门任务随机二选一（打怪×2 / 通关地图×1），把两路计数都补齐，确保无论抽到哪路都能达成。
         self.assertIn('接取', self.call('宗门任务'))
         self.adv()['rewards'] = 2
+        self.adv().setdefault('trial', {})['used'] = 1
         self.assertIn('任务达成', self.call('宗门任务'))
         self.assertIn('冷却中', self.call('宗门任务'))
         self.now += 60

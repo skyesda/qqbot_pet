@@ -19,6 +19,7 @@ MENU = """## 灵契仙途
 ② 每个境界满级后 `渡劫` 破境（需天材地宝 + 天劫战斗），解锁「神通」
 ③ `仙途地图` → `历练 1` 挑战首领 · `锻造 灵剑` 培养装备
 ④ `组队秘境 葬龙秘境` 邀请群友并肩作战
+免费经验：`外出历练` 随机遭殃，掉修为/灵材/灵石/玄晶（约15分钟冷却，不耗体力、不计副本）
 
 `我的修士`（看灵根/神通/战力/体力）· `我的洞天` · `洞天突破`
 `修士配装 破阵` · `灵宠专长 辅助` · `悟性加点 攻 5` · `我的体力` · `道号` · `性别`
@@ -308,7 +309,7 @@ class AdventureService:
                     f"灵根：{_root}（{c.root_bonus(a.get('spirit_root') or '')}） · 属性：{c.element_line(c.hero_element(a))} · 神通：{tactics}\n"
                     f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n{power_lines}\n性命 {s['hp']} · 攻击 {s['atk']} · 防御 {s['def']} · 速度 {s['speed']}\n"
                     f"悟性 {s['wudao']} · 根骨 {s['gengu']}\n功法：{a['style']} · 灵宠：{units[1]['name']}（{c.element_line(units[1].get('element'))} · {a['pet_role']}）\n"
-                    f"灵材 {a['ore']} · 体力 {_stamina}（每5分钟回1，宗门任务/探索/镇守消耗） · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3"
+                    f"灵材 {a['ore']} · 体力 {_stamina}（每1分钟回1，醒神丹翻倍；宗门任务10/探索20/镇守15） · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3"
                     f"{cap_hint}\n"
                     f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备 · 渡劫 · 道号 · 性别")
         if cmd == "修士转职":
@@ -364,14 +365,28 @@ class AdventureService:
             cap = c.realm_cap(a["realm"])
             self.require(a["level"] < c.MAX_LEVEL, "已臻真仙圆满，臻于化境，无可再进。")
             self.require(a["level"] < cap, f"已达{c.REALMS[a['realm']]}巅峰Lv{cap}，须「渡劫」方可破境。")
-            cost = 60 + a["level"] * 20
-            self.require(a["cultivation"] >= cost, f"突破需要{cost}修为，当前{a['cultivation']}。")
-            a["cultivation"] -= cost
-            a["level"] += 1
-            a["wudao"] = a.get("wudao", 0) + 1
-            a["gengu"] = a.get("gengu", 0) + 1
-            a["insight"] = a.get("insight", 0) + 1
-            return f"突破成功：{c.REALMS[a['realm']]} Lv{a['level']}！悟性+1 · 根骨+1 · 悟性点+1"
+            want = max(1, int(arg)) if arg.isdigit() else 1
+            # 批量突破：逐级累计修为（每级 60+等级×20），可一键连突，自动钳到境界/满级上限并停在不败处。
+            take, spent, lv = 0, 0, a["level"]
+            while take < want and lv < min(cap, c.MAX_LEVEL):
+                cost = 60 + lv * 20
+                if a["cultivation"] < spent + cost:
+                    break
+                spent += cost
+                take += 1
+                lv += 1
+            self.require(take > 0, f"修为不足，突破 Lv{a['level']}→{a['level']+1} 需 {60 + a['level']*20} 修为（当前 {a['cultivation']}）。")
+            a["cultivation"] -= spent
+            a["level"] += take
+            a["wudao"] = a.get("wudao", 0) + take
+            a["gengu"] = a.get("gengu", 0) + take
+            a["insight"] = a.get("insight", 0) + take
+            msg = f"境界+{take}：{c.REALMS[a['realm']]} Lv{a['level']}！悟性+{take} · 根骨+{take} · 悟性点+{take}"
+            if take < want:
+                msg += "（修为不足或已达上限，止步于此）"
+            if a["level"] >= cap:
+                msg += f"\n已达{c.REALMS[a['realm']]}巅峰Lv{cap}，可「渡劫」破境。"
+            return msg
         if cmd == "渡劫":
             self.can_edit(key)
             self.require(a["realm"] < len(c.REALMS) - 1, "已臻真仙，无劫可渡。")
@@ -416,10 +431,43 @@ class AdventureService:
             from .sect import _roll_stamina
             _roll_stamina(self, a)
             return (f"修士体力：{a.get('stamina', 0)}/{a.get('stamina_max', 100)}"
-                    f"（每5分钟回1，醒神丹期翻倍）。宗门任务/探索/镇守会消耗体力。")
+                    f"（每1分钟回1，醒神丹期翻倍）。宗门任务10 · 北秘境探索20 · 镇守15。")
+        if cmd == "外出历练":
+            self.can_edit(key)
+            cooldown = a.get("explore_cd", 0)
+            self.require(self.clock() >= cooldown, f"外出历练冷却中，还需 {max(0, int((cooldown - self.clock()) // 60) + 1)} 分钟。")
+            # 随机一场与当前修为匹配的散修遭遇（以地图为均衡基准，元素/机制随机），免费、不耗体力。
+            pool = [m for m in c.MAPS.values() if m["level"] <= a["level"] + 2] or list(c.MAPS.values())
+            enc = deepcopy(random.choice(pool))
+            enc["mechanic"] = random.choice(list(c.MECHANICS))
+            enc = self.encounter(enc, a["heaven"])
+            enc["scale"] *= random.uniform(0.85, 1.15)
+            result = simulate(build_party(p, key), enemies(enc, scale_factor=self._power_scale_factor(p, key)), random.randrange(2 ** 32))
+            a["explore_cd"] = int(self.clock()) + c.EXPLORE_COOLDOWN
+            text = self.record(a, result, "外出历练")
+            if result["won"]:
+                cult = 30 + a["level"] * 3
+                ore = 2 + a["level"] // 20
+                coin = 10 + a["level"] // 5
+                jifen = 3 + a["level"] // 30
+                a["cultivation"] += cult
+                a["ore"] += ore
+                self.store.add_currency(p, "灵石", coin)
+                self.store.add_currency(p, "玄晶", jifen)
+                parts = [f"修为×{cult}、灵材×{ore}、灵石×{coin}、玄晶×{jifen}"]
+                if random.random() < 0.25:
+                    frag = random.choice(list(c.MATERIAL_FRAGMENTS))
+                    count = random.randint(1, 2)
+                    self.store.add_item(p, frag, count)
+                    parts.append(f"『{frag}』×{count}")
+                text += "\n历练得手：" + "、".join(parts) + "。外出历练免费、不占每日副本收益，但有冷却。"
+            else:
+                text += "\n遭遇敌手落败，仅消耗了外出时间，无收益。"
+            return text
         if cmd == "宗门帮助":
             return ("【宗门】群级共享，一宗一界。\n"
                     "创建宗门 名称 → 申请入宗 → 同意入宗 QQ → 宗门任务/探索/镇守赚帮贡。\n"
+                    "宗门任务每日随机二选一：打怪两次 / 通关地图一次，接取后须真正去打才行。\n"
                     "宗门升级(消耗帮贡) · 星辰阁(合成星盘大阵) · 宗门兑换(西仓库)。\n"
                     "宗门榜 · 宗门名册 · 封官 QQ 长老 · 踢出宗门 QQ。")
         if cmd == "修士配装":

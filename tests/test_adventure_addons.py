@@ -103,12 +103,12 @@ class AdventureAddonTests(unittest.TestCase):
         p = self.create()
         a = p['adventure']
         a['stamina'] = 0
-        a['stamina_ts'] = self.now - 300  # 恰好5分钟
+        a['stamina_ts'] = self.now - 60  # 恰好1分钟
         self.assertIn('体力：1/100', self.call('我的体力'))
         self.assertEqual(a['stamina'], 1)
         # 醒神丹期回复翻倍
         a['stamina'] = 0
-        a['stamina_ts'] = self.now - 300
+        a['stamina_ts'] = self.now - 60
         a['stamina_buff_until'] = self.now + 86400
         self.assertIn('体力：2/100', self.call('修士体力'))
         self.assertEqual(a['stamina'], 2)
