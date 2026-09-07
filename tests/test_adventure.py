@@ -35,7 +35,8 @@ class AdventureTests(unittest.TestCase):
         self.create()
         self.assertIn('修为＋',self.call('修士修炼'))
         self.assertIn('锻造成功',self.call('锻造 灵剑'))
-        self.assertIn('获得灵材',self.call('历练 1'))
+        with patch('qqbot_pet.petpark.adventure.service.random.random', return_value=0.99):
+            self.assertIn('获得灵材',self.call('历练 1'))
         self.assertEqual(p['bag'],{'红药水':3})
         self.assertEqual(p['pet'],before)
         self.assertIn('先通关',self.call('历练 3'))

@@ -1167,22 +1167,22 @@ ITEMS.update({
         "effect": {},
     },
     "合体道果": {
-        "price": 600000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "price": 450000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "炼虚破入合体的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
     "大乘舍利": {
-        "price": 800000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "price": 520000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "合体破入大乘的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
     "渡劫符": {
-        "price": 900000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "price": 560000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "大乘破入渡劫的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
     "真仙花": {
-        "price": 960000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
+        "price": 600000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "渡劫破入真仙的渡劫材料（渡劫自动消耗）。",
         "effect": {},
     },
@@ -1212,22 +1212,22 @@ ITEMS.update({
         "effect": {},
     },
     "神血石": {
-        "price": 900000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "price": 520000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
         "desc": "仙器破入神器的装备进阶材料（装备进阶自动消耗）。",
         "effect": {},
     },
     "圣辉玉": {
-        "price": 950000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "price": 560000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
         "desc": "神器破入圣器的装备进阶材料（装备进阶自动消耗）。",
         "effect": {},
     },
     "混沌精": {
-        "price": 975000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "price": 580000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
         "desc": "圣器破入至宝的装备进阶材料（装备进阶自动消耗）。",
         "effect": {},
     },
     "鸿蒙紫气": {
-        "price": 990000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
+        "price": 600000, "currency": CURRENCY_COIN, "category": "锻造材料", "usable": False,
         "desc": "至宝破入鸿蒙的装备进阶材料（装备进阶自动消耗）。",
         "effect": {},
     },

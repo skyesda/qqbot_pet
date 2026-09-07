@@ -40,11 +40,23 @@ def card_html(player, key, equipment=False):
                      f'<div class="gear-name">{name}<b>Lv{rank}</b></div>'
                      f'<small>{"尚未强化" if rank == 0 else "提升" + label}</small></div>')
     stats = "".join(f'<div><span>{label}</span><b>{s[field]}</b></div>' for label, field in
-                    [("性命", "hp"), ("攻击", "atk"), ("防御", "def"), ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
+                    [("血量上限", "hp"), ("攻击", "atk"), ("防御", "def"), ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
     details = (f'本体 {bd["hero"]} ＋ 15%×灵宠 {bd["pet_contrib"]} ＋ 10%×坐骑 {bd["mount_contrib"]}'
                f'<br>道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}') if bd else ""
+    bonus = a.get("bonus") or {}
+    focus = " · ".join(f"{l}+{bonus.get(f, 0)}" for l, f in [("攻", "atk"), ("防", "def"), ("血", "hp"), ("速", "speed")])
+    # 升级进度：显示距下一级/破境还需多少修为，或已可突破/渡劫。
+    lv_cap = c.realm_cap(a["realm"])
+    if a["level"] >= c.MAX_LEVEL:
+        level_msg = "已臻化境 · 满级圆满"
+    elif a["level"] >= lv_cap:
+        level_msg = f"已至{c.REALMS[a['realm']]}巅峰 Lv{a['level']}，待「渡劫」破境"
+    else:
+        cost = 60 + a["level"] * 20
+        need = cost - int(a["cultivation"])
+        level_msg = f"可突破 → Lv{a['level'] + 1}" if need <= 0 else f"距突破还需 {need} 修为"
     footer = ('锻造 ' + c.GEAR_NAMES + '<br>每级消耗 3＋当前等级×2 灵材，强化上限为修士等级。') if equipment else (
-        '修士修炼 · 修士突破 · 修士装备 · 道号 · 性别')
+        '修士修炼 · 修士突破 · 悟性加点 · 修士装备 · 道号 · 性别')
     css = """
     .card{width:720px;padding:26px;box-sizing:border-box;color:#304c48;background:linear-gradient(145deg,#fcf8ed,#e6ece2)}
     .identity{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;color:#304c48}
@@ -76,5 +88,5 @@ def card_html(player, key, equipment=False):
             f'<div class="stats">{stats}</div><div class="resources">修为 {a["cultivation"]} · 灵材 {a["ore"]}'
             f' · 功法 {escape(str(a["style"]))}<br>灵宠 {escape(str(bd["pet_name"] if bd else "引路灵蝶"))}'
             f' · {escape(str(a.get("pet_role", "攻击")))} · 今日副本收益 {a.get("rewards", 0)}/8'
-            f' · 首领挑战 {a.get("world_hits", 0)}/3</div><div class="details">{details}</div>'
+            f' · 首领挑战 {a.get("world_hits", 0)}/3<br>{escape(str(level_msg))}<br>悟性点 {a.get("insight", 0)} 可用 · 已分配 {focus}</div><div class="details">{details}</div>'
             f'<div class="foot">{footer}</div></div></body></html>')
