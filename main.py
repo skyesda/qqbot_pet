@@ -1234,7 +1234,8 @@ class PetParkPlugin(Star):
         for cfg in self.store.active_events().values():
             if text == cfg.get("menu_cmd"):
                 return self._event_menu_keyboard(cfg)
-        return None
+        # 兜底：其它文本回复也附带主菜单快捷按钮，方便随时一键跳转（棋类/扫雷/活动按钮优先）。
+        return self._main_menu_keyboard()
 
     # =====================================================================
     # 消息入口：监听全部消息，解析无前缀中文指令

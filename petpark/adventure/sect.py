@@ -272,12 +272,19 @@ def _roster(service, s):
 
 
 def _roster_all(service, group):
-    sects = service.store.sects_in_group(group)
-    ranked = sorted(sects, key=lambda x: (-int(x.get("total_contribution", 0)), x.get("name", "")))[:10]
-    if not ranked:
+    sects = sorted(service.store.sects_in_group(group),
+                   key=lambda x: (-int(x.get("total_contribution", 0)), x.get("name", "")))
+    if not sects:
         return "本群暂无宗门。可「创建宗门 名称」立门。"
-    return "\n".join(f"{i}. {x['name']}（Lv{x.get('level', 1)}）· {len(x.get('members') or {})}人 · 贡献 {int(x.get('total_contribution', 0))}"
-                     for i, x in enumerate(ranked, 1))
+    lines = [
+        f"## 🏛 本群宗门（共 {len(sects)} 个）",
+        "> 建宗：`创建宗门 名称`（2000天晶）　加入：`申请入宗 宗名`",
+        "",
+    ]
+    for i, x in enumerate(sects, 1):
+        lines.append(f"**{i}. {x['name']}** — Lv{x.get('level', 1)} · {len(x.get('members') or {})}/{sect_cap(x)}人"
+                     f" · 贡献 {int(x.get('total_contribution', 0))} · 帮贡 {int(x.get('treasury', 0))}")
+    return "\n".join(lines)
 
 
 def _announce(service, key, p, qq, s, args):
