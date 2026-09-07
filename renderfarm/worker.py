@@ -29,7 +29,13 @@ from pathlib import Path
 
 
 def log(msg: str):
-    print(time.strftime("[%H:%M:%S] ") + msg, flush=True)
+    # 中文 Windows 控制台默认 GBK 打不出 ✓/✗ 等 Unicode 符号，直接 print 会抛
+    # UnicodeEncodeError 把渲染线程搞死——统一转成可打印形式再输出。
+    try:
+        print(time.strftime("[%H:%M:%S] ") + msg, flush=True)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "utf-8"
+        print(time.strftime("[%H:%M:%S] ") + msg.encode(enc, errors="replace").decode(enc), flush=True)
 
 
 def chrome_path() -> str | None:
@@ -55,7 +61,8 @@ def render_cli(chrome: str, html: str, width: int, height: int,
     """单张：写临时 HTML → chrome --headless --screenshot → 读 PNG 字节。
 
     安全设计：脚本默认关闭，用一个全新的临时 user-data-dir，绝不触碰本机的真实
-    Chrome 配置；禁用 JS（--blink-settings=scriptEnabled=false）与后台网络请求，
+    Chrome 配置；禁用 JS（--disable-javascript；注意别用 --blink-settings=scriptEnabled=false，
+    它在部分 Chrome 会自动退出且不产出截图）与后台网络请求，
     这样即便 HTML 里被塞了代码也只会被当静态样式渲染，无法读取/外传本机任何东西。
     """
     with tempfile.TemporaryDirectory() as td:
@@ -63,7 +70,7 @@ def render_cli(chrome: str, html: str, width: int, height: int,
         png_file = Path(td) / "r.png"
         profile = Path(td) / "profile"
         html_file.write_text(html, encoding="utf-8")
-        js = [] if javascript else ["--blink-settings=scriptEnabled=false"]
+        js = [] if javascript else ["--disable-javascript"]
         subprocess.run(
             [chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
              "--disable-dev-shm-usage", "--disable-background-networking",
