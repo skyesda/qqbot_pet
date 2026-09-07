@@ -224,8 +224,19 @@ class AdventureService:
             a["spirit_root"] = random.choices(c.SPIRIT_ROOTS, weights=[r["weight"] for r in c.SPIRIT_ROOTS], k=1)[0]["name"]
         if not a.get("tactics"):
             a["tactics"] = [c.TACTICS[r]["name"] for r in range(min(a.get("realm", 0), len(c.TACTICS) - 1) + 1)]
+        # 幻世仙魔收编新增：悟性点池 / 修士体力 / 加速Buff时间戳 / 形象。
+        a.setdefault("insight", 0)            # 未用悟性点池（可自由分配到 bonus）
+        a.setdefault("stamina", 100)          # 修士体力（行动力）
+        a.setdefault("stamina_max", 100)
+        a.setdefault("stamina_ts", int(self.clock()))      # 体力惰性回算时间戳
+        a.setdefault("exp_buff_until", 0)     # 修为翻倍到期时间戳
+        a.setdefault("stamina_buff_until", 0) # 体力回复翻倍到期时间戳
+        a.setdefault("portrait", "")          # 形象卡自定义形象（空=默认）
         a["schema_version"] = c.VERSION
         self.daily(a)
+        if cmd in c.SECT_COMMANDS:
+            from . import sect
+            return sect.handle(self, group, key, cmd, args, p, a)
         if cmd == "结契灵宠":
             self.can_edit(key)
             self.require(arg in c.STARTERS, "结契灵宠 九尾狐（攻击）/ 卡比兽（守护）/ 七夕青鸟（辅助）")
@@ -320,6 +331,12 @@ class AdventureService:
             root = c.spirit_root_by_name(a.get("spirit_root", ""))
             if root and root.get("cult"):
                 rate *= 1 + root["cult"]
+            # 修为翻倍（蓄力丸/提神丹/神龙果/星盘大阵）：作用于修炼速率。
+            if self.clock() < a.get("exp_buff_until", 0):
+                rate *= 2
+            # 宗门练武堂：成员修炼速率加成（每级+3%）。
+            from .sect import member_passive
+            rate *= 1 + 0.03 * member_passive(self, group, qq, "martial")
             minutes = min(720, max(0, int((self.clock() - a["last_train"]) // 60)))
             self.require(minutes > 0, "每分钟积累修为（随境界与灵根加速），最多储存12小时，请稍后领取。")
             gain = int(minutes * rate)
@@ -337,7 +354,8 @@ class AdventureService:
             a["level"] += 1
             a["wudao"] = a.get("wudao", 0) + 1
             a["gengu"] = a.get("gengu", 0) + 1
-            return f"突破成功：{c.REALMS[a['realm']]} Lv{a['level']}！悟性+1 · 根骨+1"
+            a["insight"] = a.get("insight", 0) + 1
+            return f"突破成功：{c.REALMS[a['realm']]} Lv{a['level']}！悟性+1 · 根骨+1 · 悟性点+1"
         if cmd == "渡劫":
             self.can_edit(key)
             self.require(a["realm"] < len(c.REALMS) - 1, "已臻真仙，无劫可渡。")
@@ -356,10 +374,38 @@ class AdventureService:
                     a["tactics"].append(tactic)
                 a["wudao"] = a.get("wudao", 0) + 3
                 a["gengu"] = a.get("gengu", 0) + 3
+                a["insight"] = a.get("insight", 0) + 5
                 a["tribulation_cd"] = 0
-                return text + f"\n⛈ 渡劫成功！你已踏入{c.REALMS[a['realm']]}（{a['realm']}境）！\n解锁神通「{tactic}」· 悟性+3 · 根骨+3"
+                return text + f"\n⛈ 渡劫成功！你已踏入{c.REALMS[a['realm']]}（{a['realm']}境）！\n解锁神通「{tactic}」· 悟性+3 · 根骨+3 · 悟性点+5"
             a["tribulation_cd"] = self.clock() + c.TRIBULATION_FAIL_COOLDOWN
             return text + f"\n⛈ 渡劫失败：雷劫加身，境界未退，『{mat}』已消耗。30分钟内不可再渡劫。"
+        if cmd == "悟性加点":
+            self.can_edit(key)
+            stat_map = {"攻": "atk", "防": "def", "血": "hp", "速": "speed"}
+            if not arg:
+                cap = min(c.INSIGHT_CAP_MAX, c.INSIGHT_CAP_BASE + a["realm"] * c.INSIGHT_CAP_PER_REALM)
+                return (f"悟性点池 {a.get('insight', 0)}（上限{cap}）。\n"
+                        f"用法：悟性加点 攻/防/血/速 数量。1点=+1对应属性。")
+            stat = stat_map.get(arg)
+            self.require(stat, "悟性加点 攻 / 防 / 血 / 速 数量")
+            n = 1
+            if args and len(args) > 1 and args[1].isdigit():
+                n = max(1, int(args[1]))
+            have = int(a.get("insight", 0))
+            self.require(have >= n, f"悟性点不足，当前 {have}，需 {n}。")
+            a["insight"] = have - n
+            a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})[stat] += n
+            return f"已给【{stat}】+{n}（剩余悟性点 {a['insight']}）。"
+        if cmd in ("我的体力", "修士体力"):
+            from .sect import _roll_stamina
+            _roll_stamina(self, a)
+            return (f"修士体力：{a.get('stamina', 0)}/{a.get('stamina_max', 100)}"
+                    f"（每5分钟回1，醒神丹期翻倍）。宗门任务/探索/镇守会消耗体力。")
+        if cmd == "宗门帮助":
+            return ("【宗门】群级共享，一宗一界。\n"
+                    "创建宗门 名称 → 申请入宗 → 同意入宗 QQ → 宗门任务/探索/镇守赚帮贡。\n"
+                    "宗门升级(消耗帮贡) · 星辰阁(合成星盘大阵) · 宗门兑换(西仓库)。\n"
+                    "宗门榜 · 宗门名册 · 封官 QQ 长老 · 踢出宗门 QQ。")
         if cmd == "修士配装":
             self.can_edit(key)
             self.require(arg in c.STYLES, "修士配装 均衡 / 破阵 / 守心\n" + "\n".join(f"{k}：{v}" for k,v in c.STYLES.items()))

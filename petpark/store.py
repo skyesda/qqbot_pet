@@ -91,6 +91,7 @@ class PetStore:
         self._data.setdefault("tomb_active_coop_index", {})
         self._data.setdefault("homestead_players", {})
         self._data.setdefault("bank_players", {})
+        self._data.setdefault("sects", {})             # 群级共享宗门：{resolve_group: sect_state}
         self._data.setdefault("qq_bindings", {})      # 平台用户ID -> QQ号（全局）
         self._data.setdefault("email_config", {})      # 邮箱服务配置（SMTP）
         self._data.setdefault("lottery", None)         # 口令抽奖（单例：一个进行中的口令抽奖）
@@ -2142,6 +2143,67 @@ class PetStore:
                     g[field] = default
             return g
         return {}
+
+    # ----------------------------- 宗门（群级共享，每群一个） -----------------------------
+    @staticmethod
+    def _default_sect_state() -> dict:
+        """宗门默认状态（每群一个；键=resolve_group(group_id)）。
+
+        注意：历史上有过 `sect` 子系统并被 ``_migrate_purge_sect`` 删除，
+        因此本表用复数 ``sects`` 且绝不写 player["sect"]/group["sect"]，
+        避免被 purge 迁移误清。
+        """
+        return {
+            "group": "",              # 规范群ID（resolve_group 后的键）
+            "name": "",               # 宗门名（空=未创建）
+            "level": 1,               # 宗门等级（1-10）
+            "treasury": 0,            # 宗门共享库存（帮贡，用于升级/星辰阁）
+            "founder": "",            # 创始成员 openid
+            "announce": "",           # 公告
+            "created_at": 0,
+            "total_contribution": 0,  # 累计贡献（排行分）
+            "members": {},            # {openid: {"role":"帮主/长老/帮众","contribution":int,"joined_at":int}}
+            "pending": {},            # {openid: joined_at}  待审批申请
+            "buildings": {            # 建筑等级（宗门等级解锁，不再单独升级）
+                "mission": 1, "warehouse": 1, "north": 1, "gold": 1,
+                "star": 1, "martial": 1, "smith": 1, "research": 1,
+            },
+            "daily": {},              # {日期: {openid: {"mission":n,"guard":n,"explore":n}}} 每日任务/镇守/探索计数
+        }
+
+    @classmethod
+    def sect_state(cls, group_id: str, create: bool = True) -> dict | None:
+        """返回某（规范）群的宗门；无宗门且 create=False 时返回 None。
+
+        一个物理群一个宗门（跨机器人按 resolve_group 统一），因此直接用
+        resolve_group(group_id) 作为键，而非按人隔离。
+        """
+        store = cls._active
+        if store is None:
+            return None
+        gid = store.resolve_group(str(group_id))
+        sects = store._data.setdefault("sects", {})
+        if not create:
+            return sects.get(gid)
+        s = sects.setdefault(gid, cls._default_sect_state())
+        for field, default in cls._default_sect_state().items():
+            if field not in s:
+                s[field] = default
+        # 内层嵌套字段惰性补齐
+        members = s.setdefault("members", {})
+        for openid, m in list(members.items()):
+            if not isinstance(m, dict):
+                continue
+            m.setdefault("role", "帮众")
+            m.setdefault("contribution", 0)
+            m.setdefault("joined_at", 0)
+        s.setdefault("pending", {})
+        buildings = s.setdefault("buildings", {})
+        for b, lv in cls._default_sect_state()["buildings"].items():
+            buildings.setdefault(b, lv)
+        s.setdefault("daily", {})
+        s.setdefault("group", gid)
+        return s
 
     # ----------------------------- QQ 绑定 -----------------------------
     def qq_bindings(self) -> dict:

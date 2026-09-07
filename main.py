@@ -6958,6 +6958,13 @@ class PetParkPlugin(Star):
                 "- 我的修士(看战力) · 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励",
                 "- 与对方修士结为道侣(结道侣/求婚/了断道侣/离缘) · 双方结契灵宠为见证 · 道侣可加速修为与提供战力加成",
                 "",
+                "**【宗门】** 群级共享 · 一宗一界",
+                "> 修士同心共建宗门：建宗→加入→每日任务/北秘境/镇守赚帮贡，等级越高奖励越丰厚。",
+                "- 创建宗门 名称 · 申请入宗 · 同意/拒绝入宗 QQ · 退出宗门 · 宗门名册",
+                "- 查看宗门 · 宗门公告 文本 · 宗门升级 · 宗门捐献 数量 · 宗门榜",
+                "- 宗门任务(每日悬赏) · 宗门探索(北秘境) · 镇守宗门(南金库) · 宗门兑换(西仓库) · 星辰阁",
+                "- 封官 QQ 长老 · 免职 QQ · 踢出宗门 QQ ｜ 悟性加点 攻/防/血/速 数量",
+                "",
                 "**【灵宠助战】** 灵宠养成",
                 "> 灵宠是修士的助战伙伴：孵化、养成、进化、飞升，成长反哺修士修为。",
                 "- 砸蛋 · 灵宠市场（品质卡/变种卡）· 我的灵宠 · 灵宠状态",
@@ -9107,8 +9114,11 @@ class PetParkPlugin(Star):
                 "> 等级/品质/属性均保留。"
             )
         # 修士级道具：修为丹 / 力量·铁骨·气血·疾风丹 / 悟道丹 / 炼体丹 —— 作用于修士本体（无需宠物）。
+        # 幻世仙魔收编：体力/经验书/加速Buff/形象等玩家级效果也走此分支（_apply_effect 仅处理宠物级）。
         _HERO_EFFECTS = ("add_cultivation", "buff_atk", "buff_def", "buff_hp", "buff_speed", "add_wudao", "add_gengu",
-                         "reroll_spirit_root", "reroll_spirit_root_boosted")
+                         "reroll_spirit_root", "reroll_spirit_root_boosted",
+                         "heal_stamina", "add_stamina_max", "companion_exp",
+                         "exp_buff_days", "stamina_buff_days", "change_appearance")
         if it_check and any(k in it_check.get("effect", {}) for k in _HERO_EFFECTS):
             if not self.store.has_item(player, name):
                 return f"背包里没有『{name}』。"
@@ -9147,6 +9157,52 @@ class PetParkPlugin(Star):
                 root = random.choices(pool, weights=[r["weight"] for r in pool], k=1)[0]["name"]
                 a["spirit_root"] = root
                 msgs.append(f"灵根重洗为「{root}」")
+            if "heal_stamina" in eff:
+                smax = int(a.get("stamina_max", 100) or 100)
+                cur = int(a.get("stamina", 0) or 0)
+                heal = int(eff["heal_stamina"]) * count
+                nc = min(smax, cur + heal)
+                actual = nc - cur
+                a["stamina"] = nc
+                msgs.append(f"体力 +{actual}（{nc}/{smax}）")
+            if "add_stamina_max" in eff:
+                gain = int(eff["add_stamina_max"]) * count
+                a["stamina_max"] = int(a.get("stamina_max", 100) or 100) + gain
+                a["stamina"] = int(a.get("stamina", 0) or 0) + gain
+                msgs.append(f"体力上限 +{gain}（{a['stamina']}/{a['stamina_max']}）")
+            if "companion_exp" in eff:
+                from .petpark.adventure import economy as _adv_economy
+                pet = _adv_economy.companion(player)
+                if pet is None:
+                    pet = self._need_pet(player)
+                if not pet:
+                    return f"你没有结契灵宠，也没有主宠，无法用『{name}』喂经验。"
+                total = int(eff["companion_exp"]) * count
+                petmod.add_exp(pet, total)
+                msgs.append(f"{pet.get('name', '灵宠')} 经验 +{total}")
+            if "exp_buff_days" in eff:
+                days = int(eff["exp_buff_days"]) * count
+                now = int(time.time())
+                cur = int(a.get("exp_buff_until", 0) or 0)
+                base = cur if cur > now else now
+                a["exp_buff_until"] = base + days * 86400
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(a["exp_buff_until"]))
+                msgs.append(f"修为翻倍 +{days} 天（至 {when}）")
+            if "stamina_buff_days" in eff:
+                days = int(eff["stamina_buff_days"]) * count
+                now = int(time.time())
+                cur = int(a.get("stamina_buff_until", 0) or 0)
+                base = cur if cur > now else now
+                a["stamina_buff_until"] = base + days * 86400
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(a["stamina_buff_until"]))
+                msgs.append(f"体力回复翻倍 +{days} 天（至 {when}）")
+            if "change_appearance" in eff:
+                sub = tokens[2].strip() if len(tokens) > 2 else ""
+                if sub in ("男", "女"):
+                    a["gender"] = sub
+                presets = ["青衫道人", "紫袍真人", "白衣剑修", "玄甲武尊", "素衣灵修"]
+                a["portrait"] = random.choice(presets)
+                msgs.append(f"形象定制：{a.get('gender', '修士')} · {a['portrait']}（发送『我的修士』查看）")
             self.store.remove_item(player, name, count)
             return f"✅ 使用『{name}』x{count}：{' · '.join(msgs)}"
         p = self._need_pet(player)

@@ -1058,6 +1058,67 @@ ITEMS.update({
         "desc": "使用后修士重洗灵根，保底洗出五行灵根（不会洗出杂灵根，需已踏入仙途）。",
         "effect": {"reroll_spirit_root_boosted": True},
     },
+    # 幻世仙魔收编：体力 / 经验书 / 加速Buff / 形象（修士级，走 main._use_item 玩家分支）。
+    "体力丹": {
+        "price": 400, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "desc": "使用后恢复30点修士体力（用于宗门任务/探索/镇守）。",
+        "effect": {"heal_stamina": 30},
+    },
+    "扩体散": {
+        "price": 800, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "desc": "使用后永久提升20点修士体力上限。",
+        "effect": {"add_stamina_max": 20},
+    },
+    "小经验书": {
+        "price": 1000, "currency": CURRENCY_JIFEN, "category": "药品", "usable": True,
+        "desc": "使用后给结契灵宠 +1000 经验。",
+        "effect": {"companion_exp": 1000},
+    },
+    "中经验书": {
+        "price": 3000, "currency": CURRENCY_JIFEN, "category": "药品", "usable": True,
+        "desc": "使用后给结契灵宠 +5000 经验。",
+        "effect": {"companion_exp": 5000},
+    },
+    "大经验书": {
+        "price": 5000, "currency": CURRENCY_JIFEN, "category": "药品", "usable": True,
+        "desc": "使用后给结契灵宠 +10000 经验。",
+        "effect": {"companion_exp": 10000},
+    },
+    "蓄力丸": {
+        "price": 300, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "desc": "使用后修为翻倍1天（适用于离线修炼）。",
+        "effect": {"exp_buff_days": 1},
+    },
+    "提神丹": {
+        "price": 600, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "desc": "使用后修为翻倍1天。",
+        "effect": {"exp_buff_days": 1},
+    },
+    "神龙果": {
+        "price": 8000, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "desc": "使用后修为翻倍30天。",
+        "effect": {"exp_buff_days": 30},
+    },
+    "醒神丹": {
+        "price": 500, "currency": CURRENCY_COIN, "category": "仙丹", "usable": True,
+        "desc": "使用后体力回复速度翻倍1天。",
+        "effect": {"stamina_buff_days": 1},
+    },
+    "涤魂散": {
+        "price": 5000, "currency": CURRENCY_JIFEN, "category": "药品", "usable": True,
+        "desc": "净化深渊侵蚀，立即消除5层。",
+        "effect": {"clear_abyss_corruption": 5},
+    },
+    "形象卡": {
+        "price": 1500, "currency": CURRENCY_JIFEN, "category": "道具", "usable": True,
+        "desc": "使用后随机重塑修士形象（性别与立绘）。",
+        "effect": {"change_appearance": True},
+    },
+    "星盘大阵": {
+        "price": 0, "currency": CURRENCY_JIFEN, "category": "道具", "usable": True,
+        "desc": "星辰阁合成，使用后修为翻倍3天。",
+        "effect": {"exp_buff_days": 3},
+    },
     "筑基丹": {
         "price": 5000, "currency": CURRENCY_COIN, "category": "天材地宝", "usable": False,
         "desc": "炼气破入筑基的渡劫材料（渡劫自动消耗）。",
