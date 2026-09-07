@@ -18,9 +18,13 @@ def portrait_name(adventure):
         "-female" if adventure.get("gender") == "女" else "-male")
 
 
-@lru_cache(maxsize=12)
+@lru_cache(maxsize=16)
 def asset_uri(name):
-    return "data:image/png;base64," + base64.b64encode((ASSETS / f"{name}.png").read_bytes()).decode("ascii")
+    """优先用压缩 WebP，缺失才回退原 PNG，避免内嵌大图把 HTML 撑到 MB 级拖慢渲染。"""
+    webp = ASSETS / f"{name}.webp"
+    src = webp if webp.is_file() else ASSETS / f"{name}.png"
+    mime = "image/webp" if src == webp else "image/png"
+    return f"data:{mime};base64," + base64.b64encode(src.read_bytes()).decode("ascii")
 
 
 def equipment_summary(adventure):

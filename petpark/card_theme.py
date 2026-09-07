@@ -12,9 +12,13 @@ def stylesheet(kind: str) -> str:
         raise ValueError(kind)
     filename = {'pet': 'celestial-clouds.png', 'bag': 'treasure-atelier.png',
                 'menu': 'mountain-gate.png', 'mount': 'celestial-clouds.png'}[kind]
-    background = base64.b64encode((ASSETS / filename).read_bytes()).decode('ascii')
+    webp = ASSETS / Path(filename).with_suffix('.webp')
+    use_webp = webp.is_file()
+    src = webp if use_webp else ASSETS / filename
+    mime = 'image/webp' if use_webp else 'image/png'
+    background = base64.b64encode(src.read_bytes()).decode('ascii')
     return (ASSETS / 'common.css').read_text(encoding='utf-8').replace(
-        '__BACKGROUND__', 'data:image/png;base64,' + background
+        '__BACKGROUND__', f'data:{mime};base64,' + background
     ) + (ASSETS / f'{kind}.css').read_text(encoding='utf-8')
 
 
