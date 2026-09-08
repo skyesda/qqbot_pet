@@ -328,23 +328,70 @@ class PlayerPortal:
         adventure = None
         if adv.get("name"):
             try:
-                from .adventure.power import compute_unified_power
+                from .adventure.power import compute_unified_power, power_breakdown
                 from .adventure.combat import hero_sheet
                 from .adventure import content as advc
                 s = hero_sheet(adv, player)
                 _realm = int(adv.get("realm") or 0)
+                _st, _stmax = int(adv.get("stamina", 100) or 100), int(adv.get("stamina_max", 100) or 100)
+                heaven = adv.get("heaven", 0)
+                heaven_meta = advc.HEAVENS[int(heaven or 0)] if 0 <= int(heaven or 0) < len(advc.HEAVENS) else None
+                # 神通：adv.tactics 列表 + 效果描述（tactic_effect）
+                _tacs = adv.get("tactics", []) or []
+                tactics = [(t, advc.tactic_effect(t)) for t in _tacs]
+                # 道侣：结契灵宠（第 0 只宠物）的姻缘状态/好感/对象
+                pets = player.get("pets") or []
+                _p0 = pets[0] if pets else {}
+                partner = {
+                    "married": _p0.get("love_state") == "已婚",
+                    "love_state": _p0.get("love_state") or "单身",
+                    "love_target": _p0.get("love_target") or "",
+                    "favor": int(_p0.get("favor", 0) or 0),
+                    "pet_name": _p0.get("nickname") or "",
+                }
+                # 战力构成（与修士图 card.html 同源 power_breakdown）
+                bd = power_breakdown(player, player.get("qq", "")) or {}
+                pb = {
+                    "hero": int(bd.get("hero", 0) or 0),
+                    "pet_name": bd.get("pet_name") or "引路灵蝶",
+                    "pet_contrib": int(bd.get("pet_contrib", 0) or 0),
+                    "pet_part": int(bd.get("pet_part", 0) or 0),
+                    "mount_contrib": int(bd.get("mount_contrib", 0) or 0),
+                    "mount_part": int(bd.get("mount_part", 0) or 0),
+                    "partner": float(bd.get("partner", 1.0) or 1.0),
+                    "heaven_margin": float(bd.get("heaven_margin", 1.0) or 1.0),
+                    "base": float(bd.get("base", 0) or 0),
+                    "total": int(bd.get("total", 0) or 0),
+                }
                 adventure = {
                     "name": adv.get("name"),
                     "profession": adv.get("profession"),
+                    "gender": adv.get("gender", "男"),
                     "realm": advc.REALMS[_realm] if 0 <= _realm < len(advc.REALMS) else "",
+                    "realm_idx": _realm,
                     "level": adv.get("level", 1),
+                    "heaven_idx": int(heaven or 0),
+                    "heaven": (heaven_meta or {}).get("name") or f"{heaven}阶",
+                    "spirit_root": adv.get("spirit_root"),
+                    "element": advc.element_line(advc.hero_element(adv)) if hasattr(advc, "hero_element") else "",
+                    "tactics": tactics,
+                    "stamina": _st,
+                    "stamina_max": _stmax,
+                    "stamina_buff_until": int(adv.get("stamina_buff_until", 0) or 0),
+                    "insight": int(adv.get("insight", 0) or 0),
+                    "wudao": int(s.get("wudao", adv.get("wudao", 0)) or 0),
+                    "gengu": int(s.get("gengu", adv.get("gengu", 0)) or 0),
                     "power": compute_unified_power(player, player.get("qq", "")),
                     "hp": s.get("hp", 0),
                     "atk": s.get("atk", 0),
-                    "def": s.get("def", 0),
-                    "spirit_root": adv.get("spirit_root"),
+                    "defense": s.get("def", 0),
+                    "speed": s.get("speed", 0),
+                    "heaven_multiplier": (heaven_meta or {}).get("enemy", 1.0),
+                    "partner": partner,
+                    "breakdown": pb,
                 }
-            except Exception:
+            except Exception as e:
+                logger.exception(f"[petpark] 修士档案汇总异常：{e}")
                 adventure = {"name": adv.get("name"), "profession": adv.get("profession"),
                              "level": adv.get("level", 1)}
         mounts = []
@@ -1155,6 +1202,8 @@ class PlayerPortal:
             group_id = str(fields.get("group_id", "")).strip()
             qq = str(fields.get("qq", "")).strip()
             mname = str(fields.get("name", "")).strip()
+            nickname = str(fields.get("nickname", "")).strip()
+            show_qq = str(fields.get("show_qq", "")).strip()
             if not group_id or not qq:
                 return web.json_response({"ok": False, "msg": "参数不完整"})
             owner = self.store.account_for_slot(group_id, qq)
@@ -1176,8 +1225,13 @@ class PlayerPortal:
             new_filename = f"{secrets.token_hex(8)}{ext}"
             path = self.store.custom_image_path(new_filename)
             path.write_bytes(file_data)
+            changes = {"name": mname, "image": new_filename}
+            if nickname:
+                changes["nickname"] = nickname
+            if show_qq:
+                changes["show_qq"] = show_qq
             review, err = self.store.create_custom_review(
-                sess.get("aid"), group_id, qq, {"name": mname, "image": new_filename},
+                sess.get("aid"), group_id, qq, changes,
                 kind="mount", mount_name=mname)
             if err:
                 try:
@@ -1719,6 +1773,70 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
   <section class="content">
     <div class="content-inner">
+      <template v-if="data && data.adventure">
+        <div class="sec-title">☯ 我的修士</div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:240px">
+              <div style="font-size:18px;font-weight:800">
+                ☯ {{ data.adventure.name }}
+                <span style="font-size:12px;font-weight:500;color:var(--brand2);margin-left:6px">{{ data.adventure.profession }} · {{ data.adventure.gender || '男' }}</span>
+              </div>
+              <div style="font-size:12.5px;color:var(--muted);margin:6px 0 8px">
+                {{ data.adventure.realm }} · Lv{{ data.adventure.level }} · {{ data.adventure.heaven }} ·
+                灵根 {{ data.adventure.spirit_root || '无' }}{{ data.adventure.element ? ' · '+data.adventure.element : '' }}
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px;margin-bottom:8px">
+                <el-tag type="danger" effect="plain" round>⚔️ 总战力 {{ fmt(data.adventure.power) }}</el-tag>
+                <el-tag effect="plain" round>❤️ 性命 {{ fmt(data.adventure.hp) }}</el-tag>
+                <el-tag effect="plain" round>⚔ 攻击 {{ fmt(data.adventure.atk) }}</el-tag>
+                <el-tag effect="plain" round>🛡 防御 {{ fmt(data.adventure.defense) }}</el-tag>
+                <el-tag effect="plain" round>⚡ 速度 {{ fmt(data.adventure.speed) }}</el-tag>
+                <el-tag type="warning" effect="plain" round>悟性 {{ data.adventure.wudao }} · 根骨 {{ data.adventure.gengu }}</el-tag>
+              </div>
+              <div style="margin-bottom:10px;font-size:12.5px;color:#4a5470">
+                💍 道侣：<b>{{ data.adventure.partner.love_state }}</b>{{ data.adventure.partner.married ? ' · 已婚于『'+data.adventure.partner.pet_name+'』' : ' · 结契灵宠『'+data.adventure.partner.pet_name+'』' }}
+                <span style="margin-left:10px">🎁 剩余悟性点 <b>{{ data.adventure.insight }}</b></span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;font-size:12.5px">
+                <span style="flex:0 0 50px">体力</span>
+                <el-progress :percentage="pct(data.adventure.stamina, data.adventure.stamina_max)" :stroke-width="10" :show-text="false" color="#6366f1" style="flex:1"></el-progress>
+                <span style="flex:0 0 auto">{{ data.adventure.stamina }} / {{ data.adventure.stamina_max }}</span>
+              </div>
+              <div v-if="data.adventure.tactics && data.adventure.tactics.length" style="margin-top:8px;font-size:12.5px;color:var(--muted)">
+                🌀 已悟神通：<span v-for="(t,i) in data.adventure.tactics" :key="i"><b>{{ t[0] }}</b><span v-if="t[1]">（{{ t[1] }}）</span><span v-if="i < data.adventure.tactics.length-1">、 </span></span>
+              </div>
+              <div style="margin-top:10px;padding:8px 12px;border-left:3px solid #b79149;background:#f1ead8;border-radius:6px;font-size:12.5px;color:#4a5470">
+                <b>战力构成</b>：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
+                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_contrib) }}（计 {{ fmt(data.adventure.breakdown.pet_part) }}）＋
+                坐骑 {{ fmt(data.adventure.breakdown.mount_contrib) }}（计 {{ fmt(data.adventure.breakdown.mount_part) }}）
+                × 道侣 ×{{ data.adventure.breakdown.partner.toFixed(2) }} ·
+                洞天 ×{{ data.adventure.breakdown.heaven_margin.toFixed(2) }}
+                → <b>{{ fmt(data.adventure.breakdown.total) }}</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="data && data.mount_custom">
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:700">🏇 定制坐骑</span>
+            <el-tag v-if="(data.mount_custom.slots||0) > 0" type="success" size="small" effect="light" round>
+              可用定制资格 ×{{ data.mount_custom.slots }}</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
+            <span style="flex:1"></span>
+            <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
+          </div>
+          <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效，并全服祝贺广播。</p>
+          <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
+            :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
+          <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
+            :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
+        </div>
+      </template>
+
       <div class="page-title">宠物档案</div>
 
       <div v-if="!current" class="card empty-tip">请先在左侧绑定并选择宠物</div>
@@ -1803,55 +1921,25 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               :title="'审核未通过：' + (r.reason || '未说明原因')"></el-alert>
           </div>
         </div>
-        <div v-else class="card empty-tip">{{ (data && (data.adventure || (data.mounts && data.mounts.length))) ? '该角色暂无宠物，可在下方查看修士与坐骑' : '该账号下暂无宠物' }}</div>
+        <div v-else class="card empty-tip">{{ (data && (data.adventure || (data.mounts && data.mounts.length))) ? '该角色暂无宠物，可在下方的「我的坐骑」继续查看坐骑' : '该账号下暂无宠物' }}</div>
 
-        <template v-if="data && (data.adventure || (data.mounts && data.mounts.length))">
-          <div class="sec-title">我的修士 / 坐骑</div>
-          <div class="card" v-if="data.adventure" style="margin-bottom:12px">
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-              <div style="flex:1;min-width:200px">
-                <div style="font-size:17px;font-weight:800">☯ {{ data.adventure.name || '未名修士' }}
-                  <span style="font-size:12px;color:var(--brand2);margin-left:6px">{{ data.adventure.profession }}</span></div>
-                <div style="font-size:12.5px;color:var(--muted);margin:4px 0 2px">{{ data.adventure.realm }} · Lv{{ data.adventure.level }} · 灵根 {{ data.adventure.spirit_root || '无' }}</div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:#4a5470">
-                  <span>⚔️ 总战力 {{ fmt(data.adventure.power) }}</span>
-                  <span>❤️ 性命 {{ fmt(data.adventure.hp) }}</span>
-                  <span>⚔ 攻击 {{ fmt(data.adventure.atk) }}</span>
-                  <span>🛡 防御 {{ fmt(data.adventure.def) }}</span>
-                </div>
+        <template v-if="data && data.mounts && data.mounts.length">
+        <div class="sec-title">🐴 我的坐骑</div>
+        <div class="card">
+          <div class="muted" style="font-size:12px;margin-bottom:8px">含官方与玩家定制的全部坐骑</div>
+          <div v-for="m in data.mounts" :key="m.name"
+               style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;font-weight:700">{{ m.name }}
+                <el-tag v-if="m.custom_spec" type="danger" size="small" effect="light" round style="margin-left:6px">⭐ 玩家定制</el-tag>
               </div>
+              <div class="muted" style="font-size:12px;margin-top:2px">★{{ m.stars }} · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
             </div>
           </div>
-          <div class="card" style="margin-bottom:12px" v-if="data.mount_custom">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <span style="font-size:14px;font-weight:700">🏇 定制坐骑</span>
-              <el-tag v-if="(data.mount_custom.slots||0) > 0" type="success" size="small" effect="light" round>
-                可用定制资格 ×{{ data.mount_custom.slots }}</el-tag>
-              <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
-              <span style="flex:1"></span>
-              <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
-            </div>
-            <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效。</p>
-            <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
-              :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
-            <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
-              :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
-          </div>
-          <div class="card" v-if="data.mounts && data.mounts.length">
-            <div class="muted" style="font-size:12px;margin-bottom:8px">我的坐骑（含定制坐骑）</div>
-            <div v-for="m in data.mounts" :key="m.name"
-                 style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px">
-              <div style="flex:1;min-width:0">
-                <div style="font-size:14px;font-weight:700">{{ m.name }}
-                  <el-tag v-if="m.custom_spec" type="danger" size="small" effect="light" round style="margin-left:6px">⭐ 玩家定制</el-tag>
-                </div>
-                <div class="muted" style="font-size:12px;margin-top:2px">★{{ m.stars }} · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
-              </div>
-            </div>
-          </div>
-        </template>
+        </div>
+      </template>
 
-        <div class="sec-title">我的财产</div>
+      <div class="sec-title">我的财产</div>
         <div class="wallet">
           <div class="coin"><div class="label">🪙 灵石</div><div class="value">{{ fmt(data.coin) }}</div></div>
           <div class="coin"><div class="label">✨ 玄晶</div><div class="value">{{ fmt(data.jifen) }}</div></div>
@@ -1985,6 +2073,12 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
       </div>
       <input ref="mountFileInput" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" style="display:none" @change="onMountFile">
       <div v-if="mountC.preview" class="crop-preview"><img :src="mountC.preview" alt="定制坐骑预览"></div>
+    </el-form-item>
+    <el-form-item label="全群祝贺信息（审核通过后将向所有授权群发送祝贺，可不填）">
+      <div style="display:flex;gap:8px">
+        <el-input v-model="mountC.nickname" maxlength="32" placeholder="你的 QQ 昵称（用于广播）" clearable></el-input>
+        <el-input v-model="mountC.showQQ" maxlength="32" placeholder="显示 QQ 号" clearable></el-input>
+      </div>
     </el-form-item>
   </el-form>
   <template #footer>
@@ -2280,8 +2374,8 @@ createApp({
 
     // ---- 坐骑外观定制 ----
     const mountFileInput = ref(null);
-    const mountC = reactive({dialog:false, name:'', code:'', redeeming:false, file:null, preview:'', submitting:false});
-    function openMountNew(){ mountC.name=''; mountC.code=''; mountC.file=null; mountC.preview=''; mountC.dialog = true; }
+    const mountC = reactive({dialog:false, name:'', nickname:'', showQQ:'', code:'', redeeming:false, file:null, preview:'', submitting:false});
+    function openMountNew(){ mountC.name=''; mountC.nickname=''; mountC.showQQ=''; mountC.code=''; mountC.file=null; mountC.preview=''; mountC.dialog = true; }
     function currentSlotId(){ return (data.value && {group_id:data.value.group_id, qq:data.value.qq}) || (currentSlot.value || {}); }
     function pickMountImage(){ if(!mountFileInput.value) return; mountFileInput.value.click(); }
     function onMountFile(e){
@@ -2315,10 +2409,12 @@ createApp({
         const fd = new FormData();
         fd.append('group_id', id.group_id); fd.append('qq', id.qq);
         fd.append('name', name); fd.append('image', mountC.file);
+        if(mountC.nickname){ fd.append('nickname', mountC.nickname); }
+        if(mountC.showQQ){ fd.append('show_qq', mountC.showQQ); }
         const resp = await fetch('/api/portal/mount_custom_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
         if(resp.status === 401 || resp.status === 403){ location.href = '/'; return null; }
         const r = await resp.json().catch(()=>null);
-        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; mountC.name=''; mountC.file=null; mountC.preview=''; }
+        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; mountC.name=''; mountC.nickname=''; mountC.showQQ=''; mountC.file=null; mountC.preview=''; }
         else { ElMessage.error((r && r.msg) || '提交失败'); }
       } finally { mountC.submitting = false; }
     }

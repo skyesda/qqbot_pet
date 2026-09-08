@@ -1976,6 +1976,8 @@ class PetStore:
                 "group": group_id,
                 "qq": qq,
                 "mount_name": new_name,
+                "nickname": str(changes.get("nickname") or "").strip()[:32],
+                "show_qq": str(changes.get("show_qq") or "").strip()[:32],
                 "old": {"name": ""},
                 "new": {"name": new_name, "image": changes.get("image")},
                 "status": "pending",

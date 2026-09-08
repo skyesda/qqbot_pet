@@ -445,6 +445,35 @@ class WebAdmin:
         ok, msg = self.store.apply_custom_review(rid)
         if ok:
             await self.store.save()
+            # 坐骑审核通过 → 全服贺电（与宠物定制同款，QQ 名/ QQ 号可由玩家在申请时填入）
+            try:
+                review = self.store.custom_reviews().get(rid) or {}
+                if review.get("kind") == "mount" and self._broadcast_callback:
+                    player = self.store._data["players"].get(
+                        self.store.make_key(review.get("group", ""), review.get("qq", "")))
+                    pet = (player.get("pets") or [{}])[0] if player else None
+                    nick = review.get("nickname") or (
+                        (self.store.get_account(review.get("account_id", "")) or {}).get("qq", "")
+                        if review.get("account_id") else "")
+                    show_qq = review.get("show_qq") or (
+                        (self.store.get_account(review.get("account_id", "")) or {}).get("qq", "")
+                        if review.get("account_id") else "")
+                    mount_name = review.get("mount_name") or review.get("new", {}).get("name", "")
+                    text = (
+                        "🎉 **全服贺电！灵契仙途迎来全新定制坐骑大师！** 🎉\n\n"
+                        f"👑 尊贵的训练家 **{nick or '神秘训练家'}**（QQ：{show_qq or '—'}）\n"
+                        f"创造了一只独一无二的新坐骑 **{mount_name or '神秘坐骑'}**，初始战力 30 万！\n\n"
+                        f"✨ **{mount_name or '神秘坐骑'}** 拥有专属外观图与战斗加成，"
+                        "（属性不可自定义——实力与热爱的象征）。\n\n"
+                        "🚀 各位训练家也快去努力，打造属于自己的专属传奇坐骑吧！"
+                    )
+                    task = self._broadcast_callback(text)
+                    if task:
+                        task.add_done_callback(
+                            lambda t: logger.info(f"[petpark] 定制坐骑全服广播结果：{t.result()}"))
+                    logger.info("[petpark] 定制坐骑全服广播已提交后台执行")
+            except Exception:
+                logger.exception("[petpark] 定制坐骑广播异常")
         return self._json({"ok": ok, "msg": msg})
 
     async def _api_custom_review_reject(self, request):
