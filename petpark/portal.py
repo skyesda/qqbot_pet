@@ -648,6 +648,34 @@ class PlayerPortal:
                 "power": int(battle_power(pet)),
             })
         pet_entries.sort(key=lambda x: x["power"], reverse=True)
+        # 仙途战力榜：修士综合战力（修士+灵宠+坐骑+道侣，与群内「仙途战力榜」同口径）
+        cultivators = []
+        compute_unified_power = None
+        advc = None
+        try:
+            from .adventure.power import compute_unified_power
+            from .adventure import content as advc
+        except Exception:
+            compute_unified_power = None
+        if compute_unified_power is not None:
+            for pl in players.values():
+                adv = pl.get("adventure") or {}
+                if not adv.get("name"):
+                    continue
+                try:
+                    power = int(compute_unified_power(pl, pl.get("qq", "")))
+                except Exception:
+                    continue
+                realm_idx = int(adv.get("realm") or 0)
+                realm = (advc.REALMS[realm_idx] if advc and 0 <= realm_idx < len(advc.REALMS) else "")
+                cultivators.append({
+                    "name": str(adv.get("name", "")),
+                    "level": int(adv.get("level", 1) or 1),
+                    "profession": adv.get("profession") or "",
+                    "realm": realm,
+                    "power": power,
+                })
+            cultivators.sort(key=lambda x: x["power"], reverse=True)
         groups = self.store._data.get("groups", {})
         auth_groups = sum(
             1 for g in groups.values()
@@ -680,6 +708,7 @@ class PlayerPortal:
                 "tomb_players": len(tomb),
             },
             "pet_rank": pet_entries[:10],
+            "cultivator_rank": cultivators[:10],
             "tomb_rank": tomb_rank[:10],
             "tomb_today": tomb_today[:10],
             "tomb_yesterday": tomb_yesterday[:10],
@@ -3531,8 +3560,32 @@ _HOME_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section class="section rank-section" id="rankings">
+    <div class="section-kicker">问道 · 修士登顶</div>
+    <div class="section-head"><h2>仙途战力榜</h2><span>按修士综合战力排序（修士 + 灵宠 + 坐骑 + 道侣）</span></div>
+    <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
+    <div class="boards">
+      <div class="board full">
+        <el-table :data="cultRank" v-loading="loading" element-loading-background="transparent" empty-text="暂无修士上榜">
+          <el-table-column label="排名" width="80">
+            <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="name" label="道号" min-width="140" show-overflow-tooltip></el-table-column>
+          <el-table-column label="等级" width="90">
+            <template #default="s">Lv{{ s.row.level }}</template>
+          </el-table-column>
+          <el-table-column prop="realm" label="境界" width="110" show-overflow-tooltip></el-table-column>
+          <el-table-column prop="profession" label="职业" width="110"></el-table-column>
+          <el-table-column label="战力" align="right" min-width="110">
+            <template #default="s"><span class="pw">{{ fmtPower(s.row.power) }}</span></template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </div>
+  </section>
+
+  <section class="section rank-section">
     <div class="section-kicker">风云 · 群雄留名</div>
-    <div class="section-head"><h2>灵宠战力榜</h2><span>按灵宠自身战力排序 · 修士综合战力请在群内查看「仙途战力榜」</span></div>
+    <div class="section-head"><h2>灵宠战力榜</h2><span>按灵宠自身战力排序 · 修士综合战力见上方「仙途战力榜」</span></div>
     <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
     <div class="boards">
       <div class="board full">
@@ -3708,6 +3761,7 @@ createApp({
     const disp = reactive({players:0, auth_groups:0, pets:0, tomb_players:0});
     const appVer = reactive({ok:false, version_name:'', url:''});
     const petRank = ref([]);
+    const cultRank = ref([]);
     const tombRank = ref([]);
     const tombToday = ref([]);
     const tombYst = ref([]);
@@ -3768,6 +3822,7 @@ createApp({
         animate('pets', r.stats.pets);
         animate('tomb_players', r.stats.tomb_players);
         petRank.value = r.pet_rank || [];
+        cultRank.value = r.cultivator_rank || [];
         tombRank.value = r.tomb_rank || [];
         tombToday.value = r.tomb_today || [];
         tombYst.value = r.tomb_yesterday || [];
@@ -3884,7 +3939,7 @@ createApp({
       setInterval(loadHome, 30000);
     });
 
-    return {professions, selectedRole, playGroups, copyCommand, hasData, homeError, loadHome, loggedIn, userQQ, loading, disp, appVer, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
+    return {professions, selectedRole, playGroups, copyCommand, hasData, homeError, loadHome, loggedIn, userQQ, loading, disp, appVer, petRank, cultRank, tombRank, tombToday, tombYst, todaySub, ystSub,
             auth, authTitle, authHint, fmt, fmtPower, openAuth, goFeedback, goPortal, downloadApp, logout, submitAuth, sendCode};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
