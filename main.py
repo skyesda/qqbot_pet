@@ -8502,13 +8502,17 @@ class PetParkPlugin(Star):
         return None
 
     @staticmethod
-    def _busy_reason(p: dict) -> str | None:
-        """宠物当前是否无法被操作（死亡 / 假死惊魂 / 心情 1 星）。可操作返回 None。"""
+    def _busy_reason(p: dict, allow_sad: bool = False) -> str | None:
+        """宠物当前是否无法被操作（死亡 / 假死惊魂 / 心情 1 星）。可操作返回 None。
+
+        allow_sad=True 时豁免「心情 1 星」这一条（仅用于玩耍——它是唯一能恢复心情的
+        日常动作，把恢复手段也禁了会造成心情 1 星后永久锁死；死亡/假死仍照常拦截）。
+        """
         if petmod.is_dead(p):
             return "宠物已死亡，请先复活（宠物复活 / 九转还魂丹）。"
         if petmod.is_frozen(p):
             return f"宠物假死/惊魂中，约 {petmod.frozen_remain_min(p)} 分钟后才能操作。"
-        if p.get("mood", 5) <= 1:
+        if not allow_sad and p.get("mood", 5) <= 1:
             return "宠物心情低落（1颗星），无法参加活动，请先恢复心情（玩耍 / 喂食 / 使用道具）。"
         return None
 
@@ -9728,7 +9732,9 @@ class PetParkPlugin(Star):
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』获取一只。"
-        busy = self._busy_reason(p)
+        # 玩耍是唯一能恢复心情的日常动作（心情 1 星时尤其需要），豁免心情门槛，
+        # 否则心情 1 星 → 玩耍被封 → 又没有恢复心情道具/自动恢复 → 永久锁死。
+        busy = self._busy_reason(p, allow_sad=(action == "玩耍"))
         if busy:
             return busy
         petmod.refresh_energy(p)
