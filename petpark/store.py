@@ -1985,6 +1985,8 @@ class PetStore:
                 "created_at": now,
             }
             self.custom_reviews()[review_id] = review
+            # 提交即占位扣减资格；若后台驳回将返还（reject_custom_review）
+            player["mount_custom_slots"] = max(0, int(player.get("mount_custom_slots", 0) or 0) - 1)
             return review, "已提交审核，预计 3 个工作日内处理完毕"
         pet = player.get("pet")
         if not pet:
@@ -2061,7 +2063,8 @@ class PetStore:
                 "stars": 4,
                 "plate": "定-" + str(hash(new_name) % 1000).zfill(3),
             }
-            player["mount_custom_slots"] = max(0, int(player.get("mount_custom_slots", 0) or 0) - 1)
+            # 资格已在提交审核时扣减，此处仅记录月度次数并落库
+            player["mount_custom_slots"] = max(0, int(player.get("mount_custom_slots", 0) or 0))
             self.custom_change_counts(player, "mount_image").append(now)
             review["status"] = "approved"
             review["reviewed_at"] = now
@@ -2089,6 +2092,21 @@ class PetStore:
         review["status"] = "rejected"
         review["reason"] = str(reason or "不符合定制规范")
         review["reviewed_at"] = int(time.time())
+        # 坐骑定制驳回 → 返还已占位的定制资格
+        if review.get("kind") == "mount":
+            player = self._data["players"].get(
+                self.make_key(review.get("group", ""), review.get("qq", "")))
+            if player:
+                player["mount_custom_slots"] = int(player.get("mount_custom_slots", 0) or 0) + 1
+            # 占用但驳回的临时外观图回收
+            try:
+                img = (review.get("new") or {}).get("image")
+                if img:
+                    p = self.custom_image_path(img)
+                    if p.exists():
+                        p.unlink()
+            except OSError:
+                pass
         return True, "已拒绝"
 
     def get_custom_reviews(

@@ -76,7 +76,14 @@ def _unified_components(player, key):
     else:
         contrib = _pet_contrib(pet, a["level"])
     mount = _mount_contrib(player, a["level"])
-    partner = 1.15 if (pets and pets[0].get("love_state") == "已婚") else 1.0  # 修士道侣加成（修士与修士结道侣，灵宠为见证）
+    # 道侣加成：在任意一只宠物上存在「已婚且道侣指向其他玩家」即生效（双方各自结算，双人都享受 +15%）
+    partner = 1.0
+    for pt in (player.get("pets") or []):
+        if pt.get("love_state") == "已婚":
+            tgt = str(pt.get("love_target") or "")
+            if tgt and tgt != str(player.get("qq", "")):
+                partner = 1.15
+                break
     heaven_margin = 1 + .02 * a.get("heaven", 0)
     base = hero + PET_POWER_RATIO * contrib + MOUNT_POWER_RATIO * mount
     return {

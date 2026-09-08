@@ -1140,7 +1140,16 @@ class PlayerPortal:
                 return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
             new_filename = f"{secrets.token_hex(8)}{ext}"
             path = self.store.custom_image_path(new_filename)
-            path.write_bytes(file_data)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file_data)
+            except OSError as e:
+                logger.exception(f"[petpark] 宠物定制图写盘失败 {path}: {e}")
+                return web.json_response({"ok": False, "msg": f"图片保存失败：{e}"})
+            if not path.exists():
+                logger.error(f"[petpark] 宠物定制图写盘后不存在 {path} (dir={self.store.custom_images_dir})")
+                return web.json_response({"ok": False, "msg": "图片保存失败，请重试"})
+            logger.info(f"[petpark] 宠物定制图已落盘 {path} size={len(file_data)}")
             changes["image"] = new_filename
         review, err = self.store.create_custom_review(sess["aid"], group_id, qq, changes)
         if err:
@@ -1224,7 +1233,16 @@ class PlayerPortal:
                 return web.json_response({"ok": False, "msg": "图片不能超过 5MB"})
             new_filename = f"{secrets.token_hex(8)}{ext}"
             path = self.store.custom_image_path(new_filename)
-            path.write_bytes(file_data)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file_data)
+            except OSError as e:
+                logger.exception(f"[petpark] 坐骑定制图写盘失败 {path}: {e}")
+                return web.json_response({"ok": False, "msg": f"图片保存失败：{e}"})
+            if not path.exists():
+                logger.error(f"[petpark] 坐骑定制图写盘后不存在 {path} (dir={self.store.custom_images_dir})")
+                return web.json_response({"ok": False, "msg": "图片保存失败，请重试"})
+            logger.info(f"[petpark] 坐骑定制图已落盘 {path} size={len(file_data)}")
             changes = {"name": mname, "image": new_filename}
             if nickname:
                 changes["nickname"] = nickname
