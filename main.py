@@ -7784,7 +7784,7 @@ class PetParkPlugin(Star):
         cfg = data.MOUNTS.get(name, {})
         owned = name in (player.get("mounts") or {})
         inst = player.get("mounts", {}).get(name, {}) if owned else {}
-        stars = int(cfg.get("stars", 1))
+        stars = int(inst.get("stars") or cfg.get("stars") or 1)
         star_str = "★" * stars + "☆" * (5 - stars)
         owner = self._display_uid(player.get("qq", "")) if owned else "—"
         plate = inst.get("plate", "骑-?") if owned else "未拥有"
@@ -7826,7 +7826,7 @@ class PetParkPlugin(Star):
         esc = self._menu_esc
         cfg = data.MOUNTS.get(name, {})
         inst = player.get("mounts", {}).get(name, {})
-        stars = int(cfg.get("stars", 1))
+        stars = int(inst.get("stars") or cfg.get("stars") or 1)
         star_str = "★" * stars + "☆" * (5 - stars)
         owner = self._display_uid(player.get("qq", ""))
         plate = inst.get("plate", "骑-?")
@@ -7897,10 +7897,11 @@ class PetParkPlugin(Star):
 
     @staticmethod
     def _pick_mount(mounts: dict) -> str | None:
-        """挑选骑乘的坐骑：已有坐骑中基础战力最高者。"""
+        """挑选骑乘的坐骑：当前战力最高者（官方坐骑按实例/基础战力，定制坐骑按其实力）。"""
         if not mounts:
             return None
-        return max(mounts, key=lambda n: data.MOUNTS.get(n, {}).get("base_power", 0))
+        return max(mounts, key=lambda n: mounts[n].get(
+            "power", data.MOUNTS.get(n, {}).get("base_power", 0)))
 
     async def _mount_enter_tick(self, qq: str, group_id: str) -> None:
         """玩家在群发言时刷新 last_msg_ts，未骑乘则自动入场并推送入场卡。"""
@@ -8875,14 +8876,14 @@ class PetParkPlugin(Star):
         return head
 
     def _mount_custom(self, player: dict) -> str:
-        """定制坐骑：引导至 bot.flyyye.cn 玩家中心自助完成外观定制。"""
-        has_mount = bool(player.get("mounts"))
-        return ("## 🎨 定制坐骑（外观）\n"
-                "坐骑外观定制只替换**显示形象**（群聊入场/坐骑卡片/玩家中心），不改名字与战力。\n"
+        """定制坐骑：引导至 bot.flyyye.cn 玩家中心自助创建（初始战力 30 万）。"""
+        return ("## 🏇 定制坐骑\n"
+                "定制坐骑 = **自定义名字 + 专属外观图** 的全新坐骑，初始战力 **30 万**（Lv.1 起可升级，"
+                "属性不可自定义）。\n"
                 "自助流程：登录 **bot.flyyye.cn** 玩家中心 → 绑定你的 群号+用户ID → 我的修士/坐骑 → "
-                "选择坐骑 → 输入「坐骑定制卡」解锁 → 上传专属立绘（JPG/PNG/GIF/WebP）→ 审核通过后自动生效。\n"
-                + ("你当前拥有坐骑，可前往网页直接发起定制。"
-                   if has_mount else "发送『坐骑市场』先购买一只坐骑，再进行外观定制。"))
+                "「＋ 新建定制坐骑」→ 兑换「坐骑定制卡」（每张 1 只）→ 填名字 + 上传专属立绘"
+                "（JPG/PNG/GIF/WebP）→ 后台审核通过即生成并自动登场。\n"
+                "定制坐骑同样：入场即骑乘登场、战力计入对战与统一战力。")
 
     def _mount_upgrade(self, player: dict, tokens: list[str]) -> str:
         """坐骑升级：耗 5000 天晶，Lv+1，战力 +500~1000 随机。"""
@@ -8894,7 +8895,7 @@ class PetParkPlugin(Star):
             name = player.get("active_mount") or self._pick_mount(mounts)
         if not name or name not in mounts:
             return "指定坐骑不存在。发送『我的坐骑』查看。"
-        cfg = data.MOUNTS[name]
+        cfg = data.MOUNTS.get(name, {})
         cost = data.MOUNT_UPGRADE_COST_DIAMOND
         diamond = self.store.get_currency(player, "钻石")
         if diamond < cost:
@@ -8902,7 +8903,7 @@ class PetParkPlugin(Star):
         inst = mounts[name]
         gain = random.randint(data.MOUNT_UPGRADE_POWER_MIN, data.MOUNT_UPGRADE_POWER_MAX)
         inst["level"] = inst.get("level", 1) + 1
-        inst["power"] = inst.get("power", cfg["base_power"]) + gain
+        inst["power"] = inst.get("power", cfg.get("base_power", 300000)) + gain
         self.store.add_currency(player, "天晶", -cost)
         return (f"✅ **坐骑升级成功！**\n『{name}』升至 Lv.{inst['level']}"
                 f"（+{gain} 战力）→ 当前战力 {inst['power']}。\n"

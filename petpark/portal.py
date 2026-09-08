@@ -355,19 +355,21 @@ class PlayerPortal:
                 "level": inst.get("level", 1),
                 "power": inst.get("power", cfg.get("base_power", 0)),
                 "custom": bool(inst.get("custom")),
+                "custom_spec": bool(inst.get("custom_spec")),
                 "custom_image": inst.get("custom_image"),
-                "stars": cfg.get("stars", 0),
+                "stars": inst.get("stars", cfg.get("stars", 0)),
                 "remaining": self.store.remaining_custom_changes(player, "mount_image"),
             }
-            if group_id and qq:
-                mreviews = self.store.get_custom_reviews(
-                    group_id, qq, kind="mount", mount_name=mname)
-                entry["pending"] = any(r.get("status") == "pending" for r in mreviews)
-                rejected = [r for r in mreviews if r.get("status") == "rejected"]
-                if rejected:
-                    entry["rejected_reason"] = rejected[-1].get("reason") or ""
             mounts.append(entry)
-        return {"adventure": adventure, "mounts": mounts}
+        mc = {"slots": self.store.mount_custom_slots(player), "pending": [], "rejected": []}
+        if group_id and qq:
+            mreviews = self.store.get_custom_reviews(group_id, qq, kind="mount")
+            mc["pending"] = [r.get("mount_name") for r in mreviews if r.get("status") == "pending"]
+            rej = [r for r in mreviews if r.get("status") == "rejected"]
+            if rej:
+                last = rej[-1]
+                mc["rejected"] = [{"name": last.get("mount_name"), "reason": last.get("reason") or ""}]
+        return {"adventure": adventure, "mounts": mounts, "mount_custom": mc}
 
     def _player_summary(self, group_id: str, qq: str, pet_index: int = 0) -> dict:
         key = self.store.make_key(group_id, qq)
@@ -393,6 +395,7 @@ class PlayerPortal:
             "pet": self._format_pet(player, group_id, qq, pet_index),
             "adventure": role["adventure"],
             "mounts": role["mounts"],
+            "mount_custom": role["mount_custom"],
             "cooldowns": self._cooldown_list(player, pet_index),
             "skills": list(rp.get("skills", [])) if rp else [],
             "artifact": rp.get("artifact") if rp else None,
@@ -1103,16 +1106,15 @@ class PlayerPortal:
         })
 
     async def _api_mount_custom_redeem(self, request: web.Request) -> web.Response:
-        """坐骑外观定制卡兑换：为绑定槽位下的指定坐骑解锁外观定制。"""
+        """坐骑定制卡兑换：获得 1 次「新建定制坐骑」资格。"""
         try:
             self._check_csrf(request)
             sess = self._require_session(request)
             body = await request.json()
             group_id = str(body.get("group_id", "")).strip()
             qq = str(body.get("qq", "")).strip()
-            mount_name = str(body.get("mount_name", "")).strip()
             code = str(body.get("code", "")).strip()
-            if not group_id or not qq or not mount_name or not code:
+            if not group_id or not qq or not code:
                 return web.json_response({"ok": False, "msg": "参数不完整"})
             owner = self.store.account_for_slot(group_id, qq)
             if owner != sess.get("aid"):
@@ -1121,8 +1123,7 @@ class PlayerPortal:
             player = self.store._data["players"].get(key)
             if not player:
                 return web.json_response({"ok": False, "msg": "未找到该角色"})
-            ok, msg = self.store.redeem_mount_custom_card(
-                code, player, sess.get("aid"), mount_name)
+            ok, msg = self.store.redeem_mount_custom_card(code, player, sess.get("aid"))
             if not ok:
                 return web.json_response({"ok": False, "msg": msg})
             await self.store.save()
@@ -1130,14 +1131,14 @@ class PlayerPortal:
             return web.json_response({
                 "ok": True,
                 "msg": msg,
-                "mounts": role["mounts"],
+                "mount_custom": role["mount_custom"],
             })
         except Exception as e:
             logger.exception(f"[petpark] 坐骑定制卡兑换异常：{e}")
             return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
 
     async def _api_mount_custom_submit(self, request: web.Request) -> web.Response:
-        """坐骑外观提交审核：上传一张图替换指定坐骑外观（不改名字与战力）。"""
+        """提交新建定制坐骑审核：定制名 + 外观图，通过后创建初始战力 30 万的定制坐骑。"""
         try:
             self._check_csrf(request)
             sess = self._require_session(request)
@@ -1153,8 +1154,8 @@ class PlayerPortal:
                     fields[part.name] = await part.text()
             group_id = str(fields.get("group_id", "")).strip()
             qq = str(fields.get("qq", "")).strip()
-            mount_name = str(fields.get("mount_name", "")).strip()
-            if not group_id or not qq or not mount_name:
+            mname = str(fields.get("name", "")).strip()
+            if not group_id or not qq:
                 return web.json_response({"ok": False, "msg": "参数不完整"})
             owner = self.store.account_for_slot(group_id, qq)
             if owner != sess.get("aid"):
@@ -1163,14 +1164,10 @@ class PlayerPortal:
             player = self.store._data["players"].get(key)
             if not player:
                 return web.json_response({"ok": False, "msg": "未找到该角色"})
-            mounts = player.get("mounts") or {}
-            inst = mounts.get(mount_name)
-            if not inst:
-                return web.json_response({"ok": False, "msg": "未找到该坐骑"})
-            if not inst.get("custom"):
-                return web.json_response({"ok": False, "msg": "该坐骑尚未解锁外观定制，请先兑换「坐骑定制卡」"})
+            if not (1 <= len(mname) <= 8):
+                return web.json_response({"ok": False, "msg": "定制坐骑名称需 1~8 个字"})
             if not file_data:
-                return web.json_response({"ok": False, "msg": "请上传坐骑外观图片"})
+                return web.json_response({"ok": False, "msg": "请上传定制坐骑外观图片"})
             ext = Path(filename).suffix.lower() if filename else ".jpg"
             if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
                 return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
@@ -1180,10 +1177,9 @@ class PlayerPortal:
             path = self.store.custom_image_path(new_filename)
             path.write_bytes(file_data)
             review, err = self.store.create_custom_review(
-                sess.get("aid"), group_id, qq, {"image": new_filename},
-                kind="mount", mount_name=mount_name)
+                sess.get("aid"), group_id, qq, {"name": mname, "image": new_filename},
+                kind="mount", mount_name=mname)
             if err:
-                # 落盘但未通过校验（如次数用尽/重复提交）时回收临时图
                 try:
                     if path.exists():
                         path.unlink()
@@ -1194,12 +1190,12 @@ class PlayerPortal:
             role = self._slot_role_summary(player, group_id, qq)
             return web.json_response({
                 "ok": True,
-                "msg": "坐骑外观已提交审核，预计 3 个工作日内处理完毕",
+                "msg": "定制坐骑已提交审核，预计 3 个工作日内处理完毕",
                 "review": review,
-                "mounts": role["mounts"],
+                "mount_custom": role["mount_custom"],
             })
         except Exception as e:
-            logger.exception(f"[petpark] 坐骑外观提交异常：{e}")
+            logger.exception(f"[petpark] 定制坐骑提交异常：{e}")
             return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
 
     # --------------------------- 玩家反馈 ---------------------------
@@ -1826,19 +1822,31 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               </div>
             </div>
           </div>
+          <div class="card" style="margin-bottom:12px" v-if="data.mount_custom">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span style="font-size:14px;font-weight:700">🏇 定制坐骑</span>
+              <el-tag v-if="(data.mount_custom.slots||0) > 0" type="success" size="small" effect="light" round>
+                可用定制资格 ×{{ data.mount_custom.slots }}</el-tag>
+              <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
+              <span style="flex:1"></span>
+              <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
+            </div>
+            <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效。</p>
+            <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
+              :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
+            <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
+              :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
+          </div>
           <div class="card" v-if="data.mounts && data.mounts.length">
-            <div class="muted" style="font-size:12px;margin-bottom:8px">坐骑外观定制仅改变形象，不影响名字与战力。</div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">我的坐骑（含定制坐骑）</div>
             <div v-for="m in data.mounts" :key="m.name"
                  style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px">
               <div style="flex:1;min-width:0">
                 <div style="font-size:14px;font-weight:700">{{ m.name }}
-                  <el-tag v-if="m.custom" type="success" size="small" effect="light" round style="margin-left:6px">✨ 已解锁定制</el-tag>
-                  <el-tag v-else size="small" effect="plain" round style="margin-left:6px">未定制</el-tag>
+                  <el-tag v-if="m.custom_spec" type="danger" size="small" effect="light" round style="margin-left:6px">⭐ 玩家定制</el-tag>
                 </div>
                 <div class="muted" style="font-size:12px;margin-top:2px">★{{ m.stars }} · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
               </div>
-              <el-button v-if="m.custom" type="primary" round size="small" @click="openMountCustom(m)">🎨 外观定制</el-button>
-              <el-button v-else type="primary" plain round size="small" @click="openMountRedeem(m)">🔑 卡密解锁定制</el-button>
             </div>
           </div>
         </template>
@@ -1949,37 +1957,39 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
   </template>
 </el-dialog>
 
-<!-- 坐骑外观定制 -->
-<el-dialog v-model="mountC.dialog" title="🎨 坐骑外观定制" width="480px" align-center>
-  <div v-if="!mountC.m" class="muted">请先选择一只坐骑。</div>
-  <template v-else>
-    <div style="font-size:14px;margin-bottom:4px">坐骑：{{ mountC.m.name }}
-      <span style="font-size:12px;color:var(--muted)">★{{ mountC.m.stars }} · Lv{{ mountC.m.level }} · 战力 {{ fmt(mountC.m.power) }}</span>
+<!-- 新建定制坐骑 -->
+<el-dialog v-model="mountC.dialog" title="🏇 新建定制坐骑" width="500px" align-center>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+    <span style="font-size:13.5px">可用定制资格</span>
+    <el-tag v-if="(data.mount_custom && data.mount_custom.slots) > 0" type="success" round>×{{ data.mount_custom.slots }}</el-tag>
+    <el-tag v-else type="info" round>无</el-tag>
+    <span style="flex:1"></span>
+    <span style="font-size:12px;color:var(--muted)">初始战力 300,000 · Lv.1</span>
+  </div>
+  <div v-if="!((data.mount_custom && data.mount_custom.slots) > 0)" style="padding:12px;border-radius:10px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.06);margin-bottom:12px">
+    <div style="font-size:13px;margin-bottom:8px">还没有定制资格，输入「坐骑定制卡」卡密兑换（每张可新建 1 只）：</div>
+    <div style="display:flex;gap:8px">
+      <el-input v-model="mountC.code" placeholder="坐骑定制卡密" clearable @keyup.enter="doMountRedeem"></el-input>
+      <el-button type="primary" round :loading="mountC.redeeming" @click="doMountRedeem">兑换资格</el-button>
     </div>
-    <p class="muted" style="font-size:12.5px;margin:6px 0 12px">外观定制只替换显示形象（群聊入场/坐骑卡片/玩家中心），<b>不会改变坐骑名字与战力</b>。</p>
-    <div v-if="!mountC.m.custom" style="padding:12px;border-radius:10px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.06);margin-bottom:10px">
-      <div style="font-size:13px;margin-bottom:8px">该坐骑尚未解锁，请输入「坐骑定制卡」卡密解锁：</div>
-      <div style="display:flex;gap:8px">
-        <el-input v-model="mountC.code" placeholder="坐骑定制卡密" clearable @keyup.enter="doMountRedeem"></el-input>
-        <el-button type="primary" round :loading="mountC.redeeming" @click="doMountRedeem">解锁</el-button>
-      </div>
-    </div>
-    <template v-else>
-      <el-alert v-if="mountC.m.pending" type="warning" :closable="false" style="margin-bottom:10px" title="已有外观修改待审核，审核通过后自动生效"></el-alert>
-      <el-alert v-if="mountC.m.rejected_reason" type="error" :closable="false" style="margin-bottom:10px" :title="'上次审核未通过：' + mountC.m.rejected_reason"></el-alert>
+  </div>
+  <el-form v-if="(data.mount_custom && data.mount_custom.slots) > 0" label-position="top">
+    <el-form-item label="定制坐骑名称（1~8 字，不可与官方坐骑重名）">
+      <el-input v-model="mountC.name" maxlength="8" placeholder="例如：混沌·青龙" clearable></el-input>
+    </el-form-item>
+    <el-form-item label="专属外观图（JPG / PNG / GIF / WebP，≤5MB；群聊入场与坐骑卡片均显示）">
       <div class="upload-zone" @click="pickMountImage">
         <div class="upload-plus">＋</div>
-        <div class="upload-text">{{ mountC.file ? '已选择：' + mountC.file.name : '点击上传坐骑外观图' }}</div>
-        <div class="upload-hint">支持 JPG / PNG / GIF / WebP，≤5MB；建议正方形或带透明底图。本月剩余 {{ mountC.m.remaining }} 次</div>
+        <div class="upload-text">{{ mountC.file ? '已选择：' + mountC.file.name : '点击上传外观图' }}</div>
+        <div class="upload-hint">建议正方形或透明底；人工审核通过后生效</div>
       </div>
       <input ref="mountFileInput" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" style="display:none" @change="onMountFile">
-      <div v-if="mountC.preview" class="crop-preview"><img :src="mountC.preview" alt="坐骑外观预览"></div>
-      <p class="muted" style="font-size:12.5px;margin-top:8px">提交后将进入人工审核，预计 3 个工作日内处理。审核期间可随时查看结果。</p>
-    </template>
-  </template>
+      <div v-if="mountC.preview" class="crop-preview"><img :src="mountC.preview" alt="定制坐骑预览"></div>
+    </el-form-item>
+  </el-form>
   <template #footer>
     <el-button round @click="mountC.dialog=false">关闭</el-button>
-    <el-button v-if="mountC.m && mountC.m.custom" type="primary" round :disabled="mountC.m.pending || !mountC.file" :loading="mountC.submitting" @click="doMountSubmit">提交审核</el-button>
+    <el-button v-if="(data.mount_custom && data.mount_custom.slots) > 0" type="primary" round :disabled="!mountC.name || !mountC.file" :loading="mountC.submitting" @click="doMountSubmit">提交审核</el-button>
   </template>
 </el-dialog>
 
@@ -2270,9 +2280,8 @@ createApp({
 
     // ---- 坐骑外观定制 ----
     const mountFileInput = ref(null);
-    const mountC = reactive({dialog:false, m:null, code:'', redeeming:false, file:null, preview:'', submitting:false});
-    function openMountRedeem(m){ mountC.m = m; mountC.code=''; mountC.dialog = true; }
-    function openMountCustom(m){ mountC.m = m; mountC.file = null; mountC.preview = ''; mountC.dialog = true; }
+    const mountC = reactive({dialog:false, name:'', code:'', redeeming:false, file:null, preview:'', submitting:false});
+    function openMountNew(){ mountC.name=''; mountC.code=''; mountC.file=null; mountC.preview=''; mountC.dialog = true; }
     function currentSlotId(){ return (data.value && {group_id:data.value.group_id, qq:data.value.qq}) || (currentSlot.value || {}); }
     function pickMountImage(){ if(!mountFileInput.value) return; mountFileInput.value.click(); }
     function onMountFile(e){
@@ -2285,27 +2294,31 @@ createApp({
     }
     async function doMountRedeem(){
       const id = currentSlotId();
-      if(!id.group_id || !id.qq || !mountC.m){ ElMessage.warning('请先绑定并选择角色'); return; }
+      if(!id.group_id || !id.qq){ ElMessage.warning('请先绑定并选择角色'); return; }
       if(!mountC.code.trim()){ ElMessage.warning('请输入坐骑定制卡密'); return; }
       mountC.redeeming = true;
       try{
-        const r = await api('/api/portal/mount_custom_redeem','POST',{group_id:id.group_id, qq:id.qq, mount_name:mountC.m.name, code:mountC.code.trim()});
-        if(r && r.ok){ ElMessage.success(r.msg || '解锁成功'); if(r.mounts) data.value.mounts = r.mounts; mountC.m = (r.mounts||[]).find(x=>x.name===mountC.m.name) || mountC.m; mountC.code=''; }
-        else { ElMessage.error((r && r.msg) || '解锁失败'); }
+        const r = await api('/api/portal/mount_custom_redeem','POST',{group_id:id.group_id, qq:id.qq, code:mountC.code.trim()});
+        if(r && r.ok){ ElMessage.success(r.msg || '兑换成功'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; mountC.code=''; }
+        else { ElMessage.error((r && r.msg) || '兑换失败'); }
       } finally { mountC.redeeming = false; }
     }
     async function doMountSubmit(){
       const id = currentSlotId();
-      if(!id.group_id || !id.qq || !mountC.m || !mountC.file){ ElMessage.warning('请先选择外观图片'); return; }
+      const name = mountC.name.trim();
+      if(!id.group_id || !id.qq){ ElMessage.warning('请先绑定并选择角色'); return; }
+      if(!name){ ElMessage.warning('请填写定制坐骑名称'); return; }
+      if(name.length > 8){ ElMessage.warning('名称最多 8 个字'); return; }
+      if(!mountC.file){ ElMessage.warning('请上传外观图片'); return; }
       mountC.submitting = true;
       try{
         const fd = new FormData();
         fd.append('group_id', id.group_id); fd.append('qq', id.qq);
-        fd.append('mount_name', mountC.m.name); fd.append('image', mountC.file);
+        fd.append('name', name); fd.append('image', mountC.file);
         const resp = await fetch('/api/portal/mount_custom_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
         if(resp.status === 401 || resp.status === 403){ location.href = '/'; return null; }
         const r = await resp.json().catch(()=>null);
-        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mounts){ data.value.mounts = r.mounts; mountC.m = (r.mounts||[]).find(x=>x.name===mountC.m.name) || mountC.m; } mountC.file=null; mountC.preview=''; }
+        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; mountC.name=''; mountC.file=null; mountC.preview=''; }
         else { ElMessage.error((r && r.msg) || '提交失败'); }
       } finally { mountC.submitting = false; }
     }
@@ -2505,7 +2518,7 @@ createApp({
       bind, pwd, custom, crop,
       auto,
       slots, currentSlot, slotPets, slotLabel, slotSub, slotImage, switchSlot,
-      mountFileInput, mountC, openMountRedeem, openMountCustom, pickMountImage, onMountFile, doMountRedeem, doMountSubmit,
+      mountFileInput, mountC, openMountNew, pickMountImage, onMountFile, doMountRedeem, doMountSubmit,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
       loadPet, logout, openBind, doBindAuto, pickAuto, reclaimBind, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       goFeedback, goChat,

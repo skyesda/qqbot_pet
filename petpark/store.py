@@ -1788,9 +1788,9 @@ class PetStore:
         return created
 
     def redeem_mount_custom_card(
-        self, code: str, player: dict, used_by: str, mount_name: str
+        self, code: str, player: dict, used_by: str
     ) -> tuple[bool, str]:
-        """兑换坐骑定制卡：为玩家已有坐骑解锁外观定制。成功返回 (True, 提示)。"""
+        """兑换坐骑定制卡：获得 1 次「新建定制坐骑」资格（自定义名+外观，初始战力 30 万）。"""
         code = str(code).strip().upper()
         cards = self.cards()
         card = cards.get(code)
@@ -1800,17 +1800,16 @@ class PetStore:
             return False, "这不是坐骑定制卡"
         if card.get("used"):
             return False, "该卡密已被使用"
-        mounts = player.get("mounts") or {}
-        if not mount_name or mount_name not in mounts:
-            return False, "你没有该坐骑，无法使用定制卡"
-        inst = mounts[mount_name]
-        if inst.get("custom"):
-            return False, f"『{mount_name}』已解锁外观定制，无需重复使用"
-        inst["custom"] = True
+        slots = int(player.get("mount_custom_slots", 0) or 0)
+        player["mount_custom_slots"] = slots + 1
         card["used"] = True
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
-        return True, f"『{mount_name}』外观定制已解锁，可上传专属立绘提交审核"
+        return True, "已获得 1 次新建定制坐骑资格，可前往玩家中心提交（初始战力 30 万）"
+
+    def mount_custom_slots(self, player: dict) -> int:
+        """玩家可用定制坐骑资格数。"""
+        return int(player.get("mount_custom_slots", 0) or 0)
 
     @staticmethod
     def auto_cultivation_active(player: dict, pet: dict = None) -> bool:
@@ -1943,26 +1942,31 @@ class PetStore:
         kind: str = "pet",
         mount_name: str = "",
     ) -> tuple[Optional[dict], str]:
-        """提交一次定制修改审核。kind=pet 改宠物形象/名称；kind=mount 为坐骑换外观（仅 image）。
+        """提交一次定制修改审核。kind=pet 改宠物形象/名称；kind=mount 为新建定制坐骑（拟名+外观图）。
 
-        changes 可含 image（已落盘的文件名）与 species_name；mount 场景仅取 image。
+        changes 可含 image（已落盘的文件名）与 species_name；mount 场景取 name（拟建定制名）与 image。
         """
         player = self._data["players"].get(self.make_key(group_id, qq))
         if not player:
             return None, "未找到该角色"
         if kind == "mount":
+            from . import data as _data_mod
+            new_name = str(changes.get("name") or mount_name or "").strip()
+            if not (1 <= len(new_name) <= 8):
+                return None, "定制坐骑名称需 1~8 个字"
+            if new_name in (_data_mod.MOUNTS or {}):
+                return None, "该名称与官方坐骑重名，请换一个"
             mounts = player.get("mounts") or {}
-            inst = mounts.get(mount_name)
-            if not inst:
-                return None, "未找到该坐骑"
-            if not inst.get("custom"):
-                return None, "该坐骑尚未解锁外观定制权限"
-            if self.get_custom_reviews(group_id, qq, kind="mount", mount_name=mount_name, status="pending"):
-                return None, "该坐骑已有待审核的外观修改，请等待审核完成后再提交"
+            if new_name in mounts:
+                return None, "你已经拥有名为该名称的坐骑"
+            if not self.mount_custom_slots(player):
+                return None, "没有可用的定制坐骑资格，请先兑换「坐骑定制卡」"
+            if self.get_custom_reviews(group_id, qq, kind="mount", mount_name=new_name, status="pending"):
+                return None, "该定制坐骑名称已有待审核申请，请换一个名称"
             if not changes.get("image"):
-                return None, "请上传坐骑外观图片"
+                return None, "请上传定制坐骑外观图片"
             if not self.can_custom_change(player, "mount_image"):
-                return None, "本月坐骑外观修改次数已达 3 次上限"
+                return None, "本月坐骑定制次数已达 3 次上限"
             review_id = secrets.token_hex(8)
             now = int(time.time())
             review = {
@@ -1971,9 +1975,9 @@ class PetStore:
                 "account_id": account_id,
                 "group": group_id,
                 "qq": qq,
-                "mount_name": mount_name,
-                "old": {"image": inst.get("custom_image") or ""},
-                "new": {"image": changes.get("image")},
+                "mount_name": new_name,
+                "old": {"name": ""},
+                "new": {"name": new_name, "image": changes.get("image")},
                 "status": "pending",
                 "reason": "",
                 "created_at": now,
@@ -2026,22 +2030,40 @@ class PetStore:
             return False, "玩家不存在"
         now = int(time.time())
         if review.get("kind") == "mount":
-            inst = (player.get("mounts") or {}).get(review.get("mount_name") or "")
-            if not inst:
-                return False, "坐骑不存在"
-            new_img = (review.get("new") or {}).get("image")
-            old_img = (review.get("old") or {}).get("image")
-            if not new_img or new_img == old_img:
+            from . import data as _data_mod
+            new_name = str(review.get("mount_name") or "").strip()
+            new_img = (review.get("new") or {}).get("image") or ""
+            mounts = player.get("mounts") or {}
+            if not (1 <= len(new_name) <= 8) or new_name in (_data_mod.MOUNTS or {}) or new_name in mounts:
+                review["status"] = "rejected"
+                review["reason"] = "定制名称不可用或已存在"
+                review["reviewed_at"] = now
+                return False, "定制名称不可用或已存在"
+            if self.mount_custom_slots(player) <= 0:
+                review["status"] = "rejected"
+                review["reason"] = "无可用的定制坐骑资格"
+                review["reviewed_at"] = now
+                return False, "无可用的定制坐骑资格"
+            if not new_img:
                 review["status"] = "rejected"
                 review["reason"] = "缺少外观图片"
                 review["reviewed_at"] = now
                 return False, "缺少外观图片，无法生效"
-            inst["custom_image"] = new_img
-            inst["custom"] = True
+            # 创建定制坐骑：初始战力 30 万、Lv.1，名字与外观自定义（仅外观自定义，不开放属性）
+            mounts[new_name] = {
+                "custom_spec": True,
+                "custom": True,
+                "custom_image": new_img,
+                "level": 1,
+                "power": 300000,
+                "stars": 4,
+                "plate": "定-" + str(hash(new_name) % 1000).zfill(3),
+            }
+            player["mount_custom_slots"] = max(0, int(player.get("mount_custom_slots", 0) or 0) - 1)
             self.custom_change_counts(player, "mount_image").append(now)
             review["status"] = "approved"
             review["reviewed_at"] = now
-            return True, "坐骑外观已生效"
+            return True, "定制坐骑已创建（初始战力 30 万）"
         pet = player.get("pet")
         if not pet:
             return False, "宠物不存在"
