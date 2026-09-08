@@ -82,19 +82,21 @@ git push
 
 ---
 
-## 三、服务端部署到 AstrBot
+## 三、服务端部署到 SkyeBot 框架
 
-> **部署规则**：代码修改完成后，默认只执行 **① `git push` 推送到远程仓库** 和 **② 在服务器插件目录执行 `git pull`**。不要自行执行 SSH kill / setsid 重启 / 进程查找等其它命令。生效方式优先通过 AstrBot 后台「重载插件」完成；只有用户明确要求时，才使用命令行重启。
+> ⚠️ 框架已从 AstrBot 彻底迁移（2026-08-20），`/root/AstrBot` 已删除。以下路径均为 **SkyeBot 独立框架**，与本仓库（插件名 `astrbot_plugin_petpark` 只为兼容，实际跑在 SkyeBot 上）对应。
+
+> **部署规则的授权边界**：默认只做 **① 本地 `git push` 推送远程仓库** 和 **② 服务器插件目录 `git pull`**，这两个是默认步骤、无需单独授权。但「对服务器写配置 / 冷重启 / 触发热重载」这类会改变**运行中进程**的服务器操作，**每次都要重新征得用户授权**——一次「授权全部执行」不延续到下一次。
 
 ### 3.1 服务器信息（当前环境）
 
-- 服务器 IP：`103.38.83.146`
-- 登录用户：`root`
-- 插件路径：`/root/AstrBot/data/plugins/astrbot_plugin_petpark`
-- 数据文件：`/root/AstrBot/data/plugin_data/astrbot_plugin_petpark/petpark.json`
-- AstrBot 根目录：`/root/AstrBot`
-- Python 虚拟环境：`/root/AstrBot/.venv/bin/python3`
-- 日志文件：`/root/AstrBot/astrbot.log`
+- 服务器 IP：`103.38.83.146`，登录用户：`root`，SSH 免密
+- 框架（**非 git**，`git pull` 勿做、勿覆盖 config.yaml）：`/root/petbot_framework/`（core/、compat/、main.py、config.yaml、requirements.txt）
+- 插件（git 仓库，分支 `devin/petpark-plugin`）：`/root/petbot_framework/plugins/astrbot_plugin_petpark`
+- 数据：`/root/petbot_framework/data/plugin_data/astrbot_plugin_petpark/petpark.json` + `data/known_groups.json`
+- venv：`/root/petbot_framework/.venv`（Python 3.12.13，来自 uv）
+- 日志：`/root/petbot_framework/framework.log`（**时区是 UTC**，人按北京时间 UTC+8 理解）
+- 端口：`7799`（插件后台）、`8091`（渲染农场协调器）、`6185`（框架后台）
 
 ### 3.2 登录服务器
 
@@ -102,51 +104,71 @@ git push
 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@103.38.83.146
 ```
 
-### 3.3 拉取最新代码
+### 3.3 拉取最新代码（默认步骤②）
 
 ```bash
-cd /root/AstrBot/data/plugins/astrbot_plugin_petpark
+cd /root/petbot_framework/plugins/astrbot_plugin_petpark
 git pull
 ```
 
-### 3.4 生效方式：通过 AstrBot 后台重载（默认）
+> `git pull` 只是把新代码写到磁盘，**运行中进程仍跑内存里的旧代码**——「明明 pull 了/后台显示版本新了，但游戏行为没变」就是这原因。必须再触发下节的**热重载**或**冷重启**才真正生效。
 
-`git pull` 完成后，插件代码已更新，但运行中的 AstrBot 仍加载旧版本。必须由用户或管理员在 AstrBot 后台手动重载插件：
+### 3.4 生效方式一：插件热重载（仅改动 `main.py` 时可信任）
 
-1. 打开 AstrBot 管理面板。
-2. 进入「插件 / Extensions」。
-3. 找到「灵契仙途」，点击「重载 / Reload」。
-4. 观察日志确认无报错。
-
-> 不要自行通过 SSH 执行 kill / setsid 等命令重启 AstrBot。
-
-### 3.5 方式 B：命令行重启 AstrBot（仅用户明确要求时使用）
-
-> 本节内容只供参考，默认不要执行。只有当用户明确说「命令行重启」或「后台重载不可用」时才使用。
-
-当后台重载不可用或需要彻底重启时：
+改动**只涉及 `main.py`（且不改任何子模块接口）**时，热重载有效。通过框架 HTTP API 触发（等价于框架后台 6185「机器人配置」页的「重载插件」按钮）：
 
 ```bash
-# 1. 查找进程
-ps -ef | grep '[p]ython3 main.py'
-
-# 2. 记录 PID，然后终止（例如 PID 为 524117）
-kill 524117
-
-# 3. 等待进程退出后重新启动
-cd /root/AstrBot
-setsid .venv/bin/python3 main.py > astrbot.log 2>&1 < /dev/null &
+JAR=$(mktemp)
+curl -s -c "$JAR" -X POST http://127.0.0.1:6185/api/login \
+  -H "Content-Type: application/json" -d '{"user":"admin","password":"2468080asd"}' >/dev/null
+curl -s -b "$JAR" -X POST http://127.0.0.1:6185/api/plugin_reload \
+  -H "Content-Type: application/json" -d '{"reload_code":true}'
+rm -f "$JAR"
 ```
 
-> 注意：不要用 `pkill -f 'python3 main.py'`，可能误杀 SSH 客户端进程导致掉线。
+- 成功标志：返回 `{"ok":true,"data":{"reloaded":true}}` + 日志 `插件已加载：PetParkPlugin`；框架 **PID 不变**（热重载不换 PID）。
+
+> **热重载对 `main.py` 之外的任何改动都不可靠**：`reload_package` 只重载 `astrbot_plugin_petpark.main` 及 `main.` 前缀子模块，**从不会**重载 `astrbot_plugin_petpark.petpark.*`。任何 `petpark/` 下模块（含嵌套子包、含「新增一个函数被 main 调用」）经 reload 后仍是旧对象 → 报 `AttributeError: module '...petpark.data' has no attribute 'xxx'`。所以**凡是动了 `petpark/` 下任何文件，直接整框架冷重启，别信 reload 返回 OK**。
+
+### 3.5 生效方式二：整框架冷重启（改动 `petpark/` 下任何文件时必然要用）
+
+判断依据：**只改 `main.py`（不改子模块接口）→ 热重载有效；改了 `petpark/` 下任何文件（data/store/pet/ai_router/adventure/zhongyuan/webadmin，直接或嵌套），或改了 main.py 与子模块之间的签名（构造/函数参数）→ 直接整框架冷重启。**
+
+**唯一正确的冷重启方式**：
+
+```bash
+bash /root/petbot_framework/relaunch.sh
+```
+
+> `relaunch.sh` 会先 `export PETPARK_FARM_TOKEN/URL/LISTEN` 三个农场环境变量，再 kill 旧 PID + setsid 启动，并 `ss` 自动找端口 PID、打印冷却后的状态。
+>
+> ⚠️ **不要用裸 `setsid .venv/bin/python3 main.py`**——会丢掉农场 token → `:8091` 协调器不启动，webadmin 矿机监控显示「渲染农场未启用：未发现 PETPARK_FARM_TOKEN」。
+> ⚠️ **不要用 `pkill -f 'python3 main.py'`**——正则自匹配会误杀 SSH 客户端进程导致掉线；按 PID kill。
+
+> 影响插件**后台任务生命周期**的改动（任务引用从类属性改实例属性、cancel 逻辑等），热重载清不掉已在跑的旧任务，也须冷重启。
 
 ### 3.6 验证是否生效
 
 ```bash
-tail -n 50 /root/AstrBot/astrbot.log
+# 冷重启后三端口都应变 LISTEN
+ss -tlnp | grep -E ':(7799|8091|6185)'
+# 最近日志无 Traceback；热重载后从 reload 时间戳往后 grep
+grep -a "插件已加载\|Traceback" /root/petbot_framework/framework.log | tail -20
+# 确认版本已是目标版本（发布前递增 metadata.yaml 的 version）
+grep -m1 '^version:' /root/petbot_framework/plugins/astrbot_plugin_petpark/metadata.yaml
 ```
 
 正常应看到插件加载成功、无异常 Traceback。
+
+### 3.7 发布闭环（一图流）
+
+```
+本地：改代码 → 递增 metadata.yaml version → py_compile → git commit → git push
+服务器：git pull → 判断：
+   只改 main.py 且改子模块接口? → 否 → 热重载 (3.4)
+                                 → 是 → 冷重启 bash relaunch.sh (3.5)
+验证：3.6 三端口 LISTEN + 日志无 Traceback + 版本号正确
+```
 
 ---
 
