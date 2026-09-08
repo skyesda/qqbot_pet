@@ -1310,6 +1310,10 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 .sec{margin:18px 0 8px;font-weight:800;font-size:13px;color:#5b657d;border-bottom:1px solid #e8ecf6;padding-bottom:6px;letter-spacing:.3px}
 .bagrow{margin:6px 0}
 .empty{padding:32px;text-align:center;color:#8a93a8;background:#fff;border:1px dashed #d8dfef;border-radius:14px}
+.cr-imgrow{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.cr-imgbox{display:inline-flex;flex-direction:column;gap:4px;background:#fafbff;border:1px solid #e8ecf6;border-radius:10px;padding:8px;min-width:160px}
+.cr-imgbox img{max-width:420px;max-height:420px;display:block;background:#fff;border-radius:6px}
+.cr-imgbox a{cursor:zoom-in}
 </style></head><body>
 <header><h1>灵契仙途 · 管理后台</h1><a href="/logout">退出登录</a></header>
 <div class="tabs">
@@ -1453,7 +1457,12 @@ async function paDelete(aid){ if(!confirm('确认删除账号 '+aid+'？绑定�
 function crImgUrl(img){ if(!img) return ''; if(img.startsWith('http') || img.startsWith('/')) return esc(img); return '/custom_images/'+esc(img); }
 function crImgBox(img,label){
  if(!img) return '';
- return `<div><div class="muted">${label}</div><div style="width:160px;height:160px;overflow:auto;border-radius:8px;border:1px solid #e8ecf6"><img src="${crImgUrl(img)}" style="width:512px;height:512px;object-fit:contain;display:block"></div></div>`;
+ return `<div class="cr-imgbox">
+   <div class="muted">${label}</div>
+   <a href="${crImgUrl(img)}" target="_blank" title="点击查看原图">
+     <img src="${crImgUrl(img)}" loading="lazy">
+   </a>
+ </div>`;
 }
 async function paUnbind(aid,group,qq){ if(!confirm(`确认解绑 ${group} / ${qq}？`)) return; await api('/api/portal_accounts/unbind',{account_id:aid,group, qq}); loadPortalAccounts(); paDetail(aid); }
 
@@ -1481,7 +1490,7 @@ function renderCustomReviews(){
    <td class="num">${esc(r.qq||'')}</td>
    <td class="num">${esc(r.group||'')}</td>
    <td>${kindTag}${nameCell}</td>
-   <td>${(newImg||(!isMount&&oldImg))?`<div style="display:flex;gap:8px">${isMount?'':crImgBox(oldImg,'旧')}${crImgBox(newImg, isMount?'新外观':'新')}</div>`:'—'}</td>
+   <td>${(newImg||(!isMount&&oldImg))?`<div class="cr-imgrow">${isMount?'':crImgBox(oldImg,'旧')}${crImgBox(newImg, isMount?'新外观':'新')}</div>`:'—'}</td>
    <td class="muted">${fdate(r.created_at)}</td>
    <td>${r.status==='pending'?`<button class="act" onclick='crApprove(${tj(r.id)})'>通过</button> <button class="act del" onclick='crReject(${tj(r.id)})'>拒绝</button>`:`<span class="tag ${r.status==='approved'?'on':'off'}">${r.status==='approved'?'已通过':'已拒绝'}</span><div class="muted">${esc(r.reason||'')}</div>`}</td>
   </tr>`;
