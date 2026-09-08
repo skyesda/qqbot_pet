@@ -1589,45 +1589,94 @@ class PetStore:
         self.accounts()[account_id] = account
         return account
 
-    def account_for_pet(self, group_id: str, qq: str) -> Optional[str]:
-        """查询某个群+QQ 的宠物已被绑定到哪个账号 ID。"""
-        target = {"group": str(group_id), "qq": str(qq)}
+    def bound_slots_of(self, account: dict) -> list[dict]:
+        """账号绑定的全部槽位（并集 bound_slots + 历史 bound_pets 去重），每项含 group/qq。"""
+        seen: dict[tuple[str, str], dict] = {}
+        for bp in account.get("bound_pets", []) or []:
+            g, q = str(bp.get("group") or ""), str(bp.get("qq") or "")
+            if g and q:
+                seen.setdefault((g, q), {"group": g, "qq": q})
+        for bs in account.get("bound_slots", []) or []:
+            g, q = str(bs.get("group") or ""), str(bs.get("qq") or "")
+            if g and q:
+                seen.setdefault((g, q), {"group": g, "qq": q})
+        return list(seen.values())
+
+    def account_for_slot(self, group_id: str, qq: str) -> Optional[str]:
+        """查询某个群+QQ 槽位（修士/宠物/坐骑）已被绑定到哪个账号 ID。"""
+        g, q = str(group_id), str(qq)
         for acc_id, acc in self.accounts().items():
-            for bp in acc.get("bound_pets", []):
-                if bp.get("group") == target["group"] and bp.get("qq") == target["qq"]:
+            for slot in self.bound_slots_of(acc):
+                if slot["group"] == g and slot["qq"] == q:
                     return acc_id
         return None
 
-    def bind_pet_to_account(
+    def bind_slot_to_account(
         self, account_id: str, group_id: str, qq: str, pet_index: int = 0
     ) -> tuple[bool, str]:
-        """绑定宠物到账号。返回 (是否成功, 提示)。"""
+        """槽位绑定：一个 (群, 用户ID) 一次绑定，其下修士/宠物/坐骑一并归本账号管理。
+
+        兼容老 bound_pets：若槽位内有宠物且尚未录入 bound_pets，仍补一条宠物记录，
+        供旧版前端按宠物粒度加载；历史数据无需迁移。
+        """
         account = self.get_account(account_id)
         if not account:
             return False, "账号不存在"
         group_id, qq = str(group_id), str(qq)
         key = self.make_key(group_id, qq)
         if key not in self._data.get("players", {}):
-            return False, "该群聊与用户 ID 下不存在宠物"
-        existing = self.account_for_pet(group_id, qq)
+            return False, "该群聊与用户 ID 下不存在角色数据（修士/宠物/坐骑）"
+        existing = self.account_for_slot(group_id, qq)
         if existing and existing != account_id:
-            return False, "该宠物已被其他账号绑定"
-        bound = account.setdefault("bound_pets", [])
-        for bp in bound:
-            if bp.get("group") == group_id and bp.get("qq") == qq:
-                return True, "已经绑定过该宠物"
+            return False, "该角色已被其他账号绑定"
+        slots = account.setdefault("bound_slots", [])
+        for bs in slots:
+            if bs.get("group") == group_id and bs.get("qq") == qq:
+                return True, "已经绑定过该角色"
+        slots.append({"group": group_id, "qq": qq})
+        # 兼容：历史 bound_pets 未覆盖当前宠物时补录，便于按宠物维度的旧功能继续工作
         player = self._data["players"][key]
-        pets = player.get("pets", [])
-        idx = max(0, min(pet_index, len(pets) - 1)) if pets else 0
-        pet = pets[idx] if 0 <= idx < len(pets) else {}
-        bound.append({
-            "group": group_id,
-            "qq": qq,
-            "pet_index": idx,
-            "nickname": pet.get("nickname", "未命名"),
-            "species": pet.get("species", "未知"),
-        })
+        pets = player.get("pets", []) or []
+        has_pet_entry = any(
+            bp.get("group") == group_id and bp.get("qq") == qq
+            for bp in account.get("bound_pets", []) or []
+        )
+        if pets and not has_pet_entry:
+            idx = max(0, min(int(pet_index or 0), len(pets) - 1))
+            account.setdefault("bound_pets", []).append({
+                "group": group_id,
+                "qq": qq,
+                "pet_index": idx,
+                "nickname": pets[idx].get("nickname", "未命名"),
+                "species": pets[idx].get("species", "未知"),
+            })
         return True, "绑定成功"
+
+    def unbind_slot(self, account_id: str, group_id: str, qq: str) -> bool:
+        """解绑账号对某槽位的绑定（同时清理 bound_slots 与 bound_pets 中该槽位）。"""
+        account = self.get_account(account_id)
+        if not account:
+            return False
+        g, q = str(group_id), str(qq)
+        account["bound_slots"] = [
+            bs for bs in account.get("bound_slots", []) or []
+            if not (str(bs.get("group")) == g and str(bs.get("qq")) == q)
+        ]
+        account["bound_pets"] = [
+            bp for bp in account.get("bound_pets", []) or []
+            if not (str(bp.get("group")) == g and str(bp.get("qq")) == q)
+        ]
+        return True
+
+    def account_for_pet(self, group_id: str, qq: str) -> Optional[str]:
+        """查询某个群+QQ 的角色（原宠物口径，现与槽位口径一致）被绑定到哪个账号 ID。"""
+        return self.account_for_slot(group_id, qq)
+
+    def bind_pet_to_account(
+        self, account_id: str, group_id: str, qq: str, pet_index: int = 0
+    ) -> tuple[bool, str]:
+        """绑定角色到账号（槽位语义，宠物参数仅为兼容保留）。返回 (是否成功, 提示)。"""
+        return self.bind_slot_to_account(account_id, group_id, qq, pet_index)
 
     def reclaim_pet_binding(
         self, account_id: str, group_id: str, qq: str, pet_index: int = 0
@@ -1644,30 +1693,23 @@ class PetStore:
         account_qq = str(account.get("qq", "")).strip()
         # 所有权校验：该槽位的用户ID属于本账号绑定的 QQ（直连或经 qq_bindings）
         if not (qq == account_qq or str(self.get_bound_qq(qq)) == account_qq):
-            return False, "只有绑定该宠物所在 QQ 的账号才能强制要回"
+            return False, "只有绑定该角色所在 QQ 的账号才能强制要回"
         key = self.make_key(group_id, qq)
         if key not in self._data.get("players", {}):
-            return False, "该群聊与用户 ID 下不存在宠物"
-        player = self._data["players"][key]
-        pets = player.get("pets", []) or []
-        idx = max(0, min(int(pet_index or 0), len(pets) - 1)) if pets else 0
-        pet = pets[idx] if 0 <= idx < len(pets) else {}
-        # 移除所有账号对该槽位的绑定
+            return False, "该群聊与用户 ID 下不存在角色数据"
+        # 移除所有账号对该槽位的绑定（bound_slots 与历史 bound_pets 一并清理）
         for acc in self.accounts().values():
+            acc["bound_slots"] = [
+                bs for bs in acc.get("bound_slots", []) or []
+                if not (str(bs.get("group")) == group_id and str(bs.get("qq")) == qq)
+            ]
             acc["bound_pets"] = [
-                bp for bp in acc.get("bound_pets", [])
+                bp for bp in acc.get("bound_pets", []) or []
                 if not (str(bp.get("group")) == group_id and str(bp.get("qq")) == qq)
             ]
-        # 绑定到本账号
-        bound = account.setdefault("bound_pets", [])
-        bound.append({
-            "group": group_id,
-            "qq": qq,
-            "pet_index": idx,
-            "nickname": pet.get("nickname", "未命名"),
-            "species": pet.get("species", "未知"),
-        })
-        return True, "已强行要回绑定权"
+        # 绑定到本账号（槽位语义，自动补宠物兼容条目）
+        ok, msg = self.bind_slot_to_account(account_id, group_id, qq, pet_index)
+        return (True, "已强行要回绑定权") if ok else (False, msg)
 
     # ----------------------------- 宠物定制 -----------------------------
     def custom_reviews(self) -> dict:
@@ -1726,6 +1768,49 @@ class PetStore:
         card["used_at"] = int(time.time())
         self.add_pet_tag(pet, "定制")
         return pet, None
+
+    def create_mount_custom_cards(self, count: int = 1, prefix: str = "") -> list[str]:
+        """批量生成坐骑定制卡密：兑换后解锁指定已有坐骑的外观定制通道（不改名字与战力）。"""
+        count = max(1, int(count))
+        cards = self.cards()
+        created: list[str] = []
+        now = int(time.time())
+        for _ in range(count):
+            code = self.gen_card_code(prefix)
+            cards[code] = {
+                "mount_custom": True,
+                "used": False,
+                "used_by": None,
+                "used_at": None,
+                "created_at": now,
+            }
+            created.append(code)
+        return created
+
+    def redeem_mount_custom_card(
+        self, code: str, player: dict, used_by: str, mount_name: str
+    ) -> tuple[bool, str]:
+        """兑换坐骑定制卡：为玩家已有坐骑解锁外观定制。成功返回 (True, 提示)。"""
+        code = str(code).strip().upper()
+        cards = self.cards()
+        card = cards.get(code)
+        if card is None:
+            return False, "卡密不存在或输入有误"
+        if not card.get("mount_custom"):
+            return False, "这不是坐骑定制卡"
+        if card.get("used"):
+            return False, "该卡密已被使用"
+        mounts = player.get("mounts") or {}
+        if not mount_name or mount_name not in mounts:
+            return False, "你没有该坐骑，无法使用定制卡"
+        inst = mounts[mount_name]
+        if inst.get("custom"):
+            return False, f"『{mount_name}』已解锁外观定制，无需重复使用"
+        inst["custom"] = True
+        card["used"] = True
+        card["used_by"] = used_by
+        card["used_at"] = int(time.time())
+        return True, f"『{mount_name}』外观定制已解锁，可上传专属立绘提交审核"
 
     @staticmethod
     def auto_cultivation_active(player: dict, pet: dict = None) -> bool:
@@ -1855,11 +1940,46 @@ class PetStore:
         group_id: str,
         qq: str,
         changes: dict,
+        kind: str = "pet",
+        mount_name: str = "",
     ) -> tuple[Optional[dict], str]:
-        """提交一次定制修改审核。changes 可含 image（文件名）和 species_name。"""
+        """提交一次定制修改审核。kind=pet 改宠物形象/名称；kind=mount 为坐骑换外观（仅 image）。
+
+        changes 可含 image（已落盘的文件名）与 species_name；mount 场景仅取 image。
+        """
         player = self._data["players"].get(self.make_key(group_id, qq))
         if not player:
-            return None, "未找到该宠物"
+            return None, "未找到该角色"
+        if kind == "mount":
+            mounts = player.get("mounts") or {}
+            inst = mounts.get(mount_name)
+            if not inst:
+                return None, "未找到该坐骑"
+            if not inst.get("custom"):
+                return None, "该坐骑尚未解锁外观定制权限"
+            if self.get_custom_reviews(group_id, qq, kind="mount", mount_name=mount_name, status="pending"):
+                return None, "该坐骑已有待审核的外观修改，请等待审核完成后再提交"
+            if not changes.get("image"):
+                return None, "请上传坐骑外观图片"
+            if not self.can_custom_change(player, "mount_image"):
+                return None, "本月坐骑外观修改次数已达 3 次上限"
+            review_id = secrets.token_hex(8)
+            now = int(time.time())
+            review = {
+                "id": review_id,
+                "kind": "mount",
+                "account_id": account_id,
+                "group": group_id,
+                "qq": qq,
+                "mount_name": mount_name,
+                "old": {"image": inst.get("custom_image") or ""},
+                "new": {"image": changes.get("image")},
+                "status": "pending",
+                "reason": "",
+                "created_at": now,
+            }
+            self.custom_reviews()[review_id] = review
+            return review, "已提交审核，预计 3 个工作日内处理完毕"
         pet = player.get("pet")
         if not pet:
             return None, "该账号下没有宠物"
@@ -1881,6 +2001,7 @@ class PetStore:
         old_name = pet.get("custom_species_name") or pet.get("species")
         review = {
             "id": review_id,
+            "kind": "pet",
             "account_id": account_id,
             "group": group_id,
             "qq": qq,
@@ -1903,10 +2024,27 @@ class PetStore:
         player = self._data["players"].get(self.make_key(review["group"], review["qq"]))
         if not player:
             return False, "玩家不存在"
+        now = int(time.time())
+        if review.get("kind") == "mount":
+            inst = (player.get("mounts") or {}).get(review.get("mount_name") or "")
+            if not inst:
+                return False, "坐骑不存在"
+            new_img = (review.get("new") or {}).get("image")
+            old_img = (review.get("old") or {}).get("image")
+            if not new_img or new_img == old_img:
+                review["status"] = "rejected"
+                review["reason"] = "缺少外观图片"
+                review["reviewed_at"] = now
+                return False, "缺少外观图片，无法生效"
+            inst["custom_image"] = new_img
+            inst["custom"] = True
+            self.custom_change_counts(player, "mount_image").append(now)
+            review["status"] = "approved"
+            review["reviewed_at"] = now
+            return True, "坐骑外观已生效"
         pet = player.get("pet")
         if not pet:
             return False, "宠物不存在"
-        now = int(time.time())
         new = review["new"]
         old = review["old"]
         if new.get("image") and new["image"] != old.get("image"):
@@ -1929,9 +2067,15 @@ class PetStore:
         review["reviewed_at"] = int(time.time())
         return True, "已拒绝"
 
-    def get_pet_custom_reviews(
-        self, group_id: str, qq: str, status: Optional[str] = None
+    def get_custom_reviews(
+        self,
+        group_id: str,
+        qq: str,
+        status: Optional[str] = None,
+        kind: Optional[str] = None,
+        mount_name: str = "",
     ) -> list[dict]:
+        """查询某槽位的定制审核记录；kind=None 取全部，mount_name 仅当 kind=mount 时按坐骑过滤。"""
         out = []
         key = self.make_key(group_id, qq)
         for r in self.custom_reviews().values():
@@ -1939,8 +2083,21 @@ class PetStore:
                 continue
             if status and r.get("status") != status:
                 continue
+            if kind and r.get("kind", "pet") != kind:
+                continue
+            if kind == "mount" and mount_name and r.get("mount_name") != mount_name:
+                continue
             out.append(r)
         return out
+
+    def get_pet_custom_reviews(
+        self, group_id: str, qq: str, status: Optional[str] = None
+    ) -> list[dict]:
+        """兼容旧名：仅取宠物定制记录（kind 缺省按 pet 处理）。"""
+        return [
+            r for r in self.get_custom_reviews(group_id, qq, status=status)
+            if r.get("kind", "pet") != "mount"
+        ]
 
     # ------------------------------------------------------------------
     # 玩家反馈（Bug / 建议）

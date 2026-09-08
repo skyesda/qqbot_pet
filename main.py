@@ -7701,6 +7701,37 @@ class PetParkPlugin(Star):
             pass
         return None
 
+    def _mount_custom_portrait_uri(self, name: str, player: dict | None) -> str | None:
+        """定制坐骑外观 data-URI：审核通过的自定义图（custom_images 目录），无则 None。"""
+        try:
+            inst = ((player or {}).get("mounts") or {}).get(name) or {}
+            cf = inst.get("custom_image")
+            if not cf:
+                return None
+            p = Path(self.store.custom_images_dir) / cf
+            if not p.exists():
+                return None
+            mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                    "gif": "image/gif", "webp": "image/webp"}.get(p.suffix.lower(), "image/jpeg")
+            return f"data:{mime};base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+        except OSError:
+            pass
+        return None
+
+    def _mount_custom_gif_url(self, name: str, player: dict | None) -> str:
+        """定制坐骑 GIF URL（仅当自定义图是 gif 时），供群聊入场动画展示。"""
+        try:
+            inst = ((player or {}).get("mounts") or {}).get(name) or {}
+            cf = str(inst.get("custom_image") or "")
+            if not cf.lower().endswith(".gif"):
+                return ""
+            p = Path(self.store.custom_images_dir) / cf
+            if p.exists():
+                return self._tomb_image_url(cf)
+        except OSError:
+            pass
+        return ""
+
     def _sync_mount_gifs(self) -> None:
         """启动时把仓库内坐骑 GIF 复制到 custom_images_dir（经 /custom_images 动画展示）。"""
         src_dir = Path(__file__).resolve().parent / "petpark" / "assets" / "mounts"
@@ -7727,8 +7758,17 @@ class PetParkPlugin(Star):
             return ""
         return self._tomb_image_url(fname)
 
-    def _mount_image_md(self, name: str, disp_w: int = 640) -> str:
-        """坐骑 GIF 的 Markdown 图片；无图返回 ""。"""
+    def _mount_image_md(self, name: str, disp_w: int = 640, player: dict | None = None) -> str:
+        """坐骑图片 Markdown：优先定制外观图（custom_images），其次官方 GIF；无图返回 ""。"""
+        inst = ((player or {}).get("mounts") or {}).get(name) or {}
+        cf = str(inst.get("custom_image") or "")
+        if cf and (Path(self.store.custom_images_dir) / cf).exists():
+            url = self._tomb_image_url(cf)
+            try:
+                w, h = self._image_dims(Path(self.store.custom_images_dir) / cf, disp_w)
+                return f"![{name} #{w} #{h}]({url})"
+            except Exception:
+                return f"![{name}]({url})"
         url = self._mount_gif_url(name)
         if not url:
             return ""
@@ -7774,9 +7814,9 @@ class PetParkPlugin(Star):
         return "\n".join(lines)
 
     def _mount_full_message(self, name: str, player: dict, kind: str = "enter", reward: int | None = None) -> str:
-        """完整坐骑消息：GIF（若有）+ 文字信息卡。reward 为入场已到账实际奖励。"""
+        """完整坐骑消息：外观图（定制优先，其次官方 GIF）+ 文字信息卡。reward 为入场已到账实际奖励。"""
         info = self._mount_info_text(name, player, kind, reward)
-        img = self._mount_image_md(name)
+        img = self._mount_image_md(name, player=player)
         if img:
             return f"{img}\n\n{info}"
         return info
@@ -7797,7 +7837,7 @@ class PetParkPlugin(Star):
         now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
         theme_word = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
         custom = bool(inst.get("custom"))
-        uri = self._mount_portrait_uri(name)
+        uri = self._mount_custom_portrait_uri(name, player) or self._mount_portrait_uri(name)
         if uri:
             portrait = (f'<div class="portrait-wrap">'
                         f'<img class="portrait ph-img" src="{uri}" alt="{esc(name)}"></div>')
@@ -8835,12 +8875,14 @@ class PetParkPlugin(Star):
         return head
 
     def _mount_custom(self, player: dict) -> str:
-        """定制坐骑：预留说明入口（本轮不接后台申请/录入）。"""
-        return ("## 🎨 定制坐骑\n"
-                "定制坐骑需联系客服或群主申请：自定义名称 + 专属 GIF 立绘。\n"
-                "**起步 100 万玄晶**：第 1 只 100 万、第 2 只 500 万、第 3 只 1000 万、"
-                "第 4 只 2000 万，此后每只 +1000 万，以此类推。\n"
-                "定制完成同样：入场奖励玄晶、进群自动登场、战力计入对战。")
+        """定制坐骑：引导至 bot.flyyye.cn 玩家中心自助完成外观定制。"""
+        has_mount = bool(player.get("mounts"))
+        return ("## 🎨 定制坐骑（外观）\n"
+                "坐骑外观定制只替换**显示形象**（群聊入场/坐骑卡片/玩家中心），不改名字与战力。\n"
+                "自助流程：登录 **bot.flyyye.cn** 玩家中心 → 绑定你的 群号+用户ID → 我的修士/坐骑 → "
+                "选择坐骑 → 输入「坐骑定制卡」解锁 → 上传专属立绘（JPG/PNG/GIF/WebP）→ 审核通过后自动生效。\n"
+                + ("你当前拥有坐骑，可前往网页直接发起定制。"
+                   if has_mount else "发送『坐骑市场』先购买一只坐骑，再进行外观定制。"))
 
     def _mount_upgrade(self, player: dict, tokens: list[str]) -> str:
         """坐骑升级：耗 5000 天晶，Lv+1，战力 +500~1000 随机。"""

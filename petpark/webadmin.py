@@ -388,6 +388,11 @@ class WebAdmin:
                     count=int(body.get("count", 1)),
                     prefix=body.get("prefix", ""),
                 )
+            elif card_type == "mount_custom":
+                codes = self.store.create_mount_custom_cards(
+                    count=int(body.get("count", 1)),
+                    prefix=body.get("prefix", ""),
+                )
             elif card_type == "auto_cultivation":
                 codes = self.store.create_auto_cultivation_cards(
                     count=int(body.get("count", 1)),
@@ -424,9 +429,12 @@ class WebAdmin:
         self._require(request)
         body = await request.json()
         status = body.get("status", "")
+        kind = body.get("kind", "")
         reviews = list(self.store.custom_reviews().values())
         if status:
             reviews = [r for r in reviews if r.get("status") == status]
+        if kind:
+            reviews = [r for r in reviews if r.get("kind", "pet") == kind]
         data = sorted(reviews, key=lambda x: x.get("created_at", 0), reverse=True)
         return self._json({"ok": True, "data": data})
 
@@ -1137,6 +1145,7 @@ class WebAdmin:
                     "created_at": acc.get("created_at"),
                     "last_login": acc.get("last_login"),
                     "bound_pets": acc.get("bound_pets", []),
+                    "bound_slots": self.store.bound_slots_of(acc),
                 }
             )
         return self._json({"ok": True, "data": data})
@@ -1176,12 +1185,7 @@ class WebAdmin:
         acc = self.store.get_account(aid)
         if not acc:
             return self._json({"ok": False, "msg": "账号不存在"})
-        bound = acc.get("bound_pets", [])
-        acc["bound_pets"] = [
-            bp
-            for bp in bound
-            if not (bp.get("group") == group and bp.get("qq") == qq)
-        ]
+        self.store.unbind_slot(aid, group, qq)
         await self.store.save()
         return self._json({"ok": True})
 
@@ -1302,6 +1306,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <select id="card_type" onchange="cardTypeChange()" style="width:130px">
  <option value="">货币/道具卡</option>
  <option value="custom_pet">宠物定制卡</option>
+ <option value="mount_custom">坐骑定制卡</option>
  <option value="auto_cultivation">自动修炼卡</option>
 </select>
 <input id="amt_coin" type="number" placeholder="灵石面额" style="width:120px">
@@ -1375,7 +1380,7 @@ function renderPortalAccounts(){
   rows+=`<tr>
    <td class="k">${esc(a.id)}</td>
    <td class="num">${esc(a.qq||'')}</td>
-   <td class="num">${(a.bound_pets||[]).length}</td>
+   <td class="num">${(a.bound_slots||[]).length}</td>
    <td class="muted">${fdate(a.last_login)}</td>
    <td class="muted">${fdate(a.created_at)}</td>
    <td style="white-space:nowrap"><button class="act" onclick='paDetail(${tj(a.id)})'>查看</button> <button class="act" onclick='paResetPwd(${tj(a.id)})'>重置密码</button> <button class="act del" onclick='paDelete(${tj(a.id)})'>删除</button></td>
@@ -1384,24 +1389,28 @@ function renderPortalAccounts(){
  document.getElementById('count').textContent='共 '+paCache.length+' 个账号';
  document.getElementById('extrawrap').innerHTML='';
  document.getElementById('tablewrap').innerHTML = rows
-   ? `<table><thead><tr><th>ID</th><th>QQ</th><th>绑定宠物</th><th>最后登录</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+   ? `<table><thead><tr><th>ID</th><th>QQ</th><th>绑定角色</th><th>最后登录</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无网页账号</div>`;
 }
 function paDetail(aid){
  const a=paCache.find(x=>x.id===aid); if(!a) return;
+ const slots=(a.bound_slots||[]).slice();
+ const bps=a.bound_pets||[];
  let pets='';
- for(const p of (a.bound_pets||[])){
+ for(const s of slots){
+  const bp=bps.find(p=>p.group===s.group&&p.qq===s.qq);
+  const petTxt=bp?` · ${esc(bp.nickname||'未命名')}`:'';
   pets+=`<div class="row" style="align-items:center;margin:6px 0;padding:8px;border:1px solid #e8ecf6;border-radius:8px">
-   <div style="flex:1"><div class="muted">群号 / 用户ID</div>${esc(p.group||'')} / ${esc(p.qq||'')}</div>
-   <div style="flex:1"><div class="muted">宠物</div>${esc(p.nickname||'未命名')} · ${esc(p.species||'未知')}</div>
-   <div><button class="act del" onclick='paUnbind(${tj(aid)},${tj(p.group)},${tj(p.qq)})'>解绑</button></div>
+   <div style="flex:1"><div class="muted">群号 / 用户ID</div>${esc(s.group||'')} / ${esc(s.qq||'')}</div>
+   <div style="flex:1"><div class="muted">角色</div>修士/坐骑${petTxt?' · 宠物'+petTxt:''}</div>
+   <div><button class="act del" onclick='paUnbind(${tj(aid)},${tj(s.group)},${tj(s.qq)})'>解绑</button></div>
   </div>`;
  }
- if(!pets) pets='<div class="muted">未绑定任何宠物</div>';
+ if(!pets) pets='<div class="muted">未绑定任何角色</div>';
  g('patitle').textContent='账号详情：'+esc(a.qq||a.id);
  g('pabody').innerHTML=`
   <div class="row"><div><label class="fld">ID</label><input readonly value="${esc(a.id)}"></div><div><label class="fld">QQ</label><input readonly value="${esc(a.qq||'')}"></div></div>
-  <div class="sec">已绑定宠物</div>${pets}`;
+  <div class="sec">已绑定角色（群号 / 用户ID）</div>${pets}`;
  g('pamodal').style.display='flex';
 }
 function closePaModal(){ g('pamodal').style.display='none'; }
@@ -1419,10 +1428,10 @@ function crImgBox(img,label){
 }
 async function paUnbind(aid,group,qq){ if(!confirm(`确认解绑 ${group} / ${qq}？`)) return; await api('/api/portal_accounts/unbind',{account_id:aid,group, qq}); loadPortalAccounts(); paDetail(aid); }
 
-let crCache=[], crStatus='pending';
-async function loadCustomReviews(status='pending'){
- crStatus=status;
- const r=await api('/api/custom_reviews',{status});
+let crCache=[], crStatus='pending', crKind='';
+async function loadCustomReviews(status='pending', kind=crKind){
+ crStatus=status; crKind=kind;
+ const r=await api('/api/custom_reviews',{status, kind});
  crCache=r.data||[];
  renderCustomReviews();
 }
@@ -1431,16 +1440,19 @@ function renderCustomReviews(){
  let rows='';
  for(const r of crCache){
   if(q && !r.id.toLowerCase().includes(q) && !String(r.qq).toLowerCase().includes(q) && !String(r.group).toLowerCase().includes(q)) continue;
-  const oldImg=r.old.image||'';
-  const newImg=r.new.image||'';
-  const oldName=esc(r.old.species_name||'');
-  const newName=esc(r.new.species_name||'');
+  const isMount = r.kind==='mount';
+  const oldImg = isMount ? (r.old&&r.old.image||'') : r.old.image||'';
+  const newImg = isMount ? (r.new&&r.new.image||'') : r.new.image||'';
+  const kindTag = `<span class="tag ${isMount?'':'off'}" style="margin-right:4px">${isMount?'坐骑':'宠物'}</span>`;
+  const nameCell = isMount
+    ? `<div><b>坐骑外观</b>${esc(r.mount_name||'')?`<div>坐骑：${esc(r.mount_name)}</div>`:''}</div>`
+    : (r.new.species_name?`<div class="muted">旧：${esc(r.old.species_name||'')}</div><div>新：${esc(r.new.species_name||'')}</div>`:'—');
   rows+=`<tr>
    <td class="k">${esc(r.id)}</td>
    <td class="num">${esc(r.qq||'')}</td>
    <td class="num">${esc(r.group||'')}</td>
-   <td>${r.new.species_name?`<div class="muted">旧：${oldName}</div><div>新：${newName}</div>`:'—'}</td>
-   <td>${r.new.image||oldImg?`<div style="display:flex;gap:8px">${crImgBox(oldImg,'旧')}${crImgBox(r.new.image,'新')}</div>`:'—'}</td>
+   <td>${kindTag}${nameCell}</td>
+   <td>${(newImg||(!isMount&&oldImg))?`<div style="display:flex;gap:8px">${isMount?'':crImgBox(oldImg,'旧')}${crImgBox(newImg, isMount?'新外观':'新')}</div>`:'—'}</td>
    <td class="muted">${fdate(r.created_at)}</td>
    <td>${r.status==='pending'?`<button class="act" onclick='crApprove(${tj(r.id)})'>通过</button> <button class="act del" onclick='crReject(${tj(r.id)})'>拒绝</button>`:`<span class="tag ${r.status==='approved'?'on':'off'}">${r.status==='approved'?'已通过':'已拒绝'}</span><div class="muted">${esc(r.reason||'')}</div>`}</td>
   </tr>`;
@@ -1452,9 +1464,13 @@ function renderCustomReviews(){
    <button class="act ${crStatus==='approved'?'':'ghost'}" onclick="loadCustomReviews('approved')">已通过</button>
    <button class="act ${crStatus==='rejected'?'':'ghost'}" onclick="loadCustomReviews('rejected')">已拒绝</button>
    <button class="act ${crStatus===''?'':'ghost'}" onclick="loadCustomReviews('')">全部</button>
+   <span style="margin:0 6px" class="muted">类型</span>
+   <button class="act ${crKind===''?'':'ghost'}" onclick="loadCustomReviews(crStatus,'')">全部</button>
+   <button class="act ${crKind==='pet'?'':'ghost'}" onclick="loadCustomReviews(crStatus,'pet')">宠物</button>
+   <button class="act ${crKind==='mount'?'':'ghost'}" onclick="loadCustomReviews(crStatus,'mount')">坐骑</button>
   </div>`;
  document.getElementById('tablewrap').innerHTML = rows
-   ? `<table><thead><tr><th>ID</th><th>QQ</th><th>群号</th><th>名称</th><th>图片</th><th>提交时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+   ? `<table><thead><tr><th>ID</th><th>QQ</th><th>群号</th><th>类型 / 名称</th><th>图片</th><th>提交时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无审核记录</div>`;
 }
 async function crApprove(id){ if(!confirm('确认通过该定制申请？')) return; const r=await api('/api/custom_reviews/approve',{id}); alert(r.ok?(r.msg||'已通过'):(r.msg||'操作失败')); loadCustomReviews(crStatus); }
@@ -2257,6 +2273,7 @@ function packageHtml(v){
 function cardContentHtml(v){
  const acDays=+(v.auto_cultivation_days||0);
  if(acDays>0)return `<span class="diamond">🧘 自动修炼 ${acDays} 天</span>`;
+ if(v.mount_custom)return `<span class="diamond">🎨 坐骑外观定制卡</span>`;
  const days=+(v.auth_days||0);
  if(days>0)return `<span class="diamond">🔐 群授权 ${days} 天·${(v.server_type==='infinite'?'无限服':'官方服')}</span>`;
  return packageHtml(v);
@@ -2706,6 +2723,8 @@ async function genCards(){
  let payload;
  if(cardType==='custom_pet'){
   payload={card_type:'custom_pet',count:+g('cnt').value,prefix:g('pre').value};
+ }else if(cardType==='mount_custom'){
+  payload={card_type:'mount_custom',count:+g('cnt').value,prefix:g('pre').value};
  }else if(cardType==='auto_cultivation'){
   payload={card_type:'auto_cultivation',count:+g('cnt').value,prefix:g('pre').value};
  }else{
@@ -2730,11 +2749,11 @@ async function genCards(){
 }
 function cardTypeChange(){
  const t=g('card_type').value;
- const hideRewards=(t==='custom_pet'||t==='auto_cultivation');
+ const hideRewards=(t==='custom_pet'||t==='mount_custom'||t==='auto_cultivation');
  ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays','amt_server_type'].forEach(id=>{const el=g(id);if(el)el.style.display=hideRewards?'none':'';});
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(dsp(c)+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(v.mount_custom){pkg='坐骑外观定制';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(dsp(c)+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }

@@ -322,16 +322,64 @@ class PlayerPortal:
         pet.pop("rune", None)
         return {"exists": True, **pet}
 
+    def _slot_role_summary(self, player: dict, group_id: str = "", qq: str = "") -> dict:
+        """槽位摘要：修士(adventure) + 坐骑(mounts)，供绑定与门户展示共用。"""
+        adv = player.get("adventure") or {}
+        adventure = None
+        if adv.get("name"):
+            try:
+                from .adventure.power import compute_unified_power
+                from .adventure.combat import hero_sheet
+                from .adventure import content as advc
+                s = hero_sheet(adv, player)
+                _realm = int(adv.get("realm") or 0)
+                adventure = {
+                    "name": adv.get("name"),
+                    "profession": adv.get("profession"),
+                    "realm": advc.REALMS[_realm] if 0 <= _realm < len(advc.REALMS) else "",
+                    "level": adv.get("level", 1),
+                    "power": compute_unified_power(player, player.get("qq", "")),
+                    "hp": s.get("hp", 0),
+                    "atk": s.get("atk", 0),
+                    "def": s.get("def", 0),
+                    "spirit_root": adv.get("spirit_root"),
+                }
+            except Exception:
+                adventure = {"name": adv.get("name"), "profession": adv.get("profession"),
+                             "level": adv.get("level", 1)}
+        mounts = []
+        for mname, inst in (player.get("mounts") or {}).items():
+            cfg = data.MOUNTS.get(mname) or {}
+            entry = {
+                "name": mname,
+                "level": inst.get("level", 1),
+                "power": inst.get("power", cfg.get("base_power", 0)),
+                "custom": bool(inst.get("custom")),
+                "custom_image": inst.get("custom_image"),
+                "stars": cfg.get("stars", 0),
+                "remaining": self.store.remaining_custom_changes(player, "mount_image"),
+            }
+            if group_id and qq:
+                mreviews = self.store.get_custom_reviews(
+                    group_id, qq, kind="mount", mount_name=mname)
+                entry["pending"] = any(r.get("status") == "pending" for r in mreviews)
+                rejected = [r for r in mreviews if r.get("status") == "rejected"]
+                if rejected:
+                    entry["rejected_reason"] = rejected[-1].get("reason") or ""
+            mounts.append(entry)
+        return {"adventure": adventure, "mounts": mounts}
+
     def _player_summary(self, group_id: str, qq: str, pet_index: int = 0) -> dict:
         key = self.store.make_key(group_id, qq)
         player = self.store._data["players"].get(key)
         if not player:
-            raise web.HTTPNotFound(text="未找到该宠物")
+            raise web.HTTPNotFound(text="未找到该角色")
         pending = self.store.get_pet_custom_reviews(group_id, qq, status="pending")
         rejected = self.store.get_pet_custom_reviews(group_id, qq, status="rejected")
         # 只返回最近一条拒绝原因
         last_rejected = sorted(rejected, key=lambda x: x.get("created_at", 0), reverse=True)[:1]
         rp = self._resolve_player_pet(player, pet_index)
+        role = self._slot_role_summary(player, group_id, qq)
         return {
             "group_id": group_id,
             "qq": qq,
@@ -343,18 +391,20 @@ class PlayerPortal:
             "abyss": dict(self.store.abyss_state(player)),
             "stats": dict(player.get("stats", {})),
             "pet": self._format_pet(player, group_id, qq, pet_index),
+            "adventure": role["adventure"],
+            "mounts": role["mounts"],
             "cooldowns": self._cooldown_list(player, pet_index),
-            "skills": list(rp.get("skills", [])),
-            "artifact": rp.get("artifact"),
+            "skills": list(rp.get("skills", [])) if rp else [],
+            "artifact": rp.get("artifact") if rp else None,
             "artifact_names": list(data.ARTIFACTS.keys()),
             "skill_names": list(data.SKILLS.keys()),
             "custom_pending": pending,
             "custom_rejected": last_rejected,
             "custom_remaining": {
-                "image": self.store.remaining_custom_changes(player, "image"),
-                "species_name": self.store.remaining_custom_changes(player, "species_name"),
+                "image": self.store.remaining_custom_changes(player, "image") if rp else 0,
+                "species_name": self.store.remaining_custom_changes(player, "species_name") if rp else 0,
             },
-            "auto_cultivation": dict(rp.get("auto_cultivation", {})),
+            "auto_cultivation": dict(rp.get("auto_cultivation", {})) if rp else {},
         }
 
     def _cooldown_list(self, player: dict, pet_index: int = 0) -> list:
@@ -426,6 +476,8 @@ class PlayerPortal:
         app.router.add_post("/api/portal/auto_cultivation", self._api_auto_cultivation)
         app.router.add_post("/api/portal/custom_redeem", self._api_custom_redeem)
         app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
+        app.router.add_post("/api/portal/mount_custom_redeem", self._api_mount_custom_redeem)
+        app.router.add_post("/api/portal/mount_custom_submit", self._api_mount_custom_submit)
         app.router.add_post("/api/portal/use_item", self._api_use_item)
         app.router.add_get("/api/portal/item_info", self._api_item_info)
         app.router.add_post("/api/portal/redeem", self._api_redeem)
@@ -692,6 +744,23 @@ class PlayerPortal:
                 "quality": pet.get("quality", "普通") if pet else "普通",
                 "image_url": images.pet_image_url(pet.get("species")) if pet else None,
             })
+        slots = []
+        for slot in self.store.bound_slots_of(account):
+            key = self.store.make_key(slot["group"], slot["qq"])
+            player = self.store._data["players"].get(key)
+            if not player:
+                continue
+            role = self._slot_role_summary(player, slot["group"], slot["qq"])
+            slot_pets = [bp for bp in bound if bp["group_id"] == slot["group"] and bp["qq"] == slot["qq"]]
+            slots.append({
+                "group_id": slot["group"],
+                "qq": slot["qq"],
+                "pets": slot_pets,
+                "adventure": role["adventure"],
+                "mounts": role["mounts"],
+                "pet_count": len(player.get("pets", []) or []),
+                "mount_count": len(role["mounts"]),
+            })
         return web.json_response({
             "ok": True,
             "account": {
@@ -700,10 +769,11 @@ class PlayerPortal:
                 "email_masked": self._mask_email(account.get("email") or ""),
             },
             "bound_pets": bound,
+            "slots": slots,
         })
 
     async def _api_bind_query(self, request: web.Request) -> web.Response:
-        """查询指定群+用户ID 下的宠物列表，供绑定前选择。"""
+        """查询指定群+用户ID 槽位（修士/宠物/坐骑）概览，供绑定前确认。"""
         self._check_csrf(request)
         self._require_session(request)
         body = await request.json()
@@ -714,14 +784,12 @@ class PlayerPortal:
         key = self.store.make_key(group_id, qq)
         player = self.store._data["players"].get(key)
         if not player:
-            return web.json_response({"ok": False, "msg": "该群聊与用户 ID 下不存在宠物"})
-        existing = self.store.account_for_pet(group_id, qq)
+            return web.json_response({"ok": False, "msg": "该群聊与用户 ID 下不存在角色数据（修士/宠物/坐骑）"})
+        existing = self.store.account_for_slot(group_id, qq)
         if existing:
             # 已绑定则直接返回当前绑定信息
-            return web.json_response({"ok": False, "already_bound": True, "msg": "该宠物已被绑定"})
-        pets = player.get("pets", [])
-        if not pets:
-            return web.json_response({"ok": False, "msg": "该用户还没有宠物"})
+            return web.json_response({"ok": False, "already_bound": True, "msg": "该角色已被绑定"})
+        pets = player.get("pets", []) or []
         pet_list = []
         for i, pt in enumerate(pets):
             pet_list.append({
@@ -733,14 +801,21 @@ class PlayerPortal:
                 "stage": pt.get("stage", "幼年期"),
                 "element": pt.get("element", "未知"),
             })
-        return web.json_response({"ok": True, "pets": pet_list})
+        role = self._slot_role_summary(player, group_id, qq)
+        return web.json_response({
+            "ok": True,
+            "pets": pet_list,
+            "has_adventure": role["adventure"] is not None,
+            "adventure": role["adventure"],
+            "mounts": role["mounts"],
+        })
 
     async def _api_bind_auto(self, request: web.Request) -> web.Response:
-        """根据登录账号的绑定 QQ，自动列出各群名下宠物及其绑定情况（含群 ID + 用户 ID）。
+        """根据登录账号的绑定 QQ，自动列出各群名下角色槽位（修士/宠物/坐骑）及其绑定情况。
 
         匹配规则：玩家槽位 (group_id, user_id) 属于该账号，当且仅当
         - user_id == 账号绑定 QQ；或 user_id 经 qq_bindings 绑定到该 QQ（平台 openid → QQ号）。
-        返回每个名下宠物的绑定状态：none=未绑定 / me=已绑到本账号 / other=被其它网页账号绑定（可强要回）。
+        返回每个名下槽位的绑定状态：none=未绑定 / me=已绑到本账号 / other=被其它网页账号绑定（可强要回）。
         """
         self._check_csrf(request)
         sess = self._require_session(request)
@@ -758,8 +833,8 @@ class PlayerPortal:
         # 汇总 (群, 用户ID) -> 已绑定账号ID，用于判断绑定状态与归属。
         bound_map: dict[tuple[str, str], str] = {}
         for acc_id, acc in self.store.accounts().items():
-            for bp in acc.get("bound_pets", []):
-                bound_map[(str(bp.get("group")), str(bp.get("qq")))] = acc_id
+            for slot in self.store.bound_slots_of(acc):
+                bound_map[(str(slot.get("group")), str(slot.get("qq")))] = acc_id
         # 记录被其它账号绑定的账号 QQ，便于展示。
         acc_qq_map = {a_id: str(a.get("qq", "")) for a_id, a in self.store.accounts().items()}
         players = self.store._data.get("players", {})
@@ -772,8 +847,10 @@ class PlayerPortal:
             uid = str(uid)
             if uid not in cand_pids:
                 continue
-            pets = player.get("pets", [])
-            if not pets:
+            pets = player.get("pets", []) or []
+            adv = player.get("adventure") or {}
+            mounts = player.get("mounts") or {}
+            if not pets and not adv.get("name") and not mounts:
                 continue
             gid = str(gid)
             owner_id = bound_map.get((gid, uid))
@@ -796,16 +873,19 @@ class PlayerPortal:
                     "stage": pt.get("stage", "幼年期"),
                     "element": pt.get("element", "未知"),
                 })
-            if pet_list:
-                entry = {
-                    "qq": uid,
-                    "pet_count": len(pet_list),
-                    "bound": bound,
-                    "pets": pet_list,
-                }
-                if bound == "other":
-                    entry["bound_qq"] = self._mask_qq(acc_qq_map.get(owner_id, ""))
-                groups.setdefault(gid, []).append(entry)
+            role = self._slot_role_summary(player, gid, uid)
+            entry = {
+                "qq": uid,
+                "pet_count": len(pet_list),
+                "mount_count": len(mounts),
+                "has_adventure": role["adventure"] is not None,
+                "adventure_name": (role["adventure"] or {}).get("name"),
+                "bound": bound,
+                "pets": pet_list,
+            }
+            if bound == "other":
+                entry["bound_qq"] = self._mask_qq(acc_qq_map.get(owner_id, ""))
+            groups.setdefault(gid, []).append(entry)
         ordered = [{"group_id": g, "players": ps} for g, ps in groups.items()]
         return web.json_response({"ok": True, "qq": account_qq, "groups": ordered})
 
@@ -1021,6 +1101,106 @@ class PlayerPortal:
             "msg": "已提交审核，预计 3 个工作日内处理完毕",
             "review": review,
         })
+
+    async def _api_mount_custom_redeem(self, request: web.Request) -> web.Response:
+        """坐骑外观定制卡兑换：为绑定槽位下的指定坐骑解锁外观定制。"""
+        try:
+            self._check_csrf(request)
+            sess = self._require_session(request)
+            body = await request.json()
+            group_id = str(body.get("group_id", "")).strip()
+            qq = str(body.get("qq", "")).strip()
+            mount_name = str(body.get("mount_name", "")).strip()
+            code = str(body.get("code", "")).strip()
+            if not group_id or not qq or not mount_name or not code:
+                return web.json_response({"ok": False, "msg": "参数不完整"})
+            owner = self.store.account_for_slot(group_id, qq)
+            if owner != sess.get("aid"):
+                raise web.HTTPForbidden(text="你没有绑定该角色")
+            key = self.store.make_key(group_id, qq)
+            player = self.store._data["players"].get(key)
+            if not player:
+                return web.json_response({"ok": False, "msg": "未找到该角色"})
+            ok, msg = self.store.redeem_mount_custom_card(
+                code, player, sess.get("aid"), mount_name)
+            if not ok:
+                return web.json_response({"ok": False, "msg": msg})
+            await self.store.save()
+            role = self._slot_role_summary(player, group_id, qq)
+            return web.json_response({
+                "ok": True,
+                "msg": msg,
+                "mounts": role["mounts"],
+            })
+        except Exception as e:
+            logger.exception(f"[petpark] 坐骑定制卡兑换异常：{e}")
+            return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
+
+    async def _api_mount_custom_submit(self, request: web.Request) -> web.Response:
+        """坐骑外观提交审核：上传一张图替换指定坐骑外观（不改名字与战力）。"""
+        try:
+            self._check_csrf(request)
+            sess = self._require_session(request)
+            reader = await request.multipart()
+            fields: dict[str, str] = {}
+            file_data: Optional[bytes] = None
+            filename: Optional[str] = None
+            async for part in reader:
+                if part.filename:
+                    file_data = await part.read()
+                    filename = part.filename
+                else:
+                    fields[part.name] = await part.text()
+            group_id = str(fields.get("group_id", "")).strip()
+            qq = str(fields.get("qq", "")).strip()
+            mount_name = str(fields.get("mount_name", "")).strip()
+            if not group_id or not qq or not mount_name:
+                return web.json_response({"ok": False, "msg": "参数不完整"})
+            owner = self.store.account_for_slot(group_id, qq)
+            if owner != sess.get("aid"):
+                raise web.HTTPForbidden(text="你没有绑定该角色")
+            key = self.store.make_key(group_id, qq)
+            player = self.store._data["players"].get(key)
+            if not player:
+                return web.json_response({"ok": False, "msg": "未找到该角色"})
+            mounts = player.get("mounts") or {}
+            inst = mounts.get(mount_name)
+            if not inst:
+                return web.json_response({"ok": False, "msg": "未找到该坐骑"})
+            if not inst.get("custom"):
+                return web.json_response({"ok": False, "msg": "该坐骑尚未解锁外观定制，请先兑换「坐骑定制卡」"})
+            if not file_data:
+                return web.json_response({"ok": False, "msg": "请上传坐骑外观图片"})
+            ext = Path(filename).suffix.lower() if filename else ".jpg"
+            if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+                return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+            if len(file_data) > 5 * 1024 * 1024:
+                return web.json_response({"ok": False, "msg": "图片不能超过 5MB"})
+            new_filename = f"{secrets.token_hex(8)}{ext}"
+            path = self.store.custom_image_path(new_filename)
+            path.write_bytes(file_data)
+            review, err = self.store.create_custom_review(
+                sess.get("aid"), group_id, qq, {"image": new_filename},
+                kind="mount", mount_name=mount_name)
+            if err:
+                # 落盘但未通过校验（如次数用尽/重复提交）时回收临时图
+                try:
+                    if path.exists():
+                        path.unlink()
+                except OSError:
+                    pass
+                return web.json_response({"ok": False, "msg": err})
+            await self.store.save()
+            role = self._slot_role_summary(player, group_id, qq)
+            return web.json_response({
+                "ok": True,
+                "msg": "坐骑外观已提交审核，预计 3 个工作日内处理完毕",
+                "review": review,
+                "mounts": role["mounts"],
+            })
+        except Exception as e:
+            logger.exception(f"[petpark] 坐骑外观提交异常：{e}")
+            return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
 
     # --------------------------- 玩家反馈 ---------------------------
     _FEEDBACK_IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
@@ -1501,24 +1681,37 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <div class="layout">
   <aside class="sidebar">
     <div class="side-brand">灵契仙途 · 玩家中心</div>
-    <div class="side-sec">我的宠物</div>
+    <div class="side-sec">我的角色</div>
     <div class="side-pets">
-      <div v-for="(p,i) in pets" :key="p.group_id + ':' + p.qq" class="pet-chip"
-           :class="{active: current && current.group_id===p.group_id && current.qq===p.qq}" @click="loadPet(p)">
+      <div v-for="s in slots" :key="s.group_id + ':' + s.qq" class="pet-chip"
+           :class="{active: currentSlot && currentSlot.group_id===s.group_id && currentSlot.qq===s.qq}"
+           @click="switchSlot(s)">
+        <img :src="slotImage(s)" :alt="slotLabel(s)" style="object-fit:contain;background:#f6f7fb">
+        <div class="info">
+          <div class="name">{{ slotLabel(s) }}</div>
+          <div class="sub">{{ slotSub(s) }}</div>
+        </div>
+      </div>
+      <span v-if="!slots.length" class="muted" style="padding:0 8px">暂无绑定角色（修士/宠物/坐骑）</span>
+    </div>
+    <div v-if="slotPets.length" class="side-sec" style="margin-top:6px">宠物</div>
+    <div v-if="slotPets.length" class="side-pets">
+      <div v-for="(p,i) in slotPets" :key="'pet'+i" class="pet-chip"
+           :class="{active: current && current.group_id===p.group_id && current.qq===p.qq && (current.pet_index||0)===p.pet_index}"
+           @click="loadPet(p)">
         <img :src="p.image_url || blankImg" alt="">
         <div class="info">
           <div class="name">{{ p.nickname }}</div>
           <div class="sub">Lv{{ p.level }} · {{ p.quality }}</div>
         </div>
       </div>
-      <span v-if="!pets.length" class="muted" style="padding:0 8px">暂无绑定宠物</span>
     </div>
     <div class="side-btns">
-      <el-button type="primary" plain round @click="openBind()">＋ 绑定新宠物</el-button>
+      <el-button type="primary" plain round @click="openBind()">＋ 绑定角色</el-button>
       <el-button type="success" round @click="goChat">💬 宠物对话</el-button>
       <el-button type="warning" round @click="goFeedback">📣 问题反馈</el-button>
     </div>
-    <p class="side-tip">绑定后可在不同群号 / 用户ID 之间切换查看宠物。</p>
+    <p class="side-tip">绑定群号+用户ID 一次，其下修士/宠物/坐骑即可统一管理。</p>
     <div class="side-foot">
       <div class="side-user" v-if="account">QQ {{ account.qq }}</div>
       <div class="side-foot-btns">
@@ -1614,7 +1807,41 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               :title="'审核未通过：' + (r.reason || '未说明原因')"></el-alert>
           </div>
         </div>
-        <div v-else class="card empty-tip">该账号下暂无宠物</div>
+        <div v-else class="card empty-tip">{{ (data && (data.adventure || (data.mounts && data.mounts.length))) ? '该角色暂无宠物，可在下方查看修士与坐骑' : '该账号下暂无宠物' }}</div>
+
+        <template v-if="data && (data.adventure || (data.mounts && data.mounts.length))">
+          <div class="sec-title">我的修士 / 坐骑</div>
+          <div class="card" v-if="data.adventure" style="margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <div style="font-size:17px;font-weight:800">☯ {{ data.adventure.name || '未名修士' }}
+                  <span style="font-size:12px;color:var(--brand2);margin-left:6px">{{ data.adventure.profession }}</span></div>
+                <div style="font-size:12.5px;color:var(--muted);margin:4px 0 2px">{{ data.adventure.realm }} · Lv{{ data.adventure.level }} · 灵根 {{ data.adventure.spirit_root || '无' }}</div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:#4a5470">
+                  <span>⚔️ 总战力 {{ fmt(data.adventure.power) }}</span>
+                  <span>❤️ 性命 {{ fmt(data.adventure.hp) }}</span>
+                  <span>⚔ 攻击 {{ fmt(data.adventure.atk) }}</span>
+                  <span>🛡 防御 {{ fmt(data.adventure.def) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card" v-if="data.mounts && data.mounts.length">
+            <div class="muted" style="font-size:12px;margin-bottom:8px">坐骑外观定制仅改变形象，不影响名字与战力。</div>
+            <div v-for="m in data.mounts" :key="m.name"
+                 style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:700">{{ m.name }}
+                  <el-tag v-if="m.custom" type="success" size="small" effect="light" round style="margin-left:6px">✨ 已解锁定制</el-tag>
+                  <el-tag v-else size="small" effect="plain" round style="margin-left:6px">未定制</el-tag>
+                </div>
+                <div class="muted" style="font-size:12px;margin-top:2px">★{{ m.stars }} · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
+              </div>
+              <el-button v-if="m.custom" type="primary" round size="small" @click="openMountCustom(m)">🎨 外观定制</el-button>
+              <el-button v-else type="primary" plain round size="small" @click="openMountRedeem(m)">🔑 卡密解锁定制</el-button>
+            </div>
+          </div>
+        </template>
 
         <div class="sec-title">我的财产</div>
         <div class="wallet">
@@ -1679,50 +1906,80 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
   </section>
 </div>
 
-<!-- 绑定新宠物 -->
-<el-dialog v-model="bind.show" title="＋ 绑定新宠物" width="460px" align-center>
+<!-- 绑定角色（槽位） -->
+<el-dialog v-model="bind.show" title="＋ 绑定角色（修士/宠物/坐骑）" width="480px" align-center>
   <div v-if="auto.loading" class="muted" style="padding:4px 2px 8px">🔍 正在自动识别（按登录 QQ {{ auto.qq || '...' }}）…</div>
   <div v-else-if="auto.list && auto.list.length" style="margin-bottom:10px">
-    <div style="color:#8f97ab;font-size:12px;margin:0 0 6px">✅ 已按登录 QQ（{{ auto.qq }}）自动列出名下宠物及绑定情况：未绑定点「选择」、被其它账号绑定的可「强要回」。</div>
-    <div style="max-height:230px;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:8px">
+    <div style="color:#8f97ab;font-size:12px;margin:0 0 6px">✅ 已按登录 QQ（{{ auto.qq }}）自动列出名下角色：未绑定点「选择」、被其它账号绑定的可「强要回」。每个（群号+用户ID）只需绑定一次。</div>
+    <div style="max-height:240px;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:8px">
       <div v-for="grp in auto.list" :key="grp.group_id" style="padding:8px;border-bottom:1px solid rgba(255,255,255,.06)">
         <div style="font-size:12px;color:#cfd6e4;margin-bottom:2px"><b>群 ID</b> <code>{{ grp.group_id }}</code></div>
         <div v-for="pl in grp.players" :key="grp.group_id + '|' + pl.qq" style="padding:6px 0 6px 10px">
-          <div style="font-size:12px;color:#aeb6c9">用户ID <code>{{ pl.qq }}</code>　共 {{ pl.pet_count }} 只
-            <span v-if="pl.bound==='other'" style="color:#f56c6c">　⚠️ 已被其它账号绑定<span v-if="pl.bound_qq">（{{ pl.bound_qq }}）</span>，可强要回</span>
-            <span v-else-if="pl.bound==='me'" style="color:#67c23a">　✅ 已绑定到本账号</span>
-          </div>
-          <div v-for="pt in pl.pets" :key="pt.index" style="display:flex;align-items:center;gap:8px;margin:3px 0 3px 8px">
-            <span style="flex:1;font-size:12px;color:#e6e9f0">{{ pt.nickname }}　{{ pt.species }}　{{ pt.quality }}　Lv{{ pt.level }}　{{ pt.stage }}</span>
-            <el-button v-if="pl.bound==='other'" size="small" round plain type="danger" @click="reclaimBind(grp.group_id, pl.qq, pt.index)">强要回</el-button>
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#e6e9f0">
+            <span style="flex:1;min-width:0">用户ID <code>{{ pl.qq }}</code>
+              <span style="color:#aeb6c9">{{ pl.has_adventure ? '修士' + (pl.adventure_name ? '·' + pl.adventure_name : '') + ' ' : '' }}{{ pl.pet_count ? '宠物'+pl.pet_count+'只 ' : '' }}{{ pl.mount_count ? '坐骑'+pl.mount_count+'只' : '' }}</span>
+            </span>
+            <el-button v-if="pl.bound==='other'" size="small" round plain type="danger" @click="reclaimBind(grp.group_id, pl.qq, 0)">强要回</el-button>
             <el-button v-else-if="pl.bound==='me'" size="small" round plain disabled>已绑定</el-button>
-            <el-button v-else size="small" round plain type="primary" @click="pickAuto(grp.group_id, pl.qq, pt.index)">选择</el-button>
+            <el-button v-else size="small" round plain type="primary" @click="pickAuto(grp.group_id, pl.qq, 0)">选择</el-button>
           </div>
         </div>
       </div>
     </div>
   </div>
-  <div v-else-if="!auto.loading" class="muted" style="padding:4px 2px 8px">未找到可通过登录 QQ（{{ auto.qq || '未绑定QQ' }}）自动匹配的宠物，请在下方手动输入群号与用户 ID。</div>
-  <el-form label-position="top" @submit.prevent="doBind">
+  <div v-else-if="!auto.loading" class="muted" style="padding:4px 2px 8px">未找到可通过登录 QQ（{{ auto.qq || '未绑定QQ' }}）自动匹配的角色，请在下方手动输入群号与用户 ID。</div>
+  <el-form label-position="top" @submit.prevent="doBindQuery">
     <el-form-item label="群号">
-      <el-input v-model="bind.group" placeholder="宠物所在的 QQ 群号" clearable></el-input>
+      <el-input v-model="bind.group" placeholder="角色所在的 QQ 群号" clearable></el-input>
     </el-form-item>
-    <el-form-item label="绑定用户ID">
-      <el-input v-model="bind.qq" placeholder="你在该群使用灵契仙途的用户 ID" clearable @keyup.enter="doBind"></el-input>
-    </el-form-item>
-  </el-form>
-  <p class="muted">输入群号和用户 ID 后先查询宠物列表，再选择要绑定的宠物。</p>
-  <el-form v-if="bind.pets && bind.pets.length && !bind.querying" label-position="top">
-    <el-form-item label="选择要绑定的宠物">
-      <el-select v-model="bind.petIndex" style="width:100%">
-        <el-option v-for="pt in bind.pets" :key="pt.index" :label="pt.nickname + '  ' + pt.species + '  ' + pt.quality + ' Lv' + pt.level + '  ' + pt.stage" :value="pt.index"></el-option>
-      </el-select>
+    <el-form-item label="用户ID / QQ">
+      <el-input v-model="bind.qq" placeholder="你在该群使用灵契仙途的用户 ID" clearable @keyup.enter="doBindQuery"></el-input>
     </el-form-item>
   </el-form>
+  <div v-if="bind.info && !bind.querying" style="padding:10px 12px;border-radius:10px;border:1px solid rgba(103,194,58,.35);background:rgba(103,194,58,.08);font-size:13px;color:#e8ffe9">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>将绑定：{{ bind.info.has_adventure ? '修士' + (bind.info.adventure.name ? '『' + bind.info.adventure.name + '』' : '') + ' ' : '' }}{{ (bind.info.pets||[]).length ? '宠物 ' + (bind.info.pets||[]).length + ' 只 ' : '' }}{{ (bind.info.mounts||[]).length ? '坐骑 ' + (bind.info.mounts||[]).length + ' 只' : '' }}</span>
+    </div>
+  </div>
+  <div v-if="bind.error" style="padding:8px 10px;border-radius:8px;background:rgba(245,108,108,.12);border:1px solid rgba(245,108,108,.3);color:#ffb7b7;font-size:12.5px;margin-bottom:4px">{{ bind.error }}</div>
   <template #footer>
     <el-button round @click="bind.show=false">取消</el-button>
-    <el-button v-if="bind.pets && bind.pets.length" type="primary" round :loading="bind.loading" @click="doBind">绑定</el-button>
-    <el-button v-else type="primary" round :loading="bind.querying" @click="doBindQuery">查询宠物</el-button>
+    <el-button type="primary" round :loading="bind.querying" @click="doBindQuery">查询角色</el-button>
+    <el-button v-if="bind.info" type="success" round :loading="bind.loading" @click="doBind">绑定该角色</el-button>
+  </template>
+</el-dialog>
+
+<!-- 坐骑外观定制 -->
+<el-dialog v-model="mountC.dialog" title="🎨 坐骑外观定制" width="480px" align-center>
+  <div v-if="!mountC.m" class="muted">请先选择一只坐骑。</div>
+  <template v-else>
+    <div style="font-size:14px;margin-bottom:4px">坐骑：{{ mountC.m.name }}
+      <span style="font-size:12px;color:var(--muted)">★{{ mountC.m.stars }} · Lv{{ mountC.m.level }} · 战力 {{ fmt(mountC.m.power) }}</span>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:6px 0 12px">外观定制只替换显示形象（群聊入场/坐骑卡片/玩家中心），<b>不会改变坐骑名字与战力</b>。</p>
+    <div v-if="!mountC.m.custom" style="padding:12px;border-radius:10px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.06);margin-bottom:10px">
+      <div style="font-size:13px;margin-bottom:8px">该坐骑尚未解锁，请输入「坐骑定制卡」卡密解锁：</div>
+      <div style="display:flex;gap:8px">
+        <el-input v-model="mountC.code" placeholder="坐骑定制卡密" clearable @keyup.enter="doMountRedeem"></el-input>
+        <el-button type="primary" round :loading="mountC.redeeming" @click="doMountRedeem">解锁</el-button>
+      </div>
+    </div>
+    <template v-else>
+      <el-alert v-if="mountC.m.pending" type="warning" :closable="false" style="margin-bottom:10px" title="已有外观修改待审核，审核通过后自动生效"></el-alert>
+      <el-alert v-if="mountC.m.rejected_reason" type="error" :closable="false" style="margin-bottom:10px" :title="'上次审核未通过：' + mountC.m.rejected_reason"></el-alert>
+      <div class="upload-zone" @click="pickMountImage">
+        <div class="upload-plus">＋</div>
+        <div class="upload-text">{{ mountC.file ? '已选择：' + mountC.file.name : '点击上传坐骑外观图' }}</div>
+        <div class="upload-hint">支持 JPG / PNG / GIF / WebP，≤5MB；建议正方形或带透明底图。本月剩余 {{ mountC.m.remaining }} 次</div>
+      </div>
+      <input ref="mountFileInput" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" style="display:none" @change="onMountFile">
+      <div v-if="mountC.preview" class="crop-preview"><img :src="mountC.preview" alt="坐骑外观预览"></div>
+      <p class="muted" style="font-size:12.5px;margin-top:8px">提交后将进入人工审核，预计 3 个工作日内处理。审核期间可随时查看结果。</p>
+    </template>
+  </template>
+  <template #footer>
+    <el-button round @click="mountC.dialog=false">关闭</el-button>
+    <el-button v-if="mountC.m && mountC.m.custom" type="primary" round :disabled="mountC.m.pending || !mountC.file" :loading="mountC.submitting" @click="doMountSubmit">提交审核</el-button>
   </template>
 </el-dialog>
 
@@ -1824,9 +2081,32 @@ createApp({
   setup(){
     const account = ref(null);
     const pets = ref([]);
+    const slots = ref([]);
     const current = ref(null);
+    const currentSlot = ref(null);
     const data = ref(null);
     const pet = computed(()=> data.value ? data.value.pet : null);
+    const slotPets = computed(()=> {
+      const c = currentSlot.value;
+      if(!c) return [];
+      return (pets.value||[]).filter(p=>p.group_id===c.group_id && p.qq===c.qq);
+    });
+    function slotLabel(s){
+      if(s.adventure && s.adventure.name) return '修士 · ' + s.adventure.name;
+      if((s.pets||[]).length) return (s.pets[0].nickname||'角色');
+      return '角色';
+    }
+    function slotSub(s){
+      const parts=[];
+      if(s.adventure && s.adventure.name) parts.push((s.adventure.realm||'') + ' Lv' + (s.adventure.level||1));
+      if(s.pet_count) parts.push('宠物 '+s.pet_count);
+      if(s.mount_count) parts.push('坐骑 '+s.mount_count);
+      return parts.join(' · ') || '未绑定?';
+    }
+    function slotImage(s){
+      if((s.pets||[]).length && s.pets[0].image_url) return s.pets[0].image_url;
+      return blankImg;
+    }
     const petLoading = ref(false);
     const now = ref(Math.floor(Date.now()/1000));
     setInterval(()=>{ now.value = Math.floor(Date.now()/1000); }, 1000);
@@ -1841,7 +2121,7 @@ createApp({
     const cooldowns = ref([]);
     const autoCultivating = ref(false);
 
-    const bind = reactive({show:false, group:'', qq:'', loading:false, querying:false, pets:null, petIndex:0});
+    const bind = reactive({show:false, group:'', qq:'', loading:false, querying:false, info:null, error:'', petIndex:0});
     const auto = reactive({loading:false, list:null, qq:''});
     const pwd = reactive({show:false, code:'', n1:'', n2:'', loading:false, sending:false, countdown:0});
     let pwdCdTimer = null;
@@ -1866,15 +2146,23 @@ createApp({
       if(!me || !me.ok){ location.href = '/'; return; }
       account.value = me.account;
       pets.value = me.bound_pets || [];
+      slots.value = me.slots || [];
       if(location.hash === '#feedback'){
         location.href = '/feedback';
         return;
       }
-      if(pets.value.length) await loadPet(pets.value[0]);
+      const first = slots.value[0];
+      if(!first){ currentSlot.value = null; data.value = null; return; }
+      if(first.pets && first.pets.length){
+        await loadPet(first.pets[0]);
+      } else {
+        await loadPet({group_id:first.group_id, qq:first.qq, pet_index:0});
+      }
     }
 
     async function loadPet(p){
       current.value = p;
+      currentSlot.value = {group_id: p.group_id, qq: p.qq};
       petLoading.value = true;
       try{
         const d = await api(`/api/portal/pet?group_id=${encodeURIComponent(p.group_id)}&qq=${encodeURIComponent(p.qq)}&pet_index=${p.pet_index||0}`);
@@ -1893,9 +2181,15 @@ createApp({
       } finally { petLoading.value = false; }
     }
 
+    function switchSlot(s){
+      if(!s) return;
+      if(s.pets && s.pets.length){ loadPet(s.pets[0]); }
+      else { loadPet({group_id:s.group_id, qq:s.qq, pet_index:0}); }
+    }
+
     async function refreshAll(){
       const me = await api('/api/portal/me');
-      if(me && me.ok){ account.value = me.account; pets.value = me.bound_pets || []; }
+      if(me && me.ok){ account.value = me.account; pets.value = me.bound_pets || []; slots.value = me.slots || []; }
       if(current.value) await loadPet(current.value);
     }
 
@@ -1929,7 +2223,7 @@ createApp({
 
     // ---- 绑定 ----
     async function openBind(){
-      bind.show = true; bind.pets = null; bind.petIndex = 0;
+      bind.show = true; bind.info = null; bind.error=''; bind.petIndex = 0;
       await doBindAuto();
     }
     async function doBindAuto(){
@@ -1941,28 +2235,26 @@ createApp({
       } finally { auto.loading = false; }
     }
     async function pickAuto(g, q, idx){
-      bind.group = g; bind.qq = q; bind.pets = null; bind.petIndex = idx || 0;
-      await doBindQuery();
+      bind.group = g; bind.qq = q; bind.info = null; bind.error=''; bind.petIndex = idx || 0;
+      await doBind();
     }
     async function reclaimBind(g, q, idx){
       if(!g || !q){ return; }
-      try{ await ElMessageBox.confirm('确定要强行要回该宠物的绑定权吗？这会把该宠物的网页绑定权改到你的账号。','强要确认',{type:'warning'}); }
+      try{ await ElMessageBox.confirm('确定要强行要回该角色的绑定权吗？该 (群号+用户ID) 下的修士/宠物/坐骑将改绑到你的账号。','强要确认',{type:'warning'}); }
       catch(e){ return; }
-      const r = await api('/api/portal/bind/reclaim','POST',{group_id:g, qq:q, pet_index:idx});
+      const r = await api('/api/portal/bind/reclaim','POST',{group_id:g, qq:q, pet_index:idx||0});
       if(r && r.ok){ ElMessage.success(r.msg || '已强行要回绑定权'); await init(); await doBindAuto(); }
       else { ElMessage.error((r && r.msg) || '强要失败'); }
     }
     async function doBindQuery(){
       const g = bind.group.trim(), q = bind.qq.trim();
       if(!g || !q){ ElMessage.warning('群号和用户 ID 不能为空'); return; }
-      bind.querying = true; bind.pets = null; bind.petIndex = 0;
+      bind.querying = true; bind.info = null; bind.error=''; bind.petIndex = 0;
       try{
         const r = await api('/api/portal/bind/query','POST',{group_id:g, qq:q});
-        if(r && r.ok){
-          bind.pets = r.pets || [];
-          if(bind.pets.length) bind.petIndex = bind.pets[0].index;
-          else ElMessage.warning('该玩家暂无宠物');
-        } else { ElMessage.error((r && r.msg) || '查询失败'); }
+        if(r && r.ok){ bind.info = r; }
+        else if(r && r.already_bound){ bind.error = r.msg || '该角色已被绑定'; }
+        else { bind.error = (r && r.msg) || '查询失败'; }
       } finally { bind.querying = false; }
     }
     async function doBind(){
@@ -1970,10 +2262,52 @@ createApp({
       if(!g || !q){ ElMessage.warning('群号和用户 ID 不能为空'); return; }
       bind.loading = true;
       try{
-        const r = await api('/api/portal/bind','POST',{group_id:g, qq:q, pet_index:bind.petIndex});
-        if(r && r.ok){ ElMessage.success(r.msg || '绑定成功'); bind.show=false; bind.group=''; bind.qq=''; bind.pets=null; bind.petIndex=0; await init(); }
+        const r = await api('/api/portal/bind','POST',{group_id:g, qq:q, pet_index:bind.petIndex||0});
+        if(r && r.ok){ ElMessage.success(r.msg || '绑定成功'); bind.show=false; bind.group=''; bind.qq=''; bind.info=null; bind.error=''; bind.petIndex=0; await init(); }
         else { ElMessage.error((r && r.msg) || '绑定失败'); }
       } finally { bind.loading = false; }
+    }
+
+    // ---- 坐骑外观定制 ----
+    const mountFileInput = ref(null);
+    const mountC = reactive({dialog:false, m:null, code:'', redeeming:false, file:null, preview:'', submitting:false});
+    function openMountRedeem(m){ mountC.m = m; mountC.code=''; mountC.dialog = true; }
+    function openMountCustom(m){ mountC.m = m; mountC.file = null; mountC.preview = ''; mountC.dialog = true; }
+    function currentSlotId(){ return (data.value && {group_id:data.value.group_id, qq:data.value.qq}) || (currentSlot.value || {}); }
+    function pickMountImage(){ if(!mountFileInput.value) return; mountFileInput.value.click(); }
+    function onMountFile(e){
+      const f = e.target.files && e.target.files[0];
+      if(!f) return;
+      if(!/\.(jpe?g|png|gif|webp)$/i.test(f.name)){ ElMessage.error('仅支持 jpg/png/gif/webp 图片'); e.target.value=''; return; }
+      if(f.size > 5*1024*1024){ ElMessage.error('图片不能超过 5MB'); e.target.value=''; return; }
+      mountC.file = f;
+      mountC.preview = URL.createObjectURL(f);
+    }
+    async function doMountRedeem(){
+      const id = currentSlotId();
+      if(!id.group_id || !id.qq || !mountC.m){ ElMessage.warning('请先绑定并选择角色'); return; }
+      if(!mountC.code.trim()){ ElMessage.warning('请输入坐骑定制卡密'); return; }
+      mountC.redeeming = true;
+      try{
+        const r = await api('/api/portal/mount_custom_redeem','POST',{group_id:id.group_id, qq:id.qq, mount_name:mountC.m.name, code:mountC.code.trim()});
+        if(r && r.ok){ ElMessage.success(r.msg || '解锁成功'); if(r.mounts) data.value.mounts = r.mounts; mountC.m = (r.mounts||[]).find(x=>x.name===mountC.m.name) || mountC.m; mountC.code=''; }
+        else { ElMessage.error((r && r.msg) || '解锁失败'); }
+      } finally { mountC.redeeming = false; }
+    }
+    async function doMountSubmit(){
+      const id = currentSlotId();
+      if(!id.group_id || !id.qq || !mountC.m || !mountC.file){ ElMessage.warning('请先选择外观图片'); return; }
+      mountC.submitting = true;
+      try{
+        const fd = new FormData();
+        fd.append('group_id', id.group_id); fd.append('qq', id.qq);
+        fd.append('mount_name', mountC.m.name); fd.append('image', mountC.file);
+        const resp = await fetch('/api/portal/mount_custom_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
+        if(resp.status === 401 || resp.status === 403){ location.href = '/'; return null; }
+        const r = await resp.json().catch(()=>null);
+        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mounts){ data.value.mounts = r.mounts; mountC.m = (r.mounts||[]).find(x=>x.name===mountC.m.name) || mountC.m; } mountC.file=null; mountC.preview=''; }
+        else { ElMessage.error((r && r.msg) || '提交失败'); }
+      } finally { mountC.submitting = false; }
     }
 
     // ---- 修改密码 ----
@@ -2170,6 +2504,8 @@ createApp({
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       bind, pwd, custom, crop,
       auto,
+      slots, currentSlot, slotPets, slotLabel, slotSub, slotImage, switchSlot,
+      mountFileInput, mountC, openMountRedeem, openMountCustom, pickMountImage, onMountFile, doMountRedeem, doMountSubmit,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
       loadPet, logout, openBind, doBindAuto, pickAuto, reclaimBind, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       goFeedback, goChat,
