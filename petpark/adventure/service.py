@@ -127,6 +127,14 @@ class AdventureService:
             if u['side']==0 and u['kind']=='hero':
                 m=r['metrics'][u['owner']]
                 lines.append(f"{u['name']}与灵宠：伤害{m['damage']} · 治疗{m['healing']} · 护盾吸收{m['absorbed']}")
+        # 战后存活血量：让玩家直观看到修士/灵宠在本场战斗里掉了多少血。
+        # 只统计带 hp/max_hp 的单位（兼容测试 mock 的最小战报结构）。
+        hp_line = " · ".join(
+            f"{u['name']}血量{u['hp']}/{u['max_hp']}（{int(u['hp'] / u['max_hp'] * 100)}%）"
+            for u in r['units']
+            if u['side'] == 0 and isinstance(u.get('hp'), int) and isinstance(u.get('max_hp'), int) and u['max_hp'] > 0)
+        if hp_line:
+            lines.append(f"战后血量：{hp_line}")
         lines.append("发送「战斗详情」查看完整战报。")
         return "\n".join(lines)
 
@@ -305,10 +313,17 @@ class AdventureService:
             _stamina = f"{a.get('stamina', 100)}/{a.get('stamina_max', 100)}"
             cap = c.realm_cap(a["realm"])
             cap_hint = "" if a["realm"] >= len(c.REALMS) - 1 else f"\n境界封顶 Lv{cap}（满级后「渡劫」破境）"
+            # 道侣信息（与修士卡/宠物卡同口径：状态存于结契灵宠）
+            _love = (p.get('pets') or [{}])[0]
+            if _love.get('love_state', '单身') != '单身':
+                _daolv_line = f"道侣：{_love.get('love_state')}（好感 {_love.get('favor', 0)}）\n"
+            else:
+                _daolv_line = "道侣：未结道侣（结道侣 用户ID 可缔结情缘）\n"
             return (f"## 灵契仙途 · {a['profession']}\n道号 {a['name']} · {a['gender']} · {c.REALMS[a['realm']]} Lv{a['level']} · 修为 {a['cultivation']}\n"
                     f"灵根：{_root}（{c.root_bonus(a.get('spirit_root') or '')}） · 属性：{c.element_line(c.hero_element(a))} · 神通：{tactics}\n"
                     f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n{power_lines}\n性命 {s['hp']} · 攻击 {s['atk']} · 防御 {s['def']} · 速度 {s['speed']}\n"
                     f"悟性 {s['wudao']} · 根骨 {s['gengu']}\n功法：{a['style']} · 灵宠：{units[1]['name']}（{c.element_line(units[1].get('element'))} · {a['pet_role']}）\n"
+                    f"{_daolv_line}"
                     f"灵材 {a['ore']} · 体力 {_stamina}（每1分钟回1，醒神丹翻倍；宗门任务10/探索20/镇守15） · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3"
                     f"{cap_hint}\n"
                     f"下一步：历练 {nxt}（{c.MAPS[str(nxt)]['name']}）\n修士修炼 · 修士突破 · 修士装备 · 渡劫 · 道号 · 性别")

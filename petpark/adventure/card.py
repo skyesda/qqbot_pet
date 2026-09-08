@@ -79,6 +79,18 @@ def card_html(player, key, equipment=False):
     # 结契灵宠属性：随战斗克制生效，原图未展示，补上并标出相克。
     _companion = next((p for p in player.get("pets", []) if p.get("pet_id") == a.get("companion_pet_id")), None)
     pet_element = c.element_line(_companion.get("element")) if _companion else "无属性"
+    # 道侣信息：与宠物卡「羁绊/伴侣」同口径——道侣状态存于结契灵宠（与 power.py 道侣判定一致）。
+    _pet0 = (player.get("pets") or [{}])[0]
+    _love = _pet0.get("love_state", "单身")
+    if _love == "已婚":
+        _daolv_b = "已婚 · 道侣相伴"
+        _daolv_s = f"道侣：{_pet0.get('love_target') or '未知'} · 好感 {_pet0.get('favor', 0)} · 战力×1.15 · 修为+20%"
+    elif _love == "恋爱":
+        _daolv_b = "恋爱中 · 情缘未满"
+        _daolv_s = f"意中人：{_pet0.get('love_target') or '未知'} · 好感 {_pet0.get('favor', 0)} · 求婚成婚后再享加成"
+    else:
+        _daolv_b = "未结道侣"
+        _daolv_s = "可与其他修士结道侣：结道侣 用户ID"
     details = (f'<div class="power-formula"><span>战力构成</span>'
                f'<b>本体 {bd["hero"]} <i>＋</i> 灵宠 {bd["pet_contrib"]} <i>＋</i> 坐骑 {bd["mount_contrib"]}</b>'
                f'<small>灵宠计 15% · 坐骑计 10% · 道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}</small></div>') if bd else ""
@@ -98,6 +110,7 @@ def card_html(player, key, equipment=False):
         f'<div class="info-card stamina"><span>当前体力</span><b>{_st}/{_mx}</b>{_stamina_bar}<small>每分钟恢复 1 点</small></div>'
         f'<div class="info-card"><span>战斗配置</span><b>{escape(str(a["style"]))} · {escape(str(a.get("pet_role", "攻击")))}</b><small>{escape(str(bd["pet_name"] if bd else "引路灵蝶"))} · {escape(str(pet_element))}</small></div>'
         f'<div class="info-card progress"><span>修炼进度</span><b>{escape(str(level_msg))}</b><small>悟性点 {a.get("insight", 0)} 可用</small></div>'
+        f'<div class="info-card daolv"><span>道侣情缘</span><b>{escape(_daolv_b)}</b><small>{escape(_daolv_s)}</small></div>'
         '</div>')
     footer = ('<div class="actions">'
               '<div><b>装备养成</b><span>锻造 · 装备进阶 · 洗炼</span><small>格式：指令＋装备名</small></div>'

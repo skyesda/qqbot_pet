@@ -148,6 +148,11 @@ def simulate(party, opposition, seed, max_rounds=24):
             return 0
         raw *= counter_mult(source, target)
         amount = max(1, int(raw * 100 / (100 + target["defense"] * (1 - pierce))))
+        # 高等级防御膨胀会把敌方打我方的伤害压到近乎为0（表现为「修士/宠物血量不掉」）。
+        # 给一个有界下限：修士/灵宠每次被命中至少损失最大生命 2%（对 boss/add 不设下限，
+        # 我方输出伤害与属性克制/剑修爆发等不受影响），保证任何阶段的战斗血量都真实流动。
+        if target.get("kind") in ("hero", "pet"):
+            amount = max(amount, max(1, int(target["max_hp"] * .02)))
         absorbed = min(target["shield"], amount)
         target["shield"] -= absorbed
         metrics[target["owner"]]["absorbed"] += absorbed
@@ -158,7 +163,8 @@ def simulate(party, opposition, seed, max_rounds=24):
             log(round_no, f"{target['name']}触发不死之体，保住一命")
         target["hp"] -= dealt
         if source['side'] == 0 or source['kind'] == 'boss':
-            log(round_no, f"{source['name']}攻击{target['name']}，伤害{dealt}" + (f"（护盾吸收{absorbed}）" if absorbed else ""))
+            hp_note = f"（{target['name']}血量{target['hp']}/{target['max_hp']}）" if target["hp"] > 0 else ""
+            log(round_no, f"{source['name']}攻击{target['name']}，伤害{dealt}" + (f"（护盾吸收{absorbed}）" if absorbed else "") + hp_note)
         metrics[source["owner"]]["damage"] += dealt
         metrics[target["owner"]]["taken"] += dealt
         if target["hp"] == 0:
