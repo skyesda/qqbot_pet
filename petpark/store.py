@@ -2055,7 +2055,8 @@ class PetStore:
                 "custom_image": new_img,
                 "level": 1,
                 "power": 300000,
-                "stars": 4,
+                "stars": 5,
+                "value": 200_000_000,  # 价值与官方最高档（阴阳镇世 2 亿）持平
                 "plate": "定-" + str(hash(new_name) % 1000).zfill(3),
                 # 入场奖励与定制宠物同档：20万~30万 玄晶
                 "reward_min": 200_000,

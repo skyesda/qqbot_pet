@@ -7779,6 +7779,15 @@ class PetParkPlugin(Star):
             return f"![{name}]({url})"
         return f"![{name} #{w} #{h}]({url})"
 
+    def _mount_value(self, name: str, player: dict | None = None) -> int:
+        """坐骑价值：实例 > 官方配置；定制坐骑缺省时按最高档 2 亿。"""
+        inst = ((player or {}).get("mounts") or {}).get(name) or {}
+        cfg = data.MOUNTS.get(name, {})
+        v = int(inst.get("value") or cfg.get("value") or 0)
+        if not v and inst.get("custom"):
+            v = 200_000_000
+        return v
+
     def _mount_reward_range(self, name: str, player: dict | None = None) -> tuple[int, int]:
         """入场奖励区间（玄晶）：实例配置 > 官方配置；定制坐骑缺省时按定制档 20万~30万。"""
         inst = ((player or {}).get("mounts") or {}).get(name) or {}
@@ -7800,7 +7809,7 @@ class PetParkPlugin(Star):
         plate = inst.get("plate", "骑-?") if owned else "未拥有"
         level = int(inst.get("level", 1))
         power = int(inst.get("power", cfg.get("base_power", 0)))
-        value = self._short_num(cfg.get("value", 0))
+        value = self._short_num(self._mount_value(name, player))
         rmin, rmax = self._mount_reward_range(name, player)
         now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
         theme = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
@@ -7842,7 +7851,7 @@ class PetParkPlugin(Star):
         plate = inst.get("plate", "骑-?")
         level = int(inst.get("level", 1))
         power = int(inst.get("power", cfg.get("base_power", 0)))
-        value = self._short_num(cfg.get("value", 0))
+        value = self._short_num(self._mount_value(name, player))
         rmin, rmax = self._mount_reward_range(name, player)
         now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
         theme_word = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
