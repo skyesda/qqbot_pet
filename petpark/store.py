@@ -1988,6 +1988,36 @@ class PetStore:
             # 提交即占位扣减资格；若后台驳回将返还（reject_custom_review）
             player["mount_custom_slots"] = max(0, int(player.get("mount_custom_slots", 0) or 0) - 1)
             return review, ""  # 成功时 err 必须为空（portal 以 err 非空判定失败并回收图片）
+        if kind == "mount_image":
+            # 更换已有定制坐骑的外观图（每月 3 次，通过审核后生效并计数）
+            new_name = str(changes.get("name") or mount_name or "").strip()
+            inst = (player.get("mounts") or {}).get(new_name)
+            if not new_name or not inst or not inst.get("custom"):
+                return None, "未找到该定制坐骑"
+            if not changes.get("image"):
+                return None, "请上传新的外观图片"
+            if not self.can_custom_change(player, "mount_image"):
+                return None, "本月坐骑外观更换次数已达 3 次上限"
+            if self.get_custom_reviews(group_id, qq, kind="mount_image",
+                                       mount_name=new_name, status="pending"):
+                return None, "该坐骑已有待审核的外观更换申请"
+            review_id = secrets.token_hex(8)
+            now = int(time.time())
+            review = {
+                "id": review_id,
+                "kind": "mount_image",
+                "account_id": account_id,
+                "group": group_id,
+                "qq": qq,
+                "mount_name": new_name,
+                "old": {"image": inst.get("custom_image") or ""},
+                "new": {"name": new_name, "image": changes.get("image")},
+                "status": "pending",
+                "reason": "",
+                "created_at": now,
+            }
+            self.custom_reviews()[review_id] = review
+            return review, ""  # 成功时 err 必须为空
         pet = player.get("pet")
         if not pet:
             return None, "该账号下没有宠物"
@@ -2068,6 +2098,35 @@ class PetStore:
             review["status"] = "approved"
             review["reviewed_at"] = now
             return True, "定制坐骑已创建（初始战力 30 万）"
+        if review.get("kind") == "mount_image":
+            # 更换已有定制坐骑外观：替换 custom_image、计次、回收旧图
+            mname = str(review.get("mount_name") or "").strip()
+            inst = (player.get("mounts") or {}).get(mname)
+            if not inst or not inst.get("custom"):
+                review["status"] = "rejected"
+                review["reason"] = "定制坐骑不存在"
+                review["reviewed_at"] = now
+                return False, "定制坐骑不存在"
+            new_img = (review.get("new") or {}).get("image") or ""
+            if not new_img:
+                review["status"] = "rejected"
+                review["reason"] = "缺少外观图片"
+                review["reviewed_at"] = now
+                return False, "缺少外观图片，无法生效"
+            old_img = str(inst.get("custom_image") or "")
+            inst["custom_image"] = new_img
+            self.custom_change_counts(player, "mount_image").append(now)
+            review["status"] = "approved"
+            review["reviewed_at"] = now
+            # 回收被替换的旧外观图（避免孤儿文件）
+            if old_img and old_img != new_img:
+                try:
+                    p = self.custom_image_path(old_img)
+                    if p.exists():
+                        p.unlink()
+                except OSError:
+                    pass
+            return True, "坐骑外观已更新"
         pet = player.get("pet")
         if not pet:
             return False, "宠物不存在"
@@ -2106,6 +2165,16 @@ class PetStore:
                         p.unlink()
             except OSError:
                 pass
+        elif review.get("kind") == "mount_image":
+            # 坐骑换装驳回 → 回收临时上传的新外观图（不占月度次数）
+            try:
+                img = (review.get("new") or {}).get("image")
+                if img:
+                    p = self.custom_image_path(img)
+                    if p.exists():
+                        p.unlink()
+            except OSError:
+                pass
         return True, "已拒绝"
 
     def get_custom_reviews(
@@ -2126,7 +2195,7 @@ class PetStore:
                 continue
             if kind and r.get("kind", "pet") != kind:
                 continue
-            if kind == "mount" and mount_name and r.get("mount_name") != mount_name:
+            if kind in ("mount", "mount_image") and mount_name and r.get("mount_name") != mount_name:
                 continue
             out.append(r)
         return out

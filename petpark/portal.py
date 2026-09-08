@@ -440,10 +440,14 @@ class PlayerPortal:
                 "remaining": self.store.remaining_custom_changes(player, "mount_image"),
             }
             mounts.append(entry)
-        mc = {"slots": self.store.mount_custom_slots(player), "pending": [], "rejected": []}
+        mc = {"slots": self.store.mount_custom_slots(player), "pending": [], "rejected": [], "img_pending": []}
         if group_id and qq:
             mreviews = self.store.get_custom_reviews(group_id, qq, kind="mount")
             mc["pending"] = [r.get("mount_name") for r in mreviews if r.get("status") == "pending"]
+            mc["img_pending"] = [
+                r.get("mount_name") for r in self.store.get_custom_reviews(
+                    group_id, qq, kind="mount_image", status="pending")
+            ]
             rej = [r for r in mreviews if r.get("status") == "rejected"]
             if rej:
                 last = rej[-1]
@@ -560,6 +564,7 @@ class PlayerPortal:
         app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
         app.router.add_post("/api/portal/mount_custom_redeem", self._api_mount_custom_redeem)
         app.router.add_post("/api/portal/mount_custom_submit", self._api_mount_custom_submit)
+        app.router.add_post("/api/portal/mount_image_submit", self._api_mount_image_submit)
         app.router.add_post("/api/portal/use_item", self._api_use_item)
         app.router.add_get("/api/portal/item_info", self._api_item_info)
         app.router.add_post("/api/portal/redeem", self._api_redeem)
@@ -1305,6 +1310,80 @@ class PlayerPortal:
             logger.exception(f"[petpark] 定制坐骑提交异常：{e}")
             return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
 
+    async def _api_mount_image_submit(self, request: web.Request) -> web.Response:
+        """更换已有定制坐骑的外观图：上传新图 → 审核（每月 3 次，通过后生效）。"""
+        try:
+            self._check_csrf(request)
+            sess = self._require_session(request)
+            reader = await request.multipart()
+            fields: dict[str, str] = {}
+            file_data: Optional[bytes] = None
+            filename: Optional[str] = None
+            async for part in reader:
+                if part.filename:
+                    file_data = await part.read()
+                    filename = part.filename
+                else:
+                    fields[part.name] = await part.text()
+            group_id = str(fields.get("group_id", "")).strip()
+            qq = str(fields.get("qq", "")).strip()
+            mname = str(fields.get("name", "")).strip()
+            if not group_id or not qq or not mname:
+                return web.json_response({"ok": False, "msg": "参数不完整"})
+            owner = self.store.account_for_slot(group_id, qq)
+            if owner != sess.get("aid"):
+                raise web.HTTPForbidden(text="你没有绑定该角色")
+            key = self.store.make_key(group_id, qq)
+            player = self.store._data["players"].get(key)
+            if not player:
+                return web.json_response({"ok": False, "msg": "未找到该角色"})
+            inst = (player.get("mounts") or {}).get(mname)
+            if not inst or not inst.get("custom"):
+                return web.json_response({"ok": False, "msg": "未找到该定制坐骑"})
+            if not file_data:
+                return web.json_response({"ok": False, "msg": "请上传新的外观图片"})
+            ext = Path(filename).suffix.lower() if filename else ".jpg"
+            if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+                return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+            if len(file_data) > 5 * 1024 * 1024:
+                return web.json_response({"ok": False, "msg": "图片不能超过 5MB"})
+            file_data, ext = self._normalize_custom_image(file_data, ext)
+            new_filename = f"{secrets.token_hex(8)}{ext}"
+            path = self.store.custom_image_path(new_filename)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file_data)
+            except OSError as e:
+                logger.exception(f"[petpark] 坐骑换装图写盘失败 {path}: {e}")
+                return web.json_response({"ok": False, "msg": f"图片保存失败：{e}"})
+            if not path.exists():
+                logger.error(f"[petpark] 坐骑换装图写盘后不存在 {path} (dir={self.store.custom_images_dir})")
+                return web.json_response({"ok": False, "msg": "图片保存失败，请重试"})
+            logger.info(f"[petpark] 坐骑换装图已落盘 {path} size={len(file_data)} mount={mname}")
+            changes = {"name": mname, "image": new_filename}
+            review, err = self.store.create_custom_review(
+                sess.get("aid"), group_id, qq, changes,
+                kind="mount_image", mount_name=mname)
+            if not review:
+                try:
+                    if path.exists():
+                        path.unlink()
+                except OSError:
+                    pass
+                return web.json_response({"ok": False, "msg": err or "提交失败，请稍后再试"})
+            await self.store.save()
+            role = self._slot_role_summary(player, group_id, qq)
+            return web.json_response({
+                "ok": True,
+                "msg": "坐骑外观更换已提交审核（每月可更换 3 次），预计 3 个工作日内处理完毕",
+                "review": review,
+                "mount_custom": role["mount_custom"],
+                "role": {"mounts": role["mounts"], "mount_custom": role["mount_custom"]},
+            })
+        except Exception as e:
+            logger.exception(f"[petpark] 坐骑换装提交异常：{e}")
+            return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
+
     # --------------------------- 玩家反馈 ---------------------------
     _FEEDBACK_IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
     _FEEDBACK_IMG_MAX = 5 * 1024 * 1024
@@ -1881,10 +1960,13 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
             <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
             <span style="flex:1"></span>
             <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
+            <el-button round size="small" @click="openMountImage()">🎨 更换坐骑外观</el-button>
           </div>
           <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效，并全服祝贺广播。</p>
           <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
             :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
+          <el-alert v-for="(pn,i) in (data.mount_custom.img_pending||[])" :key="'mip'+i" type="warning" :closable="false" style="margin-top:10px"
+            :title="'『'+pn+'』外观更换审核中，通过后生效'"></el-alert>
           <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
             :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
         </div>
@@ -2137,6 +2219,34 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
   <template #footer>
     <el-button round @click="mountC.dialog=false">关闭</el-button>
     <el-button v-if="(data.mount_custom && data.mount_custom.slots) > 0" type="primary" round :disabled="!mountC.name || !mountC.file" :loading="mountC.submitting" @click="doMountSubmit">提交审核</el-button>
+  </template>
+</el-dialog>
+
+<!-- 更换定制坐骑外观 -->
+<el-dialog v-model="mountI.dialog" title="🎨 更换坐骑外观" width="500px" align-center>
+  <div style="padding:10px 12px;border-radius:10px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.06);font-size:13px;margin-bottom:12px">
+    每只定制坐骑<b>每月可更换 3 次外观</b>；新图经人工审核通过后生效，旧图自动替换。
+  </div>
+  <div v-if="!customMountList.length" style="padding:14px;color:var(--muted);font-size:13px">当前角色还没有定制坐骑。先『新建定制坐骑』吧。</div>
+  <el-form v-else label-position="top">
+    <el-form-item label="选择定制坐骑">
+      <el-select v-model="mountI.name" placeholder="选择要更换外观的定制坐骑" style="width:100%">
+        <el-option v-for="m in customMountList" :key="m.name" :value="m.name" :label="m.name + '（本月剩余 ' + m.remaining + ' 次）'" :disabled="m.remaining <= 0 || isMountImgPending(m.name)"></el-option>
+      </el-select>
+    </el-form-item>
+    <el-form-item label="新外观图（JPG / PNG / GIF / WebP，≤5MB）">
+      <div class="upload-zone" @click="pickMountImgFile">
+        <div class="upload-plus">＋</div>
+        <div class="upload-text">{{ mountI.file ? '已选择：' + mountI.file.name : '点击上传新外观图' }}</div>
+        <div class="upload-hint">建议正方形或透明底；动态图（GIF/WebP）会保留动画</div>
+      </div>
+      <input ref="mountImgFileInput" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" style="display:none" @change="onMountImgFile">
+      <div v-if="mountI.preview" class="crop-preview"><img :src="mountI.preview" alt="新外观预览"></div>
+    </el-form-item>
+  </el-form>
+  <template #footer>
+    <el-button round @click="mountI.dialog=false">关闭</el-button>
+    <el-button v-if="customMountList.length" type="primary" round :disabled="!mountI.name || !mountI.file" :loading="mountI.submitting" @click="doMountImgSubmit">提交审核</el-button>
   </template>
 </el-dialog>
 
@@ -2472,6 +2582,39 @@ createApp({
       } finally { mountC.submitting = false; }
     }
 
+    // ---- 更换定制坐骑外观（每月 3 次，走审核） ----
+    const mountImgFileInput = ref(null);
+    const mountI = reactive({dialog:false, name:'', file:null, preview:'', submitting:false});
+    const customMountList = computed(() => ((data.value && data.value.mounts) || []).filter(m => m.custom));
+    function isMountImgPending(n){ return ((data.value && data.value.mount_custom && data.value.mount_custom.img_pending) || []).includes(n); }
+    function openMountImage(){ mountI.name=''; mountI.file=null; mountI.preview=''; mountI.dialog = true; }
+    function pickMountImgFile(){ if(!mountImgFileInput.value) return; mountImgFileInput.value.click(); }
+    function onMountImgFile(e){
+      const f = e.target.files && e.target.files[0];
+      if(!f) return;
+      if(!/\.(jpe?g|png|gif|webp)$/i.test(f.name)){ ElMessage.error('仅支持 jpg/png/gif/webp 图片'); e.target.value=''; return; }
+      if(f.size > 5*1024*1024){ ElMessage.error('图片不能超过 5MB'); e.target.value=''; return; }
+      mountI.file = f;
+      mountI.preview = URL.createObjectURL(f);
+    }
+    async function doMountImgSubmit(){
+      const id = currentSlotId();
+      if(!id.group_id || !id.qq){ ElMessage.warning('请先绑定并选择角色'); return; }
+      if(!mountI.name){ ElMessage.warning('请选择要更换外观的坐骑'); return; }
+      if(!mountI.file){ ElMessage.warning('请上传新外观图片'); return; }
+      mountI.submitting = true;
+      try{
+        const fd = new FormData();
+        fd.append('group_id', id.group_id); fd.append('qq', id.qq);
+        fd.append('name', mountI.name); fd.append('image', mountI.file);
+        const resp = await fetch('/api/portal/mount_image_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
+        if(resp.status === 401 || resp.status === 403){ location.href = '/'; return null; }
+        const r = await resp.json().catch(()=>null);
+        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; if(r.role){ data.value.mounts = r.role.mounts; } mountI.name=''; mountI.file=null; mountI.preview=''; }
+        else { ElMessage.error((r && r.msg) || '提交失败'); }
+      } finally { mountI.submitting = false; }
+    }
+
     // ---- 修改密码 ----
     function openPwd(){ pwd.code=''; pwd.n1=''; pwd.n2=''; pwd.show=true; }
     async function sendPwdCode(){
@@ -2668,6 +2811,7 @@ createApp({
       auto,
       slots, currentSlot, slotPets, slotLabel, slotSub, slotImage, switchSlot,
       mountFileInput, mountC, openMountNew, pickMountImage, onMountFile, doMountRedeem, doMountSubmit,
+      mountImgFileInput, mountI, customMountList, isMountImgPending, openMountImage, pickMountImgFile, onMountImgFile, doMountImgSubmit,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
       loadPet, logout, openBind, doBindAuto, pickAuto, reclaimBind, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       goFeedback, goChat,

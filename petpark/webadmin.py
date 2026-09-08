@@ -1615,12 +1615,15 @@ function renderCustomReviews(){
  for(const r of crCache){
   if(q && !r.id.toLowerCase().includes(q) && !String(r.qq).toLowerCase().includes(q) && !String(r.group).toLowerCase().includes(q)) continue;
   const isMount = r.kind==='mount';
-  const oldImg = isMount ? (r.old&&r.old.image||'') : r.old.image||'';
-  const newImg = isMount ? (r.new&&r.new.image||'') : r.new.image||'';
-  const kindTag = `<span class="tag ${isMount?'':'off'}" style="margin-right:4px">${isMount?'坐骑':'宠物'}</span>`;
+  const isMImg = r.kind==='mount_image';   // 坐骑换装：旧+新图对照，均可驳回回收
+  const oldImg = r.old&&r.old.image||'';
+  const newImg = r.new&&r.new.image||'';
+  const kindTag = `<span class="tag ${isMount||isMImg?'':'off'}" style="margin-right:4px">${isMount?'坐骑':(isMImg?'坐骑换装':'宠物')}</span>`;
   const nameCell = isMount
     ? `<div><b>坐骑外观</b>${esc(r.mount_name||'')?`<div>坐骑：${esc(r.mount_name)}</div>`:''}</div>`
-    : (r.new.species_name?`<div class="muted">旧：${esc(r.old.species_name||'')}</div><div>新：${esc(r.new.species_name||'')}</div>`:'—');
+    : (isMImg
+      ? `<div><b>坐骑外观更换</b>${esc(r.mount_name||'')?`<div>坐骑：${esc(r.mount_name)}</div>`:''}</div>`
+      : (r.new.species_name?`<div class="muted">旧：${esc(r.old.species_name||'')}</div><div>新：${esc(r.new.species_name||'')}</div>`:'—'));
   rows+=`<tr>
    <td class="k">${esc(r.id)}</td>
    <td class="num">${esc(r.qq||'')}</td>
@@ -1642,6 +1645,7 @@ function renderCustomReviews(){
    <button class="act ${crKind===''?'':'ghost'}" onclick="loadCustomReviews(crStatus,'')">全部</button>
    <button class="act ${crKind==='pet'?'':'ghost'}" onclick="loadCustomReviews(crStatus,'pet')">宠物</button>
    <button class="act ${crKind==='mount'?'':'ghost'}" onclick="loadCustomReviews(crStatus,'mount')">坐骑</button>
+   <button class="act ${crKind==='mount_image'?'':'ghost'}" onclick="loadCustomReviews(crStatus,'mount_image')">坐骑换装</button>
   </div>`;
  document.getElementById('tablewrap').innerHTML = rows
    ? `<table><thead><tr><th>ID</th><th>QQ</th><th>群号</th><th>类型 / 名称</th><th>图片</th><th>提交时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
