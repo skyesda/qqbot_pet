@@ -2,9 +2,15 @@
 from copy import deepcopy
 import math
 import random
+import time as _time
 from .content import (PROFESSIONS, VERSION, TACTICS, SPIRIT_ROOTS, AFFIXES, tier_mult,
                       hero_element, element_for, COUNTER_BONUS, COUNTER_PENALTY)
 from .. import data as legacy
+
+
+def _now():
+    """可被测试覆盖的时间源。"""
+    return _time.time()
 
 
 def unit(uid, name, side, hp, atk, defense, speed=90, **extra):
@@ -93,10 +99,44 @@ def hero_sheet(a, player, include_mount=True):
             "wudao": wudao, "gengu": gengu}
 
 
+def roll_hp(a, player, now=None):
+    """惰性回算修士当前气血：存活每分钟回复上限 1%（至少 1 点/分钟），陨落静养 30 分钟自愈至 30%。"""
+    if now is None:
+        now = _now()
+    mx = hero_sheet(a, player)["hp"]
+    cur = a.get("hp")
+    ts = a.get("hp_ts", 0)
+    if not isinstance(cur, int) or cur <= 0:
+        return mx
+    dt = int(now - ts) if isinstance(ts, int) else 0
+    if cur >= mx:
+        return mx
+    dead = (a.get("hp_dead") is True)
+    if dead:
+        # 陨落状态：静养 30 分钟后自动复活并自愈至 30%
+        if dt >= 1800:
+            a.pop("hp_dead", None)
+            a["hp_ts"] = int(now)
+            a["hp"] = max(1, int(mx * 0.30))
+            return a["hp"]
+        return 0
+    # 存活：每分钟恢复上限 1%（至少 1 点/分钟）
+    regen_per_min = max(1, int(mx * 0.01))
+    mins = dt // 60
+    heal = mins * regen_per_min
+    new = min(mx, cur + heal)
+    if new > cur:
+        a["hp"] = new
+        a["hp_ts"] = int(now)
+    return new
+
+
 def build_party(player, key, side=0):
     a = player["adventure"]
     s = hero_sheet(a, player)
-    hero = unit(key, a["name"], side, s["hp"], s["atk"], s["def"], s["speed"])
+    # 战斗入场使用持久化气血（含惰性回算）
+    cur_hp = roll_hp(a, player)
+    hero = unit(key, a["name"], side, cur_hp, s["atk"], s["def"], s["speed"])
     hero.update(role=a["profession"], style=a["style"], element=hero_element(a))
     pet = next((p for p in player.get("pets", []) if p.get("pet_id") == a.get("companion_pet_id")), None)
     # A free guide makes the introduction playable without destroying/replacing legacy pets.

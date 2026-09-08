@@ -172,3 +172,130 @@ class AdventureAddonTests(unittest.TestCase):
             self.assertIsNotNone(it, name)
             self.assertTrue(it.get('usable'), f"{name} 应可数使用")
             self.assertEqual(it.get('effect'), eff, name)
+
+
+class HeroHpTests(unittest.TestCase):
+    """修士气血（当前血量）跨战斗保留：落档/回算/陨落拦截/复活静养/商城药品定义。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'petpark.json'
+        self.store = PetStore(self.path)
+        self.now = 1800000000
+        self.service = AdventureService(self.store, lambda: self.now)
+
+    def call(self, text, qq='a', group='g'):
+        return self.service.handle(group, qq, text.split())
+
+    def create(self, profession='剑修', qq='a', group='g'):
+        self.call('踏入仙途 ' + profession, qq, group)
+        p = self.store.get_player(qq, group)
+        p['adventure']['spirit_root'] = '杂灵根'
+        return p
+
+    def _fake_result(self, hero_hp, key='g:a', name='剑修修士', won=False):
+        return {
+            "won": won, "winner": 1 if not won else 0, "rounds": 3, "reason": "test",
+            "events": [],
+            "units": [
+                {"side": 0, "kind": "hero", "owner": key, "name": name, "hp": hero_hp, "max_hp": 700},
+                {"side": 0, "kind": "pet", "owner": key, "name": "灵宠", "hp": 5, "max_hp": 200},
+            ],
+            "metrics": {},
+        }
+
+    def test_battle_persists_current_hp(self):
+        from qqbot_pet.petpark.adventure.combat import build_party, hero_sheet
+        p = self.create()
+        a = p['adventure']
+        mx = hero_sheet(a, p)['hp']
+        with patch('qqbot_pet.petpark.adventure.service.simulate',
+                   return_value=self._fake_result(int(mx * 0.4), won=True)), \
+             patch('qqbot_pet.petpark.adventure.combat._now', return_value=self.now):
+            out = self.call('历练 1')
+        self.assertIn('获得灵材', out)
+        self.assertEqual(a['hp'], int(mx * 0.4))
+        self.assertEqual(a['hp_ts'], self.now)
+        with patch('qqbot_pet.petpark.adventure.combat._now', return_value=self.now):
+            party = build_party(p, 'g:a')
+        self.assertEqual(party[0]['hp'], int(mx * 0.4))
+
+    def test_death_blocks_battle_and_self_revives(self):
+        p = self.create()
+        a = p['adventure']
+        owner = self.service.key('g', 'a')
+        mx = 680  # default hero max_hp
+        # Step 1: Death - mock battle returns hp=0 with correct owner key
+        fake_dead = {'won': False, 'winner': 1, 'rounds': 3, 'reason': 'test', 'events': [],
+                     'units': [{'side': 0, 'kind': 'hero', 'owner': owner, 'name': '剑修修士', 'hp': 0, 'max_hp': mx},
+                               {'side': 0, 'kind': 'pet', 'owner': owner, 'name': '灵宠', 'hp': 5, 'max_hp': 200}],
+                     'metrics': {owner: {'damage': 0, 'healing': 0, 'absorbed': 0}}}
+        with patch('qqbot_pet.petpark.adventure.service.simulate', return_value=fake_dead), \
+             patch('qqbot_pet.petpark.adventure.combat._now', return_value=self.now):
+            out = self.call('历练 1')
+        self.assertIn('陨落', out)
+        self.assertEqual(a['hp'], 0)
+        self.assertTrue(a.get('hp_dead'))
+        # Step 2: 陨落拦截一切战斗指令（当前时间不足30分钟）
+        with patch('qqbot_pet.petpark.adventure.service.simulate', return_value=fake_dead), \
+             patch('qqbot_pet.petpark.adventure.combat._now', return_value=self.now):
+            self.assertIn('陨落', self.call('历练 1'))
+            self.assertIn('陨落', self.call('外出历练'))
+            self.assertIn('陨落', self.call('讨伐首领'))
+        # Step 3: 静养不足30分钟：仍陨落
+        self.now += 1799
+        with patch('qqbot_pet.petpark.adventure.service.simulate', return_value=fake_dead), \
+             patch('qqbot_pet.petpark.adventure.combat._now', return_value=self.now):
+            self.assertIn('陨落', self.call('历练 1'))
+        # Step 4: 静养满30分钟：自愈至30%上限后可以出战
+        self.now += 1
+        # 使用新 service 实例以使用更新后的时钟
+        service = AdventureService(self.store, lambda: self.now)
+        fake_alive = {'won': True, 'winner': 0, 'rounds': 3, 'reason': 'test', 'events': [],
+                      'units': [{'side': 0, 'kind': 'hero', 'owner': owner, 'name': '剑修修士', 'hp': int(mx * 0.5), 'max_hp': mx},
+                                {'side': 0, 'kind': 'pet', 'owner': owner, 'name': '灵宠', 'hp': 200, 'max_hp': 200}],
+                      'metrics': {owner: {'damage': 100, 'healing': 0, 'absorbed': 0}}}
+        with patch('qqbot_pet.petpark.adventure.service.simulate', return_value=fake_alive), \
+             patch('qqbot_pet.petpark.adventure.combat._now', return_value=self.now):
+            out = service.handle('g', 'a', ['历练', '1'])
+        self.assertNotIn('陨落，无法出战', out)
+        # 战后气血应为 mock 的 50%（340），满足 >= 30% 断言
+        self.assertGreaterEqual(a['hp'], int(mx * 0.30))
+
+    def test_roll_hp_regen_rate(self):
+        from qqbot_pet.petpark.adventure.combat import hero_sheet, roll_hp
+        p = self.create()
+        a = p['adventure']
+        mx = hero_sheet(a, p)['hp']
+        a['hp'] = 10
+        a['hp_ts'] = self.now - 120  # 2分钟 → +2%（至少1点/分钟）
+        cur = roll_hp(a, p, self.now)
+        self.assertEqual(cur, min(mx, 10 + 2 * max(1, int(mx * 0.01))))
+        # 已满不超上限
+        a['hp_ts'] = self.now - 7200  # 2小时
+        self.assertEqual(roll_hp(a, p, self.now), mx)
+
+    def test_duel_is_lossless_for_hp(self):
+        from qqbot_pet.petpark.adventure.combat import hero_sheet, _now
+        p2 = self.create(qq='b')
+        p = self.create(qq='a')
+        a = p['adventure']
+        fake_now = self.now
+        with patch('qqbot_pet.petpark.adventure.service.simulate',
+                   return_value=self._fake_result(0, key='g\x1fb')), \
+             patch('qqbot_pet.petpark.adventure.combat._now', return_value=fake_now):
+            self.call('仙途切磋 b')
+            out = self.call('接受切磋', qq='b')
+        self.assertIn('存档血量和资源未改变', out)
+        self.assertNotIn('陨落', out)
+        # 切磋不落档：hp 字段未被写入
+        self.assertNotIsInstance(a.get('hp'), int)
+
+    def test_heal_and_revive_item_defs(self):
+        for name, eff in (("回血丹", {"heal_hp_pct": 50}), ("复苏丹", {"revive_hp_pct": 50})):
+            it = data.ITEMS.get(name)
+            self.assertIsNotNone(it, name)
+            self.assertTrue(it.get('usable'), name)
+            self.assertEqual(it.get('effect'), eff, name)
+            self.assertEqual(it.get('currency'), data.CURRENCY_COIN, name)

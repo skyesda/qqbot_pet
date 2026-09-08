@@ -535,6 +535,19 @@ def _do_guard(service, key, p, a, s, qq):
         return f"镇守冷却中，还需 {cd} 秒。"
     if not _spend_stamina(service, a, 15):
         return "体力不足（镇守需15体力）。"
+    # 修士气血归零=陨落，拦截出战
+    cur = a.get("hp")
+    if isinstance(cur, int) and cur <= 0:
+        ts = a.get("hp_ts", 0)
+        if isinstance(ts, int) and (service.clock() - ts) >= 1800:
+            mx = __import__('time')
+            from .combat import hero_sheet, roll_hp
+            mx_val = hero_sheet(a, p)["hp"]
+            a["hp"] = max(1, int(mx_val * 0.30))
+            a["hp_ts"] = int(service.clock())
+            a.pop("hp_dead", None)
+        else:
+            return "修士已陨落，无法出战。服用『复苏丹』立即复活，或静养30分钟自愈。"
     result = _simulate_guard(service, p, key, s)
     if not result["won"]:
         _bump(s, qq, "guard")

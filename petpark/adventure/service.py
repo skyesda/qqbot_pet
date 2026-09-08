@@ -7,8 +7,8 @@ import time
 import uuid
 from . import content as c
 from ..pet import new_pet
-from .combat import build_party, enemies, hero_sheet, simulate
-from .power import compute_unified_power, power_breakdown, power_to_scale, fmt_power
+from .combat import build_party, enemies, hero_sheet, roll_hp, simulate
+from .power import compute_unified_power, power_breakdown, power_to_scale
 
 MENU = """## 灵契仙途
 修士问道，灵宠同行。
@@ -91,6 +91,21 @@ class AdventureService:
         self.require(p and p.get("adventure"), "请先发送「踏入仙途 剑修 / 体修 / 灵修 / 魔修」。")
         return p
 
+    def require_alive(self, a):
+        """修士气血归零=陨落，静养30分钟或服用复苏丹后恢复，期间拦截所有出战指令。"""
+        cur = a.get("hp")
+        if isinstance(cur, int) and cur <= 0:
+            ts = a.get("hp_ts", 0)
+            if isinstance(ts, int) and (self.clock() - ts) >= 1800:
+                # 静养30分钟后自愈至30%（用 a 中的基础属性估算上限）
+                from .combat import hero_sheet
+                mx = hero_sheet(a, {}).get("hp", 680)  # 默认 680 防崩
+                a["hp"] = max(1, int(mx * 0.30))
+                a["hp_ts"] = int(self.clock())
+                a.pop("hp_dead", None)
+                return
+            raise RuleError("修士已陨落，无法出战。服用『复苏丹』立即复活，或静养30分钟自愈。")
+
     def today(self):
         return datetime.fromtimestamp(self.clock(), ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
 
@@ -114,6 +129,28 @@ class AdventureService:
         record = {"id": uuid.uuid4().hex[:12], "title": title, "time": int(self.clock()), "result": result}
         a.setdefault("history", []).append(record)
         a["history"] = a["history"][-10:]
+        # 气血跨战斗保留：落档修士剩余气血（owner 匹配，兼容无 hp 字段的最小战报）
+        # 无损切磋（title='无损论道'）不落档气血，保持双方存档不变
+        owner = None
+        is_duel = (title == '无损论道')
+        if not is_duel:
+            for u in result.get("units", []):
+                if u.get("side") == 0 and u.get("kind") == "hero" and isinstance(u.get("owner"), str):
+                    owner = u["owner"]
+                    break
+        if owner:
+            for u in result.get("units", []):
+                if u.get("side") == 0 and u.get("kind") == "hero" and u.get("owner") == owner:
+                    hp_val = u.get("hp")
+                    if isinstance(hp_val, int):
+                        a["hp"] = max(0, hp_val)
+                        a["hp_ts"] = int(self.clock())
+                        if hp_val <= 0:
+                            a["hp_dead"] = True
+                    break
+        # 战败陨落提示
+        if a.get("hp_dead"):
+            record["result"]["events"].insert(0, "⚠ 修士气血耗尽，已陨落（静养30分钟或服用复苏丹复活）")
         return self.report(record)
 
     @staticmethod
@@ -125,8 +162,8 @@ class AdventureService:
         lines.extend(r["events"][-5:])
         for u in r['units']:
             if u['side']==0 and u['kind']=='hero':
-                m=r['metrics'][u['owner']]
-                lines.append(f"{u['name']}与灵宠：伤害{m['damage']} · 治疗{m['healing']} · 护盾吸收{m['absorbed']}")
+                m = r['metrics'].get(u['owner']) or {}
+                lines.append(f"{u['name']}与灵宠：伤害{m.get('damage', 0)} · 治疗{m.get('healing', 0)} · 护盾吸收{m.get('absorbed', 0)}")
         # 战后存活血量：让玩家直观看到修士/灵宠在本场战斗里掉了多少血。
         # 只统计带 hp/max_hp 的单位（兼容测试 mock 的最小战报结构）。
         hp_line = " · ".join(
@@ -296,14 +333,24 @@ class AdventureService:
             return "## 仙途毕业进度\n" + "\n".join(("✓ " if ok else "○ ")+name for name,ok in goals.items()) + ("\n恭喜，完成当前版本全部毕业目标！" if all(goals.values()) else "\n按未完成目标继续修行。")
         if cmd in ("我的修士", "今日修行"):
             units = build_party(p, key)
+            # 使用持久化气血（含惰性回算）
+            cur_hp = roll_hp(a, p, self.clock())
             s = hero_sheet(a, p)
+            mx = s['hp']
+            hp_now = cur_hp if isinstance(cur_hp, int) else mx
+            hp_pct = f"{int(hp_now/mx*100)}%" if mx > 0 else ""
+            hp_hint = f"（{hp_now}/{mx} {hp_pct}）"
+            if hp_now < mx and not a.get('hp_dead'):
+                hp_hint += " · 可服用『回血丹』立即回复，或静待自动回复"
+            elif a.get('hp_dead'):
+                hp_hint += " · 💀 陨落！服用『复苏丹』复活或静养30分钟"
             bd = power_breakdown(p, key)
             nxt = min(20, len(a["cleared"]) + 1)
             if bd:
                 power_lines = (
-                    f"总战力 {fmt_power(bd['total'])}\n"
-                    f"　构成：本体 {fmt_power(bd['hero'])} ＋ 15%×灵宠『{bd['pet_name']}』{fmt_power(bd['pet_contrib'])} ＋ 10%×坐骑 {fmt_power(bd['mount_contrib'])} ＝ {fmt_power(bd['base'])}\n"
-                    f"　再乘：道侣×{bd['partner']:.2f} · 洞天×{bd['heaven_margin']:.2f} → {fmt_power(bd['total'])}"
+                    f"总战力 {bd['total']}\n"
+                    f"　构成：本体 {bd['hero']} ＋ 15%×灵宠『{bd['pet_name']}』{bd['pet_contrib']} ＋ 10%×坐骑 {bd['mount_contrib']} ＝ {bd['base']:.1f}\n"
+                    f"　再乘：道侣×{bd['partner']:.2f} · 洞天×{bd['heaven_margin']:.2f} → {bd['total']}"
                 )
             else:
                 power_lines = "总战力 0"
@@ -321,7 +368,7 @@ class AdventureService:
                 _daolv_line = "道侣：未结道侣（结道侣 用户ID 可缔结情缘）\n"
             return (f"## 灵契仙途 · {a['profession']}\n道号 {a['name']} · {a['gender']} · {c.REALMS[a['realm']]} Lv{a['level']} · 修为 {a['cultivation']}\n"
                     f"灵根：{_root}（{c.root_bonus(a.get('spirit_root') or '')}） · 属性：{c.element_line(c.hero_element(a))} · 神通：{tactics}\n"
-                    f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n{power_lines}\n性命 {s['hp']} · 攻击 {s['atk']} · 防御 {s['def']} · 速度 {s['speed']}\n"
+                    f"洞天：{c.HEAVENS[a['heaven']]['name']}（{a['heaven']}阶）\n{power_lines}\n气血{hp_hint} · 攻击 {s['atk']} · 防御 {s['def']} · 速度 {s['speed']}\n"
                     f"悟性 {s['wudao']} · 根骨 {s['gengu']}\n功法：{a['style']} · 灵宠：{units[1]['name']}（{c.element_line(units[1].get('element'))} · {a['pet_role']}）\n"
                     f"{_daolv_line}"
                     f"灵材 {a['ore']} · 体力 {_stamina}（每1分钟回1，醒神丹翻倍；宗门任务10/探索20/镇守15） · 今日副本收益 {a['rewards']}/8 · 首领挑战 {a['world_hits']}/3"
@@ -449,6 +496,7 @@ class AdventureService:
                     f"（每1分钟回1，醒神丹期翻倍）。宗门任务10 · 北秘境探索20 · 镇守15。")
         if cmd == "外出历练":
             self.can_edit(key)
+            self.require_alive(a)
             cooldown = a.get("explore_cd", 0)
             self.require(self.clock() >= cooldown, f"外出历练冷却中，还需 {max(0, int((cooldown - self.clock()) // 60) + 1)} 分钟。")
             # 随机一场与当前修为匹配的散修遭遇（以地图为均衡基准，元素/机制随机），免费、不耗体力。
@@ -524,6 +572,7 @@ class AdventureService:
             return f"锻造成功：{c.gear_name(a['profession'], slot, tier)}＋{rank + 1}。"
         if cmd == "装备进阶":
             self.can_edit(key)
+            self.require_alive(a)
             slot = c.gear_slot(a['profession'], arg)
             self.require(slot, "用法：装备进阶 " + c.gear_command_names(a['profession'], a['equip_tier']))
             rank = a["equipment"][slot]
@@ -556,6 +605,7 @@ class AdventureService:
         if cmd == "仙途地图":
             return f"## 山海历练 · {c.HEAVENS[a['heaven']]['name']}洞天 · 敌人×{c.HEAVENS[a['heaven']]['enemy']}\n" + "\n".join(f"{m['id']}. {m['name']} · Lv{m['level']} · {m['boss']} {'✓' if m['id'] in a['cleared'] else ''}" for m in c.MAPS.values()) + "\n历练 序号 · 首关直接开放，之后逐关解锁。通关后可「历练 序号 困难」：敌人加强，灵材额外＋2，同样占一次收益。"
         if cmd in ("历练", "挑战秘境"):
+            self.require_alive(a)
             enc = c.map_for(arg or str(min(20, len(a['cleared'])+1)))
             self.require(enc, "发送「仙途地图」查看，使用「历练 序号」。")
             self.require(enc['id'] == '1' or str(int(enc['id'])-1) in a['cleared'], "先通关上一张地图。")
@@ -588,6 +638,7 @@ class AdventureService:
             b = self.world(group)
             return f"## 世界首领 · {b['name']}\n生命 {b['hp']}/{b['max_hp']}\n{c.MECHANICS[b['mechanic']][1]}\n每天轮换，个人每日3次；讨伐获得灵材，击败后可领共同奖励。\n讨伐首领 · 首领奖励"
         if cmd == "讨伐首领":
+            self.require_alive(a)
             b = self.world(group)
             self.require(b['hp'] > 0, "首领已被击败，发送「首领奖励」。")
             self.require(a['world_hits'] < 3, "今日首领挑战已完成，明日再来。")
@@ -730,6 +781,7 @@ class AdventureService:
 
     def deep(self,p,key,cmd,arg):
         a=p['adventure']
+        self.require_alive(a)
         if cmd=='深渊收手':
             self.require(a['deep'],'你不在仙途深渊中。')
             floor=a['deep']['floor']
@@ -768,7 +820,10 @@ class AdventureService:
         duels=self.root()['duels']
         for k in list(duels):
             if duels[k]['expires']<=self.clock(): del duels[k]
+        a = self.player(key)['adventure']
+        self.require_alive(a)
         if cmd=='仙途切磋':
+            self.require_alive(a)
             target=self.key(group,arg)
             self.require(target!=key,'不能与自己切磋。')
             self.player(target)

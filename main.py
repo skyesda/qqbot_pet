@@ -7779,25 +7779,6 @@ class PetParkPlugin(Star):
             return f"![{name}]({url})"
         return f"![{name} #{w} #{h}]({url})"
 
-    def _mount_value(self, name: str, player: dict | None = None) -> int:
-        """坐骑价值：实例 > 官方配置；定制坐骑缺省时按最高档 2 亿。"""
-        inst = ((player or {}).get("mounts") or {}).get(name) or {}
-        cfg = data.MOUNTS.get(name, {})
-        v = int(inst.get("value") or cfg.get("value") or 0)
-        if not v and inst.get("custom"):
-            v = 200_000_000
-        return v
-
-    def _mount_reward_range(self, name: str, player: dict | None = None) -> tuple[int, int]:
-        """入场奖励区间（玄晶）：实例配置 > 官方配置；定制坐骑缺省时按定制档 20万~30万。"""
-        inst = ((player or {}).get("mounts") or {}).get(name) or {}
-        cfg = data.MOUNTS.get(name, {})
-        rmin = int(inst.get("reward_min") or cfg.get("reward_min") or 0)
-        rmax = int(inst.get("reward_max") or cfg.get("reward_max") or 0)
-        if not rmin and not rmax and inst.get("custom"):
-            rmin, rmax = 200_000, 300_000
-        return rmin, rmax
-
     def _mount_info_text(self, name: str, player: dict, kind: str = "enter", reward: int | None = None) -> str:
         """坐骑文字信息卡（GIF 之外的属性行；kind 控制主题/奖励行；reward 为已到账实际奖励）。"""
         cfg = data.MOUNTS.get(name, {})
@@ -7809,8 +7790,8 @@ class PetParkPlugin(Star):
         plate = inst.get("plate", "骑-?") if owned else "未拥有"
         level = int(inst.get("level", 1))
         power = int(inst.get("power", cfg.get("base_power", 0)))
-        value = self._short_num(self._mount_value(name, player))
-        rmin, rmax = self._mount_reward_range(name, player)
+        value = self._short_num(cfg.get("value", 0))
+        rmin, rmax = cfg.get("reward_min", 0), cfg.get("reward_max", 0)
         now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
         theme = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
         custom = bool(inst.get("custom"))
@@ -7851,8 +7832,8 @@ class PetParkPlugin(Star):
         plate = inst.get("plate", "骑-?")
         level = int(inst.get("level", 1))
         power = int(inst.get("power", cfg.get("base_power", 0)))
-        value = self._short_num(self._mount_value(name, player))
-        rmin, rmax = self._mount_reward_range(name, player)
+        value = self._short_num(cfg.get("value", 0))
+        rmin, rmax = cfg.get("reward_min", 0), cfg.get("reward_max", 0)
         now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
         theme_word = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
         custom = bool(inst.get("custom"))
@@ -7939,10 +7920,10 @@ class PetParkPlugin(Star):
         player["active_mount"] = chosen
         player["mount_group"] = group_id
         player["mount_enter_ts"] = now
-        rmin, rmax = self._mount_reward_range(chosen, player)
+        cfg = data.MOUNTS.get(chosen)
         reward = None
-        if rmax > 0:
-            reward = random.randint(rmin, rmax)
+        if cfg:
+            reward = random.randint(cfg["reward_min"], cfg["reward_max"])
             self.store.add_currency(player, "玄晶", reward)
         await self.store.save()
         if player.get("mount_enter_notify", True):
@@ -8754,7 +8735,7 @@ class PetParkPlugin(Star):
         name = act
         txt = (f"## 🐎 {name}（当前骑乘）\n\n"
                f"{self._mount_info_text(name, player, 'my')}")
-        img = self._mount_image_md(name, player=player)
+        img = self._mount_image_md(name)
         if img:
             return (txt, img)
         return txt
@@ -8776,7 +8757,7 @@ class PetParkPlugin(Star):
         player["mount_group"] = group_id
         txt = (f"已骑乘『{name}』，战力计入对战胜负。\n\n"
                f"{self._mount_info_text(name, player, 'my')}")
-        img = self._mount_image_md(name, player=player)
+        img = self._mount_image_md(name)
         if img:
             return (txt, img)
         return txt
@@ -9430,7 +9411,8 @@ class PetParkPlugin(Star):
         _HERO_EFFECTS = ("add_cultivation", "buff_atk", "buff_def", "buff_hp", "buff_speed", "add_wudao", "add_gengu",
                          "reroll_spirit_root", "reroll_spirit_root_boosted",
                          "heal_stamina", "add_stamina_max", "companion_exp",
-                         "exp_buff_days", "stamina_buff_days", "change_appearance")
+                         "exp_buff_days", "stamina_buff_days", "change_appearance",
+                         "heal_hp_pct", "revive_hp_pct")
         if it_check and any(k in it_check.get("effect", {}) for k in _HERO_EFFECTS):
             if not self.store.has_item(player, name):
                 return f"背包里没有『{name}』。"

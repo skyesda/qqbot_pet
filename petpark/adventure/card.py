@@ -7,7 +7,7 @@ from pathlib import Path
 from .. import card_theme
 from . import content as c
 from .combat import hero_sheet
-from .power import power_breakdown, fmt_power
+from .power import power_breakdown
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "cultivator"
 PORTRAITS = {"剑修": "sword", "体修": "body", "灵修": "spirit", "魔修": "demon"}
@@ -39,8 +39,15 @@ def equipment_summary(adventure):
 
 
 def card_html(player, key, equipment=False):
+    from .combat import roll_hp
+    import time as _t
     a = player["adventure"]
     s = hero_sheet(a, player)
+    mx = s["hp"]
+    cur_hp = roll_hp(a, player, _t.time())
+    if not isinstance(cur_hp, int) or cur_hp <= 0:
+        cur_hp = mx
+    dead = a.get("hp_dead") is True
     bd = power_breakdown(player, key)
     eq = a.get("equipment", {})
     slots = []
@@ -55,12 +62,21 @@ def card_html(player, key, equipment=False):
                      f'<small>{"尚未强化" if rank == 0 else "提升" + label}</small></div>')
     bonus = a.get("bonus") or {}
     # 悟性加点分配（攻/防/血/速）直接以 +N 徽标附着在各属性后，直观呈现。
+    # 气血：显示当前/上限，并画红色气血条（陨落时显示复苏提示）
+    hp_pct = max(0, min(100, int(cur_hp / mx * 100))) if mx > 0 else 100
+    hp_color = "#c0392b" if cur_hp < mx * 0.3 else ("#e67e22" if cur_hp < mx * 0.6 else "#27ae60")
+    _dead_mark = '<span style="color:#c0392b;font-size:16px"> 💀 陨落</span>' if dead else ''
+    _hp_bar = f'<span class="barwrap"><span class="bar" style="width:{hp_pct}%;background:{hp_color}"></span></span>'
+    _hp_hint = '<small style="color:#c0392b">服用「复苏丹」立即复活</small>' if dead else ''
     stats = "".join(
         f'<div><span>{label}</span><b>{s[field]}'
         + (f'<em>+{int(bonus.get(field, 0))}</em>' if bonus.get(field, 0) else '')
         + '</b></div>'
-        for label, field in [("血量上限", "hp"), ("攻击", "atk"), ("防御", "def"),
+        for label, field in [("攻击", "atk"), ("防御", "def"),
                              ("速度", "speed"), ("悟性", "wudao"), ("根骨", "gengu")])
+    # 气血单独一行
+    _hp_row = f'<div style="grid-column:1/-1;padding:10px 12px;background:#fcfaf0cc;border-bottom:1px solid #cabc98"><span>气血</span><b style="color:{hp_color}">{cur_hp}/{mx} ({hp_pct}%)</b>{_hp_bar}{_dead_mark}{_hp_hint}</div>'
+    stats = _hp_row + stats
     # 灵根／属性（五行相克）／神通：修士「道基」信息原图缺失，单独成行展示。
     # 灵根补实际加成（金→攻+10%）、神通补被动效果（灵台清明→攻+4%/防+4%），不再只给名字。
     root = escape(str(a.get("spirit_root") or "无"))
@@ -92,7 +108,7 @@ def card_html(player, key, equipment=False):
         _daolv_b = "未结道侣"
         _daolv_s = "可与其他修士结道侣：结道侣 用户ID"
     details = (f'<div class="power-formula"><span>战力构成</span>'
-               f'<b>本体 {fmt_power(bd["hero"])} <i>＋</i> 灵宠 {fmt_power(bd["pet_contrib"])} <i>＋</i> 坐骑 {fmt_power(bd["mount_contrib"])}</b>'
+               f'<b>本体 {bd["hero"]} <i>＋</i> 灵宠 {bd["pet_contrib"]} <i>＋</i> 坐骑 {bd["mount_contrib"]}</b>'
                f'<small>灵宠计 15% · 坐骑计 10% · 道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}</small></div>') if bd else ""
     # 升级进度：显示距下一级/破境还需多少修为，或已可突破/渡劫。
     lv_cap = c.realm_cap(a["realm"])
@@ -133,7 +149,7 @@ def card_html(player, key, equipment=False):
     .portrait img{width:100%;height:100%;object-fit:contain;display:block;position:absolute}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
     .stats div{padding:9px 12px;background:#fcfaf0cc;border-bottom:1px solid #cabc98;display:flex;justify-content:space-between}
-    .stats em{font-style:normal;font-size:12px;color:#3f8f4f;margin-left:6px}
+    .stats em{font-style:normal;font-size:12px;color:#3f8f4f;margin-left:6px}.hp-row{grid-column:1/-1}
     .dashboard{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:14px}
     .info-card{min-height:67px;padding:10px 13px;box-sizing:border-box;background:#fffaf0cc;border:1px solid #d3c394;display:grid;grid-template-columns:1fr auto;gap:3px 10px;align-items:center}
     .info-card span,.lineage-grid span,.power-formula>span{font-size:12px;letter-spacing:1px;color:#947035}
@@ -155,7 +171,7 @@ def card_html(player, key, equipment=False):
             f'<div class="eyebrow">灵契仙途 · 我的修士</div>'
             f'<h1>{escape(str(a["name"]))}</h1><p>{escape(str(a["profession"]))} · {escape(str(a.get("gender", "男")))} · '
             f'{c.REALMS[a["realm"]]} Lv{a["level"]} · {c.HEAVENS[a.get("heaven", 0)]["name"]}洞天</p></div>'
-            f'<div class="power">总战力<strong>{fmt_power(bd["total"]) if bd else 0}</strong></div></div>'
+            f'<div class="power">总战力<strong>{bd["total"] if bd else 0}</strong></div></div>'
             f'<div class="loadout"><div class="gear-column">{"".join(slots[:3])}</div>'
             f'<div class="portrait"><img src="{asset_uri(portrait_name(a))}" alt="修士立绘"></div>'
             f'<div class="gear-column">{"".join(slots[3:])}</div></div>'

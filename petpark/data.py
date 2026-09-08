@@ -1040,6 +1040,22 @@ ITEMS.update({
         "desc": "使用后修士性命上限永久 +100（已踏入仙途后使用，计入修士战力）。",
         "effect": {"buff_hp": 100},
     },
+    "回血丹": {
+        "price": 400,
+        "currency": CURRENCY_COIN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "使用后修士立即回复 50% 上限气血（战斗中受伤后可服用恢复，已满时不消耗）。",
+        "effect": {"heal_hp_pct": 50},
+    },
+    "复苏丹": {
+        "price": 1000,
+        "currency": CURRENCY_COIN,
+        "category": "仙丹",
+        "usable": True,
+        "desc": "修士陨落后可立即复活并回复 50% 上限气血；存活时使用回复 50% 气血。需已在仙途。",
+        "effect": {"revive_hp_pct": 50},
+    },
     "疾风丹": {
         "price": 150,
         "currency": CURRENCY_DIAMOND,
