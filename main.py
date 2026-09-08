@@ -8754,7 +8754,7 @@ class PetParkPlugin(Star):
         name = act
         txt = (f"## 🐎 {name}（当前骑乘）\n\n"
                f"{self._mount_info_text(name, player, 'my')}")
-        img = self._mount_image_md(name)
+        img = self._mount_image_md(name, player=player)
         if img:
             return (txt, img)
         return txt
@@ -8776,7 +8776,7 @@ class PetParkPlugin(Star):
         player["mount_group"] = group_id
         txt = (f"已骑乘『{name}』，战力计入对战胜负。\n\n"
                f"{self._mount_info_text(name, player, 'my')}")
-        img = self._mount_image_md(name)
+        img = self._mount_image_md(name, player=player)
         if img:
             return (txt, img)
         return txt
