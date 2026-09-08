@@ -2037,17 +2037,12 @@ class PetStore:
             from . import data as _data_mod
             new_name = str(review.get("mount_name") or "").strip()
             new_img = (review.get("new") or {}).get("image") or ""
-            mounts = player.get("mounts") or {}
+            mounts = player.setdefault("mounts", {})  # 空 mounts 也必须原地引用，否则创建结果丢失
             if not (1 <= len(new_name) <= 8) or new_name in (_data_mod.MOUNTS or {}) or new_name in mounts:
                 review["status"] = "rejected"
                 review["reason"] = "定制名称不可用或已存在"
                 review["reviewed_at"] = now
                 return False, "定制名称不可用或已存在"
-            if self.mount_custom_slots(player) <= 0:
-                review["status"] = "rejected"
-                review["reason"] = "无可用的定制坐骑资格"
-                review["reviewed_at"] = now
-                return False, "无可用的定制坐骑资格"
             if not new_img:
                 review["status"] = "rejected"
                 review["reason"] = "缺少外观图片"
@@ -2062,6 +2057,9 @@ class PetStore:
                 "power": 300000,
                 "stars": 4,
                 "plate": "定-" + str(hash(new_name) % 1000).zfill(3),
+                # 入场奖励与定制宠物同档：20万~30万 玄晶
+                "reward_min": 200_000,
+                "reward_max": 300_000,
             }
             # 资格已在提交审核时扣减，此处仅记录月度次数并落库
             player["mount_custom_slots"] = max(0, int(player.get("mount_custom_slots", 0) or 0))

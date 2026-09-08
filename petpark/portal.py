@@ -62,6 +62,21 @@ class PlayerPortal:
         self._email_codes: dict[str, dict] = {}
         self._email_send_at: dict[str, float] = {}
 
+    @staticmethod
+    def _normalize_custom_image(file_data: bytes, ext: str) -> tuple[bytes, str]:
+        """上传定制图规范化：webp → png（QQ 群聊拉取/展示不兼容 webp）；转换失败回退原样。"""
+        if ext != ".webp":
+            return file_data, ext
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(io.BytesIO(file_data))
+            out = io.BytesIO()
+            img.save(out, format="PNG")
+            return out.getvalue(), ".png"
+        except Exception:
+            return file_data, ext
+
     # --------------------------- 工具：密码与会话 ---------------------------
     @staticmethod
     def _hash_password(password: str, salt: str) -> str:
@@ -1138,6 +1153,7 @@ class PlayerPortal:
             ext = Path(filename).suffix.lower() if filename else ".jpg"
             if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
                 return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+            file_data, ext = self._normalize_custom_image(file_data, ext)
             new_filename = f"{secrets.token_hex(8)}{ext}"
             path = self.store.custom_image_path(new_filename)
             try:
@@ -1231,6 +1247,7 @@ class PlayerPortal:
                 return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
             if len(file_data) > 5 * 1024 * 1024:
                 return web.json_response({"ok": False, "msg": "图片不能超过 5MB"})
+            file_data, ext = self._normalize_custom_image(file_data, ext)
             new_filename = f"{secrets.token_hex(8)}{ext}"
             path = self.store.custom_image_path(new_filename)
             try:

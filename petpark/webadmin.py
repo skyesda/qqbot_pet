@@ -81,6 +81,8 @@ class WebAdmin:
         app.router.add_post("/api/custom_reviews/reject", self._api_custom_review_reject)
         app.router.add_post("/api/custom_pets", self._api_custom_pets)
         app.router.add_post("/api/custom_pets/cancel", self._api_custom_pet_cancel)
+        app.router.add_post("/api/custom_mounts", self._api_custom_mounts)
+        app.router.add_post("/api/custom_mounts/set_image", self._api_custom_mount_set_image)
         app.router.add_post("/api/feedbacks", self._api_feedbacks)
         app.router.add_post("/api/feedbacks/reply", self._api_feedback_reply)
         app.router.add_post("/api/feedbacks/delete", self._api_feedback_delete)
@@ -637,6 +639,110 @@ class WebAdmin:
             })
         data.sort(key=lambda x: x["group"])
         return self._json({"ok": True, "data": data})
+
+    async def _api_custom_mounts(self, request):
+        """列出所有玩家的定制坐骑（供「定制管理」页维护外观图）。"""
+        self._require(request)
+        accounts = self.store.accounts()
+        account_map = {}
+        for aid, acc in accounts.items():
+            for bp in acc.get("bound_pets", []):
+                account_map[self.store.make_key(bp.get("group", ""), bp.get("qq", ""))] = acc.get("qq", aid)
+        data = []
+        for key, player in self.store._data.get("players", {}).items():
+            mounts = player.get("mounts") or {}
+            for name, inst in mounts.items():
+                if not (inst or {}).get("custom"):
+                    continue
+                group, qq = key.split("\x1f", 1)
+                data.append({
+                    "group": group,
+                    "qq": qq,
+                    "account_qq": account_map.get(key, "—"),
+                    "name": name,
+                    "custom_image": inst.get("custom_image") or "",
+                    "power": int(inst.get("power", 0) or 0),
+                    "level": int(inst.get("level", 1) or 1),
+                    "stars": int(inst.get("stars", 0) or 0),
+                    "plate": inst.get("plate", ""),
+                    "reward_min": int(inst.get("reward_min", 0) or 0),
+                    "reward_max": int(inst.get("reward_max", 0) or 0),
+                })
+        data.sort(key=lambda x: (x["group"], x["qq"]))
+        return self._json({"ok": True, "data": data})
+
+    _CUSTOM_MOUNT_IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+    async def _api_custom_mount_set_image(self, request):
+        """后台直接更换/补救定制坐骑外观图（如历史丢图）：上传文件 → 落盘 → 更新实例。"""
+        self._require(request)
+        reader = await request.multipart()
+        group = qq = mname = ""
+        file_data = b""
+        filename = ""
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "image":
+                file_data = await part.read(decode=False)
+                filename = part.filename or ""
+            elif part.name == "group":
+                group = (await part.text()).strip()
+            elif part.name == "qq":
+                qq = (await part.text()).strip()
+            elif part.name == "name":
+                mname = (await part.text()).strip()
+        if not group or not qq or not mname:
+            return self._json({"ok": False, "msg": "参数不完整"})
+        player = self.store._data.get("players", {}).get(self.store.make_key(group, qq))
+        if not player:
+            return self._json({"ok": False, "msg": "未找到该角色"})
+        inst = (player.get("mounts") or {}).get(mname)
+        if not inst or not inst.get("custom"):
+            return self._json({"ok": False, "msg": "未找到该定制坐骑"})
+        if not file_data:
+            return self._json({"ok": False, "msg": "请选择图片文件"})
+        if len(file_data) > 5 * 1024 * 1024:
+            return self._json({"ok": False, "msg": "图片不能超过 5MB"})
+        ext = Path(filename).suffix.lower() if filename else ".jpg"
+        if ext not in self._CUSTOM_MOUNT_IMG_EXTS:
+            return self._json({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+        # webp → png（QQ 群聊拉取不兼容 webp）
+        if ext == ".webp":
+            try:
+                import io
+                from PIL import Image
+                img = Image.open(io.BytesIO(file_data))
+                out = io.BytesIO()
+                img.save(out, format="PNG")
+                file_data, ext = out.getvalue(), ".png"
+            except Exception:
+                pass
+        new_filename = f"{secrets.token_hex(8)}{ext}"
+        path = self.store.custom_image_path(new_filename)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(file_data)
+        except OSError as e:
+            logger.exception(f"[petpark] 后台坐骑换图写盘失败 {path}: {e}")
+            return self._json({"ok": False, "msg": f"图片保存失败：{e}"})
+        if not path.exists():
+            logger.error(f"[petpark] 后台坐骑换图写盘后不存在 {path}")
+            return self._json({"ok": False, "msg": "图片保存失败，请重试"})
+        old_img = str(inst.get("custom_image") or "")
+        inst["custom_image"] = new_filename
+        await self.store.save()
+        # 回收旧外观图（与回收临时图同理，避免孤儿文件）
+        if old_img and old_img != new_filename:
+            try:
+                old_p = self.store.custom_image_path(old_img)
+                if old_p.exists():
+                    old_p.unlink()
+            except OSError:
+                pass
+        logger.info(f"[petpark] 后台已更换定制坐骑外观 group={group} qq={qq} mount={mname} img={new_filename}")
+        return self._json({"ok": True, "msg": "外观图已更新", "image": new_filename})
 
     async def _api_custom_pet_cancel(self, request):
         self._require(request)
@@ -1553,10 +1659,12 @@ function renderCustomReviews(){
 async function crApprove(id){ if(!confirm('确认通过该定制申请？')) return; const r=await api('/api/custom_reviews/approve',{id}); alert(r.ok?(r.msg||'已通过'):(r.msg||'操作失败')); loadCustomReviews(crStatus); }
 async function crReject(id){ const reason=prompt('请输入拒绝原因：'); if(!reason) return; const r=await api('/api/custom_reviews/reject',{id,reason}); alert(r.ok?(r.msg||'已拒绝'):(r.msg||'操作失败')); loadCustomReviews(crStatus); }
 
-let cpCache=[];
+let cpCache=[], cmCache=[];
 async function loadCustomPets(){
  const r=await api('/api/custom_pets',{});
  cpCache=r.data||[];
+ const m=await api('/api/custom_mounts',{});
+ cmCache=m.data||[];
  renderCustomPets();
 }
 function renderCustomPets(){
@@ -1578,11 +1686,43 @@ function renderCustomPets(){
    <td style="white-space:nowrap"><button class="act del" onclick='cpCancel(${tj(p.group)},${tj(p.qq)})'>取消定制</button></td>
   </tr>`;
  }
- document.getElementById('count').textContent='共 '+cpCache.length+' 个';
+ document.getElementById('count').textContent='共 '+cpCache.length+' 个宠物 / '+cmCache.length+' 个坐骑';
  document.getElementById('extrawrap').innerHTML='';
- document.getElementById('tablewrap').innerHTML = rows
+ const petHtml = rows
    ? `<table><thead><tr><th>群号</th><th>用户ID</th><th>账号QQ</th><th>宠物昵称</th><th>种类名称</th><th>品质</th><th>标签</th><th>定制图</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
    : `<div class="empty">暂无已解锁定制的宠物</div>`;
+ let mrows='';
+ cmCache.forEach((m,i)=>{
+  if(q && !String(m.group).toLowerCase().includes(q) && !String(m.qq).toLowerCase().includes(q) && !String(m.account_qq).toLowerCase().includes(q) && !String(m.name).toLowerCase().includes(q)) return;
+  const img=m.custom_image?`<img src="/custom_images/${esc(m.custom_image)}" onerror="this.replaceWith(document.createTextNode('（图缺失）'))" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e8ecf6">`:'（未设置）';
+  mrows+=`<tr>
+   <td class="num">${esc(m.group)}</td>
+   <td class="num">${esc(m.qq)}</td>
+   <td class="num">${esc(m.account_qq)}</td>
+   <td>${esc(m.name)}</td>
+   <td class="num">${esc(String(m.power))}</td>
+   <td>${esc(m.plate||'')}</td>
+   <td>${img}</td>
+   <td style="white-space:nowrap"><input type="file" id="cm_file_${i}" accept=".jpg,.jpeg,.png,.gif,.webp" style="width:190px"> <button class="act" onclick="cmSetImage(${i})">更换外观图</button></td>
+  </tr>`;
+ });
+ const mountHtml = `<h3 style="margin:22px 0 8px">定制坐骑</h3>` + (mrows
+   ? `<table><thead><tr><th>群号</th><th>用户ID</th><th>账号QQ</th><th>坐骑名</th><th>战力</th><th>号牌</th><th>外观图</th><th>操作</th></tr></thead><tbody>${mrows}</tbody></table>`
+   : `<div class="empty">暂无定制坐骑</div>`);
+ document.getElementById('tablewrap').innerHTML = petHtml + mountHtml;
+}
+async function cmSetImage(i){
+ const m=cmCache[i];
+ const inp=document.getElementById('cm_file_'+i);
+ if(!inp||!inp.files.length){alert('请先选择图片文件');return;}
+ if(!confirm('确认将坐骑「'+m.name+'」的外观图替换为所选图片？（旧图将被回收）')) return;
+ const fd=new FormData();
+ fd.append('group',m.group); fd.append('qq',m.qq); fd.append('name',m.name); fd.append('image',inp.files[0],inp.files[0].name);
+ try{
+  const r=await (await fetch('/api/custom_mounts/set_image',{method:'POST',body:fd})).json();
+  alert(r.ok?(r.msg||'已更新'):(r.msg||'更新失败'));
+  if(r.ok) loadCustomPets();
+ }catch(e){ alert('上传失败：'+e); }
 }
 function fsize(n){n=Number(n)||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(2)+' MB';}
 async function loadAppRelease(){
