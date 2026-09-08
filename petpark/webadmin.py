@@ -109,6 +109,9 @@ class WebAdmin:
         app.router.add_post("/api/celebrate/reset_stock", self._api_celebrate_reset_stock)
         app.router.add_post("/api/celebrate/broadcast", self._api_celebrate_broadcast)
         app.router.add_get("/api/song_silk/{name}", self._api_song_silk)
+        # 后台审核图片：以进程内 file read 直接返回二进制，绕开 /custom_images 静态路由
+        # （framework 容器化运行后 host 与容器文件视图可能不一致，需 in-process 提供）
+        app.router.add_get("/api/admin/image", self._api_admin_image)
 
         portal = PlayerPortal(
             self.store,
@@ -128,6 +131,39 @@ class WebAdmin:
         )
 
     # ---- 点歌 silk 临时文件下载（供 QQ 拉取；无鉴权，仅服务白名单临时目录）----
+    async def _api_admin_image(self, request):
+        """后台审核页图片：进程内读取 store.custom_images_dir 文件并直接返回二进制。
+        避开 /custom_images 静态路由（容器化/挂载视图差异下不可靠）。
+        """
+        self._require(request)
+        from aiohttp import web
+        fn = str(request.query.get("file", "")).strip()
+        if not fn:
+            return web.Response(status=404)
+        # 拒绝路径穿越
+        if "/" in fn or ".." in fn:
+            return web.Response(status=400, text="bad filename")
+        try:
+            p = self.store.custom_image_path(fn)
+            if not p.exists():
+                # 占位：返回一张 SVG 提示「图片缺失」，前端 <img onerror> 也会兜底
+                svg = (
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="240">'
+                    '<rect width="100%" height="100%" fill="repeating-linear-gradient(45deg,#f3f4f6,#f3f4f6 12px,#fafafa 12px,#fafafa 24px)"/>'
+                    '<text x="50%" y="46%" font-size="16" text-anchor="middle" fill="#5b657d">📂 图片缺失</text>'
+                    '<text x="50%" y="64%" font-size="11" text-anchor="middle" fill="#8a93a8">该定制图文件可能已被清理；建议让玩家重新提交。</text>'
+                    '</svg>')
+                return web.Response(body=svg, content_type="image/svg+xml")
+            data = p.read_bytes()
+        except OSError:
+            return web.Response(status=404)
+        ext = p.suffix.lower()
+        mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".png": "image/png", ".gif": "image/gif",
+                ".webp": "image/webp"}.get(ext, "application/octet-stream")
+        return web.Response(body=data, content_type=mime,
+                            headers={"Cache-Control": "no-cache"})
+
     async def _api_song_silk(self, request) -> Any:
         from aiohttp import web
 
@@ -1456,7 +1492,7 @@ async function paResetPwd(aid){
  alert(r.ok?(r.msg||'重置成功'):(r.msg||'重置失败'));
 }
 async function paDelete(aid){ if(!confirm('确认删除账号 '+aid+'？绑定关系也会清空。')) return; await api('/api/portal_accounts/delete',{account_id:aid}); loadPortalAccounts(); }
-function crImgUrl(img){ if(!img) return ''; if(img.startsWith('http') || img.startsWith('/')) return esc(img); return '/custom_images/'+esc(img); }
+function crImgUrl(img){ if(!img) return ''; if(img.startsWith('http') || img.startsWith('/')) return esc(img); return '/api/admin/image?file='+encodeURIComponent(img); }
 function crImgBox(img,label){
  if(!img) return '';
  const u = crImgUrl(img);
