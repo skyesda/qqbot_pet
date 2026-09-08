@@ -1987,7 +1987,7 @@ class PetStore:
             self.custom_reviews()[review_id] = review
             # 提交即占位扣减资格；若后台驳回将返还（reject_custom_review）
             player["mount_custom_slots"] = max(0, int(player.get("mount_custom_slots", 0) or 0) - 1)
-            return review, "已提交审核，预计 3 个工作日内处理完毕"
+            return review, ""  # 成功时 err 必须为空（portal 以 err 非空判定失败并回收图片）
         pet = player.get("pet")
         if not pet:
             return None, "该账号下没有宠物"
@@ -2023,7 +2023,7 @@ class PetStore:
             "created_at": now,
         }
         self.custom_reviews()[review_id] = review
-        return review, "已提交审核，预计 3 个工作日内处理完毕"
+        return review, ""  # 成功时 err 必须为空（portal 以 err 非空判定失败并回收图片）
 
     def apply_custom_review(self, review_id: str) -> tuple[bool, str]:
         review = self.custom_reviews().get(review_id)

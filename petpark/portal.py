@@ -1152,8 +1152,8 @@ class PlayerPortal:
             logger.info(f"[petpark] 宠物定制图已落盘 {path} size={len(file_data)}")
             changes["image"] = new_filename
         review, err = self.store.create_custom_review(sess["aid"], group_id, qq, changes)
-        if err:
-            return web.json_response({"ok": False, "msg": err})
+        if not review:
+            return web.json_response({"ok": False, "msg": err or "提交失败，请稍后再试"})
         await self.store.save()
         return web.json_response({
             "ok": True,
@@ -1251,13 +1251,14 @@ class PlayerPortal:
             review, err = self.store.create_custom_review(
                 sess.get("aid"), group_id, qq, changes,
                 kind="mount", mount_name=mname)
-            if err:
+            if not review:
+                # 仅在真正失败（review 未创建）时回收图片文件；成功路径 err 恒为空
                 try:
                     if path.exists():
                         path.unlink()
                 except OSError:
                     pass
-                return web.json_response({"ok": False, "msg": err})
+                return web.json_response({"ok": False, "msg": err or "提交失败，请稍后再试"})
             await self.store.save()
             role = self._slot_role_summary(player, group_id, qq)
             return web.json_response({
