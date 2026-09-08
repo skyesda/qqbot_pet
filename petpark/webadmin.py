@@ -708,17 +708,8 @@ class WebAdmin:
         ext = Path(filename).suffix.lower() if filename else ".jpg"
         if ext not in self._CUSTOM_MOUNT_IMG_EXTS:
             return self._json({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
-        # webp → png（QQ 群聊拉取不兼容 webp）
-        if ext == ".webp":
-            try:
-                import io
-                from PIL import Image
-                img = Image.open(io.BytesIO(file_data))
-                out = io.BytesIO()
-                img.save(out, format="PNG")
-                file_data, ext = out.getvalue(), ".png"
-            except Exception:
-                pass
+        # webp 规范化（QQ 端不兼容 webp）：动态转 GIF / 静态转 PNG，与玩家上传同一逻辑
+        file_data, ext = PlayerPortal._normalize_custom_image(file_data, ext)
         new_filename = f"{secrets.token_hex(8)}{ext}"
         path = self.store.custom_image_path(new_filename)
         try:

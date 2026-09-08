@@ -64,13 +64,30 @@ class PlayerPortal:
 
     @staticmethod
     def _normalize_custom_image(file_data: bytes, ext: str) -> tuple[bytes, str]:
-        """上传定制图规范化：webp → png（QQ 群聊拉取/展示不兼容 webp）；转换失败回退原样。"""
+        """上传定制图规范化：QQ 端不兼容 webp —— 动态 webp 转动态 GIF（保留动画），
+        静态 webp 转 PNG；转换失败回退原样。其余格式原样返回。"""
         if ext != ".webp":
             return file_data, ext
         try:
             import io
             from PIL import Image
             img = Image.open(io.BytesIO(file_data))
+            if getattr(img, "is_animated", False):
+                frames, durations = [], []
+                for i in range(getattr(img, "n_frames", 1)):
+                    img.seek(i)
+                    durations.append(int(img.info.get("duration") or 80))
+                    frames.append(img.convert("RGBA").convert("P", palette=Image.ADAPTIVE))
+                out = io.BytesIO()
+                try:
+                    frames[0].save(out, format="GIF", save_all=True,
+                                   append_images=frames[1:], duration=durations, loop=0)
+                except TypeError:
+                    out = io.BytesIO()
+                    avg = max(1, sum(durations) // len(durations))
+                    frames[0].save(out, format="GIF", save_all=True,
+                                   append_images=frames[1:], duration=avg, loop=0)
+                return out.getvalue(), ".gif"
             out = io.BytesIO()
             img.save(out, format="PNG")
             return out.getvalue(), ".png"
@@ -3263,191 +3280,116 @@ createApp({
 
 
 _HOME_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>灵契仙途 · 全服数据中心</title>
+<title>灵契仙途 · 与灵宠结契，共赴仙途</title>
+<meta name="description" content="灵契仙途 QQ 群聊修仙游戏：剑修、体修、灵修、魔修四职业，灵宠结契、洞天突破、宗门秘境、坐骑养成。玩家中心支持绑定角色、查看修士与灵宠、坐骑外观定制。">
+<meta name="theme-color" content="#112f2d">
+<link rel="preload" as="image" href="/webstatic/home/hero-mountains.webp">
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<link rel="stylesheet" href="/webstatic/element-plus-dark.css">
-<style>
-  :root{
-    --bg:#0b1020; --card:rgba(255,255,255,.04); --line:rgba(255,255,255,.08);
-    --text:#e8ecf8; --muted:#8b93b0; --brand:#6366f1; --brand2:#a855f7;
-  }
-  *{margin:0;padding:0;box-sizing:border-box}
-  html.dark{--el-bg-color:#141a33;--el-bg-color-overlay:#141a33}
-  body{
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-    background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden;
-  }
-  [v-cloak]{display:none}
-  #particles{position:fixed;inset:0;z-index:0;pointer-events:none}
-  .glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.35;pointer-events:none;z-index:0;transition:transform .6s cubic-bezier(.22,1,.36,1)}
-  .glow.a{width:560px;height:560px;background:#4338ca;top:-180px;left:-120px;animation:drift 18s ease-in-out infinite alternate}
-  .glow.b{width:480px;height:480px;background:#7e22ce;top:22%;right:-160px;animation:drift 22s ease-in-out infinite alternate-reverse}
-  .glow.c{width:420px;height:420px;background:#0e7490;bottom:-140px;left:32%;animation:drift 26s ease-in-out infinite alternate}
-  @keyframes drift{from{transform:translate(0,0)}to{transform:translate(60px,40px)}}
-  .grid-bg{position:fixed;inset:0;z-index:0;pointer-events:none;
-    background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
-    background-size:44px 44px;
-    mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 40%,transparent 100%);
-  }
-  .wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 24px}
 
-  nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0}
-  .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;letter-spacing:.5px}
-  .brand .dot{width:12px;height:12px;border-radius:4px;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 0 16px rgba(129,90,247,.8)}
-  .nav-btns{display:flex;gap:10px;align-items:center}
-  .user-chip{font-size:13px;color:#b6f2d4;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);border-radius:999px;padding:7px 14px;font-weight:600}
-  .btn-grad{background:linear-gradient(135deg,var(--brand),var(--brand2)) !important;border:none !important;color:#fff !important;box-shadow:0 4px 18px rgba(120,80,240,.4)}
-  .btn-grad:hover{transform:translateY(-1px);box-shadow:0 8px 26px rgba(120,80,240,.55)}
-
-  .hero{text-align:center;padding:72px 0 40px}
-  .hero .tag,.hero h1,.hero p,.hero .cta{opacity:0;animation:rise .9s cubic-bezier(.22,1,.36,1) forwards}
-  .hero h1{animation-delay:.12s}
-  .hero p{animation-delay:.24s}
-  .hero .cta{animation-delay:.36s}
-  @keyframes rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}
-  .hero .tag{display:inline-block;font-size:12px;letter-spacing:2px;color:#b6bdf7;border:1px solid rgba(120,110,250,.4);border-radius:999px;padding:6px 16px;background:rgba(90,80,220,.12);margin-bottom:22px}
-  .hero h1{font-size:56px;font-weight:900;line-height:1.15;letter-spacing:1px;
-    background:linear-gradient(120deg,#fff 10%,#c7bfff 35%,#8f7bf7 55%,#c7bfff 75%,#fff 95%);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:rise .9s cubic-bezier(.22,1,.36,1) .12s forwards,shine 7s linear 1.1s infinite}
-  @keyframes shine{to{background-position:-200% center}}
-  .hero p{color:var(--muted);font-size:16px;margin-top:16px;line-height:1.8}
-  .hero .cta{margin-top:30px;display:flex;gap:14px;justify-content:center}
-  .hero .cta .el-button{padding:22px 32px;font-size:15px;border-radius:12px}
-
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:46px 0 10px}
-  .stat-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 20px;text-align:center;backdrop-filter:blur(8px);position:relative;overflow:hidden;transition:transform .25s,border-color .25s,box-shadow .25s}
-  .stat-card:hover{transform:translateY(-4px);border-color:rgba(140,110,255,.45);box-shadow:0 14px 36px rgba(80,60,200,.28)}
-  .stat-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(140,110,255,.7),transparent)}
-  .stat-card .num{font-size:38px;font-weight:900;background:linear-gradient(120deg,#fff,#b9aefe);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
-  .stat-card .lbl{color:var(--muted);font-size:13px;margin-top:8px;letter-spacing:1px}
-
-  .section{margin:64px 0}
-  .section-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px}
-  .section-head h2{font-size:24px;font-weight:800}
-  .section-head span{color:var(--muted);font-size:13px}
-  .boards{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  .board{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;backdrop-filter:blur(8px)}
-  .board.full{grid-column:1/-1}
-  .board h3{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:4px}
-  .board .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
-  .board .el-table{--el-table-bg-color:transparent;--el-table-tr-bg-color:transparent;--el-table-header-bg-color:transparent;
-    --el-table-border-color:rgba(255,255,255,.07);--el-table-row-hover-bg-color:rgba(255,255,255,.045);
-    --el-table-header-text-color:#8b93b0;--el-table-text-color:#e8ecf8;font-size:14px}
-  .board .el-table::before{display:none}
-  .rk{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;font-size:13px;font-weight:800;background:rgba(255,255,255,.06);color:var(--muted)}
-  .rk.g1{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#442c00}
-  .rk.g2{background:linear-gradient(135deg,#e5e7eb,#9ca3af);color:#26292f}
-  .rk.g3{background:linear-gradient(135deg,#f6ad7b,#c2703d);color:#3d1e05}
-  .pw{font-weight:800;color:#ffd479;font-variant-numeric:tabular-nums}
-  .mb{font-weight:700;color:#8ce3c2;font-variant-numeric:tabular-nums}
-  .q{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:rgba(140,110,255,.15);color:#c3b8ff;border:1px solid rgba(140,110,255,.25)}
-
-  .links{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
-  .link-card{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;text-decoration:none;color:var(--text);backdrop-filter:blur(8px);transition:.2s;cursor:pointer}
-  .link-card:hover{transform:translateY(-2px);border-color:rgba(140,110,255,.45);box-shadow:0 12px 32px rgba(80,60,200,.25)}
-  .link-card .ic{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;background:linear-gradient(135deg,rgba(99,102,241,.25),rgba(168,85,247,.25));border:1px solid rgba(140,110,255,.3);flex-shrink:0}
-  .link-card .t{font-size:16px;font-weight:800}
-  .link-card .d{color:var(--muted);font-size:13px;margin-top:5px;line-height:1.6}
-  .link-card .go{margin-left:auto;flex-shrink:0;color:#a5b0ff;font-size:13px;font-weight:700;white-space:nowrap}
-  @media(max-width:900px){.links{grid-template-columns:1fr}}
-
-  footer{color:var(--muted);font-size:13px;text-align:center;padding:50px 0 36px;border-top:1px solid var(--line);margin-top:70px}
-  footer a{color:#a5b0ff;text-decoration:none}
-
-  .reveal{opacity:0;transform:translateY(34px);transition:opacity .8s cubic-bezier(.22,1,.36,1),transform .8s cubic-bezier(.22,1,.36,1)}
-  .reveal.in{opacity:1;transform:none}
-  @media(prefers-reduced-motion:reduce){
-    .reveal{opacity:1;transform:none;transition:none}
-    .hero .tag,.hero h1,.hero p,.hero .cta{opacity:1;animation:none}
-  }
-
-  .auth-dialog{--el-dialog-border-radius:20px}
-  .auth-dialog .el-dialog__header{padding-bottom:2px}
-  .auth-hint{color:var(--muted);font-size:13px;margin-bottom:18px}
-  .auth-switch{color:var(--muted);font-size:13px;text-align:center;margin-top:14px}
-  .auth-switch a{color:#a5b0ff;cursor:pointer}
-
-  @media(max-width:900px){
-    .stats{grid-template-columns:repeat(2,1fr)}
-    .boards{grid-template-columns:1fr}
-    .hero h1{font-size:38px}
-  }
-  @media(max-width:600px){
-    .wrap{padding:0 16px}
-    nav{padding:16px 0}
-    .brand{font-size:16px}
-    .nav-btns{gap:6px}
-    .nav-btns .el-button{padding:8px 14px}
-    .user-chip{display:none}
-    .hero{padding:44px 0 26px}
-    .hero h1{font-size:30px}
-    .hero p{font-size:14px}
-    .hero .cta{flex-wrap:wrap}
-    .hero .cta .el-button{padding:18px 22px;font-size:14px}
-    .stats{gap:10px;margin:30px 0 6px}
-    .stat-card{padding:18px 12px;border-radius:14px}
-    .stat-card .num{font-size:27px}
-    .section{margin:44px 0}
-    .section-head{flex-direction:column;gap:4px}
-    .section-head h2{font-size:20px}
-    .board{padding:14px;border-radius:14px}
-    .board .el-table{font-size:13px}
-    .link-card{padding:16px}
-    .link-card .go{display:none}
-    footer{padding:36px 0 26px;line-height:2}
-    .el-dialog{--el-dialog-width:calc(100vw - 28px) !important;width:calc(100vw - 28px) !important;max-width:calc(100vw - 28px)}
-    .el-message{max-width:calc(100vw - 24px)}
-  }
-</style>
+<link rel="stylesheet" href="/webstatic/home.css?v=20260908">
 </head>
 <body>
-<div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
-<div class="grid-bg"></div>
-<canvas id="particles"></canvas>
+<a class="skip-link" href="#explore">跳到玩法介绍</a>
+<noscript><p class="no-script">灵契仙途 · 请启用 JavaScript 查看游戏首页。<a href="https://qm.qq.com/q/S6ql07Q72m">加入官方群 547205828</a></p></noscript>
 <div id="app" v-cloak>
+<header class="masthead">
+  <img class="landscape" src="/webstatic/home/hero-mountains.webp" alt="" fetchpriority="high" width="1672" height="941">
 <div class="wrap">
-  <nav>
-    <div class="brand"><span class="dot"></span>灵契仙途</div>
+  <nav aria-label="主导航">
+    <a class="brand" href="/" aria-label="灵契仙途首页"><span class="seal" aria-hidden="true">契</span>灵契仙途</a>
+    <div class="nav-links"><a href="#explore">仙途万象</a><a href="#professions">四道同修</a><a href="#start">初入仙途</a><a href="#rankings">风云榜</a></div>
     <div class="nav-btns" v-if="loggedIn">
-      <span class="user-chip">✅ 已登录{{ userQQ ? ' · ' + userQQ : '' }}</span>
-      <el-button class="btn-grad" round @click="goPortal">仪表盘</el-button>
-      <el-button round plain @click="logout">退出登录</el-button>
+      <span class="user-chip">{{ userQQ }}</span><el-button @click="goPortal">我的角色</el-button><el-button @click="logout">退出</el-button>
     </div>
-    <div class="nav-btns" v-else>
-      <el-button round plain @click="openAuth('login')">登录</el-button>
-      <el-button class="btn-grad" round @click="openAuth('register')">注册</el-button>
-    </div>
+    <div class="nav-btns" v-else><el-button @click="openAuth('login')">登录</el-button><el-button class="btn-grad" @click="openAuth('register')">注册</el-button></div>
   </nav>
-
   <div class="hero">
-    <div class="tag">QQ 群宠物养成 · 全服数据中心</div>
-    <h1>砸蛋抽宠 · 养成对战<br>飞升渡劫 · 摸金探险</h1>
-    <p>跨群神榜实时竞技，副本、姻缘、天赋觉醒、深渊秘境……<br>登录玩家中心，随时随地管理你的专属宠物。</p>
-    <div class="cta" v-if="loggedIn">
-      <el-button class="btn-grad" size="large" round @click="goPortal">进入仪表盘</el-button>
-      <el-button size="large" round plain @click="logout">退出登录</el-button>
+    <div class="hero-copy">
+      <div class="eyebrow">灵契仙途 / QQ 群聊修仙游戏</div>
+      <h1>一念入仙途。<br><span>山海有灵契。</span></h1>
+      <p class="hero-intro">择一道修行，结一世灵契。<br>带上你的灵宠，与群友一起闯秘境、建宗门。<br>从无名修士，到属于你的仙途传说。</p>
+      <div class="cta">
+        <el-button class="btn-grad" size="large" @click="loggedIn ? goPortal() : openAuth('login')">{{ loggedIn ? '回到我的角色' : '进入玩家中心' }} &nbsp; ↗</el-button>
+        <a class="secondary" href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">加入官方群 &nbsp; →</a>
+      </div>
+      <button v-if="appVer.ok" class="app-link" @click="downloadApp">安卓客户端下载 · {{ appVer.version_name }} ↗</button>
     </div>
-    <div class="cta" v-else>
-      <el-button class="btn-grad" size="large" round @click="openAuth('register')">立即加入</el-button>
-      <el-button size="large" round plain @click="openAuth('login')">进入玩家中心</el-button>
-    </div>
-    <div class="cta" v-if="appVer.ok">
-      <el-button size="large" round plain @click="downloadApp">📱 下载安卓 App（{{ appVer.version_name }}）</el-button>
-    </div>
+    <div class="hero-poem" aria-hidden="true">携灵宠作伴<br>向山海而行</div>
+    <a class="hero-note" href="#explore">向下展开仙途长卷 &nbsp; ↓</a>
   </div>
-
   <div class="stats reveal">
-    <div class="stat-card"><div class="num">{{ fmt(disp.players) }}</div><div class="lbl">全服玩家</div></div>
-    <div class="stat-card"><div class="num">{{ fmt(disp.auth_groups) }}</div><div class="lbl">授权群聊</div></div>
-    <div class="stat-card"><div class="num">{{ fmt(disp.pets) }}</div><div class="lbl">在册宠物</div></div>
-    <div class="stat-card"><div class="num">{{ fmt(disp.tomb_players) }}</div><div class="lbl">摸金玩家</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.players) : '—' }}</div><div class="lbl">全服玩家</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.auth_groups) : '—' }}</div><div class="lbl">授权群聊</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.pets) : '—' }}</div><div class="lbl">在册宠物</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.tomb_players) : '—' }}</div><div class="lbl">摸金玩家</div></div>
   </div>
 
-  <div class="section reveal">
-    <div class="section-head"><h2>🏅 宠物神榜</h2><span>全服跨群战力排行 · 前三每日可领神榜奖励</span></div>
+  <div class="data-state" v-if="homeError" role="status">{{ homeError }}<button @click="loadHome" :disabled="loading">重新加载</button></div>
+</div>
+</header>
+<main class="wrap" id="explore">
+  <div class="update-strip"><strong>仙途新事</strong><p>修士、灵宠、坐骑，一处查看。坐骑外观定制现已开放。</p><a class="text-link" href="#player-center">查看玩家中心新功能 ↗</a></div>
+
+  <section class="section" id="professions" aria-labelledby="profession-title">
+    <div class="section-kicker">修行 · 各有其道</div>
+    <div class="section-head"><h2 id="profession-title">四条路，同赴仙途。</h2><span>剑意、坚躯、灵法、血煞 · 点击了解职业</span></div>
+    <div class="profession-grid">
+      <button v-for="role in professions" :key="role.key" class="profession-card" :aria-pressed="selectedRole.key===role.key" @click="selectedRole=role" :aria-label="'了解'+role.name">
+        <img :src="'/webstatic/home/'+role.key+'.webp'" :alt="role.name+'职业立绘'" width="512" height="768" loading="lazy">
+        <span class="profession-label"><b>{{ role.name }}</b><span>{{ role.tag }}</span></span>
+      </button>
+    </div>
+    <div class="profession-detail" aria-live="polite"><p><strong>{{ selectedRole.name }}</strong> {{ selectedRole.desc }}</p><button class="command" @click="copyCommand('选择职业 '+selectedRole.name)">选择职业 {{ selectedRole.name }} &nbsp; ⧉</button></div>
+  </section>
+
+  <section class="section" aria-labelledby="world-title">
+    <div class="section-kicker">历练 · 不止一种日常</div>
+    <div class="section-head"><h2 id="world-title">这方天地，等你来闯。</h2><span>修炼有进境，同行有故人</span></div>
+    <div class="world-grid">
+      <div class="world-art"><img src="/webstatic/home/world.webp" alt="仙途地图：从青山宗门到云海仙境" width="800" height="1200" loading="lazy"><div class="world-caption"><small>二十方山海 · 普通 / 困难</small><h3>越过眼前山，<br>还有万重境。</h3><p>历练地图、组队秘境、世界首领、深渊挑战。</p><button class="command" @click="copyCommand('仙途地图')">仙途地图 &nbsp; ⧉</button></div></div>
+      <div>
+        <article class="feature-row"><span class="feature-no">01</span><div><h3>修士与灵宠，并肩而战</h3><p>修炼破境、觉醒神通、锻造六件装备。灵宠可选择攻击、守护或辅助专长；坐骑与道侣，也会成为你修行路上的助力。</p><button class="command" @click="copyCommand('我的修士')">我的修士 &nbsp; ⧉</button></div></article>
+        <article class="feature-row"><span class="feature-no">02</span><div><h3>一方洞天，一步一重关</h3><p>从初识到仙门，逐层挑战洞天试炼。与灵宠共同成长，完成仙途毕业目标，记下这一程的修行。</p><button class="command" @click="copyCommand('我的洞天')">我的洞天 &nbsp; ⧉</button></div></article>
+        <article class="feature-row"><span class="feature-no">03</span><div><h3>与群友开宗立派</h3><p>创建或加入宗门，一起做任务、外出探索、镇守宗门。捐献资源、积累贡献，再去宗门兑换所需。</p><button class="command" @click="copyCommand('宗门帮助')">宗门帮助 &nbsp; ⧉</button></div></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section portal-band" id="player-center" aria-labelledby="portal-title">
+    <div><div class="eyebrow">玩家中心 · 近期更新</div><h2 id="portal-title">你的修行，<br>打开就看得见。</h2><p>群里继续游历，网页随时查看。<br>绑定所在群的角色，修士、灵宠与坐骑都有自己的位置。</p><div class="cta"><el-button class="btn-grad" @click="loggedIn ? goPortal() : openAuth('login')">{{ loggedIn ? '查看我的角色' : '登录并绑定角色' }} &nbsp; ↗</el-button><a class="secondary" href="/chat">网页游玩 →</a></div></div>
+    <div class="portal-features">
+      <div class="portal-feature"><span>01</span><div><b>修士档案与角色绑定</b><p>查看职业、境界、洞天、灵根、神通与战力构成；没有灵宠，也能绑定修士。</p></div></div>
+      <div class="portal-feature"><span>02</span><div><b>灵宠、坐骑与背包</b><p>查看养成状态、坐骑信息和资产，使用背包道具、兑换卡密。</p></div></div>
+      <div class="portal-feature"><span>03</span><div><b>把喜欢的形象，带进仙途</b><p>灵宠定制与坐骑外观定制。解锁对应资格后上传图片、提交申请，审核通过后使用。</p></div></div>
+    </div>
+  </section>
+
+  <section class="section" id="start" aria-labelledby="start-title">
+    <div class="section-kicker">初见 · 从这三步开始</div>
+    <div class="section-head"><h2 id="start-title">第一步，在群里发一句话。</h2><span>点击指令复制，回到已开通游戏的 QQ 群发送</span></div>
+    <div class="guide-grid">
+      <article class="guide-step"><span class="step-index">壹 / 创建角色</span><h3>先有一个自己的道号</h3><p>加入官方群或已开通游戏的群，发送指令创建修士。</p><button class="command" @click="copyCommand('创建角色')">创建角色 &nbsp; ⧉</button></article>
+      <article class="guide-step"><span class="step-index">贰 / 选择职业</span><h3>选你喜欢的修行之道</h3><p>剑修、体修、灵修、魔修任选其一，体验各自的战斗方式。</p><button class="command" @click="copyCommand('选择职业 '+selectedRole.name)">选择职业 {{ selectedRole.name }} &nbsp; ⧉</button></article>
+      <article class="guide-step"><span class="step-index">叁 / 结契灵宠</span><h3>这一程，有伙伴同行</h3><p>九尾狐、卡比兽、七夕青鸟，选一只初始伙伴，再出发历练。</p><button class="command" @click="copyCommand('结契灵宠 九尾狐')">结契灵宠 九尾狐 &nbsp; ⧉</button></article>
+    </div>
+    <p class="guide-foot">已在群里玩过？直接登录玩家中心绑定已有角色。若群内提示需要绑定 QQ，请先发送「绑定教程」。完整菜单发送「灵契仙途」。</p>
+  </section>
+
+  <section class="section" aria-labelledby="library-title">
+    <div class="section-head"><h2 id="library-title">修行之外，也有江湖。</h2><span>展开查看玩法与常用指令</span></div>
+    <div class="play-library">
+      <details v-for="group in playGroups" :key="group.title"><summary><b>{{ group.title }}</b><span>{{ group.subtitle }}</span></summary><div class="library-body"><p>{{ group.desc }}</p><div class="command-list"><button class="command" v-for="cmd in group.commands" :key="cmd" @click="copyCommand(cmd)">{{ cmd }} &nbsp; ⧉</button></div></div></details>
+    </div>
+  </section>
+
+  <section class="section rank-section" id="rankings">
+    <div class="section-kicker">风云 · 群雄留名</div>
+    <div class="section-head"><h2>灵宠战力榜</h2><span>按灵宠自身战力排序 · 修士综合战力请在群内查看「仙途战力榜」</span></div>
+    <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
     <div class="boards">
       <div class="board full">
         <el-table :data="petRank" v-loading="loading" element-loading-background="transparent" empty-text="暂无宠物上榜">
@@ -3468,13 +3410,13 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </el-table>
       </div>
     </div>
-  </div>
+  </section>
 
   <div class="section reveal">
-    <div class="section-head"><h2>🏺 摸金风云榜</h2><span>地宫探险 · 冥币为王</span></div>
+    <div class="section-head"><h2>摸金风云榜</h2><span>地宫探险 · 记录每一笔收获</span></div>
     <div class="boards">
       <div class="board full">
-        <h3>💰 摸金排行（全服）</h3>
+        <h3>摸金排行 · 全服</h3>
         <div class="sub">按永久冥币总量排序</div>
         <el-table :data="tombRank" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="80">
@@ -3487,7 +3429,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </el-table>
       </div>
       <div class="board">
-        <h3>🔥 今日摸金神榜</h3>
+        <h3>今日摸金榜</h3>
         <div class="sub">{{ todaySub }}</div>
         <el-table :data="tombToday" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="70">
@@ -3500,7 +3442,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </el-table>
       </div>
       <div class="board">
-        <h3>🌙 昨日摸金神榜</h3>
+        <h3>昨日摸金榜</h3>
         <div class="sub">{{ ystSub }}</div>
         <el-table :data="tombYst" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="70">
@@ -3516,37 +3458,37 @@ _HOME_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="section reveal">
-    <div class="section-head"><h2>🚀 加入我们</h2><span>进群开玩 · 充值直达</span></div>
+    <div class="section-head"><h2>江湖不远，群里见。</h2><span>一起玩，也一起把仙途变得更好</span></div>
     <div class="links">
       <a class="link-card" href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">
-        <div class="ic">💬</div>
+        <div class="ic" aria-hidden="true">01</div>
         <div>
-          <div class="t">小飞机器人官方群</div>
+          <div class="t">小飞机器人 · 官方群</div>
           <div class="d">官方 QQ 群：547205828 · 点击一键加群，交流攻略、领取福利</div>
         </div>
-        <div class="go">加入群聊 →</div>
+        <div class="go">↗</div>
       </a>
       <a class="link-card" href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">
-        <div class="ic">💎</div>
+        <div class="ic" aria-hidden="true">02</div>
         <div>
           <div class="t">充值入口</div>
           <div class="d">灵石 / 玄晶 / 天晶卡密自助购买，兑换即时到账</div>
         </div>
-        <div class="go">前往充值 →</div>
+        <div class="go">↗</div>
       </a>
-      <a class="link-card" @click="goFeedback">
-        <div class="ic">📣</div>
+      <button type="button" class="link-card" @click="goFeedback">
+        <div class="ic" aria-hidden="true">03</div>
         <div>
           <div class="t">问题反馈</div>
-          <div class="d">遇到 Bug 或有好建议？登录后即可提交，管理员处理后回复可查</div>
+          <div class="d">提交遇到的问题或玩法建议，登录后可查看管理员回复。</div>
         </div>
-        <div class="go">去反馈 →</div>
-      </a>
+        <div class="go">↗</div>
+      </button>
     </div>
   </div>
 
-  <footer>灵契仙途 · 数据每 30 秒更新 · <a href="/portal">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">充值入口</a></footer>
-</div>
+  <footer><div>灵契仙途 · 与灵宠结契，共赴仙途。<br>榜单每 30 秒刷新；不同玩法按各自规则统计。</div><div><a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a></div></footer>
+</main>
 
 <el-dialog v-model="auth.show" :title="authTitle" width="400px" class="auth-dialog" align-center>
   <div class="auth-hint">{{ authHint }}</div>
@@ -3598,6 +3540,27 @@ createApp({
     const loggedIn = ref(false);
     const userQQ = ref('');
     const loading = ref(true);
+    const hasData = ref(false);
+    const homeError = ref('');
+    const professions = [
+      {key:'sword',name:'剑修',tag:'剑意爆发 · 破甲斩敌',desc:'每三回合蓄起剑意，以爆发与破甲直面强敌。'},
+      {key:'body',name:'体修',tag:'护盾反击 · 护卫队友',desc:'以坚躯护卫队友，用护盾承伤，在受击中反击。'},
+      {key:'spirit',name:'灵修',tag:'疗愈净化 · 灵法相助',desc:'队友受伤时施以治疗，无需治疗时以灵法进攻。'},
+      {key:'demon',name:'魔修',tag:'以血催煞 · 攻击汲生',desc:'以血催煞，在攻击中汲取生命，走另一条修行路。'}
+    ];
+    const selectedRole = ref(professions[0]);
+    const playGroups = [
+      {title:'灵宠养成',subtitle:'砸蛋收集 / 进化飞升 / 天赋与炼丹',desc:'从获得第一只灵宠开始，升级、进化、飞升与渡劫；还可学习秘技、打造神器，挑战宠物副本与剧情任务。',commands:['砸蛋','我的宠物','宠物市场','灵宠觉醒','宠物副本','宠物剧情任务']},
+      {title:'仙途历练',subtitle:'装备锻造 / 组队秘境 / 世界首领 / 深渊',desc:'修炼积累修为，锻造并进阶装备，选择历练与挑战。洞天试炼和仙途毕业，也在等你完成。',commands:['修士修炼','修士装备','锻造 灵剑','仙途地图','世界首领','我的洞天','仙途毕业']},
+      {title:'坐骑与情缘',subtitle:'坐骑养成 / 外观定制 / 道侣双修',desc:'带上坐骑踏入仙途，与另一位修士结为道侣。玩家中心可查看坐骑，并在解锁资格后申请专属外观。',commands:['我的坐骑','道侣情缘','道侣双修']},
+      {title:'宗门与家园',subtitle:'开宗立派 / 宗门任务 / 家园经营',desc:'与群友经营宗门、完成任务与探索；闲下来，也可以回到自己的家园。',commands:['宗门帮助','查看宗门','宗门任务','宗门兑换','家园']},
+      {title:'摸金与棋局',subtitle:'地宫探险 / 扫雷 / 群聊棋类对弈',desc:'下地宫摸金，或与群友摆一局。象棋、围棋、五子棋、军棋和斗兽棋都有各自的玩法。发送完整菜单查看开局方式。',commands:['摸金介绍','灵契仙途']},
+      {title:'每日与排行',subtitle:'签到 / 商城背包 / 本群与全服战力榜',desc:'签到领取日常奖励，查看背包与商城。群内仙途战力榜展示综合战力，官网下方保留灵宠自身战力和摸金榜。',commands:['签到','查看背包','宠物商城','仙途战力榜','仙途战力榜全服']}
+    ];
+    async function copyCommand(command){
+      try { await navigator.clipboard.writeText(command); ElMessage.success('已复制「'+command+'」，请到游戏群发送'); }
+      catch(e) { ElMessage.info({message:'请在游戏群发送：'+command,duration:6000}); }
+    }
     const disp = reactive({players:0, auth_groups:0, pets:0, tomb_players:0});
     const appVer = reactive({ok:false, version_name:'', url:''});
     const petRank = ref([]);
@@ -3615,9 +3578,10 @@ createApp({
       (auth.tab==='email' ? '使用已绑定的邮箱接收验证码登录' : '使用注册时的 QQ 号登录玩家中心')));
 
     const fmt = n => Number(n||0).toLocaleString('zh-CN');
-    const fmtPower = bp => bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp);
+    const fmtPower = bp => bp >= 1e12 ? (bp/1e12).toFixed(2) + '万亿' : bp >= 1e8 ? (bp/1e8).toFixed(2) + '亿' : bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp);
 
     function animate(key, target){
+      if(matchMedia('(prefers-reduced-motion: reduce)').matches){ disp[key] = target; return; }
       const from = disp[key] || 0;
       if(from === target){ disp[key] = target; return; }
       const start = performance.now(), dur = 1200;
@@ -3647,9 +3611,14 @@ createApp({
     }
 
     async function loadHome(){
+      loading.value = true;
       try{
-        const r = await (await fetch('/api/portal/home')).json();
-        if(!r.ok) return;
+        const response = await fetch('/api/portal/home');
+        if(!response.ok) throw new Error('home unavailable');
+        const r = await response.json();
+        if(!r.ok || !r.stats) throw new Error('invalid home data');
+        hasData.value = true;
+        homeError.value = '';
         animate('players', r.stats.players);
         animate('auth_groups', r.stats.auth_groups);
         animate('pets', r.stats.pets);
@@ -3661,6 +3630,7 @@ createApp({
         todaySub.value = `统计 ${r.date_today} 00:00 至今获得冥币，每日 0 点重置`;
         ystSub.value = `统计 ${r.date_yesterday} 全天 · 前三名可领取随机宠物经验奖励`;
       }catch(e){
+        homeError.value = hasData.value ? '数据更新暂时中断，当前显示上次获取结果。' : '榜单暂时未能加载，请稍后重试。';
       }finally{ loading.value = false; }
     }
 
@@ -3763,90 +3733,14 @@ createApp({
       finally{ auth.loading = false; }
     }
 
-    function initParticles(){
-      const cv = document.getElementById('particles');
-      if(!cv) return;
-      const ctx = cv.getContext('2d');
-      let W = 0, H = 0, dots = [];
-      const mouse = {x:-9999, y:-9999};
-      function resize(){
-        W = cv.width = innerWidth; H = cv.height = innerHeight;
-        const n = Math.min(110, Math.round(W * H / 16000));
-        dots = Array.from({length:n}, () => ({
-          x: Math.random()*W, y: Math.random()*H,
-          vx: (Math.random()-.5)*.35, vy: (Math.random()-.5)*.35,
-          r: Math.random()*1.6 + .6
-        }));
-      }
-      resize();
-      addEventListener('resize', resize);
-      addEventListener('pointermove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-      addEventListener('pointerleave', () => { mouse.x = -9999; mouse.y = -9999; });
-      const LINK = 130, MOUSE = 170;
-      function frame(){
-        ctx.clearRect(0, 0, W, H);
-        for(const d of dots){
-          d.x += d.vx; d.y += d.vy;
-          if(d.x < -20) d.x = W + 20; else if(d.x > W + 20) d.x = -20;
-          if(d.y < -20) d.y = H + 20; else if(d.y > H + 20) d.y = -20;
-          ctx.beginPath();
-          ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(165,150,255,.55)';
-          ctx.fill();
-        }
-        for(let i = 0; i < dots.length; i++){
-          const a = dots[i];
-          for(let j = i + 1; j < dots.length; j++){
-            const b = dots[j];
-            const dx = a.x - b.x, dy = a.y - b.y;
-            const dist = Math.hypot(dx, dy);
-            if(dist < LINK){
-              ctx.beginPath();
-              ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-              ctx.strokeStyle = `rgba(140,120,255,${(1 - dist / LINK) * .22})`;
-              ctx.lineWidth = 1;
-              ctx.stroke();
-            }
-          }
-          const md = Math.hypot(a.x - mouse.x, a.y - mouse.y);
-          if(md < MOUSE){
-            ctx.beginPath();
-            ctx.moveTo(a.x, a.y); ctx.lineTo(mouse.x, mouse.y);
-            ctx.strokeStyle = `rgba(190,170,255,${(1 - md / MOUSE) * .3})`;
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
-        }
-        requestAnimationFrame(frame);
-      }
-      if(!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(frame);
-    }
-
-    function initMotion(){
-      const io = new IntersectionObserver(es => {
-        es.forEach(e => { if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
-      }, {threshold: .12});
-      document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-      const glows = document.querySelectorAll('.glow');
-      addEventListener('pointermove', e => {
-        const rx = e.clientX / innerWidth - .5, ry = e.clientY / innerHeight - .5;
-        glows.forEach((g, i) => {
-          const k = (i + 1) * 14;
-          g.style.transform = `translate(${rx * k}px, ${ry * k}px)`;
-        });
-      });
-    }
-
     onMounted(()=>{
       checkAuth();
       loadHome();
       loadAppVer();
       setInterval(loadHome, 30000);
-      initParticles();
-      initMotion();
     });
 
-    return {loggedIn, userQQ, loading, disp, appVer, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
+    return {professions, selectedRole, playGroups, copyCommand, hasData, homeError, loadHome, loggedIn, userQQ, loading, disp, appVer, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
             auth, authTitle, authHint, fmt, fmtPower, openAuth, goFeedback, goPortal, downloadApp, logout, submitAuth, sendCode};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
