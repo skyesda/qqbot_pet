@@ -8,7 +8,7 @@ import uuid
 from . import content as c
 from ..pet import new_pet
 from .combat import build_party, enemies, hero_sheet, simulate
-from .power import compute_unified_power, power_breakdown, power_to_scale
+from .power import compute_unified_power, power_breakdown, power_to_scale, fmt_power
 
 MENU = """## 灵契仙途
 修士问道，灵宠同行。
@@ -301,9 +301,9 @@ class AdventureService:
             nxt = min(20, len(a["cleared"]) + 1)
             if bd:
                 power_lines = (
-                    f"总战力 {bd['total']}\n"
-                    f"　构成：本体 {bd['hero']} ＋ 15%×灵宠『{bd['pet_name']}』{bd['pet_contrib']} ＋ 10%×坐骑 {bd['mount_contrib']} ＝ {bd['base']:.1f}\n"
-                    f"　再乘：道侣×{bd['partner']:.2f} · 洞天×{bd['heaven_margin']:.2f} → {bd['total']}"
+                    f"总战力 {fmt_power(bd['total'])}\n"
+                    f"　构成：本体 {fmt_power(bd['hero'])} ＋ 15%×灵宠『{bd['pet_name']}』{fmt_power(bd['pet_contrib'])} ＋ 10%×坐骑 {fmt_power(bd['mount_contrib'])} ＝ {fmt_power(bd['base'])}\n"
+                    f"　再乘：道侣×{bd['partner']:.2f} · 洞天×{bd['heaven_margin']:.2f} → {fmt_power(bd['total'])}"
                 )
             else:
                 power_lines = "总战力 0"

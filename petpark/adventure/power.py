@@ -15,6 +15,45 @@ pet.battle_power(pet) 显示值。本模块提供唯一的「仙途战力」，�
 from .combat import hero_sheet
 from ..pet import battle_power
 
+_NUM_UNITS = (
+    (10**100, "古戈尔"), (10**72, "大数"), (10**68, "无量"),
+    (10**64, "不可思议"), (10**60, "那由他"), (10**56, "阿僧祇"),
+    (10**52, "恒河沙"), (10**48, "极"), (10**44, "载"),
+    (10**40, "正"), (10**36, "涧"), (10**32, "沟"),
+    (10**28, "穰"), (10**24, "秭"), (10**20, "垓"), (10**16, "京"),
+    (10**12, "兆"), (10**8, "亿"), (10**4, "万"),
+)
+
+
+def fmt_power(n) -> str:
+    """战力/大数显示：≥1万 按 万→亿→兆→…→古戈尔(10^100) 缩写，保留 2 位小数，
+    不足万原样；整数运算，与主站 _short_num 完全同口径，供修士卡/文字版/榜单复用。"""
+    try:
+        iv = int(n)
+    except (TypeError, ValueError, OverflowError):
+        return str(n)
+    neg = iv < 0
+    a = -iv if neg else iv
+    if a < 10_000:
+        return str(iv)
+    sign = "-" if neg else ""
+    for threshold, unit in _NUM_UNITS:
+        if a >= threshold:
+            whole = a // threshold
+            wstr = str(whole)
+            if len(wstr) >= 5:
+                head = wstr[:3]
+                return f"{sign}{head[0]}.{head[1:]}e{len(wstr) - 1}{unit}"
+            scaled = (a % threshold) * 100
+            dec_q, dec_r = divmod(scaled, threshold)
+            if dec_r * 2 >= threshold:
+                dec_q += 1
+            if dec_q >= 100:
+                whole += 1
+                dec_q = 0
+            return f"{sign}{whole}.{dec_q:02d}{unit}"
+    return f"{sign}{a}"
+
 
 def hero_power(a, player, include_mount=True):
     """修士本体：职业基础属性 + 等级成长 + 洞天装备（+ 坐骑战力可选），折成单个数。

@@ -7,7 +7,7 @@ from pathlib import Path
 from .. import card_theme
 from . import content as c
 from .combat import hero_sheet
-from .power import power_breakdown
+from .power import power_breakdown, fmt_power
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "cultivator"
 PORTRAITS = {"剑修": "sword", "体修": "body", "灵修": "spirit", "魔修": "demon"}
@@ -92,7 +92,7 @@ def card_html(player, key, equipment=False):
         _daolv_b = "未结道侣"
         _daolv_s = "可与其他修士结道侣：结道侣 用户ID"
     details = (f'<div class="power-formula"><span>战力构成</span>'
-               f'<b>本体 {bd["hero"]} <i>＋</i> 灵宠 {bd["pet_contrib"]} <i>＋</i> 坐骑 {bd["mount_contrib"]}</b>'
+               f'<b>本体 {fmt_power(bd["hero"])} <i>＋</i> 灵宠 {fmt_power(bd["pet_contrib"])} <i>＋</i> 坐骑 {fmt_power(bd["mount_contrib"])}</b>'
                f'<small>灵宠计 15% · 坐骑计 10% · 道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}</small></div>') if bd else ""
     # 升级进度：显示距下一级/破境还需多少修为，或已可突破/渡劫。
     lv_cap = c.realm_cap(a["realm"])
@@ -155,7 +155,7 @@ def card_html(player, key, equipment=False):
             f'<div class="eyebrow">灵契仙途 · 我的修士</div>'
             f'<h1>{escape(str(a["name"]))}</h1><p>{escape(str(a["profession"]))} · {escape(str(a.get("gender", "男")))} · '
             f'{c.REALMS[a["realm"]]} Lv{a["level"]} · {c.HEAVENS[a.get("heaven", 0)]["name"]}洞天</p></div>'
-            f'<div class="power">总战力<strong>{bd["total"] if bd else 0}</strong></div></div>'
+            f'<div class="power">总战力<strong>{fmt_power(bd["total"]) if bd else 0}</strong></div></div>'
             f'<div class="loadout"><div class="gear-column">{"".join(slots[:3])}</div>'
             f'<div class="portrait"><img src="{asset_uri(portrait_name(a))}" alt="修士立绘"></div>'
             f'<div class="gear-column">{"".join(slots[3:])}</div></div>'
