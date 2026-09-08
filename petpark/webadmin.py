@@ -1314,6 +1314,8 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 .cr-imgbox{display:inline-flex;flex-direction:column;gap:4px;background:#fafbff;border:1px solid #e8ecf6;border-radius:10px;padding:8px;min-width:160px}
 .cr-imgbox img{max-width:420px;max-height:420px;display:block;background:#fff;border-radius:6px}
 .cr-imgbox a{cursor:zoom-in}
+.cr-imgbox .img-missing{display:flex;align-items:center;justify-content:center;flex-direction:column;width:420px;max-width:100%;height:240px;background:repeating-linear-gradient(45deg,#f3f4f6,#f3f4f6 12px,#fafafa 12px,#fafafa 24px);border:1px dashed #c9cede;color:#5b657d;border-radius:6px;font-size:13px;text-align:center;line-height:1.7}
+.cr-imgbox .img-missing small{display:block;color:#8a93a8;margin-top:6px;font-size:11.5px}
 </style></head><body>
 <header><h1>灵契仙途 · 管理后台</h1><a href="/logout">退出登录</a></header>
 <div class="tabs">
@@ -1457,10 +1459,11 @@ async function paDelete(aid){ if(!confirm('确认删除账号 '+aid+'？绑定�
 function crImgUrl(img){ if(!img) return ''; if(img.startsWith('http') || img.startsWith('/')) return esc(img); return '/custom_images/'+esc(img); }
 function crImgBox(img,label){
  if(!img) return '';
+ const u = crImgUrl(img);
  return `<div class="cr-imgbox">
    <div class="muted">${label}</div>
-   <a href="${crImgUrl(img)}" target="_blank" title="点击查看原图">
-     <img src="${crImgUrl(img)}" loading="lazy">
+   <a href="${u}" target="_blank" title="点击查看原图">
+     <img src="${u}" loading="lazy" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'img-missing',innerHTML:'<div>📂 图片缺失</div><small>该定制图文件可能已被清理；建议让玩家重新提交一次。</small>'}));">
    </a>
  </div>`;
 }
