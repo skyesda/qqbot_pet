@@ -62,6 +62,38 @@ class PlayerPortal:
         self._email_codes: dict[str, dict] = {}
         self._email_send_at: dict[str, float] = {}
 
+    @staticmethod
+    def _normalize_custom_image(file_data: bytes, ext: str) -> tuple[bytes, str]:
+        """上传定制图规范化：QQ 端不兼容 webp —— 动态 webp 转动态 GIF（保留动画），
+        静态 webp 转 PNG；转换失败回退原样。其余格式原样返回。"""
+        if ext != ".webp":
+            return file_data, ext
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(io.BytesIO(file_data))
+            if getattr(img, "is_animated", False):
+                frames, durations = [], []
+                for i in range(getattr(img, "n_frames", 1)):
+                    img.seek(i)
+                    durations.append(int(img.info.get("duration") or 80))
+                    frames.append(img.convert("RGBA").convert("P", palette=Image.ADAPTIVE))
+                out = io.BytesIO()
+                try:
+                    frames[0].save(out, format="GIF", save_all=True,
+                                   append_images=frames[1:], duration=durations, loop=0)
+                except TypeError:
+                    out = io.BytesIO()
+                    avg = max(1, sum(durations) // len(durations))
+                    frames[0].save(out, format="GIF", save_all=True,
+                                   append_images=frames[1:], duration=avg, loop=0)
+                return out.getvalue(), ".gif"
+            out = io.BytesIO()
+            img.save(out, format="PNG")
+            return out.getvalue(), ".png"
+        except Exception:
+            return file_data, ext
+
     # --------------------------- 工具：密码与会话 ---------------------------
     @staticmethod
     def _hash_password(password: str, salt: str) -> str:
@@ -328,23 +360,77 @@ class PlayerPortal:
         adventure = None
         if adv.get("name"):
             try:
-                from .adventure.power import compute_unified_power
-                from .adventure.combat import hero_sheet
+                from .adventure.power import compute_unified_power, power_breakdown
+                from .adventure.combat import hero_sheet, roll_hp
                 from .adventure import content as advc
                 s = hero_sheet(adv, player)
                 _realm = int(adv.get("realm") or 0)
+                _st, _stmax = int(adv.get("stamina", 100) or 100), int(adv.get("stamina_max", 100) or 100)
+                heaven = adv.get("heaven", 0)
+                heaven_meta = advc.HEAVENS[int(heaven or 0)] if 0 <= int(heaven or 0) < len(advc.HEAVENS) else None
+                # 神通：adv.tactics 列表 + 效果描述（tactic_effect）
+                _tacs = adv.get("tactics", []) or []
+                tactics = [(t, advc.tactic_effect(t)) for t in _tacs]
+                # 道侣：结契灵宠（第 0 只宠物）的姻缘状态/好感/对象
+                pets = player.get("pets") or []
+                _p0 = pets[0] if pets else {}
+                partner = {
+                    "married": _p0.get("love_state") == "已婚",
+                    "love_state": _p0.get("love_state") or "单身",
+                    "love_target": _p0.get("love_target") or "",
+                    "favor": int(_p0.get("favor", 0) or 0),
+                    "pet_name": _p0.get("nickname") or "",
+                }
+                # 战力构成（与修士图 card.html 同源 power_breakdown）
+                bd = power_breakdown(player, player.get("qq", "")) or {}
+                pb = {
+                    "hero": int(bd.get("hero", 0) or 0),
+                    "pet_name": bd.get("pet_name") or "引路灵蝶",
+                    "pet_contrib": int(bd.get("pet_contrib", 0) or 0),
+                    "pet_part": int(bd.get("pet_part", 0) or 0),
+                    "mount_contrib": int(bd.get("mount_contrib", 0) or 0),
+                    "mount_part": int(bd.get("mount_part", 0) or 0),
+                    "partner": float(bd.get("partner", 1.0) or 1.0),
+                    "heaven_margin": float(bd.get("heaven_margin", 1.0) or 1.0),
+                    "base": float(bd.get("base", 0) or 0),
+                    "total": int(bd.get("total", 0) or 0),
+                }
+                # 当前气血：惰性回算（存活每分钟回复上限1%，陨落静养30分钟自愈30%）
+                import time as _time
+                cur_hp = roll_hp(adv, player, _time.time())
+                if not isinstance(cur_hp, int) or cur_hp <= 0:
+                    cur_hp = s.get("hp", 0)
                 adventure = {
                     "name": adv.get("name"),
                     "profession": adv.get("profession"),
+                    "gender": adv.get("gender", "男"),
                     "realm": advc.REALMS[_realm] if 0 <= _realm < len(advc.REALMS) else "",
+                    "realm_idx": _realm,
                     "level": adv.get("level", 1),
-                    "power": compute_unified_power(player, player.get("qq", "")),
-                    "hp": s.get("hp", 0),
-                    "atk": s.get("atk", 0),
-                    "def": s.get("def", 0),
+                    "heaven_idx": int(heaven or 0),
+                    "heaven": (heaven_meta or {}).get("name") or f"{heaven}阶",
                     "spirit_root": adv.get("spirit_root"),
+                    "element": advc.element_line(advc.hero_element(adv)) if hasattr(advc, "hero_element") else "",
+                    "tactics": tactics,
+                    "stamina": _st,
+                    "stamina_max": _stmax,
+                    "stamina_buff_until": int(adv.get("stamina_buff_until", 0) or 0),
+                    "insight": int(adv.get("insight", 0) or 0),
+                    "wudao": int(s.get("wudao", adv.get("wudao", 0)) or 0),
+                    "gengu": int(s.get("gengu", adv.get("gengu", 0)) or 0),
+                    "power": compute_unified_power(player, player.get("qq", "")),
+                    "hp": cur_hp,
+                    "hp_max": s.get("hp", 0),
+                    "hp_dead": adv.get("hp_dead") is True,
+                    "atk": s.get("atk", 0),
+                    "defense": s.get("def", 0),
+                    "speed": s.get("speed", 0),
+                    "heaven_multiplier": (heaven_meta or {}).get("enemy", 1.0),
+                    "partner": partner,
+                    "breakdown": pb,
                 }
-            except Exception:
+            except Exception as e:
+                logger.exception(f"[petpark] 修士档案汇总异常：{e}")
                 adventure = {"name": adv.get("name"), "profession": adv.get("profession"),
                              "level": adv.get("level", 1)}
         mounts = []
@@ -361,10 +447,14 @@ class PlayerPortal:
                 "remaining": self.store.remaining_custom_changes(player, "mount_image"),
             }
             mounts.append(entry)
-        mc = {"slots": self.store.mount_custom_slots(player), "pending": [], "rejected": []}
+        mc = {"slots": self.store.mount_custom_slots(player), "pending": [], "rejected": [], "img_pending": []}
         if group_id and qq:
             mreviews = self.store.get_custom_reviews(group_id, qq, kind="mount")
             mc["pending"] = [r.get("mount_name") for r in mreviews if r.get("status") == "pending"]
+            mc["img_pending"] = [
+                r.get("mount_name") for r in self.store.get_custom_reviews(
+                    group_id, qq, kind="mount_image", status="pending")
+            ]
             rej = [r for r in mreviews if r.get("status") == "rejected"]
             if rej:
                 last = rej[-1]
@@ -481,6 +571,7 @@ class PlayerPortal:
         app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
         app.router.add_post("/api/portal/mount_custom_redeem", self._api_mount_custom_redeem)
         app.router.add_post("/api/portal/mount_custom_submit", self._api_mount_custom_submit)
+        app.router.add_post("/api/portal/mount_image_submit", self._api_mount_image_submit)
         app.router.add_post("/api/portal/use_item", self._api_use_item)
         app.router.add_get("/api/portal/item_info", self._api_item_info)
         app.router.add_post("/api/portal/redeem", self._api_redeem)
@@ -564,6 +655,34 @@ class PlayerPortal:
                 "power": int(battle_power(pet)),
             })
         pet_entries.sort(key=lambda x: x["power"], reverse=True)
+        # 仙途战力榜：修士综合战力（修士+灵宠+坐骑+道侣，与群内「仙途战力榜」同口径）
+        cultivators = []
+        compute_unified_power = None
+        advc = None
+        try:
+            from .adventure.power import compute_unified_power
+            from .adventure import content as advc
+        except Exception:
+            compute_unified_power = None
+        if compute_unified_power is not None:
+            for pl in players.values():
+                adv = pl.get("adventure") or {}
+                if not adv.get("name"):
+                    continue
+                try:
+                    power = int(compute_unified_power(pl, pl.get("qq", "")))
+                except Exception:
+                    continue
+                realm_idx = int(adv.get("realm") or 0)
+                realm = (advc.REALMS[realm_idx] if advc and 0 <= realm_idx < len(advc.REALMS) else "")
+                cultivators.append({
+                    "name": str(adv.get("name", "")),
+                    "level": int(adv.get("level", 1) or 1),
+                    "profession": adv.get("profession") or "",
+                    "realm": realm,
+                    "power": power,
+                })
+            cultivators.sort(key=lambda x: x["power"], reverse=True)
         groups = self.store._data.get("groups", {})
         auth_groups = sum(
             1 for g in groups.values()
@@ -596,6 +715,7 @@ class PlayerPortal:
                 "tomb_players": len(tomb),
             },
             "pet_rank": pet_entries[:10],
+            "cultivator_rank": cultivators[:10],
             "tomb_rank": tomb_rank[:10],
             "tomb_today": tomb_today[:10],
             "tomb_yesterday": tomb_yesterday[:10],
@@ -1091,13 +1211,23 @@ class PlayerPortal:
             ext = Path(filename).suffix.lower() if filename else ".jpg"
             if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
                 return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+            file_data, ext = self._normalize_custom_image(file_data, ext)
             new_filename = f"{secrets.token_hex(8)}{ext}"
             path = self.store.custom_image_path(new_filename)
-            path.write_bytes(file_data)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file_data)
+            except OSError as e:
+                logger.exception(f"[petpark] 宠物定制图写盘失败 {path}: {e}")
+                return web.json_response({"ok": False, "msg": f"图片保存失败：{e}"})
+            if not path.exists():
+                logger.error(f"[petpark] 宠物定制图写盘后不存在 {path} (dir={self.store.custom_images_dir})")
+                return web.json_response({"ok": False, "msg": "图片保存失败，请重试"})
+            logger.info(f"[petpark] 宠物定制图已落盘 {path} size={len(file_data)}")
             changes["image"] = new_filename
         review, err = self.store.create_custom_review(sess["aid"], group_id, qq, changes)
-        if err:
-            return web.json_response({"ok": False, "msg": err})
+        if not review:
+            return web.json_response({"ok": False, "msg": err or "提交失败，请稍后再试"})
         await self.store.save()
         return web.json_response({
             "ok": True,
@@ -1155,6 +1285,8 @@ class PlayerPortal:
             group_id = str(fields.get("group_id", "")).strip()
             qq = str(fields.get("qq", "")).strip()
             mname = str(fields.get("name", "")).strip()
+            nickname = str(fields.get("nickname", "")).strip()
+            show_qq = str(fields.get("show_qq", "")).strip()
             if not group_id or not qq:
                 return web.json_response({"ok": False, "msg": "参数不完整"})
             owner = self.store.account_for_slot(group_id, qq)
@@ -1173,19 +1305,35 @@ class PlayerPortal:
                 return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
             if len(file_data) > 5 * 1024 * 1024:
                 return web.json_response({"ok": False, "msg": "图片不能超过 5MB"})
+            file_data, ext = self._normalize_custom_image(file_data, ext)
             new_filename = f"{secrets.token_hex(8)}{ext}"
             path = self.store.custom_image_path(new_filename)
-            path.write_bytes(file_data)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file_data)
+            except OSError as e:
+                logger.exception(f"[petpark] 坐骑定制图写盘失败 {path}: {e}")
+                return web.json_response({"ok": False, "msg": f"图片保存失败：{e}"})
+            if not path.exists():
+                logger.error(f"[petpark] 坐骑定制图写盘后不存在 {path} (dir={self.store.custom_images_dir})")
+                return web.json_response({"ok": False, "msg": "图片保存失败，请重试"})
+            logger.info(f"[petpark] 坐骑定制图已落盘 {path} size={len(file_data)}")
+            changes = {"name": mname, "image": new_filename}
+            if nickname:
+                changes["nickname"] = nickname
+            if show_qq:
+                changes["show_qq"] = show_qq
             review, err = self.store.create_custom_review(
-                sess.get("aid"), group_id, qq, {"name": mname, "image": new_filename},
+                sess.get("aid"), group_id, qq, changes,
                 kind="mount", mount_name=mname)
-            if err:
+            if not review:
+                # 仅在真正失败（review 未创建）时回收图片文件；成功路径 err 恒为空
                 try:
                     if path.exists():
                         path.unlink()
                 except OSError:
                     pass
-                return web.json_response({"ok": False, "msg": err})
+                return web.json_response({"ok": False, "msg": err or "提交失败，请稍后再试"})
             await self.store.save()
             role = self._slot_role_summary(player, group_id, qq)
             return web.json_response({
@@ -1196,6 +1344,80 @@ class PlayerPortal:
             })
         except Exception as e:
             logger.exception(f"[petpark] 定制坐骑提交异常：{e}")
+            return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
+
+    async def _api_mount_image_submit(self, request: web.Request) -> web.Response:
+        """更换已有定制坐骑的外观图：上传新图 → 审核（每月 3 次，通过后生效）。"""
+        try:
+            self._check_csrf(request)
+            sess = self._require_session(request)
+            reader = await request.multipart()
+            fields: dict[str, str] = {}
+            file_data: Optional[bytes] = None
+            filename: Optional[str] = None
+            async for part in reader:
+                if part.filename:
+                    file_data = await part.read()
+                    filename = part.filename
+                else:
+                    fields[part.name] = await part.text()
+            group_id = str(fields.get("group_id", "")).strip()
+            qq = str(fields.get("qq", "")).strip()
+            mname = str(fields.get("name", "")).strip()
+            if not group_id or not qq or not mname:
+                return web.json_response({"ok": False, "msg": "参数不完整"})
+            owner = self.store.account_for_slot(group_id, qq)
+            if owner != sess.get("aid"):
+                raise web.HTTPForbidden(text="你没有绑定该角色")
+            key = self.store.make_key(group_id, qq)
+            player = self.store._data["players"].get(key)
+            if not player:
+                return web.json_response({"ok": False, "msg": "未找到该角色"})
+            inst = (player.get("mounts") or {}).get(mname)
+            if not inst or not inst.get("custom"):
+                return web.json_response({"ok": False, "msg": "未找到该定制坐骑"})
+            if not file_data:
+                return web.json_response({"ok": False, "msg": "请上传新的外观图片"})
+            ext = Path(filename).suffix.lower() if filename else ".jpg"
+            if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+                return web.json_response({"ok": False, "msg": "仅支持 jpg/png/gif/webp 图片"})
+            if len(file_data) > 5 * 1024 * 1024:
+                return web.json_response({"ok": False, "msg": "图片不能超过 5MB"})
+            file_data, ext = self._normalize_custom_image(file_data, ext)
+            new_filename = f"{secrets.token_hex(8)}{ext}"
+            path = self.store.custom_image_path(new_filename)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(file_data)
+            except OSError as e:
+                logger.exception(f"[petpark] 坐骑换装图写盘失败 {path}: {e}")
+                return web.json_response({"ok": False, "msg": f"图片保存失败：{e}"})
+            if not path.exists():
+                logger.error(f"[petpark] 坐骑换装图写盘后不存在 {path} (dir={self.store.custom_images_dir})")
+                return web.json_response({"ok": False, "msg": "图片保存失败，请重试"})
+            logger.info(f"[petpark] 坐骑换装图已落盘 {path} size={len(file_data)} mount={mname}")
+            changes = {"name": mname, "image": new_filename}
+            review, err = self.store.create_custom_review(
+                sess.get("aid"), group_id, qq, changes,
+                kind="mount_image", mount_name=mname)
+            if not review:
+                try:
+                    if path.exists():
+                        path.unlink()
+                except OSError:
+                    pass
+                return web.json_response({"ok": False, "msg": err or "提交失败，请稍后再试"})
+            await self.store.save()
+            role = self._slot_role_summary(player, group_id, qq)
+            return web.json_response({
+                "ok": True,
+                "msg": "坐骑外观更换已提交审核（每月可更换 3 次），预计 3 个工作日内处理完毕",
+                "review": review,
+                "mount_custom": role["mount_custom"],
+                "role": {"mounts": role["mounts"], "mount_custom": role["mount_custom"]},
+            })
+        except Exception as e:
+            logger.exception(f"[petpark] 坐骑换装提交异常：{e}")
             return web.json_response({"ok": False, "msg": f"服务器内部错误：{e}"})
 
     # --------------------------- 玩家反馈 ---------------------------
@@ -1719,6 +1941,74 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
   <section class="content">
     <div class="content-inner">
+      <template v-if="data && data.adventure">
+        <div class="sec-title">☯ 我的修士</div>
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:240px">
+              <div style="font-size:18px;font-weight:800">
+                ☯ {{ data.adventure.name }}
+                <span style="font-size:12px;font-weight:500;color:var(--brand2);margin-left:6px">{{ data.adventure.profession }} · {{ data.adventure.gender || '男' }}</span>
+              </div>
+              <div style="font-size:12.5px;color:var(--muted);margin:6px 0 8px">
+                {{ data.adventure.realm }} · Lv{{ data.adventure.level }} · {{ data.adventure.heaven }} ·
+                灵根 {{ data.adventure.spirit_root || '无' }}{{ data.adventure.element ? ' · '+data.adventure.element : '' }}
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px;margin-bottom:8px">
+                <el-tag type="danger" effect="plain" round>⚔️ 总战力 {{ fmt(data.adventure.power) }}</el-tag>
+                <span>💓 气血 {{ fmt(data.adventure.hp) }}/{{ data.adventure.hp_max }}</span>
+                  <span v-if="data.adventure.hp_dead" style="color:#c0392b">💀 陨落</span>
+                <el-tag effect="plain" round>⚔ 攻击 {{ fmt(data.adventure.atk) }}</el-tag>
+                <el-tag effect="plain" round>🛡 防御 {{ fmt(data.adventure.defense) }}</el-tag>
+                <el-tag effect="plain" round>⚡ 速度 {{ fmt(data.adventure.speed) }}</el-tag>
+                <el-tag type="warning" effect="plain" round>悟性 {{ data.adventure.wudao }} · 根骨 {{ data.adventure.gengu }}</el-tag>
+              </div>
+              <div style="margin-bottom:10px;font-size:12.5px;color:#4a5470">
+                💍 道侣：<b>{{ data.adventure.partner.love_state }}</b>{{ data.adventure.partner.married ? ' · 已婚于『'+data.adventure.partner.pet_name+'』' : ' · 结契灵宠『'+data.adventure.partner.pet_name+'』' }}
+                <span style="margin-left:10px">🎁 剩余悟性点 <b>{{ data.adventure.insight }}</b></span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;font-size:12.5px">
+                <span style="flex:0 0 50px">体力</span>
+                <el-progress :percentage="pct(data.adventure.stamina, data.adventure.stamina_max)" :stroke-width="10" :show-text="false" color="#6366f1" style="flex:1"></el-progress>
+                <span style="flex:0 0 auto">{{ data.adventure.stamina }} / {{ data.adventure.stamina_max }}</span>
+              </div>
+              <div v-if="data.adventure.tactics && data.adventure.tactics.length" style="margin-top:8px;font-size:12.5px;color:var(--muted)">
+                🌀 已悟神通：<span v-for="(t,i) in data.adventure.tactics" :key="i"><b>{{ t[0] }}</b><span v-if="t[1]">（{{ t[1] }}）</span><span v-if="i < data.adventure.tactics.length-1">、 </span></span>
+              </div>
+              <div style="margin-top:10px;padding:8px 12px;border-left:3px solid #b79149;background:#f1ead8;border-radius:6px;font-size:12.5px;color:#4a5470">
+                <b>战力构成</b>：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
+                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_contrib) }}（计 {{ fmt(data.adventure.breakdown.pet_part) }}）＋
+                坐骑 {{ fmt(data.adventure.breakdown.mount_contrib) }}（计 {{ fmt(data.adventure.breakdown.mount_part) }}）
+                × 道侣 ×{{ data.adventure.breakdown.partner.toFixed(2) }} ·
+                洞天 ×{{ data.adventure.breakdown.heaven_margin.toFixed(2) }}
+                → <b>{{ fmt(data.adventure.breakdown.total) }}</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="data && data.mount_custom">
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:700">🏇 定制坐骑</span>
+            <el-tag v-if="(data.mount_custom.slots||0) > 0" type="success" size="small" effect="light" round>
+              可用定制资格 ×{{ data.mount_custom.slots }}</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
+            <span style="flex:1"></span>
+            <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
+            <el-button round size="small" @click="openMountImage()">🎨 更换坐骑外观</el-button>
+          </div>
+          <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效，并全服祝贺广播。</p>
+          <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
+            :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
+          <el-alert v-for="(pn,i) in (data.mount_custom.img_pending||[])" :key="'mip'+i" type="warning" :closable="false" style="margin-top:10px"
+            :title="'『'+pn+'』外观更换审核中，通过后生效'"></el-alert>
+          <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
+            :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
+        </div>
+      </template>
+
       <div class="page-title">宠物档案</div>
 
       <div v-if="!current" class="card empty-tip">请先在左侧绑定并选择宠物</div>
@@ -1803,56 +2093,25 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               :title="'审核未通过：' + (r.reason || '未说明原因')"></el-alert>
           </div>
         </div>
-        <div v-else class="card empty-tip">{{ (data && (data.adventure || (data.mounts && data.mounts.length))) ? '该角色暂无宠物，可在下方查看修士与坐骑' : '该账号下暂无宠物' }}</div>
+        <div v-else class="card empty-tip">{{ (data && (data.adventure || (data.mounts && data.mounts.length))) ? '该角色暂无宠物，可在下方的「我的坐骑」继续查看坐骑' : '该账号下暂无宠物' }}</div>
 
-        <template v-if="data && (data.adventure || (data.mounts && data.mounts.length))">
-          <div class="sec-title">我的修士 / 坐骑</div>
-          <div class="card" v-if="data.adventure" style="margin-bottom:12px">
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-              <div style="flex:1;min-width:200px">
-                <div style="font-size:17px;font-weight:800">☯ {{ data.adventure.name || '未名修士' }}
-                  <span style="font-size:12px;color:var(--brand2);margin-left:6px">{{ data.adventure.profession }}</span></div>
-                <div style="font-size:12.5px;color:var(--muted);margin:4px 0 2px">{{ data.adventure.realm }} · Lv{{ data.adventure.level }} · 灵根 {{ data.adventure.spirit_root || '无' }}</div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:#4a5470">
-                  <span>⚔️ 总战力 {{ fmt(data.adventure.power) }}</span>
-                  <span>💓 气血 {{ fmt(data.adventure.hp) }}/{{ data.adventure.hp_max }}</span>
-                  <span v-if="data.adventure.hp_dead" style="color:#c0392b">💀 陨落</span>
-                  <span>⚔ 攻击 {{ fmt(data.adventure.atk) }}</span>
-                  <span>🛡 防御 {{ fmt(data.adventure.def) }}</span>
-                </div>
+        <template v-if="data && data.mounts && data.mounts.length">
+        <div class="sec-title">🐴 我的坐骑</div>
+        <div class="card">
+          <div class="muted" style="font-size:12px;margin-bottom:8px">含官方与玩家定制的全部坐骑</div>
+          <div v-for="m in data.mounts" :key="m.name"
+               style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;font-weight:700">{{ m.name }}
+                <el-tag v-if="m.custom_spec" type="danger" size="small" effect="light" round style="margin-left:6px">⭐ 玩家定制</el-tag>
               </div>
+              <div class="muted" style="font-size:12px;margin-top:2px">★{{ m.stars }} · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
             </div>
           </div>
-          <div class="card" style="margin-bottom:12px" v-if="data.mount_custom">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <span style="font-size:14px;font-weight:700">🏇 定制坐骑</span>
-              <el-tag v-if="(data.mount_custom.slots||0) > 0" type="success" size="small" effect="light" round>
-                可用定制资格 ×{{ data.mount_custom.slots }}</el-tag>
-              <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
-              <span style="flex:1"></span>
-              <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
-            </div>
-            <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效。</p>
-            <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
-              :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
-            <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
-              :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
-          </div>
-          <div class="card" v-if="data.mounts && data.mounts.length">
-            <div class="muted" style="font-size:12px;margin-bottom:8px">我的坐骑（含定制坐骑）</div>
-            <div v-for="m in data.mounts" :key="m.name"
-                 style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px">
-              <div style="flex:1;min-width:0">
-                <div style="font-size:14px;font-weight:700">{{ m.name }}
-                  <el-tag v-if="m.custom_spec" type="danger" size="small" effect="light" round style="margin-left:6px">⭐ 玩家定制</el-tag>
-                </div>
-                <div class="muted" style="font-size:12px;margin-top:2px">★{{ m.stars }} · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
-              </div>
-            </div>
-          </div>
-        </template>
+        </div>
+      </template>
 
-        <div class="sec-title">我的财产</div>
+      <div class="sec-title">我的财产</div>
         <div class="wallet">
           <div class="coin"><div class="label">🪙 灵石</div><div class="value">{{ fmt(data.coin) }}</div></div>
           <div class="coin"><div class="label">✨ 玄晶</div><div class="value">{{ fmt(data.jifen) }}</div></div>
@@ -1987,10 +2246,44 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
       <input ref="mountFileInput" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" style="display:none" @change="onMountFile">
       <div v-if="mountC.preview" class="crop-preview"><img :src="mountC.preview" alt="定制坐骑预览"></div>
     </el-form-item>
+    <el-form-item label="全群祝贺信息（审核通过后将向所有授权群发送祝贺，可不填）">
+      <div style="display:flex;gap:8px">
+        <el-input v-model="mountC.nickname" maxlength="32" placeholder="你的 QQ 昵称（用于广播）" clearable></el-input>
+        <el-input v-model="mountC.showQQ" maxlength="32" placeholder="显示 QQ 号" clearable></el-input>
+      </div>
+    </el-form-item>
   </el-form>
   <template #footer>
     <el-button round @click="mountC.dialog=false">关闭</el-button>
     <el-button v-if="(data.mount_custom && data.mount_custom.slots) > 0" type="primary" round :disabled="!mountC.name || !mountC.file" :loading="mountC.submitting" @click="doMountSubmit">提交审核</el-button>
+  </template>
+</el-dialog>
+
+<!-- 更换定制坐骑外观 -->
+<el-dialog v-model="mountI.dialog" title="🎨 更换坐骑外观" width="500px" align-center>
+  <div style="padding:10px 12px;border-radius:10px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.06);font-size:13px;margin-bottom:12px">
+    每只定制坐骑<b>每月可更换 3 次外观</b>；新图经人工审核通过后生效，旧图自动替换。
+  </div>
+  <div v-if="!customMountList.length" style="padding:14px;color:var(--muted);font-size:13px">当前角色还没有定制坐骑。先『新建定制坐骑』吧。</div>
+  <el-form v-else label-position="top">
+    <el-form-item label="选择定制坐骑">
+      <el-select v-model="mountI.name" placeholder="选择要更换外观的定制坐骑" style="width:100%">
+        <el-option v-for="m in customMountList" :key="m.name" :value="m.name" :label="m.name + '（本月剩余 ' + m.remaining + ' 次）'" :disabled="m.remaining <= 0 || isMountImgPending(m.name)"></el-option>
+      </el-select>
+    </el-form-item>
+    <el-form-item label="新外观图（JPG / PNG / GIF / WebP，≤5MB）">
+      <div class="upload-zone" @click="pickMountImgFile">
+        <div class="upload-plus">＋</div>
+        <div class="upload-text">{{ mountI.file ? '已选择：' + mountI.file.name : '点击上传新外观图' }}</div>
+        <div class="upload-hint">建议正方形或透明底；动态图（GIF/WebP）会保留动画</div>
+      </div>
+      <input ref="mountImgFileInput" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" style="display:none" @change="onMountImgFile">
+      <div v-if="mountI.preview" class="crop-preview"><img :src="mountI.preview" alt="新外观预览"></div>
+    </el-form-item>
+  </el-form>
+  <template #footer>
+    <el-button round @click="mountI.dialog=false">关闭</el-button>
+    <el-button v-if="customMountList.length" type="primary" round :disabled="!mountI.name || !mountI.file" :loading="mountI.submitting" @click="doMountImgSubmit">提交审核</el-button>
   </template>
 </el-dialog>
 
@@ -2281,8 +2574,8 @@ createApp({
 
     // ---- 坐骑外观定制 ----
     const mountFileInput = ref(null);
-    const mountC = reactive({dialog:false, name:'', code:'', redeeming:false, file:null, preview:'', submitting:false});
-    function openMountNew(){ mountC.name=''; mountC.code=''; mountC.file=null; mountC.preview=''; mountC.dialog = true; }
+    const mountC = reactive({dialog:false, name:'', nickname:'', showQQ:'', code:'', redeeming:false, file:null, preview:'', submitting:false});
+    function openMountNew(){ mountC.name=''; mountC.nickname=''; mountC.showQQ=''; mountC.code=''; mountC.file=null; mountC.preview=''; mountC.dialog = true; }
     function currentSlotId(){ return (data.value && {group_id:data.value.group_id, qq:data.value.qq}) || (currentSlot.value || {}); }
     function pickMountImage(){ if(!mountFileInput.value) return; mountFileInput.value.click(); }
     function onMountFile(e){
@@ -2316,12 +2609,47 @@ createApp({
         const fd = new FormData();
         fd.append('group_id', id.group_id); fd.append('qq', id.qq);
         fd.append('name', name); fd.append('image', mountC.file);
+        if(mountC.nickname){ fd.append('nickname', mountC.nickname); }
+        if(mountC.showQQ){ fd.append('show_qq', mountC.showQQ); }
         const resp = await fetch('/api/portal/mount_custom_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
         if(resp.status === 401 || resp.status === 403){ location.href = '/'; return null; }
         const r = await resp.json().catch(()=>null);
-        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; mountC.name=''; mountC.file=null; mountC.preview=''; }
+        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; mountC.name=''; mountC.nickname=''; mountC.showQQ=''; mountC.file=null; mountC.preview=''; }
         else { ElMessage.error((r && r.msg) || '提交失败'); }
       } finally { mountC.submitting = false; }
+    }
+
+    // ---- 更换定制坐骑外观（每月 3 次，走审核） ----
+    const mountImgFileInput = ref(null);
+    const mountI = reactive({dialog:false, name:'', file:null, preview:'', submitting:false});
+    const customMountList = computed(() => ((data.value && data.value.mounts) || []).filter(m => m.custom));
+    function isMountImgPending(n){ return ((data.value && data.value.mount_custom && data.value.mount_custom.img_pending) || []).includes(n); }
+    function openMountImage(){ mountI.name=''; mountI.file=null; mountI.preview=''; mountI.dialog = true; }
+    function pickMountImgFile(){ if(!mountImgFileInput.value) return; mountImgFileInput.value.click(); }
+    function onMountImgFile(e){
+      const f = e.target.files && e.target.files[0];
+      if(!f) return;
+      if(!/\.(jpe?g|png|gif|webp)$/i.test(f.name)){ ElMessage.error('仅支持 jpg/png/gif/webp 图片'); e.target.value=''; return; }
+      if(f.size > 5*1024*1024){ ElMessage.error('图片不能超过 5MB'); e.target.value=''; return; }
+      mountI.file = f;
+      mountI.preview = URL.createObjectURL(f);
+    }
+    async function doMountImgSubmit(){
+      const id = currentSlotId();
+      if(!id.group_id || !id.qq){ ElMessage.warning('请先绑定并选择角色'); return; }
+      if(!mountI.name){ ElMessage.warning('请选择要更换外观的坐骑'); return; }
+      if(!mountI.file){ ElMessage.warning('请上传新外观图片'); return; }
+      mountI.submitting = true;
+      try{
+        const fd = new FormData();
+        fd.append('group_id', id.group_id); fd.append('qq', id.qq);
+        fd.append('name', mountI.name); fd.append('image', mountI.file);
+        const resp = await fetch('/api/portal/mount_image_submit', {method:'POST', headers:{'X-CSRF-Token':CSRF_TOKEN}, body:fd});
+        if(resp.status === 401 || resp.status === 403){ location.href = '/'; return null; }
+        const r = await resp.json().catch(()=>null);
+        if(r && r.ok){ ElMessage.success(r.msg || '已提交审核'); if(r.mount_custom) data.value.mount_custom = r.mount_custom; if(r.role){ data.value.mounts = r.role.mounts; } mountI.name=''; mountI.file=null; mountI.preview=''; }
+        else { ElMessage.error((r && r.msg) || '提交失败'); }
+      } finally { mountI.submitting = false; }
     }
 
     // ---- 修改密码 ----
@@ -2520,6 +2848,7 @@ createApp({
       auto,
       slots, currentSlot, slotPets, slotLabel, slotSub, slotImage, switchSlot,
       mountFileInput, mountC, openMountNew, pickMountImage, onMountFile, doMountRedeem, doMountSubmit,
+      mountImgFileInput, mountI, customMountList, isMountImgPending, openMountImage, pickMountImgFile, onMountImgFile, doMountImgSubmit,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
       loadPet, logout, openBind, doBindAuto, pickAuto, reclaimBind, doBindQuery, doBind, openPwd, changePwd, sendPwdCode, petAction, useItem, showItemInfo, redeem,
       goFeedback, goChat,
@@ -3132,191 +3461,140 @@ createApp({
 
 
 _HOME_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>灵契仙途 · 全服数据中心</title>
+<title>灵契仙途 · 与灵宠结契，共赴仙途</title>
+<meta name="description" content="灵契仙途 QQ 群聊修仙游戏：剑修、体修、灵修、魔修四职业，灵宠结契、洞天突破、宗门秘境、坐骑养成。玩家中心支持绑定角色、查看修士与灵宠、坐骑外观定制。">
+<meta name="theme-color" content="#112f2d">
+<link rel="preload" as="image" href="/webstatic/home/hero-mountains.webp">
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<link rel="stylesheet" href="/webstatic/element-plus-dark.css">
-<style>
-  :root{
-    --bg:#0b1020; --card:rgba(255,255,255,.04); --line:rgba(255,255,255,.08);
-    --text:#e8ecf8; --muted:#8b93b0; --brand:#6366f1; --brand2:#a855f7;
-  }
-  *{margin:0;padding:0;box-sizing:border-box}
-  html.dark{--el-bg-color:#141a33;--el-bg-color-overlay:#141a33}
-  body{
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-    background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden;
-  }
-  [v-cloak]{display:none}
-  #particles{position:fixed;inset:0;z-index:0;pointer-events:none}
-  .glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.35;pointer-events:none;z-index:0;transition:transform .6s cubic-bezier(.22,1,.36,1)}
-  .glow.a{width:560px;height:560px;background:#4338ca;top:-180px;left:-120px;animation:drift 18s ease-in-out infinite alternate}
-  .glow.b{width:480px;height:480px;background:#7e22ce;top:22%;right:-160px;animation:drift 22s ease-in-out infinite alternate-reverse}
-  .glow.c{width:420px;height:420px;background:#0e7490;bottom:-140px;left:32%;animation:drift 26s ease-in-out infinite alternate}
-  @keyframes drift{from{transform:translate(0,0)}to{transform:translate(60px,40px)}}
-  .grid-bg{position:fixed;inset:0;z-index:0;pointer-events:none;
-    background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
-    background-size:44px 44px;
-    mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 40%,transparent 100%);
-  }
-  .wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 24px}
 
-  nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0}
-  .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;letter-spacing:.5px}
-  .brand .dot{width:12px;height:12px;border-radius:4px;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 0 16px rgba(129,90,247,.8)}
-  .nav-btns{display:flex;gap:10px;align-items:center}
-  .user-chip{font-size:13px;color:#b6f2d4;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);border-radius:999px;padding:7px 14px;font-weight:600}
-  .btn-grad{background:linear-gradient(135deg,var(--brand),var(--brand2)) !important;border:none !important;color:#fff !important;box-shadow:0 4px 18px rgba(120,80,240,.4)}
-  .btn-grad:hover{transform:translateY(-1px);box-shadow:0 8px 26px rgba(120,80,240,.55)}
-
-  .hero{text-align:center;padding:72px 0 40px}
-  .hero .tag,.hero h1,.hero p,.hero .cta{opacity:0;animation:rise .9s cubic-bezier(.22,1,.36,1) forwards}
-  .hero h1{animation-delay:.12s}
-  .hero p{animation-delay:.24s}
-  .hero .cta{animation-delay:.36s}
-  @keyframes rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}
-  .hero .tag{display:inline-block;font-size:12px;letter-spacing:2px;color:#b6bdf7;border:1px solid rgba(120,110,250,.4);border-radius:999px;padding:6px 16px;background:rgba(90,80,220,.12);margin-bottom:22px}
-  .hero h1{font-size:56px;font-weight:900;line-height:1.15;letter-spacing:1px;
-    background:linear-gradient(120deg,#fff 10%,#c7bfff 35%,#8f7bf7 55%,#c7bfff 75%,#fff 95%);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:rise .9s cubic-bezier(.22,1,.36,1) .12s forwards,shine 7s linear 1.1s infinite}
-  @keyframes shine{to{background-position:-200% center}}
-  .hero p{color:var(--muted);font-size:16px;margin-top:16px;line-height:1.8}
-  .hero .cta{margin-top:30px;display:flex;gap:14px;justify-content:center}
-  .hero .cta .el-button{padding:22px 32px;font-size:15px;border-radius:12px}
-
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:46px 0 10px}
-  .stat-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 20px;text-align:center;backdrop-filter:blur(8px);position:relative;overflow:hidden;transition:transform .25s,border-color .25s,box-shadow .25s}
-  .stat-card:hover{transform:translateY(-4px);border-color:rgba(140,110,255,.45);box-shadow:0 14px 36px rgba(80,60,200,.28)}
-  .stat-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(140,110,255,.7),transparent)}
-  .stat-card .num{font-size:38px;font-weight:900;background:linear-gradient(120deg,#fff,#b9aefe);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
-  .stat-card .lbl{color:var(--muted);font-size:13px;margin-top:8px;letter-spacing:1px}
-
-  .section{margin:64px 0}
-  .section-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px}
-  .section-head h2{font-size:24px;font-weight:800}
-  .section-head span{color:var(--muted);font-size:13px}
-  .boards{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  .board{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;backdrop-filter:blur(8px)}
-  .board.full{grid-column:1/-1}
-  .board h3{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:4px}
-  .board .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
-  .board .el-table{--el-table-bg-color:transparent;--el-table-tr-bg-color:transparent;--el-table-header-bg-color:transparent;
-    --el-table-border-color:rgba(255,255,255,.07);--el-table-row-hover-bg-color:rgba(255,255,255,.045);
-    --el-table-header-text-color:#8b93b0;--el-table-text-color:#e8ecf8;font-size:14px}
-  .board .el-table::before{display:none}
-  .rk{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;font-size:13px;font-weight:800;background:rgba(255,255,255,.06);color:var(--muted)}
-  .rk.g1{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#442c00}
-  .rk.g2{background:linear-gradient(135deg,#e5e7eb,#9ca3af);color:#26292f}
-  .rk.g3{background:linear-gradient(135deg,#f6ad7b,#c2703d);color:#3d1e05}
-  .pw{font-weight:800;color:#ffd479;font-variant-numeric:tabular-nums}
-  .mb{font-weight:700;color:#8ce3c2;font-variant-numeric:tabular-nums}
-  .q{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:rgba(140,110,255,.15);color:#c3b8ff;border:1px solid rgba(140,110,255,.25)}
-
-  .links{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
-  .link-card{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;text-decoration:none;color:var(--text);backdrop-filter:blur(8px);transition:.2s;cursor:pointer}
-  .link-card:hover{transform:translateY(-2px);border-color:rgba(140,110,255,.45);box-shadow:0 12px 32px rgba(80,60,200,.25)}
-  .link-card .ic{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;background:linear-gradient(135deg,rgba(99,102,241,.25),rgba(168,85,247,.25));border:1px solid rgba(140,110,255,.3);flex-shrink:0}
-  .link-card .t{font-size:16px;font-weight:800}
-  .link-card .d{color:var(--muted);font-size:13px;margin-top:5px;line-height:1.6}
-  .link-card .go{margin-left:auto;flex-shrink:0;color:#a5b0ff;font-size:13px;font-weight:700;white-space:nowrap}
-  @media(max-width:900px){.links{grid-template-columns:1fr}}
-
-  footer{color:var(--muted);font-size:13px;text-align:center;padding:50px 0 36px;border-top:1px solid var(--line);margin-top:70px}
-  footer a{color:#a5b0ff;text-decoration:none}
-
-  .reveal{opacity:0;transform:translateY(34px);transition:opacity .8s cubic-bezier(.22,1,.36,1),transform .8s cubic-bezier(.22,1,.36,1)}
-  .reveal.in{opacity:1;transform:none}
-  @media(prefers-reduced-motion:reduce){
-    .reveal{opacity:1;transform:none;transition:none}
-    .hero .tag,.hero h1,.hero p,.hero .cta{opacity:1;animation:none}
-  }
-
-  .auth-dialog{--el-dialog-border-radius:20px}
-  .auth-dialog .el-dialog__header{padding-bottom:2px}
-  .auth-hint{color:var(--muted);font-size:13px;margin-bottom:18px}
-  .auth-switch{color:var(--muted);font-size:13px;text-align:center;margin-top:14px}
-  .auth-switch a{color:#a5b0ff;cursor:pointer}
-
-  @media(max-width:900px){
-    .stats{grid-template-columns:repeat(2,1fr)}
-    .boards{grid-template-columns:1fr}
-    .hero h1{font-size:38px}
-  }
-  @media(max-width:600px){
-    .wrap{padding:0 16px}
-    nav{padding:16px 0}
-    .brand{font-size:16px}
-    .nav-btns{gap:6px}
-    .nav-btns .el-button{padding:8px 14px}
-    .user-chip{display:none}
-    .hero{padding:44px 0 26px}
-    .hero h1{font-size:30px}
-    .hero p{font-size:14px}
-    .hero .cta{flex-wrap:wrap}
-    .hero .cta .el-button{padding:18px 22px;font-size:14px}
-    .stats{gap:10px;margin:30px 0 6px}
-    .stat-card{padding:18px 12px;border-radius:14px}
-    .stat-card .num{font-size:27px}
-    .section{margin:44px 0}
-    .section-head{flex-direction:column;gap:4px}
-    .section-head h2{font-size:20px}
-    .board{padding:14px;border-radius:14px}
-    .board .el-table{font-size:13px}
-    .link-card{padding:16px}
-    .link-card .go{display:none}
-    footer{padding:36px 0 26px;line-height:2}
-    .el-dialog{--el-dialog-width:calc(100vw - 28px) !important;width:calc(100vw - 28px) !important;max-width:calc(100vw - 28px)}
-    .el-message{max-width:calc(100vw - 24px)}
-  }
-</style>
+<link rel="stylesheet" href="/webstatic/home.css?v=20260908">
 </head>
 <body>
-<div class="glow a"></div><div class="glow b"></div><div class="glow c"></div>
-<div class="grid-bg"></div>
-<canvas id="particles"></canvas>
+<a class="skip-link" href="#explore">跳到玩法介绍</a>
+<noscript><p class="no-script">灵契仙途 · 请启用 JavaScript 查看游戏首页。<a href="https://qm.qq.com/q/S6ql07Q72m">加入官方群 547205828</a></p></noscript>
 <div id="app" v-cloak>
+<header class="masthead">
+  <img class="landscape" src="/webstatic/home/hero-mountains.webp" alt="" fetchpriority="high" width="1672" height="941">
 <div class="wrap">
-  <nav>
-    <div class="brand"><span class="dot"></span>灵契仙途</div>
+  <nav aria-label="主导航">
+    <a class="brand" href="/" aria-label="灵契仙途首页"><span class="seal" aria-hidden="true">契</span>灵契仙途</a>
+    <div class="nav-links"><a href="#explore">仙途万象</a><a href="#professions">四道同修</a><a href="#start">初入仙途</a><a href="#rankings">风云榜</a></div>
     <div class="nav-btns" v-if="loggedIn">
-      <span class="user-chip">✅ 已登录{{ userQQ ? ' · ' + userQQ : '' }}</span>
-      <el-button class="btn-grad" round @click="goPortal">仪表盘</el-button>
-      <el-button round plain @click="logout">退出登录</el-button>
+      <span class="user-chip">{{ userQQ }}</span><el-button @click="goPortal">我的角色</el-button><el-button @click="logout">退出</el-button>
     </div>
-    <div class="nav-btns" v-else>
-      <el-button round plain @click="openAuth('login')">登录</el-button>
-      <el-button class="btn-grad" round @click="openAuth('register')">注册</el-button>
-    </div>
+    <div class="nav-btns" v-else><el-button @click="openAuth('login')">登录</el-button><el-button class="btn-grad" @click="openAuth('register')">注册</el-button></div>
   </nav>
-
   <div class="hero">
-    <div class="tag">QQ 群宠物养成 · 全服数据中心</div>
-    <h1>砸蛋抽宠 · 养成对战<br>飞升渡劫 · 摸金探险</h1>
-    <p>跨群神榜实时竞技，副本、姻缘、天赋觉醒、深渊秘境……<br>登录玩家中心，随时随地管理你的专属宠物。</p>
-    <div class="cta" v-if="loggedIn">
-      <el-button class="btn-grad" size="large" round @click="goPortal">进入仪表盘</el-button>
-      <el-button size="large" round plain @click="logout">退出登录</el-button>
+    <div class="hero-copy">
+      <div class="eyebrow">灵契仙途 / QQ 群聊修仙游戏</div>
+      <h1>一念入仙途。<br><span>山海有灵契。</span></h1>
+      <p class="hero-intro">择一道修行，结一世灵契。<br>带上你的灵宠，与群友一起闯秘境、建宗门。<br>从无名修士，到属于你的仙途传说。</p>
+      <div class="cta">
+        <el-button class="btn-grad" size="large" @click="loggedIn ? goPortal() : openAuth('login')">{{ loggedIn ? '回到我的角色' : '进入玩家中心' }} &nbsp; ↗</el-button>
+        <a class="secondary" href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">加入官方群 &nbsp; →</a>
+      </div>
+      <button v-if="appVer.ok" class="app-link" @click="downloadApp">安卓客户端下载 · {{ appVer.version_name }} ↗</button>
     </div>
-    <div class="cta" v-else>
-      <el-button class="btn-grad" size="large" round @click="openAuth('register')">立即加入</el-button>
-      <el-button size="large" round plain @click="openAuth('login')">进入玩家中心</el-button>
-    </div>
-    <div class="cta" v-if="appVer.ok">
-      <el-button size="large" round plain @click="downloadApp">📱 下载安卓 App（{{ appVer.version_name }}）</el-button>
-    </div>
+    <div class="hero-poem" aria-hidden="true">携灵宠作伴<br>向山海而行</div>
+    <a class="hero-note" href="#explore">向下展开仙途长卷 &nbsp; ↓</a>
   </div>
-
   <div class="stats reveal">
-    <div class="stat-card"><div class="num">{{ fmt(disp.players) }}</div><div class="lbl">全服玩家</div></div>
-    <div class="stat-card"><div class="num">{{ fmt(disp.auth_groups) }}</div><div class="lbl">授权群聊</div></div>
-    <div class="stat-card"><div class="num">{{ fmt(disp.pets) }}</div><div class="lbl">在册宠物</div></div>
-    <div class="stat-card"><div class="num">{{ fmt(disp.tomb_players) }}</div><div class="lbl">摸金玩家</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.players) : '—' }}</div><div class="lbl">全服玩家</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.auth_groups) : '—' }}</div><div class="lbl">授权群聊</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.pets) : '—' }}</div><div class="lbl">在册宠物</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.tomb_players) : '—' }}</div><div class="lbl">摸金玩家</div></div>
   </div>
 
-  <div class="section reveal">
-    <div class="section-head"><h2>🏅 宠物神榜</h2><span>全服跨群战力排行 · 前三每日可领神榜奖励</span></div>
+  <div class="data-state" v-if="homeError" role="status">{{ homeError }}<button @click="loadHome" :disabled="loading">重新加载</button></div>
+</div>
+</header>
+<main class="wrap" id="explore">
+  <div class="update-strip"><strong>仙途新事</strong><p>修士、灵宠、坐骑，一处查看。坐骑外观定制现已开放。</p><a class="text-link" href="#player-center">查看玩家中心新功能 ↗</a></div>
+
+  <section class="section" id="professions" aria-labelledby="profession-title">
+    <div class="section-kicker">修行 · 各有其道</div>
+    <div class="section-head"><h2 id="profession-title">四条路，同赴仙途。</h2><span>剑意、坚躯、灵法、血煞 · 点击了解职业</span></div>
+    <div class="profession-grid">
+      <button v-for="role in professions" :key="role.key" class="profession-card" :aria-pressed="selectedRole.key===role.key" @click="selectedRole=role" :aria-label="'了解'+role.name">
+        <img :src="'/webstatic/home/'+role.key+'.webp'" :alt="role.name+'职业立绘'" width="512" height="768" loading="lazy">
+        <span class="profession-label"><b>{{ role.name }}</b><span>{{ role.tag }}</span></span>
+      </button>
+    </div>
+    <div class="profession-detail" aria-live="polite"><p><strong>{{ selectedRole.name }}</strong> {{ selectedRole.desc }}</p><button class="command" @click="copyCommand('选择职业 '+selectedRole.name)">选择职业 {{ selectedRole.name }} &nbsp; ⧉</button></div>
+  </section>
+
+  <section class="section" aria-labelledby="world-title">
+    <div class="section-kicker">历练 · 不止一种日常</div>
+    <div class="section-head"><h2 id="world-title">这方天地，等你来闯。</h2><span>修炼有进境，同行有故人</span></div>
+    <div class="world-grid">
+      <div class="world-art"><img src="/webstatic/home/world.webp" alt="仙途地图：从青山宗门到云海仙境" width="800" height="1200" loading="lazy"><div class="world-caption"><small>二十方山海 · 普通 / 困难</small><h3>越过眼前山，<br>还有万重境。</h3><p>历练地图、组队秘境、世界首领、深渊挑战。</p><button class="command" @click="copyCommand('仙途地图')">仙途地图 &nbsp; ⧉</button></div></div>
+      <div>
+        <article class="feature-row"><span class="feature-no">01</span><div><h3>修士与灵宠，并肩而战</h3><p>修炼破境、觉醒神通、锻造六件装备。灵宠可选择攻击、守护或辅助专长；坐骑与道侣，也会成为你修行路上的助力。</p><button class="command" @click="copyCommand('我的修士')">我的修士 &nbsp; ⧉</button></div></article>
+        <article class="feature-row"><span class="feature-no">02</span><div><h3>一方洞天，一步一重关</h3><p>从初识到仙门，逐层挑战洞天试炼。与灵宠共同成长，完成仙途毕业目标，记下这一程的修行。</p><button class="command" @click="copyCommand('我的洞天')">我的洞天 &nbsp; ⧉</button></div></article>
+        <article class="feature-row"><span class="feature-no">03</span><div><h3>与群友开宗立派</h3><p>创建或加入宗门，一起做任务、外出探索、镇守宗门。捐献资源、积累贡献，再去宗门兑换所需。</p><button class="command" @click="copyCommand('宗门帮助')">宗门帮助 &nbsp; ⧉</button></div></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section portal-band" id="player-center" aria-labelledby="portal-title">
+    <div><div class="eyebrow">玩家中心 · 近期更新</div><h2 id="portal-title">你的修行，<br>打开就看得见。</h2><p>群里继续游历，网页随时查看。<br>绑定所在群的角色，修士、灵宠与坐骑都有自己的位置。</p><div class="cta"><el-button class="btn-grad" @click="loggedIn ? goPortal() : openAuth('login')">{{ loggedIn ? '查看我的角色' : '登录并绑定角色' }} &nbsp; ↗</el-button><a class="secondary" href="/chat">网页游玩 →</a></div></div>
+    <div class="portal-features">
+      <div class="portal-feature"><span>01</span><div><b>修士档案与角色绑定</b><p>查看职业、境界、洞天、灵根、神通与战力构成；没有灵宠，也能绑定修士。</p></div></div>
+      <div class="portal-feature"><span>02</span><div><b>灵宠、坐骑与背包</b><p>查看养成状态、坐骑信息和资产，使用背包道具、兑换卡密。</p></div></div>
+      <div class="portal-feature"><span>03</span><div><b>把喜欢的形象，带进仙途</b><p>灵宠定制与坐骑外观定制。解锁对应资格后上传图片、提交申请，审核通过后使用。</p></div></div>
+    </div>
+  </section>
+
+  <section class="section" id="start" aria-labelledby="start-title">
+    <div class="section-kicker">初见 · 从这三步开始</div>
+    <div class="section-head"><h2 id="start-title">第一步，在群里发一句话。</h2><span>点击指令复制，回到已开通游戏的 QQ 群发送</span></div>
+    <div class="guide-grid">
+      <article class="guide-step"><span class="step-index">壹 / 创建角色</span><h3>先有一个自己的道号</h3><p>加入官方群或已开通游戏的群，发送指令创建修士。</p><button class="command" @click="copyCommand('创建角色')">创建角色 &nbsp; ⧉</button></article>
+      <article class="guide-step"><span class="step-index">贰 / 选择职业</span><h3>选你喜欢的修行之道</h3><p>剑修、体修、灵修、魔修任选其一，体验各自的战斗方式。</p><button class="command" @click="copyCommand('选择职业 '+selectedRole.name)">选择职业 {{ selectedRole.name }} &nbsp; ⧉</button></article>
+      <article class="guide-step"><span class="step-index">叁 / 结契灵宠</span><h3>这一程，有伙伴同行</h3><p>九尾狐、卡比兽、七夕青鸟，选一只初始伙伴，再出发历练。</p><button class="command" @click="copyCommand('结契灵宠 九尾狐')">结契灵宠 九尾狐 &nbsp; ⧉</button></article>
+    </div>
+    <p class="guide-foot">已在群里玩过？直接登录玩家中心绑定已有角色。若群内提示需要绑定 QQ，请先发送「绑定教程」。完整菜单发送「灵契仙途」。</p>
+  </section>
+
+  <section class="section" aria-labelledby="library-title">
+    <div class="section-head"><h2 id="library-title">修行之外，也有江湖。</h2><span>展开查看玩法与常用指令</span></div>
+    <div class="play-library">
+      <details v-for="group in playGroups" :key="group.title"><summary><b>{{ group.title }}</b><span>{{ group.subtitle }}</span></summary><div class="library-body"><p>{{ group.desc }}</p><div class="command-list"><button class="command" v-for="cmd in group.commands" :key="cmd" @click="copyCommand(cmd)">{{ cmd }} &nbsp; ⧉</button></div></div></details>
+    </div>
+  </section>
+
+  <section class="section rank-section" id="rankings">
+    <div class="section-kicker">问道 · 修士登顶</div>
+    <div class="section-head"><h2>仙途战力榜</h2><span>按修士综合战力排序（修士 + 灵宠 + 坐骑 + 道侣）</span></div>
+    <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
+    <div class="boards">
+      <div class="board full">
+        <el-table :data="cultRank" v-loading="loading" element-loading-background="transparent" empty-text="暂无修士上榜">
+          <el-table-column label="排名" width="80">
+            <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="name" label="道号" min-width="140" show-overflow-tooltip></el-table-column>
+          <el-table-column label="等级" width="90">
+            <template #default="s">Lv{{ s.row.level }}</template>
+          </el-table-column>
+          <el-table-column prop="realm" label="境界" width="110" show-overflow-tooltip></el-table-column>
+          <el-table-column prop="profession" label="职业" width="110"></el-table-column>
+          <el-table-column label="战力" align="right" min-width="110">
+            <template #default="s"><span class="pw">{{ fmtPower(s.row.power) }}</span></template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </div>
+  </section>
+
+  <section class="section rank-section">
+    <div class="section-kicker">风云 · 群雄留名</div>
+    <div class="section-head"><h2>灵宠战力榜</h2><span>按灵宠自身战力排序 · 修士综合战力见上方「仙途战力榜」</span></div>
+    <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
     <div class="boards">
       <div class="board full">
         <el-table :data="petRank" v-loading="loading" element-loading-background="transparent" empty-text="暂无宠物上榜">
@@ -3337,13 +3615,13 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </el-table>
       </div>
     </div>
-  </div>
+  </section>
 
   <div class="section reveal">
-    <div class="section-head"><h2>🏺 摸金风云榜</h2><span>地宫探险 · 冥币为王</span></div>
+    <div class="section-head"><h2>摸金风云榜</h2><span>地宫探险 · 记录每一笔收获</span></div>
     <div class="boards">
       <div class="board full">
-        <h3>💰 摸金排行（全服）</h3>
+        <h3>摸金排行 · 全服</h3>
         <div class="sub">按永久冥币总量排序</div>
         <el-table :data="tombRank" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="80">
@@ -3356,7 +3634,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </el-table>
       </div>
       <div class="board">
-        <h3>🔥 今日摸金神榜</h3>
+        <h3>今日摸金榜</h3>
         <div class="sub">{{ todaySub }}</div>
         <el-table :data="tombToday" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="70">
@@ -3369,7 +3647,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
         </el-table>
       </div>
       <div class="board">
-        <h3>🌙 昨日摸金神榜</h3>
+        <h3>昨日摸金榜</h3>
         <div class="sub">{{ ystSub }}</div>
         <el-table :data="tombYst" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="70">
@@ -3385,37 +3663,37 @@ _HOME_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="section reveal">
-    <div class="section-head"><h2>🚀 加入我们</h2><span>进群开玩 · 充值直达</span></div>
+    <div class="section-head"><h2>江湖不远，群里见。</h2><span>一起玩，也一起把仙途变得更好</span></div>
     <div class="links">
       <a class="link-card" href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">
-        <div class="ic">💬</div>
+        <div class="ic" aria-hidden="true">01</div>
         <div>
-          <div class="t">小飞机器人官方群</div>
+          <div class="t">小飞机器人 · 官方群</div>
           <div class="d">官方 QQ 群：547205828 · 点击一键加群，交流攻略、领取福利</div>
         </div>
-        <div class="go">加入群聊 →</div>
+        <div class="go">↗</div>
       </a>
       <a class="link-card" href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">
-        <div class="ic">💎</div>
+        <div class="ic" aria-hidden="true">02</div>
         <div>
           <div class="t">充值入口</div>
           <div class="d">灵石 / 玄晶 / 天晶卡密自助购买，兑换即时到账</div>
         </div>
-        <div class="go">前往充值 →</div>
+        <div class="go">↗</div>
       </a>
-      <a class="link-card" @click="goFeedback">
-        <div class="ic">📣</div>
+      <button type="button" class="link-card" @click="goFeedback">
+        <div class="ic" aria-hidden="true">03</div>
         <div>
           <div class="t">问题反馈</div>
-          <div class="d">遇到 Bug 或有好建议？登录后即可提交，管理员处理后回复可查</div>
+          <div class="d">提交遇到的问题或玩法建议，登录后可查看管理员回复。</div>
         </div>
-        <div class="go">去反馈 →</div>
-      </a>
+        <div class="go">↗</div>
+      </button>
     </div>
   </div>
 
-  <footer>灵契仙途 · 数据每 30 秒更新 · <a href="/portal">玩家中心</a> · <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> · <a href="https://pay.ldxp.cn/shop/2P5XIVMD" target="_blank" rel="noopener">充值入口</a></footer>
-</div>
+  <footer><div>灵契仙途 · 与灵宠结契，共赴仙途。<br>榜单每 30 秒刷新；不同玩法按各自规则统计。</div><div><a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a></div></footer>
+</main>
 
 <el-dialog v-model="auth.show" :title="authTitle" width="400px" class="auth-dialog" align-center>
   <div class="auth-hint">{{ authHint }}</div>
@@ -3467,9 +3745,31 @@ createApp({
     const loggedIn = ref(false);
     const userQQ = ref('');
     const loading = ref(true);
+    const hasData = ref(false);
+    const homeError = ref('');
+    const professions = [
+      {key:'sword',name:'剑修',tag:'剑意爆发 · 破甲斩敌',desc:'每三回合蓄起剑意，以爆发与破甲直面强敌。'},
+      {key:'body',name:'体修',tag:'护盾反击 · 护卫队友',desc:'以坚躯护卫队友，用护盾承伤，在受击中反击。'},
+      {key:'spirit',name:'灵修',tag:'疗愈净化 · 灵法相助',desc:'队友受伤时施以治疗，无需治疗时以灵法进攻。'},
+      {key:'demon',name:'魔修',tag:'以血催煞 · 攻击汲生',desc:'以血催煞，在攻击中汲取生命，走另一条修行路。'}
+    ];
+    const selectedRole = ref(professions[0]);
+    const playGroups = [
+      {title:'灵宠养成',subtitle:'砸蛋收集 / 进化飞升 / 天赋与炼丹',desc:'从获得第一只灵宠开始，升级、进化、飞升与渡劫；还可学习秘技、打造神器，挑战宠物副本与剧情任务。',commands:['砸蛋','我的宠物','宠物市场','灵宠觉醒','宠物副本','宠物剧情任务']},
+      {title:'仙途历练',subtitle:'装备锻造 / 组队秘境 / 世界首领 / 深渊',desc:'修炼积累修为，锻造并进阶装备，选择历练与挑战。洞天试炼和仙途毕业，也在等你完成。',commands:['修士修炼','修士装备','锻造 灵剑','仙途地图','世界首领','我的洞天','仙途毕业']},
+      {title:'坐骑与情缘',subtitle:'坐骑养成 / 外观定制 / 道侣双修',desc:'带上坐骑踏入仙途，与另一位修士结为道侣。玩家中心可查看坐骑，并在解锁资格后申请专属外观。',commands:['我的坐骑','道侣情缘','道侣双修']},
+      {title:'宗门与家园',subtitle:'开宗立派 / 宗门任务 / 家园经营',desc:'与群友经营宗门、完成任务与探索；闲下来，也可以回到自己的家园。',commands:['宗门帮助','查看宗门','宗门任务','宗门兑换','家园']},
+      {title:'摸金与棋局',subtitle:'地宫探险 / 扫雷 / 群聊棋类对弈',desc:'下地宫摸金，或与群友摆一局。象棋、围棋、五子棋、军棋和斗兽棋都有各自的玩法。发送完整菜单查看开局方式。',commands:['摸金介绍','灵契仙途']},
+      {title:'每日与排行',subtitle:'签到 / 商城背包 / 本群与全服战力榜',desc:'签到领取日常奖励，查看背包与商城。群内仙途战力榜展示综合战力，官网下方保留灵宠自身战力和摸金榜。',commands:['签到','查看背包','宠物商城','仙途战力榜','仙途战力榜全服']}
+    ];
+    async function copyCommand(command){
+      try { await navigator.clipboard.writeText(command); ElMessage.success('已复制「'+command+'」，请到游戏群发送'); }
+      catch(e) { ElMessage.info({message:'请在游戏群发送：'+command,duration:6000}); }
+    }
     const disp = reactive({players:0, auth_groups:0, pets:0, tomb_players:0});
     const appVer = reactive({ok:false, version_name:'', url:''});
     const petRank = ref([]);
+    const cultRank = ref([]);
     const tombRank = ref([]);
     const tombToday = ref([]);
     const tombYst = ref([]);
@@ -3484,9 +3784,10 @@ createApp({
       (auth.tab==='email' ? '使用已绑定的邮箱接收验证码登录' : '使用注册时的 QQ 号登录玩家中心')));
 
     const fmt = n => Number(n||0).toLocaleString('zh-CN');
-    const fmtPower = bp => bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp);
+    const fmtPower = bp => bp >= 1e12 ? (bp/1e12).toFixed(2) + '万亿' : bp >= 1e8 ? (bp/1e8).toFixed(2) + '亿' : bp >= 10000 ? (bp/10000).toFixed(2) + '万' : fmt(bp);
 
     function animate(key, target){
+      if(matchMedia('(prefers-reduced-motion: reduce)').matches){ disp[key] = target; return; }
       const from = disp[key] || 0;
       if(from === target){ disp[key] = target; return; }
       const start = performance.now(), dur = 1200;
@@ -3516,20 +3817,27 @@ createApp({
     }
 
     async function loadHome(){
+      loading.value = true;
       try{
-        const r = await (await fetch('/api/portal/home')).json();
-        if(!r.ok) return;
+        const response = await fetch('/api/portal/home');
+        if(!response.ok) throw new Error('home unavailable');
+        const r = await response.json();
+        if(!r.ok || !r.stats) throw new Error('invalid home data');
+        hasData.value = true;
+        homeError.value = '';
         animate('players', r.stats.players);
         animate('auth_groups', r.stats.auth_groups);
         animate('pets', r.stats.pets);
         animate('tomb_players', r.stats.tomb_players);
         petRank.value = r.pet_rank || [];
+        cultRank.value = r.cultivator_rank || [];
         tombRank.value = r.tomb_rank || [];
         tombToday.value = r.tomb_today || [];
         tombYst.value = r.tomb_yesterday || [];
         todaySub.value = `统计 ${r.date_today} 00:00 至今获得冥币，每日 0 点重置`;
         ystSub.value = `统计 ${r.date_yesterday} 全天 · 前三名可领取随机宠物经验奖励`;
       }catch(e){
+        homeError.value = hasData.value ? '数据更新暂时中断，当前显示上次获取结果。' : '榜单暂时未能加载，请稍后重试。';
       }finally{ loading.value = false; }
     }
 
@@ -3632,90 +3940,14 @@ createApp({
       finally{ auth.loading = false; }
     }
 
-    function initParticles(){
-      const cv = document.getElementById('particles');
-      if(!cv) return;
-      const ctx = cv.getContext('2d');
-      let W = 0, H = 0, dots = [];
-      const mouse = {x:-9999, y:-9999};
-      function resize(){
-        W = cv.width = innerWidth; H = cv.height = innerHeight;
-        const n = Math.min(110, Math.round(W * H / 16000));
-        dots = Array.from({length:n}, () => ({
-          x: Math.random()*W, y: Math.random()*H,
-          vx: (Math.random()-.5)*.35, vy: (Math.random()-.5)*.35,
-          r: Math.random()*1.6 + .6
-        }));
-      }
-      resize();
-      addEventListener('resize', resize);
-      addEventListener('pointermove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-      addEventListener('pointerleave', () => { mouse.x = -9999; mouse.y = -9999; });
-      const LINK = 130, MOUSE = 170;
-      function frame(){
-        ctx.clearRect(0, 0, W, H);
-        for(const d of dots){
-          d.x += d.vx; d.y += d.vy;
-          if(d.x < -20) d.x = W + 20; else if(d.x > W + 20) d.x = -20;
-          if(d.y < -20) d.y = H + 20; else if(d.y > H + 20) d.y = -20;
-          ctx.beginPath();
-          ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(165,150,255,.55)';
-          ctx.fill();
-        }
-        for(let i = 0; i < dots.length; i++){
-          const a = dots[i];
-          for(let j = i + 1; j < dots.length; j++){
-            const b = dots[j];
-            const dx = a.x - b.x, dy = a.y - b.y;
-            const dist = Math.hypot(dx, dy);
-            if(dist < LINK){
-              ctx.beginPath();
-              ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-              ctx.strokeStyle = `rgba(140,120,255,${(1 - dist / LINK) * .22})`;
-              ctx.lineWidth = 1;
-              ctx.stroke();
-            }
-          }
-          const md = Math.hypot(a.x - mouse.x, a.y - mouse.y);
-          if(md < MOUSE){
-            ctx.beginPath();
-            ctx.moveTo(a.x, a.y); ctx.lineTo(mouse.x, mouse.y);
-            ctx.strokeStyle = `rgba(190,170,255,${(1 - md / MOUSE) * .3})`;
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
-        }
-        requestAnimationFrame(frame);
-      }
-      if(!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(frame);
-    }
-
-    function initMotion(){
-      const io = new IntersectionObserver(es => {
-        es.forEach(e => { if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
-      }, {threshold: .12});
-      document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-      const glows = document.querySelectorAll('.glow');
-      addEventListener('pointermove', e => {
-        const rx = e.clientX / innerWidth - .5, ry = e.clientY / innerHeight - .5;
-        glows.forEach((g, i) => {
-          const k = (i + 1) * 14;
-          g.style.transform = `translate(${rx * k}px, ${ry * k}px)`;
-        });
-      });
-    }
-
     onMounted(()=>{
       checkAuth();
       loadHome();
       loadAppVer();
       setInterval(loadHome, 30000);
-      initParticles();
-      initMotion();
     });
 
-    return {loggedIn, userQQ, loading, disp, appVer, petRank, tombRank, tombToday, tombYst, todaySub, ystSub,
+    return {professions, selectedRole, playGroups, copyCommand, hasData, homeError, loadHome, loggedIn, userQQ, loading, disp, appVer, petRank, cultRank, tombRank, tombToday, tombYst, todaySub, ystSub,
             auth, authTitle, authHint, fmt, fmtPower, openAuth, goFeedback, goPortal, downloadApp, logout, submitAuth, sendCode};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
