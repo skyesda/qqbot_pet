@@ -11041,8 +11041,19 @@ class PetParkPlugin(Star):
                 self._inc_stat(player, "ascended_dungeon_clear")
             drop = ""
             if random.random() < 0.2:
-                self.store.add_item(player, "万能宝石", 1)
-                drop = "\n> 💎 掉落道具：**万能宝石** ×1"
+                # 掉落池：避免全掉万能宝石，随机从多种材料中选取
+                DROP_POOL = [
+                    ("红药水", 25),
+                    ("蓝药水", 25),
+                    ("三明治", 15),
+                    ("相思豆", 10),
+                    ("五色药", 10),
+                    ("进化神石", 8),
+                    ("万能宝石", 7),
+                ]
+                drop_item = random.choices(DROP_POOL, weights=[w for _, w in DROP_POOL])[0][0]
+                self.store.add_item(player, drop_item, 1)
+                drop = f"\n> 💎 掉落道具：**{drop_item}** ×1"
             desc = f"您的{nick}在{name}遇见{monster}，激战{monster}结果**大胜**！"
             body = (
                 f"> ⏱️ 耗时 {minutes} 分钟 · 👹 怪物战力 **{power}**\n"
