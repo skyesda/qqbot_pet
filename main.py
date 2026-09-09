@@ -9928,11 +9928,12 @@ class PetParkPlugin(Star):
         n = petmod.auto_level_up(p)
         if n == 0:
             return f"未能升级（经验或精力不足）。当前 Lv{p['level']}/{petmod.level_cap(p)}。"
+        cult_txt = self._pet_to_cultivation(player, p, n, "灵宠升级")
         reward = self._grant_level60_reward(player, p, before)
         prep_msg = self._rebirth_prep_reminder(p, before)
         return (
             f"⬆ 一键升级 +{n} 级！当前 Lv{p['level']}/{petmod.level_cap(p)}，剩余精力 {p['energy']}。"
-            + reward + prep_msg
+            + cult_txt + reward + prep_msg
         )
 
     def _toggle_auto_level(self, player: dict, enable: bool) -> str:
