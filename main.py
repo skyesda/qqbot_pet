@@ -7813,6 +7813,8 @@ class PetParkPlugin(Star):
         rmin, rmax = self._mount_reward_range(name, player)
         now_hhmm = time.strftime("%H:%M", time.localtime(int(time.time())))
         theme = {"enter": "闪★亮", "leave": "绝★尘", "my": "专属"}.get(kind, "骑")
+        # 底部成对词：与顶部主题构成上下对称的语感（闪★亮+出★行 / 绝★尘+而★去）；my/其它无底部框。
+        bottom = {"enter": "出★行", "leave": "而★去"}.get(kind)
         custom = bool(inst.get("custom"))
         lines = [
             f"┌★★—{theme}—★★┐",
@@ -7830,6 +7832,8 @@ class PetParkPlugin(Star):
         if custom:
             lines.append("来源：专属定制")
         lines.append(f"时间：{now_hhmm}")
+        if bottom:
+            lines.append(f"└★★—{bottom}—★★┘")
         return "\n".join(lines)
 
     def _mount_full_message(self, name: str, player: dict, kind: str = "enter", reward: int | None = None) -> str:
