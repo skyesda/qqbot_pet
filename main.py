@@ -644,7 +644,8 @@ class PetParkPlugin(Star):
         self.auto_approve = False
         # 独立招新模块负责入群欢迎；关闭宠物乐园旧版欢迎，避免重复推送。
         self.welcome_push = False
-        self.leave_push = bool(self.config.get("leave_push", True))
+        # 退群提醒按用户要求整体关闭（配置里 leave_push 仍可能为 true，这里硬关）。
+        self.leave_push = False
         # 强制绑定QQ：开启后未绑定用户禁止游玩灵契仙途（安全阀，可在后台关闭）
         self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
         self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
