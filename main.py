@@ -640,7 +640,8 @@ class PetParkPlugin(Star):
         data.ENERGY_REGEN_PER_MIN = max(1, int(self.config.get("energy_regen_per_min", data.ENERGY_REGEN_PER_MIN)))
         # 群管理（禁言/自动审批进群/新人推送/退群推送）——全部由插件实现
         self.mute_enabled = bool(self.config.get("mute_enabled", True))
-        self.auto_approve = bool(self.config.get("auto_approve", True))
+        # 独立招新模块负责审批；强制关闭旧的全量自动审批，避免绕过 AI 审核。
+        self.auto_approve = False
         self.welcome_push = bool(self.config.get("welcome_push", True))
         self.leave_push = bool(self.config.get("leave_push", True))
         # 强制绑定QQ：开启后未绑定用户禁止游玩灵契仙途（安全阀，可在后台关闭）
