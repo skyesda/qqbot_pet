@@ -642,7 +642,8 @@ class PetParkPlugin(Star):
         self.mute_enabled = bool(self.config.get("mute_enabled", True))
         # 独立招新模块负责审批；强制关闭旧的全量自动审批，避免绕过 AI 审核。
         self.auto_approve = False
-        self.welcome_push = bool(self.config.get("welcome_push", True))
+        # 独立招新模块负责入群欢迎；关闭宠物乐园旧版欢迎，避免重复推送。
+        self.welcome_push = False
         self.leave_push = bool(self.config.get("leave_push", True))
         # 强制绑定QQ：开启后未绑定用户禁止游玩灵契仙途（安全阀，可在后台关闭）
         self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
