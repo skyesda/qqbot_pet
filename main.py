@@ -7029,7 +7029,7 @@ class PetParkPlugin(Star):
                 "- 灵宠侦查 用户ID",
                 "> 💡 席位：默认 2 ｜ 最多 10 ｜ 重生 +1 ｜ 宠物席位卡 +1",
                 "- 灵宠列表（查看所有灵宠概要）· 切换灵宠 序号 · 灵宠信息 序号",
-                "- 炼化灵宠（消耗 1000 玄晶，化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化灵宠 宠物卡` 可炼化神秘宠物卡）",
+                "- 炼化灵宠（消耗 1000 玄晶，化作对应品质的卡/碎片，20% 出卡 80% 出碎片 3-8 个；`炼化灵宠 宠物卡 [张数|全部]` 可批量炼化神秘宠物卡）",
                 "- 一键升级灵宠 · 灵宠升级 次数 · 灵宠进化（旧名 宠物升级/宠物进化 仍可用）",
                 "- 开启自动升级 · 关闭自动升级（经验满自动升级开关，默认开启）",
                 "- 灵宠飞升 · 灵宠渡劫 · 幻境寻宝 · 灵宠神仙劫（旧名 宠物飞升/渡劫/神仙劫 仍可用）",
@@ -8988,7 +8988,7 @@ class PetParkPlugin(Star):
         - `炼化宠物 宠物卡`：改炼化背包里的「宠物卡」（品质随机结算）。
         """
         if len(tokens) >= 2 and tokens[1] == "宠物卡":
-            return self._refine_pet_card(player)
+            return self._refine_pet_card(player, self._arg(tokens, 2))
         if not self._need_pet(player):
             return "你还没有宠物，无法炼化。"
         if len(tokens) >= 2:
@@ -9027,29 +9027,84 @@ class PetParkPlugin(Star):
             hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{quality}卡】。"
         return f"{out}\n\n💠 消耗 **{cost} 玄晶**。\n{hint}"
 
-    def _refine_pet_card(self, player: dict) -> str:
-        """炼化「宠物卡」（神秘卡）：品质随机结算，20% 出对应品质卡，80% 出对应品质碎片 3-8。"""
+    def _refine_pet_card(self, player: dict, count_str: str | None = None) -> str:
+        """炼化「宠物卡」（神秘卡）：品质随机结算，20% 出对应品质卡，80% 出对应品质碎片 3-8。
+
+        支持批量，免去一张一张发指令：`炼化宠物 宠物卡 10` / `炼化宠物 宠物卡 全部`。
+        实际炼化张数取「想要 / 背包持有 / 玄晶够付」三者最小值——所以「全部」是
+        「在钱包允许范围内全炼掉」，不会把玄晶扣成负数，剩余的卡会明确告知。
+        """
         name = "宠物卡"
-        if not self.store.has_item(player, name, 1):
+        have = player.get("bag", {}).get(name, 0)
+        if have <= 0:
             return f"背包里没有『{name}』，无法炼化。"
         cost = data.REFINE_COST
-        if self.store.get_currency(player, "积分") < cost:
+        afford = self.store.get_currency(player, "玄晶") // cost
+        if afford <= 0:
             return f"炼化需要 **{cost} 玄晶**，当前玄晶不足。"
-        self.store.add_currency(player, "玄晶", -cost)
-        self.store.remove_item(player, name, 1)
-        q = self._roll_quality()
-        if random.random() < data.REFINE_CARD_CHANCE:
-            card = f"{q}卡"
-            self.store.add_item(player, card, 1)
-            out = f"🎴 **炼化成功！**『{name}』化作 **{card} ×1**！"
-            hint = f"> 【{card}】可召唤同品质宠物，或用于提升品质。"
+        text = str(count_str or "").strip()
+        if text in ("全部", "所有"):
+            want = have
+        elif text.isdigit():
+            want = int(text)
+        elif not text:
+            want = 1
         else:
-            frag = f"{q}碎片"
-            n = random.randint(*data.REFINE_FRAGMENT_RANGE)
-            self.store.add_item(player, frag, n)
-            out = f"🧩 **炼化成功！**『{name}』化作 **{frag} ×{n}**。"
-            hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{q}卡】。"
-        return f"{out}\n\n💠 消耗 **{cost} 玄晶**。\n{hint}"
+            return (
+                "用法：炼化宠物 宠物卡 [张数|全部]\n"
+                f"例如：炼化宠物 宠物卡 10（当前持有 {have} 张）"
+            )
+        if want <= 0:
+            return "炼化张数必须大于 0。"
+        n = min(want, have, afford)
+        self.store.add_currency(player, "玄晶", -cost * n)
+        self.store.remove_item(player, name, n)
+        cards: dict[str, int] = {}
+        frags: dict[str, int] = {}
+        for _ in range(n):
+            q = self._roll_quality()
+            if random.random() < data.REFINE_CARD_CHANCE:
+                cards[q] = cards.get(q, 0) + 1
+            else:
+                frags[q] = frags.get(q, 0) + random.randint(*data.REFINE_FRAGMENT_RANGE)
+        for q, c in cards.items():
+            self.store.add_item(player, f"{q}卡", c)
+        for q, c in frags.items():
+            self.store.add_item(player, f"{q}碎片", c)
+        # 单张沿用原有文案，老玩家观感不变；多张才汇总成表。
+        if n == 1:
+            if cards:
+                q = next(iter(cards))
+                out = f"🎴 **炼化成功！**『{name}』化作 **{q}卡 ×1**！"
+                hint = f"> 【{q}卡】可召唤同品质宠物，或用于提升品质。"
+            else:
+                q = next(iter(frags))
+                out = f"🧩 **炼化成功！**『{name}』化作 **{q}碎片 ×{frags[q]}**。"
+                hint = f"> {data.FRAGMENT_TO_CARD} 片【{q}碎片】可兑换 1 张【{q}卡】。"
+            return f"{out}\n\n💠 消耗 **{cost} 玄晶**。\n{hint}"
+        total_cards = sum(cards.values())
+        total_frags = sum(frags.values())
+        lines = [
+            f"🎴 **批量炼化完成！**『{name}』×{n}",
+            "",
+            "| 品质 | 品质卡 | 碎片 |",
+            "|:--:|--:|--:|",
+        ]
+        for q in data.QUALITY_WEIGHT:
+            if q in cards or q in frags:
+                lines.append(f"| {q} | {cards.get(q, 0)} | {frags.get(q, 0)} |")
+        lines.append(f"| **合计** | **{total_cards}** | **{total_frags}** |")
+        lines.append("")
+        lines.append(f"💠 消耗 **{cost * n:,} 玄晶**")
+        if n < want:
+            why = []
+            if have < want:
+                why.append(f"背包只有 {have} 张")
+            if afford < want:
+                why.append(f"玄晶只够 {afford} 张")
+            lines.append(f"> ⚠️ 只炼化了 **{n}** 张（{'，'.join(why)}）。")
+        lines.append(f"> 📦 『{name}』剩余 **{have - n}** 张。")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # 多宠物系统：指令处理器
