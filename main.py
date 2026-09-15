@@ -10949,7 +10949,7 @@ class PetParkPlugin(Star):
                 f"\n> 🎁 神榜前三每日可『领取神榜奖励』，随机天晶 💠 "
                 f"{self.rank_reward_diamond_min}~{self.rank_reward_diamond_max}。"
             )
-        lines.append("\n> 仙途战力 = 修士本体(境界/装备/洞天/悟性根骨) + 15%×结契灵宠 + 10%×坐骑，再乘道侣与洞天增益。")
+        lines.append("\n> 仙途战力 = 修士本体(境界/装备/洞天/悟性根骨) + 结契灵宠实战战力 + 坐骑实战战力，再乘道侣与洞天增益。")
         return "\n".join(lines)
 
     def _claim_rank_reward(self, player: dict, group_id: str) -> str:

@@ -1,19 +1,20 @@
 """Unified 修士战力：把修士主线与灵宠/道侣折到同一个数。
 
-仙途侧此前没有持久化战力，战斗由 combat.build_party 每次现场推演；老宠物系统用
-pet.battle_power(pet) 显示值。本模块提供唯一的「仙途战力」，供排行榜、副本缩放、
-摸金/神器/秘技/坐骑的强度展示与判定复用。
+仙途侧此前没有持久化战力，战斗由 combat.build_party 每次现场推演。本模块提供唯一的
+「仙途战力」，供排行榜、摸金/神器/秘技/坐骑的强度展示与判定复用。
 
 设计：
 - 实时计算，不写入 adventure["power"]（输入随增改路径高频变化，缓存失效面太大）。
-- 总战力 = 修士本体(去坐骑) + 15%×所带灵宠真实战力 + 10%×坐骑真实战力，再乘道侣与洞天。
-  灵宠取 battle_power(pet)（与「我的宠物」综合战力同源），坐骑取原始 power，不再压缩。
-  坐骑在 hero_sheet 里只作战斗攻击加成，战力侧剥离以免双重计，改走独立 10% 项。
-- 取「所带灵宠」(companion_pet_id)；无则取贡献最高一只；再无用引路灵蝶兜底。
+- 总战力 = 修士本体(去坐骑) + 灵宠实战战力 + 坐骑实战战力，再乘道侣与洞天。
+  **三项同口径、同单位直接相加**：灵宠/坐骑都走 combat 那套 projection 压缩后的实战
+  属性，再套与 hero_power 相同的换算，所以三个数可比、可加。
+- 这里曾经取 pet.battle_power()（「我的宠物」面板的养成度显示值：生命上限×心情，未压缩）
+  计入 15%。同一只宠两个口径实测差 2.7 亿倍（显示 125 万亿 vs 实战攻击 470），结果全服
+  28 人里 9 人的修士本体被压到总战力的 0.00%。口径统一后本体中位占 ~78%。
+- 所带灵宠由 combat.active_pet 统一决定，与战斗/修士图同一口径——显示的必须就是打出来的。
 - 不改动 combat.build_party / enemies（战斗模拟与「战力标尺」分离）。
 """
-from .combat import hero_sheet
-from ..pet import battle_power
+from .combat import active_pet, companion_sheet, hero_sheet, projection
 
 _NUM_UNITS = (
     (10**100, "古戈尔"), (10**72, "大数"), (10**68, "无量"),
@@ -59,43 +60,43 @@ def hero_power(a, player, include_mount=True):
     """修士本体：职业基础属性 + 等级成长 + 洞天装备（+ 坐骑战力可选），折成单个数。
 
     include_mount=False 用于统一战力里取「修士本体」——坐骑不渗在 hero 里，
-    改由 _mount_contrib 以独立 10% 占比计入，避免双重计。
-    「修士为主」：本体权重放大（攻防×3、生命/4），压过灵宠真实战力占比。
+    改由 _mount_contrib 以同口径独立计入，避免双重计。
     """
     s = hero_sheet(a, player, include_mount=include_mount)
     return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
 
 
-PET_POWER_RATIO = 0.15   # 结契灵宠战力贡献占比（修士为主：下调以压过灵宠真实战力）
-MOUNT_POWER_RATIO = 0.10  # 骑乘坐骑战力贡献占比（修士为主：下调，坐骑退回锦上添花）
+# 灵宠/坐骑战力计入倍率。1.0 = 与修士本体同口径直接相加。
+# 口径统一后灵宠实战战力本来就与本体可比（全服中位为本体的 0.30 倍），
+# 不需要再挂系数补偿，也**不应该**再加系数——任何系数都会让某一方失真。
+PET_POWER_RATIO = 1.0
+MOUNT_POWER_RATIO = 1.0
+
+
+def pet_power(pet, level):
+    """灵宠战力：把 companion_sheet 的实战属性套修士同款换算，与 hero_power 可直接相加。
+
+    必须走 companion_sheet（战斗同源），不能取 pet.battle_power()——后者是「我的宠物」
+    面板的养成度显示值，两个口径能差亿倍，详见 companion_sheet 的说明。
+    """
+    s = companion_sheet(pet, level)
+    return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
 
 
 def _pet_contrib(pet, lv):
-    """单只灵宠战力贡献：直接取灵宠真实 battle_power（与「我的宠物」综合战力同源）。
-
-    「全面收编」后按用户要求：总战力 = 修士本体 + 15%×所带灵宠真实战力 + 10%×坐骑，
-    不再用 projection 压缩（压缩口径会把灵宠战力折成极小值，导致占比看起来像没加上）。
-    lv 参数保留以兼容调用签名，实际不再参与。
-    """
-    return int(battle_power(pet))
-
-
-def _guide_pet(lv):
-    """无宠物时的引路灵蝶兜底，保证未结宠的修士不至于战力归零。"""
-    return _pet_contrib({"nickname": "引路灵蝶", "hp_max": 800, "atk": 50,
-                         "def": 40, "intel": 30, "mood": 5}, lv)
+    """单只灵宠战力贡献：与战斗同口径，可与 hero_power 直接比大小。"""
+    return pet_power(pet, lv)
 
 
 def _mount_contrib(player, lv):
-    """坐骑战力贡献：直接取坐骑真实 power（与「我的坐骑」显示同源）。
-
-    总战力 = 修士本体 + 15%×所带灵宠真实战力 + 10%×坐骑真实战力，不再压缩。
+    """坐骑战力贡献：与 hero_sheet 同口径——power 经 projection(power,10000,5) 折成
+    攻击加成，再按 hero_power 的攻防权重 ×3；不取坐骑原始 power（那是展示值）。
     """
     m = player.get("active_mount") or ""
     inst = player.get("mounts", {}).get(m)
     if not inst:
         return 0
-    return int(inst.get("power", 0))
+    return int(projection(inst.get("power", 0), 10000, 5) * 3)
 
 
 def _unified_components(player, key):
@@ -103,17 +104,9 @@ def _unified_components(player, key):
     a = player.get("adventure")
     if not a:
         return None
-    hero = hero_power(a, player, include_mount=False)  # 修士本体（去坐骑，坐骑走独立 10% 项）
-    pets = player.get("pets", []) or []
-    cid = a.get("companion_pet_id")
-    pet = next((p for p in pets if p.get("pet_id") == cid), None)
-    if pet is None:
-        pet = max(pets, key=lambda p: _pet_contrib(p, a["level"]), default=None)
-    if pet is None:  # 无宠物：引路灵蝶兜底（name 仅供明细展示）
-        pet = {"nickname": "引路灵蝶", "hp_max": 800, "atk": 50, "def": 40, "intel": 30, "mood": 5}
-        contrib = _guide_pet(a["level"])
-    else:
-        contrib = _pet_contrib(pet, a["level"])
+    hero = hero_power(a, player, include_mount=False)  # 修士本体（去坐骑，坐骑走同口径独立项）
+    pet = active_pet(player)  # 与战斗同一选宠口径，见 active_pet 的说明
+    contrib = _pet_contrib(pet, a["level"])
     mount = _mount_contrib(player, a["level"])
     # 道侣加成：在任意一只宠物上存在「已婚且道侣指向其他玩家」即生效（双方各自结算，双人都享受 +15%）
     partner = 1.0
@@ -142,8 +135,9 @@ def _unified_components(player, key):
 def compute_unified_power(player, key):
     """唯一仙途战力。未踏入仙途返回 0（引导去「踏入仙途」）。
 
-    战力 = 修士本体(不含坐骑) + 15%×所带灵宠真实战力 + 10%×坐骑真实战力，再乘道侣与洞天增益。
-    所带灵宠按 companion_pet_id；无则取贡献最高一只；再无则引路灵蝶兜底。
+    战力 = 修士本体(不含坐骑) + 灵宠实战战力 + 坐骑实战战力，再乘道侣与洞天增益。
+    三项同口径，直接相加。所带灵宠由 combat.active_pet 统一决定——与战斗、修士图
+    同一选宠口径，未结契或绑定悬空时为引路灵蝶。
     """
     c = _unified_components(player, key)
     return c["total"] if c else 0

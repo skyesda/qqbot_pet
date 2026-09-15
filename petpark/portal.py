@@ -1976,9 +1976,9 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                 🌀 已悟神通：<span v-for="(t,i) in data.adventure.tactics" :key="i"><b>{{ t[0] }}</b><span v-if="t[1]">（{{ t[1] }}）</span><span v-if="i < data.adventure.tactics.length-1">、 </span></span>
               </div>
               <div style="margin-top:10px;padding:8px 12px;border-left:3px solid #b79149;background:#f1ead8;border-radius:6px;font-size:12.5px;color:#4a5470">
-                <b>战力构成</b>：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
-                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_contrib) }}（计 {{ fmt(data.adventure.breakdown.pet_part) }}）＋
-                坐骑 {{ fmt(data.adventure.breakdown.mount_contrib) }}（计 {{ fmt(data.adventure.breakdown.mount_part) }}）
+                <b>战力构成</b>（三者同口径实战战力）：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
+                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_contrib) }} ＋
+                坐骑 {{ fmt(data.adventure.breakdown.mount_contrib) }}
                 × 道侣 ×{{ data.adventure.breakdown.partner.toFixed(2) }} ·
                 洞天 ×{{ data.adventure.breakdown.heaven_margin.toFixed(2) }}
                 → <b>{{ fmt(data.adventure.breakdown.total) }}</b>

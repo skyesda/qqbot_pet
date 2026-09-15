@@ -349,7 +349,7 @@ class AdventureService:
             if bd:
                 power_lines = (
                     f"总战力 {bd['total']}\n"
-                    f"　构成：本体 {bd['hero']} ＋ 15%×灵宠『{bd['pet_name']}』{bd['pet_contrib']} ＋ 10%×坐骑 {bd['mount_contrib']} ＝ {bd['base']:.1f}\n"
+                    f"　构成：本体 {bd['hero']} ＋ 灵宠『{bd['pet_name']}』{bd['pet_contrib']} ＋ 坐骑 {bd['mount_contrib']} ＝ {bd['base']:.1f}（三者同口径实战战力）\n"
                     f"　再乘：道侣×{bd['partner']:.2f} · 洞天×{bd['heaven_margin']:.2f} → {bd['total']}"
                 )
             else:

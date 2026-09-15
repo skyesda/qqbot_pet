@@ -131,6 +131,50 @@ def roll_hp(a, player, now=None):
     return new
 
 
+GUIDE_PET = {"nickname": "引路灵蝶", "hp_max": 800, "atk": 50, "def": 40, "intel": 30}
+
+
+def active_pet(player):
+    """出战灵宠——战斗、战力、修士图共用的唯一选宠口径。
+
+    严格按 adventure.companion_pet_id 结契查找；未结契、或绑定指向一只已不存在的
+    灵宠（放生/换号遗留的悬空 id），一律返回引路灵蝶。
+    **不要**在这里退化成「取最强的一只」：那会让战力明细显示一只从不登场的灵宠，
+    实测 4/28 用例正是因绑定悬空而虚高约 10%——显示的必须就是打出来的。
+    """
+    a = player.get("adventure") or {}
+    cid = a.get("companion_pet_id")
+    if cid:
+        pet = next((p for p in player.get("pets") or [] if p.get("pet_id") == cid), None)
+        if pet is not None:
+            return pet
+    return dict(GUIDE_PET)
+
+
+def companion_sheet(pet, level):
+    """灵宠实战属性面——战斗与战力共用的唯一事实源。
+
+    属性先经 projection 对数压缩、再按等级成长 pg 放大，这是灵宠「真正打得出来」的
+    强度。战力侧必须走这里，不能取 pet.battle_power()——那是「我的宠物」面板的养成度
+    显示值（生命上限×心情，未压缩），同一只宠两个口径实测差 2.7 亿倍（显示 125万亿
+    vs 实战攻击 470），拿显示值计入总战力会把修士本体压到 0.00%。
+    """
+    pg = 1 + .08 * (level - 1)
+    hp = max(1, int((180 + projection(pet.get("hp_max", 0), 800, 45)) * pg))
+    atk = max(1, int((20 + projection(pet.get("atk", 0), 50, 12)) * pg))
+    dfn = max(0, int((12 + projection(pet.get("def", 0), 40, 8)) * pg))
+    legacy_bonus = legacy.ARTIFACTS.get(pet.get('artifact'), {}).get('power', 0)
+    legacy_bonus += sum(legacy.SKILLS.get(name, {}).get('power', 0) for name in pet.get('skills', []))
+    # Legacy stat bonuses remain relevant without restoring unbounded instant kills.
+    atk += int(projection(legacy_bonus, 10000, 6) * pg)
+    if pet.get("talent") == "狂暴怒火":
+        atk = int(atk * 1.3)
+    if pet.get("talent") == "天火御甲":
+        dfn = int(dfn * 1.3)
+    return {"hp": hp, "atk": atk, "def": dfn,
+            "heal_power": (25 + projection(pet.get("intel", 0), 30, 12)) * pg}
+
+
 def build_party(player, key, side=0):
     a = player["adventure"]
     s = hero_sheet(a, player)
@@ -138,25 +182,14 @@ def build_party(player, key, side=0):
     cur_hp = roll_hp(a, player)
     hero = unit(key, a["name"], side, cur_hp, s["atk"], s["def"], s["speed"])
     hero.update(role=a["profession"], style=a["style"], element=hero_element(a))
-    pet = next((p for p in player.get("pets", []) if p.get("pet_id") == a.get("companion_pet_id")), None)
-    # A free guide makes the introduction playable without destroying/replacing legacy pets.
-    pet = pet or {"nickname": "引路灵蝶", "hp_max": 800, "atk": 50, "def": 40, "intel": 30}
-    pg = 1 + .08 * (a["level"] - 1)
+    # 引路灵蝶兜底，让刚踏入仙途的修士也能打，且不改动/替换既有灵宠。
+    pet = active_pet(player)
+    cs = companion_sheet(pet, a["level"])
     companion = unit(key + ":pet", pet.get("nickname", "灵宠"), side,
-                     (180 + projection(pet.get("hp_max", 0), 800, 45)) * pg,
-                     (20 + projection(pet.get("atk", 0), 50, 12)) * pg,
-                     (12 + projection(pet.get("def", 0), 40, 8)) * pg, 95)
+                     cs["hp"], cs["atk"], cs["def"], 95)
     companion.update(kind="pet", owner=key, role=a["pet_role"],
-                     heal_power=(25 + projection(pet.get("intel", 0), 30, 12)) * pg,
+                     heal_power=cs["heal_power"],
                      talent=pet.get("talent"), saved=False, element=pet.get("element"))
-    legacy_bonus = legacy.ARTIFACTS.get(pet.get('artifact'), {}).get('power', 0)
-    legacy_bonus += sum(legacy.SKILLS.get(name, {}).get('power', 0) for name in pet.get('skills', []))
-    companion['atk'] += int(projection(legacy_bonus, 10000, 6) * pg)
-    # Legacy stat bonuses remain relevant without restoring unbounded instant kills.
-    if companion["talent"] == "狂暴怒火":
-        companion["atk"] = int(companion["atk"] * 1.3)
-    if companion["talent"] == "天火御甲":
-        companion["defense"] = int(companion["defense"] * 1.3)
     return [hero, companion]
 
 
