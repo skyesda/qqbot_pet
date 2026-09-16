@@ -8,12 +8,15 @@
 - 总战力 = 修士本体(去坐骑) + 灵宠项 + 坐骑项，再乘道侣与洞天。
   本体走 hero_power，灵宠/坐骑先走 combat 那套 projection 压缩后的**实战口径**，
   再按系数折算，三项单位一致可比可加：
-  - 灵宠项 = 灵宠实战战力 × 15%，并以「本体 × 0.5」兜底封顶；
+  - 灵宠项 = 灵宠实战战力 × r(修士等级)，并以「本体 × 0.5」兜底封顶；
   - 坐骑项 = 坐骑给本体带来的实战增量 × 10%。
-- 「修士没怎么练、靠一只氪金宠霸榜」是**结构上**被挡住的，不靠封顶：灵宠实战战力按
-  修士等级缩放（companion_sheet(pet, a["level"])），等级低 → pg 小 → 宠物项自动小；
-  再叠 15% 折算，宠物项稳定只占本体 7%~24%，排行仍由本体主导。封顶那条 min() 实测
-  基本不触发（见 PET_CAP_RATIO 注释），只在宠物数值极端膨胀时兜底。
+- **灵宠的等级门槛只做一层**：r(L) 随修士等级从 Lv1 的 0% 线性爬到 Lv999 的 15%，
+  灵宠实战战力本身按「满级修士」口径算（与修士等级解耦）。此处刻意不再叠
+  companion_sheet 里的 pg 等级缩放——两层相乘会把低等级玩家压两次。
+  ⚠️ companion_sheet 的 pg 是**战斗**在用的（build_party 每次实战都调），改它会动真实
+  战斗平衡，所以只让「战力标尺」与它解耦，绝不动 companion_sheet 本身。
+- 「修士没怎么练、靠一只氪金宠霸榜」被 r(L) 这道门槛挡住：等级低 → 折算率趋近 0，
+  宠物项自动就小；满级玩家照拿 15%，氪金养的宠在同等本体下不缩水，优待保住。
 - 这里曾经的坑：取 pet.battle_power()（「我的宠物」面板的养成度显示值，未压缩）计入
   15%。同一只宠两个口径实测差 43 万倍（面板 135.83 亿 vs 实战 3.12 万），全服 28 人里
   9 人的修士本体被压到总战力的 0.00%。**折算系数只能乘在实战口径上，不能乘面板值。**
@@ -21,6 +24,7 @@
 - 不改动 combat.build_party / enemies（战斗模拟与「战力标尺」分离）。
 """
 from .combat import active_pet, companion_sheet, hero_sheet
+from .content import MAX_LEVEL
 
 _NUM_UNITS = (
     (10**100, "古戈尔"), (10**72, "大数"), (10**68, "无量"),
@@ -72,39 +76,45 @@ def hero_power(a, player, include_mount=True):
     return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
 
 
-# 灵宠/坐骑战力折算系数（都乘在**实战口径**上，不是面板养成度）。
-#
-# 灵宠 15%：灵宠有氪金价值，不能白养，所以照战力线性给贡献；但单靠一只宠不该顶掉
-#   整个修士主线，所以只按 15% 折算，并把差额留给本体。
-# 坐骑 10%：同乘在实战增量上。
+# 灵宠折算率上限（修士满级时）：灵宠有氪金价值，不能白养；但也不该顶掉整个修士主线。
 PET_POWER_RATIO = 0.15
+# 坐骑折算率：固定 10%，不吃等级曲线（坐骑本就是修士自己养出来的战力）。
 MOUNT_POWER_RATIO = 0.10
-# 灵宠项的极端上限倍数（保险丝，不是主要机制）：
-# 灵宠实战战力按修士等级缩放（companion_sheet(pet, a["level"])），再经 projection
-# 对数压缩，所以「本体弱 + 宠强」这个组合天然被压住——实测把宠物原始属性拉到 1e18 倍，
-# 实战战力也只到 97236，宠物项/本体比值上限约 1.6，正常区间宠物项只占本体 7%~24%。
-# 因此这道 min() 基本不会触发，只在宠物数值继续膨胀到极端时才兜底。
+# 灵宠项的极端上限倍数（保险丝，不是主要机制）：等级门槛已由 pet_ratio 承担，
+# 这道 min() 只在宠物数值膨胀到极端时兜底，正常不触发。
 PET_CAP_RATIO = 0.5
 
 
-def pet_power(pet, level):
+def pet_ratio(level):
+    """灵宠折算率 r(L)：修士 Lv1 → 0%，Lv999(MAX_LEVEL) → PET_POWER_RATIO(15%)，线性。
+
+    这是灵宠**唯一**的等级门槛——修士没练上去，宠物项就趋近 0，光靠一只氪金宠霸不了榜；
+    满级玩家照拿 15%，氪金优待不缩水。
+    """
+    lv = max(1, min(int(level or 1), MAX_LEVEL))
+    return PET_POWER_RATIO * (lv - 1) / (MAX_LEVEL - 1)
+
+
+def pet_power(pet):
     """灵宠战力：把 companion_sheet 的实战属性套修士同款换算，与 hero_power 可直接相加。
 
+    按「满级修士」口径算，与修士等级**解耦**——等级门槛统一由 pet_ratio(level) 承担，
+    此处再叠 companion_sheet 的 pg 就是两层缩放相乘（见模块说明）。
     必须走 companion_sheet（战斗同源），不能取 pet.battle_power()——后者是「我的宠物」
     面板的养成度显示值，两个口径能差亿倍，详见 companion_sheet 的说明。
     """
-    s = companion_sheet(pet, level)
+    s = companion_sheet(pet, MAX_LEVEL)
     return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
 
 
 def _pet_contrib(pet, lv, hero):
-    """灵宠战力贡献 = 实战战力 × PET_POWER_RATIO，并以本体 × PET_CAP_RATIO 兜底封顶。
+    """灵宠战力贡献 = 灵宠实战战力 × r(修士等级)，并以本体 × PET_CAP_RATIO 兜底封顶。
 
-    防「没练修士靠宠霸榜」靠的是结构：lv 取修士等级，宠实战战力随修士等级缩放，
-    修士没练的玩家 pg 小、宠物项自动就小。封顶只在宠物数值极端膨胀时兜底，正常不触发。
+    防「没练修士靠宠霸榜」就靠 r(L) 这道等级门槛：等级低 → 折算率趋近 0 → 宠物项自动小。
+    封顶只在宠物数值极端膨胀时兜底，正常不触发。
     """
-    raw = pet_power(pet, lv)
-    return min(int(raw * PET_POWER_RATIO), int(hero * PET_CAP_RATIO))
+    raw = pet_power(pet)
+    return min(int(raw * pet_ratio(lv)), int(hero * PET_CAP_RATIO))
 
 
 def _mount_contrib(a, player):
@@ -126,7 +136,8 @@ def _unified_components(player, key):
         return None
     hero = hero_power(a, player, include_mount=False)  # 修士本体（去坐骑，坐骑走独立项）
     pet = active_pet(player)  # 与战斗同一选宠口径，见 active_pet 的说明
-    pet_pw = pet_power(pet, a["level"])  # 灵宠实战战力（折算前）
+    pet_pw = pet_power(pet)  # 灵宠实战战力（满修士口径，与修士等级解耦）
+    p_ratio = pet_ratio(a["level"])  # 该修士等级对应的折算率
     contrib = _pet_contrib(pet, a["level"], hero)
     mount_pw = hero_power(a, player, include_mount=True) - hero  # 坐骑实战增量（折算前）
     mount = _mount_contrib(a, player)
@@ -143,13 +154,14 @@ def _unified_components(player, key):
     return {
         "hero": hero,
         "pet_name": pet.get("nickname") or pet.get("name") or "灵宠",
-        "pet_power": pet_pw,      # 灵宠实战战力（折算前，供卡面透明展示）
-        "pet_contrib": contrib,   # 计入总战力的灵宠项（×15%，受本体×0.5 封顶）
+        "pet_power": pet_pw,      # 灵宠实战战力（满修士口径，折算前，供卡面透明展示）
+        "pet_contrib": contrib,   # 计入总战力的灵宠项（×r(等级)，受本体×0.5 封顶）
         "pet_part": contrib,
         "mount_power": mount_pw,  # 坐骑实战增量（折算前）
         "mount_contrib": mount,   # 计入总战力的坐骑项（×10%）
         "mount_part": mount,
-        "pet_ratio": PET_POWER_RATIO,
+        "pet_ratio": p_ratio,              # 该玩家当前折算率（随修士等级爬升）
+        "pet_ratio_max": PET_POWER_RATIO,  # 满级时的折算率
         "pet_cap_ratio": PET_CAP_RATIO,
         "mount_ratio": MOUNT_POWER_RATIO,
         "partner": partner,
@@ -162,9 +174,10 @@ def _unified_components(player, key):
 def compute_unified_power(player, key):
     """唯一仙途战力。未踏入仙途返回 0（引导去「踏入仙途」）。
 
-    战力 = 修士本体(不含坐骑) + 灵宠实战战力×15%(上限 本体×0.5) + 坐骑实战增量×10%，
-    再乘道侣与洞天增益。三项同走实战口径。所带灵宠由 combat.active_pet 统一决定——
-    与战斗、修士图同一选宠口径，未结契或绑定悬空时为引路灵蝶。
+    战力 = 修士本体(不含坐骑) + 灵宠实战战力×r(修士等级)(上限 本体×0.5) + 坐骑实战增量×10%，
+    再乘道侣与洞天增益。r(L) 从 Lv1 的 0% 线性爬到 Lv999 的 15%——灵宠的等级门槛只此一层。
+    三项同走实战口径。所带灵宠由 combat.active_pet 统一决定——与战斗、修士图同一选宠口径，
+    未结契或绑定悬空时为引路灵蝶。
     """
     c = _unified_components(player, key)
     return c["total"] if c else 0
@@ -180,4 +193,5 @@ def power_to_scale(power, k=30000):
     return max(.6, min(3.0, .6 + power / k))
 
 
-__all__ = ["compute_unified_power", "power_breakdown", "hero_power", "power_to_scale"]
+__all__ = ["compute_unified_power", "power_breakdown", "hero_power", "pet_ratio",
+           "pet_power", "power_to_scale"]

@@ -392,7 +392,8 @@ class PlayerPortal:
                     "mount_contrib": int(bd.get("mount_contrib", 0) or 0),
                     "mount_part": int(bd.get("mount_part", 0) or 0),
                     "mount_power": int(bd.get("mount_power", 0) or 0),
-                    "pet_ratio": float(bd.get("pet_ratio", 0.15) or 0.15),
+                    "pet_ratio": float(bd.get("pet_ratio") or 0),  # 0 是合法值（Lv1），不能回退默认
+                    "pet_ratio_max": float(bd.get("pet_ratio_max") or 0.15),
                     "pet_cap_ratio": float(bd.get("pet_cap_ratio", 0.5) or 0.5),
                     "mount_ratio": float(bd.get("mount_ratio", 0.10) or 0.10),
                     "partner": float(bd.get("partner", 1.0) or 1.0),
@@ -1982,8 +1983,8 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               </div>
               <div style="margin-top:10px;padding:8px 12px;border-left:3px solid #b79149;background:#f1ead8;border-radius:6px;font-size:12.5px;color:#4a5470">
                 <b>战力构成</b>：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
-                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_power) }} × {{ Math.round(data.adventure.breakdown.pet_ratio*100) }}%
-                ＝ {{ fmt(data.adventure.breakdown.pet_contrib) }}（上限 本体×{{ data.adventure.breakdown.pet_cap_ratio }}） ＋
+                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_power) }} × {{ (data.adventure.breakdown.pet_ratio*100).toFixed(1) }}%
+                （随修士等级，满级 {{ (data.adventure.breakdown.pet_ratio_max*100).toFixed(0) }}%）＝ {{ fmt(data.adventure.breakdown.pet_contrib) }}（上限 本体×{{ data.adventure.breakdown.pet_cap_ratio }}） ＋
                 坐骑 {{ fmt(data.adventure.breakdown.mount_power) }} × {{ Math.round(data.adventure.breakdown.mount_ratio*100) }}%
                 ＝ {{ fmt(data.adventure.breakdown.mount_contrib) }}
                 × 道侣 ×{{ data.adventure.breakdown.partner.toFixed(2) }} ·
