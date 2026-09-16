@@ -388,8 +388,13 @@ class PlayerPortal:
                     "pet_name": bd.get("pet_name") or "引路灵蝶",
                     "pet_contrib": int(bd.get("pet_contrib", 0) or 0),
                     "pet_part": int(bd.get("pet_part", 0) or 0),
+                    "pet_power": int(bd.get("pet_power", 0) or 0),
                     "mount_contrib": int(bd.get("mount_contrib", 0) or 0),
                     "mount_part": int(bd.get("mount_part", 0) or 0),
+                    "mount_power": int(bd.get("mount_power", 0) or 0),
+                    "pet_ratio": float(bd.get("pet_ratio", 0.15) or 0.15),
+                    "pet_cap_ratio": float(bd.get("pet_cap_ratio", 0.5) or 0.5),
+                    "mount_ratio": float(bd.get("mount_ratio", 0.10) or 0.10),
                     "partner": float(bd.get("partner", 1.0) or 1.0),
                     "heaven_margin": float(bd.get("heaven_margin", 1.0) or 1.0),
                     "base": float(bd.get("base", 0) or 0),
@@ -1976,9 +1981,11 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                 🌀 已悟神通：<span v-for="(t,i) in data.adventure.tactics" :key="i"><b>{{ t[0] }}</b><span v-if="t[1]">（{{ t[1] }}）</span><span v-if="i < data.adventure.tactics.length-1">、 </span></span>
               </div>
               <div style="margin-top:10px;padding:8px 12px;border-left:3px solid #b79149;background:#f1ead8;border-radius:6px;font-size:12.5px;color:#4a5470">
-                <b>战力构成</b>（三者同口径实战战力）：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
-                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_contrib) }} ＋
-                坐骑 {{ fmt(data.adventure.breakdown.mount_contrib) }}
+                <b>战力构成</b>：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
+                灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_power) }} × {{ Math.round(data.adventure.breakdown.pet_ratio*100) }}%
+                ＝ {{ fmt(data.adventure.breakdown.pet_contrib) }}（上限 本体×{{ data.adventure.breakdown.pet_cap_ratio }}） ＋
+                坐骑 {{ fmt(data.adventure.breakdown.mount_power) }} × {{ Math.round(data.adventure.breakdown.mount_ratio*100) }}%
+                ＝ {{ fmt(data.adventure.breakdown.mount_contrib) }}
                 × 道侣 ×{{ data.adventure.breakdown.partner.toFixed(2) }} ·
                 洞天 ×{{ data.adventure.breakdown.heaven_margin.toFixed(2) }}
                 → <b>{{ fmt(data.adventure.breakdown.total) }}</b>

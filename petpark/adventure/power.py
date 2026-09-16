@@ -5,16 +5,22 @@
 
 设计：
 - 实时计算，不写入 adventure["power"]（输入随增改路径高频变化，缓存失效面太大）。
-- 总战力 = 修士本体(去坐骑) + 灵宠实战战力 + 坐骑实战战力，再乘道侣与洞天。
-  **三项同口径、同单位直接相加**：灵宠/坐骑都走 combat 那套 projection 压缩后的实战
-  属性，再套与 hero_power 相同的换算，所以三个数可比、可加。
-- 这里曾经取 pet.battle_power()（「我的宠物」面板的养成度显示值：生命上限×心情，未压缩）
-  计入 15%。同一只宠两个口径实测差 2.7 亿倍（显示 125 万亿 vs 实战攻击 470），结果全服
-  28 人里 9 人的修士本体被压到总战力的 0.00%。口径统一后本体中位占 ~78%。
+- 总战力 = 修士本体(去坐骑) + 灵宠项 + 坐骑项，再乘道侣与洞天。
+  本体走 hero_power，灵宠/坐骑先走 combat 那套 projection 压缩后的**实战口径**，
+  再按系数折算，三项单位一致可比可加：
+  - 灵宠项 = 灵宠实战战力 × 15%，并以「本体 × 0.5」兜底封顶；
+  - 坐骑项 = 坐骑给本体带来的实战增量 × 10%。
+- 「修士没怎么练、靠一只氪金宠霸榜」是**结构上**被挡住的，不靠封顶：灵宠实战战力按
+  修士等级缩放（companion_sheet(pet, a["level"])），等级低 → pg 小 → 宠物项自动小；
+  再叠 15% 折算，宠物项稳定只占本体 7%~24%，排行仍由本体主导。封顶那条 min() 实测
+  基本不触发（见 PET_CAP_RATIO 注释），只在宠物数值极端膨胀时兜底。
+- 这里曾经的坑：取 pet.battle_power()（「我的宠物」面板的养成度显示值，未压缩）计入
+  15%。同一只宠两个口径实测差 43 万倍（面板 135.83 亿 vs 实战 3.12 万），全服 28 人里
+  9 人的修士本体被压到总战力的 0.00%。**折算系数只能乘在实战口径上，不能乘面板值。**
 - 所带灵宠由 combat.active_pet 统一决定，与战斗/修士图同一口径——显示的必须就是打出来的。
 - 不改动 combat.build_party / enemies（战斗模拟与「战力标尺」分离）。
 """
-from .combat import active_pet, companion_sheet, hero_sheet, projection
+from .combat import active_pet, companion_sheet, hero_sheet
 
 _NUM_UNITS = (
     (10**100, "古戈尔"), (10**72, "大数"), (10**68, "无量"),
@@ -66,11 +72,19 @@ def hero_power(a, player, include_mount=True):
     return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
 
 
-# 灵宠/坐骑战力计入倍率。1.0 = 与修士本体同口径直接相加。
-# 口径统一后灵宠实战战力本来就与本体可比（全服中位为本体的 0.30 倍），
-# 不需要再挂系数补偿，也**不应该**再加系数——任何系数都会让某一方失真。
-PET_POWER_RATIO = 1.0
-MOUNT_POWER_RATIO = 1.0
+# 灵宠/坐骑战力折算系数（都乘在**实战口径**上，不是面板养成度）。
+#
+# 灵宠 15%：灵宠有氪金价值，不能白养，所以照战力线性给贡献；但单靠一只宠不该顶掉
+#   整个修士主线，所以只按 15% 折算，并把差额留给本体。
+# 坐骑 10%：同乘在实战增量上。
+PET_POWER_RATIO = 0.15
+MOUNT_POWER_RATIO = 0.10
+# 灵宠项的极端上限倍数（保险丝，不是主要机制）：
+# 灵宠实战战力按修士等级缩放（companion_sheet(pet, a["level"])），再经 projection
+# 对数压缩，所以「本体弱 + 宠强」这个组合天然被压住——实测把宠物原始属性拉到 1e18 倍，
+# 实战战力也只到 97236，宠物项/本体比值上限约 1.6，正常区间宠物项只占本体 7%~24%。
+# 因此这道 min() 基本不会触发，只在宠物数值继续膨胀到极端时才兜底。
+PET_CAP_RATIO = 0.5
 
 
 def pet_power(pet, level):
@@ -83,20 +97,26 @@ def pet_power(pet, level):
     return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
 
 
-def _pet_contrib(pet, lv):
-    """单只灵宠战力贡献：与战斗同口径，可与 hero_power 直接比大小。"""
-    return pet_power(pet, lv)
+def _pet_contrib(pet, lv, hero):
+    """灵宠战力贡献 = 实战战力 × PET_POWER_RATIO，并以本体 × PET_CAP_RATIO 兜底封顶。
 
-
-def _mount_contrib(player, lv):
-    """坐骑战力贡献：与 hero_sheet 同口径——power 经 projection(power,10000,5) 折成
-    攻击加成，再按 hero_power 的攻防权重 ×3；不取坐骑原始 power（那是展示值）。
+    防「没练修士靠宠霸榜」靠的是结构：lv 取修士等级，宠实战战力随修士等级缩放，
+    修士没练的玩家 pg 小、宠物项自动就小。封顶只在宠物数值极端膨胀时兜底，正常不触发。
     """
-    m = player.get("active_mount") or ""
-    inst = player.get("mounts", {}).get(m)
-    if not inst:
-        return 0
-    return int(projection(inst.get("power", 0), 10000, 5) * 3)
+    raw = pet_power(pet, lv)
+    return min(int(raw * PET_POWER_RATIO), int(hero * PET_CAP_RATIO))
+
+
+def _mount_contrib(a, player):
+    """坐骑战力贡献 = 坐骑给本体带来的真实增量 × MOUNT_POWER_RATIO。
+
+    增量取 hero_sheet 含/不含坐骑之差，与战斗实际使用的属性面完全同口径。
+    旧实现取 projection(inst.power, 10000, 5) * 3，漏掉成长曲线与神通/灵根乘区，
+    实测低估 18.7 倍（power 335300 的坐骑算成 76，真实增量 1419）。
+    """
+    delta = (hero_power(a, player, include_mount=True)
+             - hero_power(a, player, include_mount=False))
+    return int(delta * MOUNT_POWER_RATIO)
 
 
 def _unified_components(player, key):
@@ -104,10 +124,12 @@ def _unified_components(player, key):
     a = player.get("adventure")
     if not a:
         return None
-    hero = hero_power(a, player, include_mount=False)  # 修士本体（去坐骑，坐骑走同口径独立项）
+    hero = hero_power(a, player, include_mount=False)  # 修士本体（去坐骑，坐骑走独立项）
     pet = active_pet(player)  # 与战斗同一选宠口径，见 active_pet 的说明
-    contrib = _pet_contrib(pet, a["level"])
-    mount = _mount_contrib(player, a["level"])
+    pet_pw = pet_power(pet, a["level"])  # 灵宠实战战力（折算前）
+    contrib = _pet_contrib(pet, a["level"], hero)
+    mount_pw = hero_power(a, player, include_mount=True) - hero  # 坐骑实战增量（折算前）
+    mount = _mount_contrib(a, player)
     # 道侣加成：在任意一只宠物上存在「已婚且道侣指向其他玩家」即生效（双方各自结算，双人都享受 +15%）
     partner = 1.0
     for pt in (player.get("pets") or []):
@@ -117,14 +139,19 @@ def _unified_components(player, key):
                 partner = 1.15
                 break
     heaven_margin = 1 + .02 * a.get("heaven", 0)
-    base = hero + PET_POWER_RATIO * contrib + MOUNT_POWER_RATIO * mount
+    base = hero + contrib + mount
     return {
         "hero": hero,
         "pet_name": pet.get("nickname") or pet.get("name") or "灵宠",
-        "pet_contrib": contrib,
-        "pet_part": round(PET_POWER_RATIO * contrib),
-        "mount_contrib": mount,
-        "mount_part": round(MOUNT_POWER_RATIO * mount),
+        "pet_power": pet_pw,      # 灵宠实战战力（折算前，供卡面透明展示）
+        "pet_contrib": contrib,   # 计入总战力的灵宠项（×15%，受本体×0.5 封顶）
+        "pet_part": contrib,
+        "mount_power": mount_pw,  # 坐骑实战增量（折算前）
+        "mount_contrib": mount,   # 计入总战力的坐骑项（×10%）
+        "mount_part": mount,
+        "pet_ratio": PET_POWER_RATIO,
+        "pet_cap_ratio": PET_CAP_RATIO,
+        "mount_ratio": MOUNT_POWER_RATIO,
         "partner": partner,
         "heaven_margin": heaven_margin,
         "base": base,
@@ -135,9 +162,9 @@ def _unified_components(player, key):
 def compute_unified_power(player, key):
     """唯一仙途战力。未踏入仙途返回 0（引导去「踏入仙途」）。
 
-    战力 = 修士本体(不含坐骑) + 灵宠实战战力 + 坐骑实战战力，再乘道侣与洞天增益。
-    三项同口径，直接相加。所带灵宠由 combat.active_pet 统一决定——与战斗、修士图
-    同一选宠口径，未结契或绑定悬空时为引路灵蝶。
+    战力 = 修士本体(不含坐骑) + 灵宠实战战力×15%(上限 本体×0.5) + 坐骑实战增量×10%，
+    再乘道侣与洞天增益。三项同走实战口径。所带灵宠由 combat.active_pet 统一决定——
+    与战斗、修士图同一选宠口径，未结契或绑定悬空时为引路灵蝶。
     """
     c = _unified_components(player, key)
     return c["total"] if c else 0

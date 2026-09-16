@@ -117,7 +117,7 @@ def card_html(player, key, equipment=False):
     # 否则高战力修士会显示成 307733 这种一长串裸数字，和宠物卡对不上。
     details = (f'<div class="power-formula"><span>战力构成</span>'
                f'<b>本体 {fmt_power(bd["hero"])} <i>＋</i> 灵宠 {fmt_power(bd["pet_contrib"])} <i>＋</i> 坐骑 {fmt_power(bd["mount_contrib"])}</b>'
-               f'<small>灵宠 · 坐骑均按实战战力计入 · 道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}</small></div>') if bd else ""
+               f'<small>灵宠战力 ×{bd["pet_ratio"]:.0%}（上限 本体×{bd["pet_cap_ratio"]:g}） · 坐骑战力 ×{bd["mount_ratio"]:.0%} · 道侣 ×{bd["partner"]:.2f} · 洞天 ×{bd["heaven_margin"]:.2f}</small></div>') if bd else ""
     # 升级进度：显示距下一级/破境还需多少修为，或已可突破/渡劫。
     lv_cap = c.realm_cap(a["realm"])
     if a["level"] >= c.MAX_LEVEL:
