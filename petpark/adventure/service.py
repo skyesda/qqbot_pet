@@ -350,7 +350,7 @@ class AdventureService:
                 power_lines = (
                     f"总战力 {bd['total']}\n"
                     f"　构成：本体 {bd['hero']} ＋ 灵宠『{bd['pet_name']}』{bd['pet_power']}×{bd['pet_ratio']:.1%}={bd['pet_contrib']}"
-                    f"（随修士等级，满级{bd['pet_ratio_max']:.0%}；上限 本体×{bd['pet_cap_ratio']:g}） ＋ 坐骑 {bd['mount_power']}×{bd['mount_ratio']:.0%}={bd['mount_contrib']} ＝ {bd['base']:.1f}\n"
+                    f"（随修士等级，满级{bd['pet_ratio_max']:.0%}） ＋ 坐骑 {bd['mount_power']}×{bd['mount_ratio']:.0%}={bd['mount_contrib']} ＝ {bd['base']:.1f}\n"
                     f"　再乘：道侣×{bd['partner']:.2f} · 洞天×{bd['heaven_margin']:.2f} → {bd['total']}"
                 )
             else:

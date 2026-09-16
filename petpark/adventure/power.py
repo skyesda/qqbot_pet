@@ -8,7 +8,7 @@
 - 总战力 = 修士本体(去坐骑) + 灵宠项 + 坐骑项，再乘道侣与洞天。
   本体走 hero_power，灵宠/坐骑先走 combat 那套 projection 压缩后的**实战口径**，
   再按系数折算，三项单位一致可比可加：
-  - 灵宠项 = 灵宠实战战力 × r(修士等级)，并以「本体 × 0.5」兜底封顶；
+  - 灵宠项 = 灵宠实战战力 × r(修士等级)，无上限；
   - 坐骑项 = 坐骑给本体带来的实战增量 × 10%。
 - **灵宠的等级门槛只做一层**：r(L) 随修士等级从 Lv1 的 0% 线性爬到 Lv999 的 15%，
   灵宠实战战力本身按「满级修士」口径算（与修士等级解耦）。此处刻意不再叠
@@ -80,9 +80,6 @@ def hero_power(a, player, include_mount=True):
 PET_POWER_RATIO = 0.15
 # 坐骑折算率：固定 10%，不吃等级曲线（坐骑本就是修士自己养出来的战力）。
 MOUNT_POWER_RATIO = 0.10
-# 灵宠项的极端上限倍数（保险丝，不是主要机制）：等级门槛已由 pet_ratio 承担，
-# 这道 min() 只在宠物数值膨胀到极端时兜底，正常不触发。
-PET_CAP_RATIO = 0.5
 
 
 def pet_ratio(level):
@@ -107,14 +104,12 @@ def pet_power(pet):
     return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
 
 
-def _pet_contrib(pet, lv, hero):
-    """灵宠战力贡献 = 灵宠实战战力 × r(修士等级)，并以本体 × PET_CAP_RATIO 兜底封顶。
+def _pet_contrib(pet, lv):
+    """灵宠战力贡献 = 灵宠实战战力 × r(修士等级)，无上限。
 
-    防「没练修士靠宠霸榜」就靠 r(L) 这道等级门槛：等级低 → 折算率趋近 0 → 宠物项自动小。
-    封顶只在宠物数值极端膨胀时兜底，正常不触发。
+    防「没练修士靠宠霸榜」全交给 r(L) 这道等级门槛：等级低 → 折算率趋近 0 → 宠物项自动小。
     """
-    raw = pet_power(pet)
-    return min(int(raw * pet_ratio(lv)), int(hero * PET_CAP_RATIO))
+    return int(pet_power(pet) * pet_ratio(lv))
 
 
 def _mount_contrib(a, player):
@@ -138,7 +133,7 @@ def _unified_components(player, key):
     pet = active_pet(player)  # 与战斗同一选宠口径，见 active_pet 的说明
     pet_pw = pet_power(pet)  # 灵宠实战战力（满修士口径，与修士等级解耦）
     p_ratio = pet_ratio(a["level"])  # 该修士等级对应的折算率
-    contrib = _pet_contrib(pet, a["level"], hero)
+    contrib = _pet_contrib(pet, a["level"])
     mount_pw = hero_power(a, player, include_mount=True) - hero  # 坐骑实战增量（折算前）
     mount = _mount_contrib(a, player)
     # 道侣加成：在任意一只宠物上存在「已婚且道侣指向其他玩家」即生效（双方各自结算，双人都享受 +15%）
@@ -162,7 +157,6 @@ def _unified_components(player, key):
         "mount_part": mount,
         "pet_ratio": p_ratio,              # 该玩家当前折算率（随修士等级爬升）
         "pet_ratio_max": PET_POWER_RATIO,  # 满级时的折算率
-        "pet_cap_ratio": PET_CAP_RATIO,
         "mount_ratio": MOUNT_POWER_RATIO,
         "partner": partner,
         "heaven_margin": heaven_margin,
@@ -174,7 +168,7 @@ def _unified_components(player, key):
 def compute_unified_power(player, key):
     """唯一仙途战力。未踏入仙途返回 0（引导去「踏入仙途」）。
 
-    战力 = 修士本体(不含坐骑) + 灵宠实战战力×r(修士等级)(上限 本体×0.5) + 坐骑实战增量×10%，
+    战力 = 修士本体(不含坐骑) + 灵宠实战战力×r(修士等级) + 坐骑实战增量×10%，
     再乘道侣与洞天增益。r(L) 从 Lv1 的 0% 线性爬到 Lv999 的 15%——灵宠的等级门槛只此一层。
     三项同走实战口径。所带灵宠由 combat.active_pet 统一决定——与战斗、修士图同一选宠口径，
     未结契或绑定悬空时为引路灵蝶。
