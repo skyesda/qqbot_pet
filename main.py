@@ -224,6 +224,7 @@ KNOWN_COMMANDS = {
     "查看宠物",
     "宠物图",
     "宠物侦查",
+    "修士侦查",
     "赠送宠物",
     "放生宠物",
     "炼化宠物",
@@ -3296,14 +3297,9 @@ class PetParkPlugin(Star):
                 except Exception as exc:
                     logger.warning(f"[petpark] 仙途地图生成失败，回退文字：{exc}")
             if cmd in ("我的修士", "今日修行", "修士装备") and player.get("adventure"):
-                try:
-                    html = cultivator_card_html(player, service.key(group_id, qq))
-                    image = self._render_html_image(html, "cultivator", 720, crop=self._card_crop,
-                                                    win_w=760, win_h=1800)
-                    if image:
-                        return image
-                except Exception as exc:
-                    logger.warning(f"[petpark] 修士卡生成失败，回退文字：{exc}")
+                image = self._render_hero_card(player, group_id, qq)
+                if image:
+                    return image
             return result
 
         # 银行逾期冻结检查（放行查看/还款类指令）
@@ -3451,6 +3447,8 @@ class PetParkPlugin(Star):
             return self._my_pet(player)
         if cmd == "宠物侦查":
             return self._inspect(group_id, tokens)
+        if cmd == "修士侦查":
+            return self._inspect_hero(group_id, tokens)
         if cmd == "赠送宠物":
             return self._gift_pet(player, group_id, tokens)
         if cmd in ("锁定宠物", "宠物锁定"):
@@ -4307,14 +4305,14 @@ class PetParkPlugin(Star):
         if shop:
             lines.append("**活动商店**（发送 `购买 物品名`）")
             for name, it in shop.items():
-                cost = " / ".join(f"{v} {k}" for k, v in it.get("cost", {}).items())
+                cost = " / ".join(f"{v} {_cur_disp(k)}" for k, v in it.get("cost", {}).items())
                 lines.append(f"• `{name}` — {cost} — {it.get('desc', '')}")
             lines.append("")
         gacha = cfg.get("gacha", {})
         if gacha.get("enabled"):
             cost = gacha.get("cost", {})
-            single_cost = " / ".join(f"{v} {k}" for k, v in cost.items())
-            ten_cost = " / ".join(f"{v * 9} {k}" for k, v in cost.items())
+            single_cost = " / ".join(f"{v} {_cur_disp(k)}" for k, v in cost.items())
+            ten_cost = " / ".join(f"{v * 9} {_cur_disp(k)}" for k, v in cost.items())
             gcmd = gacha.get("cmd", "抽奖")
             ten_cmd = gcmd[:-2] + "十连抽" if gcmd.endswith("抽奖") else f"{gcmd}十连"
             lines.append(
@@ -5172,7 +5170,7 @@ class PetParkPlugin(Star):
                     partial = dict(reward)
                     partial[cur] = amt
                     self._grant_event_reward(target, eid, cfg, partial)
-                    granted[sk].append(f"{cur} +{amt}")
+                    granted[sk].append(f"{_cur_disp(cur)} +{amt}")
             # 活动代币
             if token in reward:
                 total = self._roll_value(reward[token], reward.get(f"{token}_max"))
@@ -5346,7 +5344,7 @@ class PetParkPlugin(Star):
                     return f"购买 {count} 个『{item_name}』需要 {amt} {token}，余额不足。"
             else:
                 if self.store.get_currency(player, cur) < amt:
-                    return f"购买 {count} 个『{item_name}』需要 {amt} {cur}，余额不足。"
+                    return f"购买 {count} 个『{item_name}』需要 {amt} {_cur_disp(cur)}，余额不足。"
         per_player = it.get("stock", {}).get("per_player")
         if per_player is not None:
             already = self.store.event_shop_bought(player, eid, item_name)
@@ -5412,7 +5410,7 @@ class PetParkPlugin(Star):
                     return f"抽奖需要 {amt} {token}，余额不足。"
             else:
                 if self.store.get_currency(player, cur) < amt:
-                    return f"抽奖需要 {amt} {cur}，余额不足。"
+                    return f"抽奖需要 {amt} {_cur_disp(cur)}，余额不足。"
         for cur, amt in cost.items():
             if cur == token:
                 self.store.add_event_token(player, eid, token, -amt)
@@ -5491,7 +5489,7 @@ class PetParkPlugin(Star):
                     return f"{times}连抽需要 {amt} {token}，余额不足。"
             else:
                 if self.store.get_currency(player, cur) < amt:
-                    return f"{times}连抽需要 {amt} {cur}，余额不足。"
+                    return f"{times}连抽需要 {amt} {_cur_disp(cur)}，余额不足。"
         for cur, amt in multi_cost.items():
             if cur == token:
                 self.store.add_event_token(player, eid, token, -amt)
@@ -5544,7 +5542,7 @@ class PetParkPlugin(Star):
                 if amt_max is not None and amt_max > amt:
                     amt = random.randint(amt, amt_max)
                 self.store.add_currency(player, cur, amt)
-                lines.append(f"{cur} +{amt}")
+                lines.append(f"{_cur_disp(cur)} +{amt}")
         if token in reward:
             amt = reward[token]
             amt_max = reward.get(f"{token}_max")
@@ -5571,7 +5569,8 @@ class PetParkPlugin(Star):
                 v = reward[cur]
                 v_max = reward.get(f"{cur}_max")
                 range_txt = f"{v}~{v_max}" if v_max and v_max > v else str(v)
-                parts.append(f"{cur} +{range_txt}")
+                # 活动配置可能仍写旧币种名（钻石），对外统一显示新名（天晶）
+                parts.append(f"{_cur_disp(cur)} +{range_txt}")
         if token in reward:
             v = reward[token]
             v_max = reward.get(f"{token}_max")
@@ -6985,7 +6984,7 @@ class PetParkPlugin(Star):
                 "- 仙途深渊 · 深渊抉择 · 深渊收手 · 试炼秘境(每日限次)",
                 "> 💰 货币渠道：历练/副本/组队/深渊/洞天通关给灵石+玄晶并几率掉材料碎片；世界首领讨伐+击杀也给灵石玄晶；材料碎片每 10 片可用「合成材料 材料名」换成对应丹药/经验书，无需购买。",
                 "- 仙途切磋 @对方 · 接受切磋 · 拒绝切磋 · 战斗详情 · 仙途战绩",
-                "- 我的修士(属性/装备/加点/升级总览) · 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励",
+                "- 我的修士(属性/装备/加点/升级总览) · 修士侦查 用户ID(查看他人修士) · 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励",
                 "",
                 "**【宗门】** 一界多门 · 各立山头",
                 "> 本群可立多个宗门，每人仅能加入一门；建宗需 2000 天晶。人数上限 10 起步，靠成员做任务/北秘境/镇守累积活跃度提升，封顶 20。",
@@ -8633,6 +8632,46 @@ class PetParkPlugin(Star):
         if md:
             return ("宠物侦查", md)
         return petmod.render_pet(pet, mp)
+
+    def _render_hero_card(self, player: dict, group_id: str, qq: str) -> str | None:
+        """渲染修士卡 Markdown；失败返回 None。「我的修士」与「修士侦查」共用同一出图口径。
+
+        qq 传谁就出谁的卡：看自己传自己，修士侦查传对方。数据按群隔离，所以 group_id
+        必须是对方所在的群（这个由 _find_target 保证）。
+        """
+        try:
+            html = cultivator_card_html(player, self.store.make_key(group_id, str(qq)))
+            return self._render_html_image(html, "cultivator", 720, crop=self._card_crop,
+                                           win_w=760, win_h=1800)
+        except Exception as exc:
+            logger.warning(f"[petpark] 修士卡生成失败，回退文字：{exc}")
+            return None
+
+    def _hero_text(self, player: dict, group_id: str) -> str:
+        """修士卡出图失败时的文字兜底：只读对方已有字段，不重算、不写入。"""
+        a = player["adventure"]
+        realm_idx = a.get("realm", 0)
+        realm = ADVENTURE_REALMS[realm_idx] if 0 <= realm_idx < len(ADVENTURE_REALMS) else ""
+        total = compute_unified_power(
+            player, self.store.make_key(group_id, str(player.get("qq", ""))))
+        return (f"## 灵契仙途 · {a.get('profession', '')}\n"
+                f"道号 {a.get('name', '')} · {realm} Lv{a.get('level', 0)} · 修为 {a.get('cultivation', 0)}\n"
+                f"总战力 {self._fmt_power(total)}（修士卡渲染失败，暂以文字显示）")
+
+    def _inspect_hero(self, group_id: str, tokens: list[str]):
+        """修士侦查：查看本群他人的修士卡。与「宠物侦查」同构，只读他人数据。"""
+        target = self._arg(tokens, 1)
+        if not target:
+            return "用法：修士侦查 用户ID"
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        if not tp.get("adventure"):
+            return "对方尚未踏入仙途。"
+        image = self._render_hero_card(tp, group_id, tp.get("qq", ""))
+        if image:
+            return ("修士侦查", image)
+        return self._hero_text(tp, group_id)
 
     def _gift_pet(self, player: dict, group_id: str, tokens: list[str]) -> str:
         p = self._need_pet(player)
