@@ -6,8 +6,8 @@
 设计：
 - 实时计算，不写入 adventure["power"]（输入随增改路径高频变化，缓存失效面太大）。
 - 总战力 = 修士本体(去坐骑) + 灵宠项 + 坐骑项，再乘道侣与洞天。
-  本体走 hero_power，灵宠/坐骑先走 combat 那套 projection 压缩后的**实战口径**，
-  再按系数折算，三项单位一致可比可加：
+  本体走 hero_power，灵宠/坐骑走 combat 那套**实战口径**（projection 已于 v3.10.18
+  去掉 log2 压缩、改线性），再按系数折算，三项单位一致可比可加：
   - 灵宠项 = 灵宠实战战力 × r(修士等级)，无上限；
   - 坐骑项 = 坐骑给本体带来的实战增量 × 10%。
 - **灵宠的等级门槛只做一层**：r(L) 随修士等级从 Lv1 的 0% 线性爬到 Lv999 的 15%，
@@ -17,9 +17,12 @@
   战斗平衡，所以只让「战力标尺」与它解耦，绝不动 companion_sheet 本身。
 - 「修士没怎么练、靠一只氪金宠霸榜」被 r(L) 这道门槛挡住：等级低 → 折算率趋近 0，
   宠物项自动就小；满级玩家照拿 15%，氪金养的宠在同等本体下不缩水，优待保住。
-- 这里曾经的坑：取 pet.battle_power()（「我的宠物」面板的养成度显示值，未压缩）计入
-  15%。同一只宠两个口径实测差 43 万倍（面板 135.83 亿 vs 实战 3.12 万），全服 28 人里
-  9 人的修士本体被压到总战力的 0.00%。**折算系数只能乘在实战口径上，不能乘面板值。**
+- 这里曾经的坑：取 pet.battle_power()（「我的宠物」面板的养成度显示值）计入 15%。当时
+  projection 还是 log2 压缩，同一只宠两个口径实测差 43 万倍（面板 135.83 亿 vs 实战
+  3.12 万），全服 28 人里 9 人的修士本体被压到总战力的 0.00%。**折算系数只能乘在实战
+  口径上，不能乘面板值**——v3.10.18 把 projection 改为线性后，实测养成分布上两口径已回到
+  同一量级（偏科极端的宠物仍可能拉开量级，故不看量级、只看口径），但 companion_sheet 仍是
+  战斗的唯一事实源，「显示的必须就是打出来的」这条不变。
 - 所带灵宠由 combat.active_pet 统一决定，与战斗/修士图同一口径——显示的必须就是打出来的。
 - 不改动 combat.build_party / enemies（战斗模拟与「战力标尺」分离）。
 """
@@ -98,7 +101,7 @@ def pet_power(pet):
     按「满级修士」口径算，与修士等级**解耦**——等级门槛统一由 pet_ratio(level) 承担，
     此处再叠 companion_sheet 的 pg 就是两层缩放相乘（见模块说明）。
     必须走 companion_sheet（战斗同源），不能取 pet.battle_power()——后者是「我的宠物」
-    面板的养成度显示值，两个口径能差亿倍，详见 companion_sheet 的说明。
+    面板的养成度显示值，与实战口径不同源，详见 companion_sheet 的说明。
     """
     s = companion_sheet(pet, MAX_LEVEL)
     return int(s["hp"] / 4 + s["atk"] * 3 + s["def"] * 3)
@@ -150,7 +153,7 @@ def _unified_components(player, key):
         "hero": hero,
         "pet_name": pet.get("nickname") or pet.get("name") or "灵宠",
         "pet_power": pet_pw,      # 灵宠实战战力（满修士口径，折算前，供卡面透明展示）
-        "pet_contrib": contrib,   # 计入总战力的灵宠项（×r(等级)，受本体×0.5 封顶）
+        "pet_contrib": contrib,   # 计入总战力的灵宠项（×r(等级)，无上限）
         "pet_part": contrib,
         "mount_power": mount_pw,  # 坐骑实战增量（折算前）
         "mount_contrib": mount,   # 计入总战力的坐骑项（×10%）

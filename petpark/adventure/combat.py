@@ -20,8 +20,13 @@ def unit(uid, name, side, hp, atk, defense, speed=90, **extra):
 
 
 def projection(value, base, weight):
-    # Monotonic per-stat compression: preserves growth direction, including reborn Lv1 pets.
-    return weight * math.log2(1 + max(0, int(value)) / base)
+    """每属性投影：把无上限的原始属性折进战斗尺度。
+
+    v3.10.18 起**去除 log2 压缩**，改为线性——原始属性按 base 归一到 weight，原值等比计入。
+    此前是 log2 对数压缩，尾部几乎压平（面板涨 5866 万倍只换 3.4 倍），高养成灵宠/坐骑的
+    投入被吃掉；现在养成投入线性兑现。曲线仍单调，重生 Lv1 灵宠的成长方向不变。
+    """
+    return weight * max(0, int(value)) / base
 
 
 def counter_mult(source, target):
@@ -154,10 +159,10 @@ def active_pet(player):
 def companion_sheet(pet, level):
     """灵宠实战属性面——战斗与战力共用的唯一事实源。
 
-    属性先经 projection 对数压缩、再按等级成长 pg 放大，这是灵宠「真正打得出来」的
-    强度。战力侧必须走这里，不能取 pet.battle_power()——那是「我的宠物」面板的养成度
-    显示值（生命上限×心情，未压缩），同一只宠两个口径实测差 2.7 亿倍（显示 125万亿
-    vs 实战攻击 470），拿显示值计入总战力会把修士本体压到 0.00%。
+    属性经 projection 折进战斗尺度（v3.10.18 起**线性、无 log2 压缩**），再按等级成长
+    pg 放大，这是灵宠「真正打得出来」的强度。战力侧必须走这里，不能取 pet.battle_power()
+    ——那是「我的宠物」面板的养成度显示值（生命上限×心情），与实战口径不同源；
+    去 log2 之前两者实测差 2.7 亿倍，拿显示值计入总战力会把修士本体压到 0.00%。
     """
     pg = 1 + .08 * (level - 1)
     hp = max(1, int((180 + projection(pet.get("hp_max", 0), 800, 45)) * pg))
