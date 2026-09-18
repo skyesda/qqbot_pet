@@ -2,7 +2,8 @@
 
 修士为主、灵宠为次。一个群可立多个宗门；每人只能加入一个宗门。建宗消耗 2000 天晶。
 宗门人数上限=10 起步，每累计 40 活跃度扩招 1 人，封顶 20（活跃度来自成员做任务/探索/镇守）。
-成员积累个人帮贡，宗门共享库存（treasury）用于升级与星辰阁合成。战斗复用 combat.simulate。
+成员积累个人帮贡，宗门共享库存（treasury）用于升级与星辰阁合成——库存是公共池，故星辰阁仅帮主/长老
+可动用、且有每日次数上限。战斗复用 combat.simulate。
 所有守卫经 service.require / RuleError，由 service.handle 深拷贝回滚兜底。
 """
 from __future__ import annotations
@@ -34,7 +35,9 @@ BUILDINGS = {
 
 # 每日次数上限（已计入数值平衡，勿随意调大以防刷爆主线）。
 # exchange 是「每日兑换总件数」，不是「发几次指令」——宗门兑换的数量由玩家自填，只限次数不限件数等于没限。
-DAILY_LIMITS = {"mission": 3, "guard": 1, "explore": 2, "exchange": 20}
+# star 是「星辰阁合成次数」，与 _SECT_CD["star"] 的 300 秒/人 冷却叠加：冷却只管单人连点，
+# 挡不住帮里 N 个长老各按各的冷却轮着取用同一个公共库存，所以必须再有一道按人计的每日闸。
+DAILY_LIMITS = {"mission": 3, "guard": 1, "explore": 2, "exchange": 20, "star": 3}
 
 # 宗门操作冷却（秒）：与宠物侧「副本/修行」的冷却节奏对齐，防连点刷取，但不叠在主线限次之外。
 _SECT_CD = {"mission": 60, "explore": 300, "guard": 600, "star": 300}
@@ -640,33 +643,63 @@ def _do_exchange(service, key, p, a, s, qq, args):
     return f"已用帮贡兑换『{item}』×{count}（-{cost} 贡献）。"
 
 
+# 星辰阁合成表：cost 是「宗门共享库存（treasury）帮贡」，**不是**个人帮贡——所以只有帮主/长老能动用，
+# 且受 DAILY_LIMITS["star"] 按人计次。发放量/描述写在这里，_do_star 直接读，别在分支里再写一遍字面量。
+#
+# ⚠️ 定价提醒：星盘大阵 = 修为翻倍 3 天，商城同类道具按**天晶**计价（提神丹 50 天晶/天、
+# 神龙果 1200 天晶/30 天，即 3 天 ≈ 120~150 天晶）。而库存帮贡按「捐献 10 灵石 = 1 帮贡、
+# 其中一半分润进库存」折算 → 300 库存帮贡 ≈ 6000 灵石捐献，且同一笔捐献还会回给捐献者
+# 600 个人帮贡（可再兑 12 袋灵石 = 3600 灵石）。合起来是「可刷的灵石 → 天晶定价的东西」，
+# 改价前务必重算这条兑换线。
+STAR_ITEMS = {
+    "星盘大阵": {"aliases": ("星盘",), "cost": 300, "desc": "修为翻倍 3 天", "buff_days": 3},
+    "灵材":     {"aliases": (),        "cost": 100, "desc": "灵材×50",       "ore": 50},
+}
+
+
+def _star_help():
+    body = " / ".join(
+        f"`星辰阁 {name}`（{v['desc']}，{v['cost']} 库存帮贡）" for name, v in STAR_ITEMS.items()
+    )
+    return (f"星辰阁（仅帮主/长老，消耗宗门共享库存）：{body}。\n"
+            f"每日最多 {DAILY_LIMITS['star']} 次。")
+
+
 def _do_star(service, key, p, a, s, qq, args):
-    if not _role_of(s, qq):
+    role = _role_of(s, qq)
+    if not role:
         return "请先「申请入宗」加入宗门。"
+    # 星辰阁花的是全宗共有的 treasury：不设权限就等于「谁都能拿公共池给自己买东西」。
+    if not _is_officer(role):
+        return f"星辰阁动用的是宗门共享库存，仅帮主/长老可操作（你当前是{role}）。"
     sect_lv = s.get("level", 1)
     if sect_lv < BUILDINGS["star"]["unlock"]:
         return "星辰阁需宗门 Lv4 解锁。"
     action = args[0] if args else ""
-    if not action:
-        return "星辰阁：消耗宗门帮贡合成。可用 `星辰阁 星盘大阵`（3天修为翻倍）或 `星辰阁 灵材`（灵材×50）。"
+    entry = next((v for n, v in STAR_ITEMS.items() if action == n or action in v["aliases"]), None)
+    if entry is None:
+        return _star_help()
+    cap = DAILY_LIMITS["star"]
+    used = _count(s, qq, "star")
+    if used >= cap:
+        return f"今日星辰阁已达上限（{cap} 次），明日再来。"
     cd = _cd_wait(service, a, "star")
     if cd > 0:
         return f"星辰阁冷却中，还需 {cd} 秒。"
-    if action in ("星盘大阵", "星盘"):
-        cost = 300
-        if not _pay_treasury(s, cost):
-            return f"宗门帮贡不足（需 {cost}）。"
-        a["exp_buff_until"] = _extend_buff_until(service, a, 3 * 86400)
-        _cd_until(service, a, "star", _SECT_CD["star"])
-        return "星盘大阵开光成功：修为翻倍 3 天！"
-    if action in ("灵材",):
-        cost = 100
-        if not _pay_treasury(s, cost):
-            return f"宗门帮贡不足（需 {cost}）。"
-        a["ore"] = a.get("ore", 0) + 50
-        _cd_until(service, a, "star", _SECT_CD["star"])
-        return "星辰阁炼材：灵材×50。"
-    return "星辰阁：`星辰阁 星盘大阵` / `星辰阁 灵材`。"
+    cost = entry["cost"]
+    have = s.get("treasury", 0)
+    if not _pay_treasury(s, cost):
+        return f"宗门帮贡不足（需 {cost}，当前 {have}）。"
+    if entry.get("ore"):
+        a["ore"] = a.get("ore", 0) + entry["ore"]
+        msg = f"星辰阁炼材：灵材×{entry['ore']}（消耗库存帮贡 {cost}）"
+    else:
+        days = entry["buff_days"]
+        a["exp_buff_until"] = _extend_buff_until(service, a, days * 86400)
+        msg = f"星盘大阵开光成功：修为翻倍 {days} 天（消耗库存帮贡 {cost}）"
+    _cd_until(service, a, "star", _SECT_CD["star"])
+    _bump(s, qq, "star")
+    return f"{msg}，今日星辰阁剩 {cap - used - 1} 次。"
 
 
 def _extend_buff_until(service, a, seconds):

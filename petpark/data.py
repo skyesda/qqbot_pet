@@ -2403,6 +2403,7 @@ HOMESTEAD_VISITED_REWARD_COIN = 20
 # 转让/赠送限制（防小号滥用）
 # ============================================================================
 TRANSFER_DAILY_MAX_OPS = 10         # 每天所有转让+赠送合计次数上限
+TRANSFER_DAILY_BONUS_MAX = 100      # 大管理员「加次数」单次可追加的当日次数上限
 TRANSFER_PER_TX_MAX = 5000          # 单次金币/积分/钻石转让数量上限
 TRANSFER_TAX_COIN = 0.20            # 金币转让税率
 TRANSFER_TAX_JIFEN = 0.20           # 积分转让税率

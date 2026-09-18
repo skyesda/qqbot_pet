@@ -17,6 +17,7 @@ from unittest.mock import patch
 from qqbot_pet.petpark.adventure.service import AdventureService
 from qqbot_pet.petpark.adventure.sect import (
     DAILY_LIMITS, SEC_MAX_LEVEL, SECT_BASE_CAP, SECT_CAP_MAX, ACTIVITY_PER_CAP, sect_cap,
+    _exchange_catalog,
 )
 from qqbot_pet.petpark.store import PetStore
 
@@ -340,7 +341,11 @@ class SectTests(unittest.TestCase):
         s['members']['a']['contribution'] = 200
         before_coin = self.store.get_currency(self.store.get_player('a', 'g'), '灵石')
         self.call('宗门兑换 灵石袋')
-        self.assertEqual(self.store.get_currency(self.store.get_player('a', 'g'), '灵石'), before_coin + 3000)
+        # 断言对齐目录条目本身，别在这里手抄字面量——v3.10.20 把灵石袋从 3000 改成 300 时
+        # 恰恰漏改了这里手抄的 3000，留下一个存量失败。
+        coin_bag = next(e for e in _exchange_catalog() if e['name'] == '灵石袋')
+        self.assertEqual(self.store.get_currency(self.store.get_player('a', 'g'), '灵石'),
+                         before_coin + coin_bag['amount'])
         before_ore = int(self.adv()['ore'])
         self.call('宗门兑换 灵材包')
         self.assertEqual(int(self.adv()['ore']), before_ore + 20)
@@ -359,6 +364,40 @@ class SectTests(unittest.TestCase):
         self.now += 300   # 等星辰阁冷却（300s）结束，再测帮贡不足
         self.state()['treasury'] = 10
         self.assertIn('帮贡不足', self.call('星辰阁 星盘大阵'))
+
+    # ---- 星辰阁加闸：共享库存只让帮主/长老动，且按人计每日次数 ----
+    def test_star_requires_officer(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        self.create(qq='b')
+        self.call('申请入宗 铁剑门', qq='b')
+        self.call('同意入宗 b')
+        self.state()['level'] = 4
+        self.state()['treasury'] = 500
+        self.assertEqual(self.state()['members']['b']['role'], '帮众')
+        # 帮众：连菜单都拿不到（闸在 action 解析之前），库存分毫未动
+        self.assertIn('仅帮主/长老', self.call('星辰阁', qq='b'))
+        self.assertIn('仅帮主/长老', self.call('星辰阁 星盘大阵', qq='b'))
+        self.assertEqual(self.state()['treasury'], 500)
+        self.assertEqual(self.state()['members']['b']['contribution'], 0)
+        # 升成长老后放行
+        self.call('封官 b 长老')
+        self.assertEqual(self.state()['members']['b']['role'], '长老')
+        self.assertIn('灵材×50', self.call('星辰阁 灵材', qq='b'))
+        self.assertEqual(self.state()['treasury'], 400)
+
+    def test_star_daily_cap(self):
+        self.create()
+        self.call('创建宗门 铁剑门')
+        self.state()['level'] = 4
+        self.state()['treasury'] = 5000
+        for _ in range(DAILY_LIMITS['star']):
+            self.assertIn('修为翻倍', self.call('星辰阁 星盘大阵'))
+            self.now += 300          # 越过星辰阁冷却（300s），单独测每日闸
+        self.assertEqual(self.state()['daily']['a']['star'], DAILY_LIMITS['star'])
+        self.assertIn('已达上限', self.call('星辰阁 星盘大阵'))
+        # 被每日闸拦下时不扣库存
+        self.assertEqual(self.state()['treasury'], 5000 - 300 * DAILY_LIMITS['star'])
 
     def test_upgrade_cost_and_cap(self):
         self.create()

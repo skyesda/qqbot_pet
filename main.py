@@ -184,6 +184,10 @@ KNOWN_COMMANDS = {
     "减玄晶",
     "加天晶",
     "减天晶",
+    # 大管理员：追加指定玩家当日的转让/赠送次数
+    "加次数",
+    "加转让次数",
+    "加赠送次数",
     # 小管理员（分群授权）
     "任命小管理",
     "任命小管理员",
@@ -503,6 +507,9 @@ WEB_BLOCKED_COMMANDS = {
     "减积分",
     "加钻石",
     "减钻石",
+    "加次数",
+    "加转让次数",
+    "加赠送次数",
     "任命小管理",
     "任命小管理员",
     "撤销小管理",
@@ -1562,6 +1569,22 @@ class PetParkPlugin(Star):
         player["active_streak"] = streak
         player["last_active_date"] = today
 
+    def _tx_daily_cap(self, sender: dict) -> int:
+        """当日转让/赠送次数上限。
+
+        基础 TRANSFER_DAILY_MAX_OPS 次，加上大管理员「加次数」当天追加的额度。
+        额度只写在当日的 _tx_daily 里：跨日 _tx_daily 整体换新 → 自动恢复基础值。
+        """
+        base = data.TRANSFER_DAILY_MAX_OPS
+        daily = sender.get("_tx_daily")
+        if not isinstance(daily, dict) or daily.get("date") != time.strftime("%Y-%m-%d"):
+            return base
+        try:
+            bonus = int(daily.get("bonus", 0) or 0)
+        except (TypeError, ValueError):
+            bonus = 0
+        return base + max(0, bonus)
+
     def _check_transfer_limit(
         self, sender: dict, target: dict, group_id: str, count: int,
         transfer_type: str = "item",
@@ -1571,6 +1594,7 @@ class PetParkPlugin(Star):
         transfer_type: "coin" / "jifen" / "diamond" / "item" / "pet"
         规则：
         1. 每日所有转让合计 ≤ TRANSFER_DAILY_MAX_OPS 次
+           （大管理员可用「加次数」为指定玩家追加当日额度，次日自动失效）
         2. 货币类单次 ≤ TRANSFER_PER_TX_MAX
         3. 道具类单次 ≤ 10 个
         4. 货币税 20%，道具税 10%
@@ -1597,10 +1621,14 @@ class PetParkPlugin(Star):
         today = time.strftime("%Y-%m-%d")
         sender.setdefault("_tx_daily", {})
         if sender["_tx_daily"].get("date") != today:
+            # 跨日整体换新：大管理员追加的当日次数（bonus）一并作废
             sender["_tx_daily"] = {"date": today, "count": 0}
-        if sender["_tx_daily"]["count"] >= data.TRANSFER_DAILY_MAX_OPS:
+        cap = self._tx_daily_cap(sender)
+        if sender["_tx_daily"]["count"] >= cap:
+            bonus = cap - data.TRANSFER_DAILY_MAX_OPS
+            extra = f"，含管理员今日追加 {bonus} 次" if bonus > 0 else ""
             return (
-                f"今日转让/赠送次数已达上限（{data.TRANSFER_DAILY_MAX_OPS}次/天），明天再来。",
+                f"今日转让/赠送次数已达上限（{cap}次/天{extra}），明天再来。",
                 0.0,
             )
 
@@ -3204,6 +3232,10 @@ class PetParkPlugin(Star):
         if cmd in ("加金币", "减金币", "加积分", "减积分", "加钻石", "减钻石",
                    "加灵石", "减灵石", "加玄晶", "减玄晶", "加天晶", "减天晶"):
             return self._admin_adjust(event, qq, group_id, cmd, tokens)
+
+        # ---- 大管理员：追加指定玩家「当日」转让/赠送次数 ----
+        if cmd in ("加次数", "加转让次数", "加赠送次数"):
+            return self._grant_transfer_ops(event, qq, group_id, tokens)
 
         # ---- 大管理员：任命 / 撤销 / 查看 小管理员 ----
         if cmd in ("任命小管理", "任命小管理员", "撤销小管理", "撤销小管理员"):
@@ -6571,6 +6603,49 @@ class PetParkPlugin(Star):
             f"> {_cur_disp(currency)}：{self._short_num(before)} → **{self._short_num(after)}**{extra}"
         )
 
+    def _grant_transfer_ops(
+        self, event, qq: str, group_id: str, tokens: list[str]
+    ) -> str:
+        """大管理员：为指定玩家追加「当日」转让/赠送次数。
+
+        只影响该玩家、只在今天生效——额度写在对方当日的 _tx_daily.bonus 里，
+        跨日 _tx_daily 整体换新，次日自动回到 TRANSFER_DAILY_MAX_OPS 次。
+        """
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可追加转让/赠送次数。"
+        if len(tokens) < 3 or not tokens[2].lstrip("+").isdigit():
+            return "用法：加次数 用户ID/@对方 次数"
+        amount = int(tokens[2])
+        if amount <= 0:
+            return "用法：加次数 用户ID/@对方 次数（次数需为正整数）"
+        if amount > data.TRANSFER_DAILY_BONUS_MAX:
+            return (
+                f"❌ 单次追加次数上限 {data.TRANSFER_DAILY_BONUS_MAX}，"
+                f"本次 {amount} 超出。"
+            )
+        target = tokens[1]
+        tp, err = self._find_target(group_id, target)
+        if err:
+            return err
+        today = time.strftime("%Y-%m-%d")
+        daily = tp.get("_tx_daily")
+        if not isinstance(daily, dict) or daily.get("date") != today:
+            # 跨日 / 首次：整体重置，别把昨天的已用次数或额度带到今天
+            daily = {"date": today, "count": 0}
+            tp["_tx_daily"] = daily
+        used = int(daily.get("count", 0) or 0)
+        before = data.TRANSFER_DAILY_MAX_OPS + int(daily.get("bonus", 0) or 0)
+        daily["bonus"] = int(daily.get("bonus", 0) or 0) + amount
+        after = data.TRANSFER_DAILY_MAX_OPS + daily["bonus"]
+        remain = max(0, after - used)
+        return (
+            f"## ⚙️ 管理操作\n"
+            f"已为 `{self._display_uid(target)}` 追加今日转让/赠送次数 **+{amount}**\n"
+            f"> 今日上限：{before} → **{after}** 次"
+            f"（今日已用 {used} 次，还可 {remain} 次）\n"
+            f"> ⏳ 仅今日有效，明日自动恢复 {data.TRANSFER_DAILY_MAX_OPS} 次"
+        )
+
     # --------------------------- 小管理员 ---------------------------
     def _is_subadmin(self, group_id: str, qq: str) -> bool:
         # 小管理员身份随本群授权有效而有效：授权失效则自动失去权限
@@ -6990,7 +7065,8 @@ class PetParkPlugin(Star):
                 "> 本群可立多个宗门，每人仅能加入一门；建宗需 2000 天晶。人数上限 10 起步，靠成员做任务/北秘境/镇守累积活跃度提升，封顶 20。",
                 "- 创建宗门 名称(2000天晶) · 申请入宗 宗名 · 同意/拒绝入宗 QQ · 退出宗门 · 宗门名册",
                 "- 查看宗门(看活跃度/人数上限) · 宗门公告 文本 · 宗门升级 · 宗门捐献 数量 · 宗门榜(本群)",
-                "- 宗门任务(每日悬赏) · 宗门探索(北秘境) · 镇守宗门(南金库) · 宗门兑换(西仓库) · 星辰阁",
+                "- 宗门任务(每日悬赏) · 宗门探索(北秘境) · 镇守宗门(南金库) · 宗门兑换(西仓库)",
+                "- 星辰阁(仅帮主/长老，消耗宗门共享库存，每日限次)",
                 "- 封官 QQ 长老 · 免职 QQ · 踢出宗门 QQ",
                 "",
                 "**【灵宠助战】** 灵宠养成",
@@ -8055,6 +8131,10 @@ class PetParkPlugin(Star):
                 "- 加积分 用户ID 数量 · 减积分 用户ID 数量",
                 "- 加钻石 用户ID 数量 · 减钻石 用户ID 数量",
                 "> 💡 小管理员仅可增减灵石/玄晶，加币有每日额度上限",
+                "",
+                "**【转让/赠送次数】**（仅大管理员）",
+                "- 加次数 用户ID 数量（给指定玩家追加**今日**转让/赠送次数）",
+                f"> 仅当日有效，次日自动恢复 {data.TRANSFER_DAILY_MAX_OPS} 次；只影响该玩家",
                 "",
                 "**【小管理员】**",
                 "- 任命小管理 用户ID · 撤销小管理 用户ID",
