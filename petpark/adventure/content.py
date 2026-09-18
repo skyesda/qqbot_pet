@@ -234,6 +234,20 @@ def gear_command_names(profession, tiers=None):
 
 def affix_by_name(name):
     return AFFIXES.get(name)
+
+
+def affix_bonus(name):
+    """词条实际加成一句话：破军→攻+6%；混元四项同值→全属性+2%；未觉醒返回空串。"""
+    af = affix_by_name(name)
+    if not af:
+        return ""
+    keys = (("atk", "攻"), ("def", "防"), ("hp", "血"), ("speed", "速"))
+    if len(af) == len(keys) and len(set(af.values())) == 1:
+        return f"全属性+{int(af['atk'] * 100)}%"
+    # 空格而非顿号：这串主要落在修士卡的窄装备格里，省下的宽度刚好让它不折行。
+    return " ".join(f"{label}+{int(af[key] * 100)}%" for key, label in keys if af.get(key))
+
+
 MECHANICS = {
     "strike": ("蓄力重击", "第三回合重击：护盾和治疗有助于生存。"),
     "pack": ("召唤狼群", "第二回合召唤小怪：破阵会优先清理小怪。"),

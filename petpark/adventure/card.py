@@ -53,13 +53,19 @@ def card_html(player, key, equipment=False):
     slots = []
     profession = a.get("profession", "剑修")
     asset_prefix = GEAR_ASSET_PREFIX.get(profession, "sword")
-    for _generic_name, (slot, label) in c.GEAR.items():
+    for _generic_name, (slot, _label) in c.GEAR.items():
         rank = eq.get(slot, 0)
         tier = a.get("equip_tier", {}).get(slot, 0)
         name = c.gear_name(profession, slot, tier)
+        # 词条（装备进阶觉醒）直接挂在装备卡上：玩家看装备就能看到它加什么，不必去记词条表。
+        # 顶掉原来的「提升X」——装备名与属性面板已表达加什么，而词条加成本来无处可查。
+        affix = a.get("equip_affix", {}).get(slot)
+        bonus = c.affix_bonus(affix)
+        affix_line = (f'<small class="affix">{escape(str(affix))} {bonus}</small>' if bonus
+                      else '<small class="affix off">未觉醒词条</small>')
         slots.append(f'<div class="gear"><img src="{asset_uri(asset_prefix + "-" + slot)}" alt="{escape(name)}">'
                      f'<div class="gear-name"><span>{escape(name)}</span><b>Lv{rank}</b></div>'
-                     f'<small>{"尚未强化" if rank == 0 else "提升" + label}</small></div>')
+                     f'{affix_line}</div>')
     bonus = a.get("bonus") or {}
     # 悟性加点分配（攻/防/血/速）直接以 +N 徽标附着在各属性后，直观呈现。
     # 气血 / 体力合占「状态」一栏：两者都是「当前/上限 + 进度条」的同类信息，
@@ -152,6 +158,10 @@ def card_html(player, key, equipment=False):
     .gear img{width:108px;height:105px;object-fit:contain;display:block}
     .gear-name{display:flex;justify-content:space-between;gap:4px;font-size:13px;align-items:center;white-space:nowrap;min-width:0}
     .gear-name span{min-width:0}.gear-name b{font-size:13px;color:#946d2f;flex-shrink:0}.gear small{font-size:12px;color:#7e8879}
+    /* 词条行：金色虚线分隔；顶掉原来的「提升X」占这行位置。
+       格内可用宽度只有 110px，最长的双属性词条串已占 101px，故不加任何前缀标记。 */
+    .gear small.affix{display:block;margin-top:4px;padding-top:4px;border-top:1px dashed #ded1ae;font-size:11px;line-height:1.3;color:#a8792b;font-weight:600;overflow-wrap:anywhere}
+    .gear small.affix.off{border-top-color:#e4e2d6;color:#a4ada1;font-weight:400}
     .portrait{height:auto;position:relative;overflow:hidden;border:1px solid #c5ad77;background:#f4f0e5}
     .portrait img{width:100%;height:100%;object-fit:contain;display:block;position:absolute}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}

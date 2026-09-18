@@ -26,6 +26,10 @@ def main():
         a = player['adventure']
         a.update(name='月照青山', level=36, realm=2, heaven=2, cultivation=1680, ore=128)
         a['equipment'] = {slot: rank for rank, (slot, _) in zip((30, 24, 18, 12, 6, 0), GEAR.values())}
+        a['equip_tier'] = {slot: tier for tier, (slot, _) in zip((3, 2, 2, 1, 1, 0), GEAR.values())}
+        # 覆盖全部词条形态：单属性 / 四项同值 / 双属性 / 未觉醒（最长的「攻+4%、防+2%」用于压测换行）。
+        a['equip_affix'] = {slot: affix for affix, (slot, _) in
+                            zip(('破军', '混元', '锐金', '木华', '水火', None), GEAR.values())}
         browser = pw.chromium.launch(executable_path='C:/Program Files/Google/Chrome/Application/chrome.exe', headless=True)
         page = browser.new_page(viewport={'width': 760, 'height': 1800})
         for profession in PROFESSIONS:
@@ -37,6 +41,7 @@ def main():
                 assert page.locator('.gear').count() == 6
                 assert page.locator('img').evaluate_all('(els) => els.every(e => e.complete && e.naturalWidth > 0)')
                 assert page.locator('.gear-name').evaluate_all('(els) => els.every(e => e.scrollWidth <= e.clientWidth)')
+                assert page.locator('.gear .affix').evaluate_all('(els) => els.every(e => e.scrollWidth <= e.clientWidth)')
                 assert page.locator('.card').evaluate('(el) => el.scrollWidth <= el.clientWidth')
                 portrait = page.locator('.portrait').bounding_box()
                 assert portrait['height'] > 450
