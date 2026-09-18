@@ -33,7 +33,8 @@ BUILDINGS = {
 }
 
 # 每日次数上限（已计入数值平衡，勿随意调大以防刷爆主线）。
-DAILY_LIMITS = {"mission": 3, "guard": 1, "explore": 2}
+# exchange 是「每日兑换总件数」，不是「发几次指令」——宗门兑换的数量由玩家自填，只限次数不限件数等于没限。
+DAILY_LIMITS = {"mission": 3, "guard": 1, "explore": 2, "exchange": 20}
 
 # 宗门操作冷却（秒）：与宠物侧「副本/修行」的冷却节奏对齐，防连点刷取，但不叠在主线限次之外。
 _SECT_CD = {"mission": 60, "explore": 300, "guard": 600, "star": 300}
@@ -574,15 +575,23 @@ def _exchange_catalog():
     """西仓库可兑换目录：以体力/材料/货币等「非养成主线加速类」为主，避免帮贡直接兑换经验/战力。
 
     灵石/玄晶/灵材为资源搬运（不直接加战力）；体力类为续航；涤魂散为深渊清理；无经验书/聚灵丹。
+
+    ⚠️ 兑换价必须与「捐献」的回本线对齐：捐献是 10 灵石 = 1 帮贡，所以任何「用帮贡换灵石」的
+    条目都等价于「用帮贡换帮贡」。灵石袋若定 3000 灵石/50 帮贡，玩家就能 50 帮贡 → 3000 灵石
+    → 300 帮贡，闭环净赚 6 倍且无上限（曾实测被刷到 1e25 帮贡）。现定 300 灵石/50 帮贡，
+    回本 30 帮贡 < 成本 50，闭环收益 0.6 倍，恒亏。改动前务必重算这条回本线。
+
+    发放量写在条目里（currency/amount 或 ore），_do_exchange 直接读——别在发放分支里再写一遍字面量，
+    显示与实发会漂移。
     """
     return [
         {"name": "体力丹", "cost": 30, "desc": "恢复30点修士体力"},
         {"name": "扩体散", "cost": 60, "desc": "体力上限永久+20"},
         {"name": "醒神丹", "cost": 50, "desc": "体力回复翻倍1天"},
         {"name": "涤魂散", "cost": 80, "desc": "清除深渊侵蚀5点"},
-        {"name": "灵材包", "cost": 50, "desc": "灵材×20"},
-        {"name": "灵石袋", "cost": 50, "desc": "灵石×3000"},
-        {"name": "玄晶袋", "cost": 60, "desc": "玄晶×500"},
+        {"name": "灵材包", "cost": 50, "desc": "灵材×20", "ore": 20},
+        {"name": "灵石袋", "cost": 50, "desc": "灵石×300", "currency": "灵石", "amount": 300},
+        {"name": "玄晶袋", "cost": 60, "desc": "玄晶×500", "currency": "玄晶", "amount": 500},
     ]
 
 
@@ -590,7 +599,7 @@ def _exchange_table(entries):
     lines = ["| 物品 | 帮贡 | 效果 |", "| --- | --- | --- |"]
     for e in entries:
         lines.append(f"| {e['name']} | {e['cost']} | {e['desc']} |")
-    lines += ["", "> 发送 `宗门兑换 物品名 数量` 兑换；帮贡来自宗门任务·北秘境·镇守。"]
+    lines += ["", f"> 发送 `宗门兑换 物品名 数量` 兑换；帮贡来自宗门任务·北秘境·镇守。每日最多兑换 {DAILY_LIMITS['exchange']} 件。"]
     return "\n".join(lines)
 
 
@@ -607,17 +616,24 @@ def _do_exchange(service, key, p, a, s, qq, args):
     entry = next((e for e in cat if e["name"] == item), None)
     if not entry:
         return _exchange_table(cat)
+    # 每日兑换总件数闸：按「件数」而非「指令次数」计，否则一次 `宗门兑换 灵石袋 999999` 就绕过了。
+    cap = DAILY_LIMITS["exchange"]
+    used = _count(s, qq, "exchange")
+    if used >= cap:
+        return f"今日宗门兑换已达上限（{cap} 件），明日再来。"
+    if count > cap - used:
+        return f"今日宗门兑换还可兑 {cap - used} 件（上限 {cap} 件/日）。"
     cost = entry["cost"] * count
     member = s["members"][qq]
     if int(member.get("contribution", 0)) < cost:
         return f"『{item}』需要 {cost} 帮贡，当前 {member.get('contribution', 0)}。"
     member["contribution"] = int(member.get("contribution", 0)) - cost
-    if item == "灵石袋":
-        service.store.add_currency(p, "灵石", 3000 * count)
-    elif item == "玄晶袋":
-        service.store.add_currency(p, "玄晶", 500 * count)
-    elif item == "灵材包":
-        a["ore"] = a.get("ore", 0) + 20 * count
+    s.setdefault("daily", {}).setdefault(qq, {})
+    s["daily"][qq]["exchange"] = used + count
+    if entry.get("currency"):
+        service.store.add_currency(p, entry["currency"], entry["amount"] * count)
+    elif entry.get("ore"):
+        a["ore"] = a.get("ore", 0) + entry["ore"] * count
     else:
         # 体力/上限/回复/净化等，进玩家背包后用「使用」生效。
         service.store.add_item(p, item, count)
