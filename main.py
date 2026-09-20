@@ -197,6 +197,10 @@ KNOWN_COMMANDS = {
     "解封",
     "封号状态",
     "封号列表",
+    # 大管理员：违规词管理（按群生效，命中即撤回）
+    "加违规词",
+    "减违规词",
+    "违规词",
     # 小管理员（分群授权）
     "任命小管理",
     "任命小管理员",
@@ -526,6 +530,9 @@ WEB_BLOCKED_COMMANDS = {
     "解封",
     "封号状态",
     "封号列表",
+    "加违规词",
+    "减违规词",
+    "违规词",
     "任命小管理",
     "任命小管理员",
     "撤销小管理",
@@ -558,6 +565,14 @@ BAN_REPLY = (
     "你已被封号，暂时无法使用灵契仙途。\n\n"
     "如有疑问请联系群管理员。"
 )
+
+# 违规词（按群）：命中即撤回。群主/管理员只提醒不撤回；大管理员整体豁免。
+BADWORD_CHECK_SEC = 10       # 兜底轮询节拍（秒）
+BADWORD_WINDOW_SEC = 120     # QQ 官方撤回窗口：超过 2 分钟就撤不掉了
+BADWORD_TEXT_MAX = 500       # 缓冲里每条消息最多保留多少字符（控内存）
+BADWORD_BUF_MAX = 100        # 每群缓冲的消息条数上限
+BADWORD_WORD_MAX = 30        # 单个违规词的最大长度（防止整段话被误当词加进去）
+BADWORD_WORDS_MAX = 100      # 每群违规词条数上限（匹配跑在每条群消息上，得有界）
 
 
 class _WebEvent:
@@ -598,6 +613,7 @@ class PetParkPlugin(Star):
         "_custom_push_task_ref",
         "_celebrate_task_ref",
         "_mount_task_ref",
+        "_badword_task_ref",
     )
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -750,6 +766,13 @@ class PetParkPlugin(Star):
         self._custom_push_task_ref = asyncio.create_task(self._custom_push_loop())
         self._celebrate_task_ref = asyncio.create_task(self._celebrate_loop())
         self._mount_task_ref = asyncio.create_task(self._mount_loop())
+        # 违规词兜底轮询：群ID → deque[(message_id, 发送者, 群身份, 时间戳, 文本)]。
+        # 即时检查已覆盖绝大多数情况，这里留缓冲是为了能**重扫**最近消息，兜住
+        # 「词是消息发出之后才加进词表」这种即时检查必然漏掉的情况（详见 _badword_loop）。
+        self._badword_recent: dict[str, deque] = {}
+        # 已处置过的消息ID（按群）：即时与轮询两条路都记，避免同一条被撤回两次。
+        self._badword_done: dict[str, set] = {}
+        self._badword_task_ref = asyncio.create_task(self._badword_loop())
         if self.zhongyuan is not None:
             self.zhongyuan.start()
 
@@ -1319,9 +1342,15 @@ class PetParkPlugin(Star):
                     f"{group_id}\x1f{qq}", deque(maxlen=30)
                 ).append((mid, time.time()))
         try:
+            # 违规词检查：内容违不违规与「是不是指令」无关，故排在最前——命中就地处置
+            # （大管理员豁免、群主/管理员只提醒，见 _badword_action）。没命中时它顺手
+            # 把这条消息记进轮询缓冲，供后台拿新加的词回头重扫。
+            word_reply = await self._badword_gate(event, qq, group_id, text)
             # 封号闸门：禁言/撤回/踢人走的是 dispatch 之外的另一条分支，只在 dispatch
             # 里拦会漏掉这三类群管理指令，故这里也判一次（判定收在 _staff_cmd_blocked）。
-            if self._staff_cmd_blocked(text, group_id, qq):
+            if word_reply is not None:
+                reply = word_reply
+            elif self._staff_cmd_blocked(text, group_id, qq):
                 reply = self._ban_reply(group_id, qq)
             elif re.match(r"^(撤回消息|撤回)(\s|<@|$)", text):
                 reply = await self._cmd_recall_member(event, qq, group_id, text)
@@ -1702,6 +1731,350 @@ class PetParkPlugin(Star):
             f"你已被封号（剩余 {left}），暂时无法使用灵契仙途。\n\n"
             "如有疑问请联系群管理员。"
         )
+
+    # --------------------------- 违规词（按群） ---------------------------
+    # 词表存在群档案的 "badwords" 里，与 "subadmins"/"banned" 同一个 dict、
+    # 同一套读写方式。命中即撤回，群主/管理员只提醒，大管理员整体豁免。
+    async def _recall_message(self, group_id: str, mid: str, api=None) -> bool:
+        """撤回一条群消息，成功返回 True。
+
+        api 缺省取当前机器人的 bot 客户端；**即时路径要传 event.bot.api**，确保用
+        「收到这条消息的那个机器人」去撤——多机器人场景下 bot 客户端未必是处理这条
+        消息的那一个。后台轮询没有 event，只能退回 bot 客户端。
+        """
+        mid = str(mid or "")
+        if not mid:
+            return False
+        if api is None:
+            api = getattr(self._get_bot(), "api", None)
+        if api is None:
+            return False
+        try:
+            from botpy.http import Route
+        except Exception:
+            return False
+        try:
+            await api._http.request(
+                Route(
+                    "DELETE",
+                    "/v2/groups/{group_openid}/messages/{message_id}",
+                    group_openid=group_id,
+                    message_id=mid,
+                )
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"[petpark] 撤回消息 {mid} 失败：{e}")
+            return False
+
+    @staticmethod
+    def _norm_badword_text(text: str) -> str:
+        """匹配前的归一化：去掉全部空白 + 转小写。
+
+        去空白是为了让「去 死」这类拆字写法也命中；转小写是为了英文词大小写不敏感。
+        """
+        return re.sub(r"\s+", "", str(text or "")).lower()
+
+    @classmethod
+    def _match_badword_in(cls, text: str, words) -> str | None:
+        """在给定词表里找第一个命中的词；没命中返回 None。
+
+        **子串**匹配（不是分词）：设置「死」时「你去死」会命中——一个字的词也会
+        触发，这正是需求要的效果。传入 text 而非去查表，是为了让轮询能拿「当前
+        词表」去重扫旧消息（词可能是消息发出之后才加的）。
+        """
+        if not words:
+            return None
+        flat = cls._norm_badword_text(text)
+        if not flat:
+            return None
+        for w in words:
+            if cls._norm_badword_text(w) in flat:
+                return w
+        return None
+
+    def _badwords_in_group(self, group_id: str) -> list[str]:
+        """本群违规词表（去重、保序）。
+
+        走 store.get_group()（与 _is_subadmin / _banned_in_group 同一读法），不摸
+        store._data——匹配跑在每条群消息上，得经得起任何 store 实现。没设过词时
+        只付出一次 dict 查找（raw 不是 list 就立刻返回）。
+        """
+        group = self.store.get_group(group_id)
+        if not isinstance(group, dict):
+            return []
+        raw = group.get("badwords")
+        if not isinstance(raw, (list, tuple)):
+            return []
+        out: list[str] = []
+        for w in raw:
+            if not isinstance(w, str):
+                continue  # 容忍落档里的脏数据（None/数字等），只认字符串
+            w = w.strip()
+            if w and w not in out:
+                out.append(w)
+        return out
+
+    def _badwords_store(self, group_id: str) -> list[str]:
+        """取本群违规词的**可写**列表（规范化后回写，与封号 _ban_store 同一套路）。"""
+        group = self.store.get_group(group_id)
+        words = self._badwords_in_group(group_id)
+        group["badwords"] = words
+        return words
+
+    def _badword_action(self, qq: str, role: str) -> str:
+        """命中违规词后该怎么处置：recall 撤回 / warn 只提醒 / skip 不理。
+
+        - 大管理员（后台 admins 白名单）→ skip：否则「加违规词 死」这条指令自己就
+          含违规词、会被自己的规则撤回，词根本加不进去；
+        - 群主/管理员 → warn：需求要的是只提醒不撤回（撤群管理者的消息多半也失败）；
+        - 其余（含群身份未知）→ recall：未知按成员处理，撤回失败会自动退化成提醒。
+        """
+        if self._is_admin_id(qq):
+            return "skip"
+        if str(role or "") in ("owner", "admin"):
+            return "warn"
+        return "recall"
+
+    def _badword_remember(
+        self, group_id: str, mid: str, qq: str, role: str, text: str
+    ) -> None:
+        """把一条群消息记进轮询缓冲（只留最近 BADWORD_BUF_MAX 条）。
+
+        记的是**全部**群消息、而不只是命中的：词可能是这条消息之后才加进词表的，
+        不留下原文，轮询就没有可重扫的东西。没有 message_id 的消息记了也撤不掉，
+        直接不记。
+        """
+        if not mid:
+            return
+        buf = self._badword_recent.get(group_id)
+        if buf is None:
+            buf = self._badword_recent[group_id] = deque(maxlen=BADWORD_BUF_MAX)
+        buf.append(
+            (mid, str(qq), str(role or ""), time.time(), str(text or "")[:BADWORD_TEXT_MAX])
+        )
+
+    def _badword_mark_done(self, group_id: str, mid: str) -> None:
+        """标记这条消息已处置，避免即时与轮询两条路把同一条撤回两次。"""
+        if mid:
+            self._badword_done.setdefault(group_id, set()).add(mid)
+
+    async def _badword_punish(
+        self, group_id: str, mid: str, qq: str, role: str, word: str,
+        source: str, api=None,
+    ) -> str | None:
+        """命中后执行处置并返回要发到群里的回执（None = 不回复）。
+
+        即时检查与后台轮询都走这里，保证两条路的处置口径完全一致。
+        回执里刻意**不写命中的是哪个词**——那是词表，写出来等于公开，玩家照着绕。
+        具体命中了哪个词只落日志，供运营回头调词表。
+        """
+        self._badword_mark_done(group_id, mid)
+        action = self._badword_action(qq, role)
+        name = self._display_uid(qq)
+        if action == "skip":
+            logger.info(
+                f"[petpark] 违规词命中大管理员({source})，跳过 "
+                f"群={group_id} 用户={qq} 词={word}"
+            )
+            return None
+        if action == "warn":
+            logger.info(
+                f"[petpark] 违规词命中群管理者({source})，只提醒 "
+                f"群={group_id} 用户={qq} 词={word}"
+            )
+            return (
+                "## ⚠️ 违规提醒\n"
+                f"`{name}` 的消息含违规内容。\n\n"
+                "> 你是本群管理者，消息不撤回，请注意"
+            )
+        if await self._recall_message(group_id, mid, api):
+            logger.info(
+                f"[petpark] 违规词已撤回({source}) "
+                f"群={group_id} 用户={qq} 词={word} mid={mid}"
+            )
+            return (
+                "## 🗑️ 撤回消息\n"
+                f"`{name}` 的消息含违规内容，已撤回。\n\n"
+                "> 请勿在群内发送违规内容"
+            )
+        logger.warning(
+            f"[petpark] 违规词撤回失败({source}) "
+            f"群={group_id} 用户={qq} 词={word} mid={mid}"
+        )
+        return (
+            "## ⚠️ 违规提醒\n"
+            f"`{name}` 的消息含违规内容。\n\n"
+            "> 撤回失败：可能已超过 2 分钟，或机器人未被设为群管理员"
+        )
+
+    async def _badword_gate(self, event, qq: str, group_id: str, text: str) -> str | None:
+        """即时违规词检查：命中则处置并返回回执，未命中返回 None。
+
+        顺手把这条消息记进轮询缓冲（词可能是之后才加的，轮询要能拿新词重扫它）。
+        """
+        if not self._is_group(group_id):
+            return None
+        api = getattr(getattr(event, "bot", None), "api", None)
+        role = str(getattr(event, "sender_role", "") or "")
+        mid = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "")
+        self._badword_remember(group_id, mid, qq, role, text)
+        words = self._badwords_in_group(group_id)
+        if not words:
+            return None  # 没设过词，连匹配都不必做
+        word = self._match_badword_in(text, words)
+        if word is None:
+            return None
+        # 大管理员豁免、群主/管理员的只提醒，统一收在 _badword_punish 里判
+        return await self._badword_punish(group_id, mid, qq, role, word, "即时", api)
+
+    async def _badword_sweep(self) -> int:
+        """扫一遍缓冲、处置漏网的命中，返回本轮处置条数（便于单测直接驱动）。
+
+        只扫 2 分钟窗口内的消息——再老的消息 QQ 官方也不让撤了，扫出来也白扫。
+        """
+        if not self._badword_recent:
+            return 0
+        acted = 0
+        now = time.time()
+        for group_id, buf in list(self._badword_recent.items()):
+            # 顺手把已滑出缓冲的消息ID从 done 里去掉，别让集合无限长大
+            done = self._badword_done.setdefault(group_id, set())
+            done &= {item[0] for item in buf}
+            words = self._badwords_in_group(group_id)
+            if not words:
+                continue
+            for mid, mqq, mrole, ts, txt in list(buf):
+                if now - ts > BADWORD_WINDOW_SEC:
+                    continue
+                if mid in done:
+                    continue
+                word = self._match_badword_in(txt, words)
+                if word is None:
+                    continue
+                if await self._badword_punish(group_id, mid, mqq, mrole, word, "轮询"):
+                    acted += 1  # 大管理员豁免返回 None，不算「处置」
+        return acted
+
+    async def _badword_loop(self):
+        """违规词兜底轮询（每 10 秒）。
+
+        即时检查已覆盖绝大多数情况，这里兜的是「即时必然漏掉」的两类：
+        ① 消息发出**之后**才把某个词加进词表——即时检查当时词表里还没有它；
+        ② 即时检查半路抛异常（外层 except 吞掉后，这条就再没人管了）。
+        """
+        while True:
+            try:
+                await asyncio.sleep(BADWORD_CHECK_SEC)
+                await self._badword_sweep()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[petpark] 违规词轮询出错")
+
+    def _badword_view(self, group_id: str, args: list[str]) -> str:
+        """查看违规词：不带参数列出本群全部，带参数查单个词在不在。"""
+        cur = self._badwords_in_group(group_id)
+        if args:
+            q = args[0]
+            if q in cur:
+                return f"## 🚫 违规词\n`{q}` **已在**本群违规词表里。"
+            return f"## ✅ 违规词\n`{q}` 不在本群违规词表里。"
+        if not cur:
+            return (
+                "## 🚫 违规词\n"
+                "本群还没有设置违规词。\n\n"
+                "> 添加：`加违规词 死 滚`"
+            )
+        lines = [
+            f"## 🚫 本群违规词（{len(cur)} 个）",
+            "",
+            "| # | 违规词 |",
+            "|---|---|",
+        ]
+        for i, w in enumerate(cur, 1):
+            lines.append(f"| {i} | `{w}` |")
+        lines += [
+            "",
+            "> 子串匹配：设置「死」时「你去死」也会命中",
+            "> 命中即撤回；群主/管理员只提醒不撤回；大管理员豁免",
+            "> 移除：`减违规词 死`",
+        ]
+        return "\n".join(lines)
+
+    def _badword_cmd(self, event, group_id: str, tokens: list[str], cmd: str) -> str:
+        """大管理员：违规词管理（按群）。
+
+        - `加违规词 死 滚 傻逼`：一次可加多个（空格分隔，故词本身不能含空格）；
+        - `减违规词 滚`：移除；
+        - `违规词`：列出本群全部；`违规词 死`：查某个词在不在。
+        """
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可管理违规词。"
+        args = [t.strip() for t in tokens[1:]]
+        args = [a for a in args if a]
+        if cmd == "违规词":
+            return self._badword_view(group_id, args)
+        if not args:
+            return f"用法：{cmd} 违规词1 [违规词2 ...]（空格分隔多个）"
+        store = self._badwords_store(group_id)
+        if cmd == "减违规词":
+            removed, missing = [], []
+            for w in args:
+                if w in store:
+                    store.remove(w)
+                    removed.append(w)
+                else:
+                    missing.append(w)
+            if removed:
+                out = [
+                    f"## ✅ 已移除违规词（{len(removed)} 个）",
+                    "",
+                    "、".join(f"`{w}`" for w in removed),
+                    "",
+                    f"> 本群现有 {len(store)} 个",
+                ]
+            else:
+                out = ["## ✅ 违规词", "", "没有移除任何词。"]
+            if missing:
+                out += ["", "不在表里（跳过）：" + "、".join(f"`{w}`" for w in missing)]
+            return "\n".join(out)
+        added, dup, too_long, over = [], [], [], []
+        for w in args:
+            if len(w) > BADWORD_WORD_MAX:
+                too_long.append(w)
+            elif w in store:
+                dup.append(w)
+            elif len(store) >= BADWORD_WORDS_MAX:
+                over.append(w)
+            else:
+                store.append(w)
+                added.append(w)
+        if added:
+            out = [
+                f"## 🚫 已添加违规词（{len(added)} 个）",
+                "",
+                "、".join(f"`{w}`" for w in added),
+                "",
+                f"> 本群现有 {len(store)} 个；命中即撤回，群主/管理员只提醒不撤回",
+            ]
+        else:
+            out = ["## 🚫 违规词", "", "没有新增任何词。"]
+        if dup:
+            out += ["", "已在表里（跳过）：" + "、".join(f"`{w}`" for w in dup)]
+        if too_long:
+            out += [
+                "",
+                f"过长（上限 {BADWORD_WORD_MAX} 字，太长会误伤整段话）："
+                + "、".join(f"`{w[:8]}…`" for w in too_long),
+            ]
+        if over:
+            out += [
+                "",
+                f"已达每群上限 {BADWORD_WORDS_MAX} 个，未添加："
+                + "、".join(f"`{w}`" for w in over),
+            ]
+        return "\n".join(out)
 
     @staticmethod
     def _track_activity(player: dict) -> None:
@@ -2688,7 +3061,7 @@ class PetParkPlugin(Star):
         if api is None:
             return "❌ 当前平台不支持撤回操作（需 QQ 官方机器人）。"
         try:
-            from botpy.http import Route
+            import botpy.http  # noqa: F401  # 平台能力探测：非 QQ 官方机器人没有撤回路由
         except Exception:
             return "❌ 当前平台不支持撤回操作（需 QQ 官方机器人）。"
         # 数量：取剩余 token 中第一个数字，默认 1，上限 10
@@ -2713,19 +3086,10 @@ class PetParkPlugin(Star):
             )
         ok, fail = 0, 0
         for mid in cand[:count]:
-            try:
-                await api._http.request(
-                    Route(
-                        "DELETE",
-                        "/v2/groups/{group_openid}/messages/{message_id}",
-                        group_openid=group_id,
-                        message_id=mid,
-                    )
-                )
+            if await self._recall_message(group_id, mid, api):
                 ok += 1
-            except Exception as e:
+            else:
                 fail += 1
-                logger.warning(f"[petpark] 撤回消息 {mid} 失败：{e}")
             self._group_msg_log[key] = deque(
                 (p for p in log if p[0] != mid), maxlen=30
             )
@@ -3429,6 +3793,10 @@ class PetParkPlugin(Star):
         # ---- 大管理员：封号（可限天数）/ 永久封号 / 解封 / 查看封号状态（按群生效）----
         if cmd in ("封号", "永久封号", "解封", "封号状态", "封号列表"):
             return self._ban_user(event, group_id, cmd, tokens)
+
+        # ---- 大管理员：违规词管理（按群生效，命中即撤回）----
+        if cmd in ("加违规词", "减违规词", "违规词"):
+            return self._badword_cmd(event, group_id, tokens, cmd)
 
         # ---- 群授权（状态查询 / 卡密授权 / 大管理员直授）----
         if cmd == "授权状态":
@@ -8488,6 +8856,13 @@ class PetParkPlugin(Star):
                 "- 封号状态 [用户ID]（不带ID则列出本群全部封号与剩余时间）",
                 "> 限期封号到期自动失效；重复封号按新天数重新计时，有限天数不会把永久封号降格",
                 "> 被封用户在本群的灵契仙途指令全部不可用，别人也无法向其转让/赠送；仅本群生效、不影响其它群；大管理员不可被封",
+                "",
+                "**【违规词】**（仅大管理员，仅本群）",
+                "- 加违规词 死 滚（一次可加多个，空格分隔）",
+                "- 减违规词 滚 · 违规词（列出本群全部）· 违规词 死（查某个词在不在）",
+                "> 子串匹配：设置「死」时「你去死」也会命中，一个字的词照样触发",
+                "> 命中即刻撤回该成员消息并 @ 提示；群主/管理员发送只提醒不撤回；大管理员豁免",
+                "> 后台每 10 秒兜底重扫一遍（兜住「词是消息发出后才加的」这类即时检查必漏的情况）",
                 "",
                 "**【群授权】**",
                 "- 授权状态（查看本群授权状态）",
