@@ -184,6 +184,9 @@ KNOWN_COMMANDS = {
     "减玄晶",
     "加天晶",
     "减天晶",
+    # 大管理员：增减指定用户背包道具
+    "加道具",
+    "减道具",
     # 大管理员：追加指定玩家当日的转让/赠送次数
     "加次数",
     "加转让次数",
@@ -507,6 +510,8 @@ WEB_BLOCKED_COMMANDS = {
     "减积分",
     "加钻石",
     "减钻石",
+    "加道具",
+    "减道具",
     "加次数",
     "加转让次数",
     "加赠送次数",
@@ -3232,6 +3237,10 @@ class PetParkPlugin(Star):
         if cmd in ("加金币", "减金币", "加积分", "减积分", "加钻石", "减钻石",
                    "加灵石", "减灵石", "加玄晶", "减玄晶", "加天晶", "减天晶"):
             return self._admin_adjust(event, qq, group_id, cmd, tokens)
+
+        # ---- 大管理员：增减指定用户背包道具 ----
+        if cmd in ("加道具", "减道具"):
+            return self._admin_adjust_item(event, qq, group_id, cmd, tokens)
 
         # ---- 大管理员：追加指定玩家「当日」转让/赠送次数 ----
         if cmd in ("加次数", "加转让次数", "加赠送次数"):
@@ -6603,6 +6612,54 @@ class PetParkPlugin(Star):
             f"> {_cur_disp(currency)}：{self._short_num(before)} → **{self._short_num(after)}**{extra}"
         )
 
+    def _admin_adjust_item(
+        self, event, qq: str, group_id: str, cmd: str, tokens: list[str]
+    ) -> str:
+        """大管理员：增减指定玩家背包里的道具。
+
+        用法：加道具 / 减道具 用户ID|@对方 道具名 数量
+        - 仅大管理员可用（小管理员无权，与「加金币」的授权层级不同）。
+        - 数量不设上限，但必须是正整数。
+        - 减道具时对方数量不足则原样报错、一个字都不动，避免「以为清空了、其实只扣到 0」。
+        """
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可增减用户道具。"
+        # 目标 ID 不一定是纯数字（QQ 官方为 openid 字符串），仅要求最后的数量是整数。
+        if len(tokens) < 4 or not tokens[3].isdigit():
+            return f"用法：{cmd} 用户ID/@对方 道具名 数量"
+        amount = int(tokens[3])
+        if amount <= 0:
+            return f"用法：{cmd} 用户ID/@对方 道具名 数量（数量需为正整数）"
+        name = tokens[2]
+        tp, err = self._find_target(group_id, tokens[1])
+        if err:
+            return err
+        adding = cmd.startswith("加")
+        before = int((tp.get("bag") or {}).get(name, 0) or 0)
+        # 道具名校验：静态表优先，再兜活动道具（与「使用」同一口径）。
+        # 减道具另放行「对方背包里真有」的下线遗留道具，好让运营能清理。
+        if not (data.ITEMS.get(name) or self._event_item_def(name)):
+            if adding or before <= 0:
+                return f"❌ 没有叫『{name}』的道具。"
+        if not adding:
+            if before < amount:
+                return (
+                    f"❌ {self._display_uid(tokens[1])} 背包里『{name}』只有 "
+                    f"{self._short_num(before)} 个，不足 {self._short_num(amount)}，"
+                    f"未做任何改动。"
+                )
+            self.store.remove_item(tp, name, amount)
+        else:
+            self.store.add_item(tp, name, amount)
+        after = int((tp.get("bag") or {}).get(name, 0) or 0)
+        verb = "增加" if adding else "减少"
+        return (
+            f"## ⚙️ 管理操作\n"
+            f"已为用户 `{self._display_uid(tokens[1])}` {verb} 📦"
+            f"**{name} ×{self._short_num(amount)}**\n"
+            f"> {name}：{self._short_num(before)} → **{self._short_num(after)}**"
+        )
+
     def _grant_transfer_ops(
         self, event, qq: str, group_id: str, tokens: list[str]
     ) -> str:
@@ -8131,6 +8188,10 @@ class PetParkPlugin(Star):
                 "- 加积分 用户ID 数量 · 减积分 用户ID 数量",
                 "- 加钻石 用户ID 数量 · 减钻石 用户ID 数量",
                 "> 💡 小管理员仅可增减灵石/玄晶，加币有每日额度上限",
+                "",
+                "**【背包道具】**（仅大管理员）",
+                "- 加道具 用户ID 道具名 数量 · 减道具 用户ID 道具名 数量",
+                "> 减道具时对方数量不足则不扣、原样报错；道具名须是现有道具或活动道具",
                 "",
                 "**【转让/赠送次数】**（仅大管理员）",
                 "- 加次数 用户ID 数量（给指定玩家追加**今日**转让/赠送次数）",
