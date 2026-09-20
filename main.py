@@ -191,8 +191,9 @@ KNOWN_COMMANDS = {
     "加次数",
     "加转让次数",
     "加赠送次数",
-    # 大管理员：封号 / 解封 / 查看封号状态（按群生效）
+    # 大管理员：封号（可限天数）/ 永久封号 / 解封 / 查看封号状态（按群生效）
     "封号",
+    "永久封号",
     "解封",
     "封号状态",
     "封号列表",
@@ -521,6 +522,7 @@ WEB_BLOCKED_COMMANDS = {
     "加转让次数",
     "加赠送次数",
     "封号",
+    "永久封号",
     "解封",
     "封号状态",
     "封号列表",
@@ -1320,7 +1322,7 @@ class PetParkPlugin(Star):
             # 封号闸门：禁言/撤回/踢人走的是 dispatch 之外的另一条分支，只在 dispatch
             # 里拦会漏掉这三类群管理指令，故这里也判一次（判定收在 _staff_cmd_blocked）。
             if self._staff_cmd_blocked(text, group_id, qq):
-                reply = BAN_REPLY
+                reply = self._ban_reply(group_id, qq)
             elif re.match(r"^(撤回消息|撤回)(\s|<@|$)", text):
                 reply = await self._cmd_recall_member(event, qq, group_id, text)
             elif re.match(r"^(禁言|解除禁言|全体禁言)(\s|<@|$)", text):
@@ -1594,43 +1596,112 @@ class PetParkPlugin(Star):
         return self._is_banned(group_id, qq) and not self._is_admin_id(qq)
 
     # --------------------------- 封号（按群） ---------------------------
-    # 名单存在群档案的 "banned" 里，与 "subadmins" 同一个 dict、同一套读写方式。
-    def _banned_in_group(self, group_id: str) -> list[str]:
-        """本群封号名单。
+    # 名单存在群档案的 "banned" 里，与 "subadmins" 同一个 dict、同一套读写方式，
+    # 形态是 {用户ID: 到期时间戳}，永久封号的时间戳为 0。
+    def _banned_in_group(self, group_id: str) -> dict[str, int]:
+        """本群**生效中**的封号 {用户ID: 到期时间戳}；永久封号的时间戳为 0。
 
-        走 store.get_group()（与 _is_subadmin / _manage_subadmin 同一读法），
-        不摸 store._data —— 判定要跑在每条群指令上，得经得起任何 store 实现。
-        这里不会替谁多建群档案：封号判定只跑在「已确认为本插件指令」之后，而那些
-        指令本来就要 get_group() 取群档案；普通聊天在更早的过滤层就 return None 了。
+        到期条目在这里就被滤掉，故不需要任何清理任务（与「加次数」当日额度同一思路：
+        靠读取时判断，而不是靠定时清理）。走 store.get_group()（与 _is_subadmin 同一
+        读法），不摸 store._data——判定要跑在每条群指令上，得经得起任何 store 实现。
+
+        兼容两种存档形态：dict（现·{id: 到期ts}）与 list（旧·一律视为永久）。后者是
+        v3.10.23 的中间形态，留着以防某一版先上了线。
         """
         group = self.store.get_group(group_id)
         if not isinstance(group, dict):
-            return []
-        return [str(x) for x in group.get("banned", []) or []]
+            return {}
+        raw = group.get("banned")
+        if isinstance(raw, dict):
+            items = list(raw.items())
+        elif isinstance(raw, list):
+            items = [(pid, 0) for pid in raw]
+        else:
+            return {}
+        now = int(time.time())
+        active: dict[str, int] = {}
+        for pid, exp in items:
+            try:
+                exp = int(exp or 0)
+            except (TypeError, ValueError):
+                exp = 0  # 脏数据按永久处理，宁可多封不可错放
+            if exp == 0 or exp > now:
+                active[str(pid)] = exp
+        return active
 
     def _is_banned(self, group_id: str, qq) -> bool:
-        """某用户在本群是否被封号（仅本群，不影响其它群）。"""
+        """某用户在本群是否正被封号（仅本群；已到期的自动不算）。"""
         return str(qq) in self._banned_in_group(group_id)
 
-    def _ban(self, group_id: str, qq) -> bool:
-        """本群封号。已在名单里返回 False，便于回执区分「新封」与「本来就封着」。"""
+    def _ban_expire(self, group_id: str, qq) -> int | None:
+        """本群封号到期时间戳：0=永久，None=未封（或已到期）。"""
+        return self._banned_in_group(group_id).get(str(qq))
+
+    @staticmethod
+    def _ban_left_text(exp: int) -> str:
+        """封号剩余时间的中文描述；exp=0 表示永久。"""
+        if not exp:
+            return "永久"
+        left = int(exp) - int(time.time())
+        if left <= 0:
+            return "已到期"
+        days, rem = divmod(left, 86400)
+        hours, rem = divmod(rem, 3600)
+        mins = rem // 60
+        if days:
+            return f"{days} 天 {hours} 小时" if hours else f"{days} 天"
+        if hours:
+            return f"{hours} 小时 {mins} 分钟" if mins else f"{hours} 小时"
+        return f"{max(1, mins)} 分钟"
+
+    def _ban_store(self, group_id: str) -> dict[str, int]:
+        """取本群封号的**可写**存储 dict。
+
+        所有写路径都从这里取：它会把旧 list 形态规范化成 dict、并顺手清掉已到期条目，
+        所以存进去的永远是规范的 {id: 到期ts}，不会越积越多。
+        """
         group = self.store.get_group(group_id)
-        banned = [str(x) for x in group.get("banned", []) or []]
-        if str(qq) in banned:
-            return False
-        banned.append(str(qq))
+        banned = self._banned_in_group(group_id)
         group["banned"] = banned
-        return True
+        return banned
+
+    def _ban(self, group_id: str, qq, days: int = 0) -> tuple[bool, int]:
+        """本群封号。days=0 → 永久，否则为 N 天。
+
+        返回 (是否改动, 最终到期时间戳)。唯一「不改动」的情况是：对方已是永久封号，
+        而本次只给了有限天数——**永久不可被有限降格**，否则一次手滑就把永久封悄悄
+        解成了限期。有限→有限按新天数重新计时（覆盖，不叠加）。
+        """
+        qq = str(qq)
+        banned = self._ban_store(group_id)
+        if banned.get(qq) == 0 and days > 0:
+            return False, 0
+        exp = 0 if days <= 0 else int(time.time()) + days * 86400
+        banned[qq] = exp
+        return True, exp
 
     def _unban(self, group_id: str, qq) -> bool:
-        """本群解封。不在名单里返回 False。"""
-        group = self.store.get_group(group_id)
-        banned = [str(x) for x in group.get("banned", []) or []]
-        if str(qq) not in banned:
+        """本群解封。返回是否真的解除掉了一个生效中的封号。"""
+        qq = str(qq)
+        banned = self._ban_store(group_id)
+        if qq not in banned:
             return False
-        banned.remove(str(qq))
-        group["banned"] = banned
+        del banned[qq]
         return True
+
+    def _ban_reply(self, group_id: str, qq) -> str:
+        """被封用户发指令时的回执。
+
+        限期封号带上剩余时间——不写的话对方只能反复试指令来猜自己还要等多久。
+        """
+        left = self._ban_left_text(self._ban_expire(group_id, qq) or 0)
+        if left == "永久":
+            return BAN_REPLY
+        return (
+            "## 🚫 已被封号\n"
+            f"你已被封号（剩余 {left}），暂时无法使用灵契仙途。\n\n"
+            "如有疑问请联系群管理员。"
+        )
 
     @staticmethod
     def _track_activity(player: dict) -> None:
@@ -3247,7 +3318,7 @@ class PetParkPlugin(Star):
             # 口令抽奖在「已知指令过滤」之前就 return 了，得单独拦一次，
             # 否则被封的人仍能靠输入口令登记报名、白拿奖池。
             if self._is_banned(group_id, qq):
-                return BAN_REPLY
+                return self._ban_reply(group_id, qq)
             return self._register_lottery_claim(qq, group_id, lottery)
         # @提及统一替换为对方用户ID：所有「用户ID/QQ号」参数位
         # （赠送/转让/PK/拜访/加金币/任命小管理等）都支持直接 @ 对方。
@@ -3309,7 +3380,7 @@ class PetParkPlugin(Star):
         # 免得「先被封、后晋升」的人被自己的封号记录锁在门外。
         # `and` 短路：_is_admin_id 要查绑定表，只在真被封时才付这个开销。
         if self._is_banned(group_id, qq) and not self._is_admin_id(qq):
-            return BAN_REPLY
+            return self._ban_reply(group_id, qq)
 
         # ---- 点歌（QQ官方语音）：搜索 / 翻页 / 按序号选歌（后台异步处理）----
         if cmd in ("点歌", "下一页", "上一页", "选歌"):
@@ -3355,8 +3426,8 @@ class PetParkPlugin(Star):
         if cmd == "我的管理额度":
             return self._my_admin_quota(event, qq, group_id)
 
-        # ---- 大管理员：封号 / 解封 / 查看封号状态（按群生效）----
-        if cmd in ("封号", "解封", "封号状态", "封号列表"):
+        # ---- 大管理员：封号（可限天数）/ 永久封号 / 解封 / 查看封号状态（按群生效）----
+        if cmd in ("封号", "永久封号", "解封", "封号状态", "封号列表"):
             return self._ban_user(event, group_id, cmd, tokens)
 
         # ---- 群授权（状态查询 / 卡密授权 / 大管理员直授）----
@@ -6882,15 +6953,17 @@ class PetParkPlugin(Star):
 
     # --------------------------- 封号 ---------------------------
     def _ban_status(self, group_id: str, tokens: list[str]) -> str:
-        """查看封号状态：带用户ID 看单人，不带则列出本群全部封号。"""
+        """查看封号状态：带用户ID 看单人（含剩余时间），不带则列出本群全部封号。"""
         banned = self._banned_in_group(group_id)
         if len(tokens) >= 2 and tokens[1].strip():
             raw = tokens[1].strip()
             target = self._resolve_user_token(raw)
-            if str(target) in banned:
+            exp = banned.get(str(target))
+            if exp is not None:
                 return (
                     f"## 🚫 封号状态\n"
                     f"用户 `{self._display_uid(target)}` **在本群已被封号**。\n\n"
+                    f"> 剩余：{self._ban_left_text(exp)}\n"
                     f"> 解封：`解封 {raw}`"
                 )
             return (
@@ -6902,21 +6975,24 @@ class PetParkPlugin(Star):
         lines = [
             f"## 🚫 本群封号名单（{len(banned)} 人）",
             "",
-            "| # | 用户 |",
-            "|---|---|",
+            "| # | 用户 | 剩余 |",
+            "|---|---|---|",
         ]
-        for i, pid in enumerate(banned, 1):
-            lines.append(f"| {i} | `{self._display_uid(pid)}` |")
+        for i, (pid, exp) in enumerate(banned.items(), 1):
+            lines.append(
+                f"| {i} | `{self._display_uid(pid)}` | {self._ban_left_text(exp)} |"
+            )
         lines += [
             "",
             "> 解封：`解封 用户ID`",
-            "> 封号只作用于本群，其它群照常游玩",
+            "> 封号只作用于本群；到期的会自动失效，无需手动清理",
         ]
         return "\n".join(lines)
 
     def _ban_user(self, event, group_id: str, cmd: str, tokens: list[str]) -> str:
-        """大管理员：本群封号 / 解封 / 查看封号状态。
+        """大管理员：本群封号（可限天数）/ 解封 / 查看封号状态。
 
+        - `封号 用户ID [天数]`：天数省略即永久；`永久封号 用户ID` 是等价的显式写法；
         - 只作用于本群：被封的人换个群照常游玩；
         - 大管理员不可被封（要停权请从后台 admins 配置移除），避免管理员之间互相锁死；
         - 被封用户的一切游戏指令不可用，且别人也无法向其转让/赠送（含宠物、坐骑）。
@@ -6925,33 +7001,57 @@ class PetParkPlugin(Star):
             return "❌ 仅大管理员可封号/解封。"
         if cmd in ("封号状态", "封号列表"):
             return self._ban_status(group_id, tokens)
-        if len(tokens) < 2 or not tokens[1].strip():
-            return f"用法：{cmd} 用户ID/@对方"
+        if cmd == "解封":
+            if len(tokens) < 2 or not tokens[1].strip():
+                return "用法：解封 用户ID/@对方"
+            raw = tokens[1].strip()
+            target = self._resolve_user_token(raw)
+            if not self._unban(group_id, target):
+                return f"用户 `{self._display_uid(target)}` 在本群未被封号。"
+            return (
+                f"## ✅ 已解封\n"
+                f"已解除 `{self._display_uid(target)}` 在本群的封号。\n\n"
+                f"> 对方现在可以正常使用灵契仙途了"
+            )
+        # ---- 封号 / 永久封号：解析天数 ----
+        if cmd == "永久封号":
+            if len(tokens) < 2 or not tokens[1].strip():
+                return "用法：永久封号 用户ID/@对方"
+            if len(tokens) >= 3 and tokens[2].strip():
+                return "用法：永久封号 用户ID/@对方（永久封号不接受天数，限期请用「封号 用户ID 天数」）"
+            days = 0
+        else:
+            if len(tokens) < 2 or not tokens[1].strip():
+                return "用法：封号 用户ID/@对方 [天数]（不填天数即永久）"
+            days = 0
+            if len(tokens) >= 3 and tokens[2].strip():
+                # 天数必须显式写清：写错（0、负数、乱码）宁可报错，也不要静默当成永久
+                tok = tokens[2].strip().lstrip("+")
+                if not tok.isdigit() or int(tok) <= 0:
+                    return "用法：封号 用户ID/@对方 [天数]（天数须为正整数，不填即永久）"
+                days = int(tok)
         raw = tokens[1].strip()
         target = self._resolve_user_token(raw)
-        if cmd == "封号":
-            # 刻意不要求对方「已在本群参与过」：要封的多半正是刷完就跑、或还没落档
-            # 就来捣乱的人，先要求他注册才肯封，等于留了个绕过的口子。
-            if self._is_admin_id(target):
-                return (
-                    "❌ 大管理员不受封号影响。\n\n"
-                    "如需停权，请从后台 admins 配置移除。"
-                )
-            if not self._ban(group_id, target):
-                return f"用户 `{self._display_uid(target)}` 在本群已经是封号状态。"
+        # 刻意不要求对方「已在本群参与过」：要封的多半正是刷完就跑、或还没落档
+        # 就来捣乱的人，先要求他注册才肯封，等于留了个绕过的口子。
+        if self._is_admin_id(target):
             return (
-                f"## 🚫 已封号\n"
-                f"已在本群封禁 `{self._display_uid(target)}`\n\n"
-                f"> 对方在本群的灵契仙途指令全部不可用\n"
-                f"> 别人也无法向其转让/赠送物品、货币、宠物、坐骑\n"
-                f"> 仅本群生效，其它群照常游玩；解封：`解封 {raw}`"
+                "❌ 大管理员不受封号影响。\n\n"
+                "如需停权，请从后台 admins 配置移除。"
             )
-        if not self._unban(group_id, target):
-            return f"用户 `{self._display_uid(target)}` 在本群未被封号。"
+        changed, exp = self._ban(group_id, target, days)
+        if not changed:
+            return (
+                f"用户 `{self._display_uid(target)}` 已是**永久封号**，"
+                f"有限天数不会把它降格。\n\n"
+                f"> 如确需改成限期，请先 `解封 {raw}` 再重新封"
+            )
         return (
-            f"## ✅ 已解封\n"
-            f"已解除 `{self._display_uid(target)}` 在本群的封号。\n\n"
-            f"> 对方现在可以正常使用灵契仙途了"
+            f"## 🚫 已封号（{self._ban_left_text(exp)}）\n"
+            f"已在本群封禁 `{self._display_uid(target)}`\n\n"
+            f"> 对方在本群的灵契仙途指令全部不可用\n"
+            f"> 别人也无法向其转让/赠送物品、货币、宠物、坐骑\n"
+            f"> 仅本群生效，其它群照常游玩；解封：`解封 {raw}`"
         )
 
     def _my_admin_quota(self, event, qq: str, group_id: str) -> str:
@@ -8383,8 +8483,10 @@ class PetParkPlugin(Star):
                 "- 我的管理额度（小管理员查看今日额度）",
                 "",
                 "**【封号】**（仅大管理员，仅本群）",
-                "- 封号 用户ID · 解封 用户ID",
-                "- 封号状态 [用户ID]（不带ID则列出本群全部封号）",
+                "- 封号 用户ID [天数]（不填天数即永久）",
+                "- 永久封号 用户ID · 解封 用户ID",
+                "- 封号状态 [用户ID]（不带ID则列出本群全部封号与剩余时间）",
+                "> 限期封号到期自动失效；重复封号按新天数重新计时，有限天数不会把永久封号降格",
                 "> 被封用户在本群的灵契仙途指令全部不可用，别人也无法向其转让/赠送；仅本群生效、不影响其它群；大管理员不可被封",
                 "",
                 "**【群授权】**",
