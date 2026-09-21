@@ -992,8 +992,13 @@ class PetParkPlugin(Star):
                 row = []
         row.append(("确定", f"助手确定{tail}"))
         rows.append(row)
-        # 回调按钮：点击不在群里冒消息（需框架支持互动事件）
-        return self._build_qq_keyboard(rows, action_type=1)
+        # 回调按钮：点击不在群里冒消息（需框架支持互动事件）。
+        # 面板只属于 owner 一人：用官方 type=0 指定用户，非本人点官方直接拦，不推事件。
+        return self._build_qq_keyboard(
+            rows,
+            action_type=1,
+            permission_user_ids=[owner] if owner else None,
+        )
 
     def _assistant_action_keyboard(self, pet: dict, owner: str = "") -> dict:
         """结果类回复（「已生效」/「助手状态」）下方的单个入口按钮。
@@ -1006,8 +1011,11 @@ class PetParkPlugin(Star):
         tasks = [t for t in self._assistant_state(pet).get("tasks", [])
                  if t in data.ASSISTANT_TASK_BY_KEY]
         tail = f" #{owner}" if owner else ""
-        return self._build_qq_keyboard([[("修改" if tasks else "选择", f"自动助手{tail}")]],
-                                       action_type=1)
+        return self._build_qq_keyboard(
+            [[("修改" if tasks else "选择", f"自动助手{tail}")]],
+            action_type=1,
+            permission_user_ids=[owner] if owner else None,
+        )
 
     def _assistant_panel_text(self, player: dict, pet: dict, picked: list[str]) -> str:
         a = self._assistant_state(pet)
@@ -1675,7 +1683,11 @@ class PetParkPlugin(Star):
         logger.info("[petpark] 已打补丁：QQ 官方消息支持 Markdown 与消息按钮")
 
     @staticmethod
-    def _build_qq_keyboard(rows: list[list[tuple]], action_type: int = 2) -> dict:
+    def _build_qq_keyboard(
+        rows: list[list[tuple]],
+        action_type: int = 2,
+        permission_user_ids: list[str] | None = None,
+    ) -> dict:
         """构造 QQ 官方机器人的 InlineKeyboard 数据字典。
 
         rows: 每一行是 (显示文字, 点击后发送的文本) 元组列表。
@@ -1687,6 +1699,11 @@ class PetParkPlugin(Star):
           并有 ``on_interaction_create``），群里不会冒出玩家消息。官方 schema 里
           ``enter`` / ``reply`` / ``anchor`` 是「指令按钮可用」，回调按钮必须不带，
           否则整条消息可能被判非法。
+
+        permission_user_ids：传入时把每个按钮的 ``permission`` 设为 type=0（指定用户
+        可操作），``specify_user_ids`` 填这些 openid——非指定用户由官方客户端在源头
+        挡住，事件不会推给机器人（无需服务端再弹「无权」提醒）。传 ``None`` 则维持
+        type=2（所有人可操作），供不需要按人限权的普通面板使用。
         """
         is_callback = int(action_type) == 1
         out_rows: list[dict] = []
@@ -1695,13 +1712,21 @@ class PetParkPlugin(Star):
             for c, item in enumerate(row):
                 label, data = item[:2]
                 enter = item[2] if len(item) > 2 else True
-                action = {
-                    "type": 1 if is_callback else 2,
-                    "permission": {
+                if permission_user_ids is not None:
+                    permission = {
+                        "type": 0,
+                        "specify_role_ids": [],
+                        "specify_user_ids": list(permission_user_ids),
+                    }
+                else:
+                    permission = {
                         "type": 2,
                         "specify_role_ids": [],
                         "specify_user_ids": [],
-                    },
+                    }
+                action = {
+                    "type": 1 if is_callback else 2,
+                    "permission": permission,
                     "click_limit": 100,
                     "data": data,
                     "at_bot_show_channel_list": False,
@@ -4638,13 +4663,13 @@ class PetParkPlugin(Star):
 
         # ---- 自动助手（旧名「自动修炼」为隐藏别名）----
         if cmd in self._ASSISTANT_CMDS:
-            # 面板按钮是**群里任何人都能点**的回调按钮，所以载荷尾带着「面板主人」；
-            # 不是本人点的一律拒绝，否则别人一点就会弹出他自己的面板
-            # （看着像在操作别人的助手）。手打指令没有该标记，owner 为空串，放行。
+            # 面板按钮已用官方 type=0 指定用户（specify_user_ids=[owner]），非本人点
+            # 官方客户端在源头就拦了，事件不会推到这里。这里只是兜底：万一某个客户端
+            # 没拦（老版本/官方未生效）照推了事件，比对 owner 后静默丢弃，绝不弹提醒。
+            # 手打指令没有 `#` 标记，owner 为空串，放行。
             owner = self._assistant_owner_of(tokens)
             if owner and owner != str(qq):
-                return ("⚠️ 这不是你的助手面板。\n\n"
-                        "> 发送『自动助手』打开你自己的勾选面板。")
+                return None
         if cmd in ("自动助手", "自动修炼"):
             return self._assistant_open(player, group_id)
         if cmd in ("助手选",):
