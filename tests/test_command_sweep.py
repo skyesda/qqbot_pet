@@ -182,7 +182,7 @@ class CommandSweepTests(unittest.TestCase):
         rows = kb['rows']
         self.assertEqual(len(rows), 5, '面板应正好 5 行（QQ 按钮上限）')
         btns = self._btns(kb)
-        self.assertEqual(len(btns), len(data.ASSISTANT_TASKS) + 1, '19 个任务 + 确定生效')
+        self.assertEqual(len(btns), len(data.ASSISTANT_TASKS) + 1, '19 个任务 + 确定')
         for b in btns:
             action = b['action']
             self.assertEqual(action['type'], 1, f"{b['id']} 应为回调按钮")
@@ -191,24 +191,38 @@ class CommandSweepTests(unittest.TestCase):
             self.assertNotIn('enter', action, f"{b['id']} 回调按钮不得带 enter")
             self.assertIn('unsupport_tips', action, f"{b['id']} 回调按钮应带 unsupport_tips")
             self.assertTrue(action['data'].startswith('助手'), f"{b['id']} 载荷应是助手指令")
-        # 未勾选时全部为 ⬜；确定按钮固定存在
+        # 全部是光标签：不加 ✅/⬜ 前缀（前缀会把标签撑过 6 字节上限而被截断）
         labels = [b['render_data']['label'] for b in btns]
-        self.assertEqual(sum(1 for l in labels if l.startswith('⬜')), len(data.ASSISTANT_TASKS))
-        self.assertIn('✅ 确定生效', labels)
+        self.assertEqual(labels, [t[1] for t in data.ASSISTANT_TASKS] + ['确定'])
         self.assertIn('助手确定', [b['action']['data'] for b in btns])
 
-    def test_assistant_panel_labels_toggle_with_pending_selection(self):
-        """点击后重绘的面板要把已勾选项标成 ✅（待选态在内存，确定前不落盘）。"""
+    def test_assistant_button_labels_fit_qq_cap(self):
+        """回归：QQ 对按钮 label 卡约 6 字节，超出会被截成「首字 + ...」。
+
+        真机实测（4 个/行）：`神仙劫`→`神...`、`家园收取`→`家...`，而 2 个汉字的
+        `砸蛋`/`打工`/`学习` 完整显示；按钮右侧大片留白说明卡的是**字节数**而不是
+        宽度，所以减少每行按钮数救不了，只能压短标签。`确定生效`（12 字节）同理
+        必须压成 `确定`。
+        """
+        for _key, label, _desc, _axis in data.ASSISTANT_TASKS:
+            size = len(label.encode('utf-8'))
+            self.assertLessEqual(size, 6, f'按钮标签「{label}」{size} 字节 > 6，会被截断')
+        self.assertLessEqual(len('确定'.encode('utf-8')), 6)
+
+    def test_assistant_selection_shows_in_text_not_labels(self):
+        """勾选态只能走面板正文：标签放不下前缀（待选态在内存，确定前不落盘）。"""
         pet = self.store.get_player('root', 'g')['pet']
         self.plugin._assistant_pending[self.plugin._assistant_pending_key('g', 'root', pet)] = {
             'picked': ['砸蛋', '打工'], 'ts': int(time.time())}
         kb = self.plugin._keyboard_for_cmd('助手选 1', '', 'g', 'root')
-        # 「✅ 确定生效」固定带 ✅，只数任务按钮
-        marked = [b['render_data']['label'] for b in self._btns(kb)
-                  if b['action']['data'] != '助手确定' and b['render_data']['label'].startswith('✅')]
-        self.assertEqual(marked, ['✅砸蛋', '✅打工'], f'应勾中砸蛋/打工，实得 {marked}')
+        labels = [b['render_data']['label'] for b in self._btns(kb)]
+        self.assertEqual(labels, [t[1] for t in data.ASSISTANT_TASKS] + ['确定'],
+                         '勾选与否都不得改动按钮标签')
+        text = self.plugin._assistant_panel_text(
+            self.store.get_player('root', 'g'), pet, ['砸蛋', '打工'])
+        self.assertIn('已选 2/4：砸蛋、打工', text, '勾选态必须出现在面板正文里')
         self.assertEqual(self.plugin._assistant_state(pet)['tasks'], [],
-                         '「确定生效」之前不得写进宠物存档')
+                         '「确定」之前不得写进宠物存档')
 
     def test_assistant_panel_needs_pet(self):
         """无宠物时面板不出现（助手是按宠物配置的，没有宠物无处挂载）。"""

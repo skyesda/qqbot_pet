@@ -707,7 +707,7 @@ class PetParkPlugin(Star):
         # 点歌会话：{group_id: {"keyword", "songs", "page", "ts"}}（15 分钟过期）
         self._song_sessions: dict[str, dict] = {}
         # 自动助手勾选态：{群\x1f用户\x1f宠物ID: {"picked", "ts"}}（内存，10 分钟过期）。
-        # 只有点「✅ 确定生效」才写进 pet["assistant"]["tasks"]，中途放弃不留痕。
+        # 只有点面板上的「确定」才写进 pet["assistant"]["tasks"]，中途放弃不留痕。
         self._assistant_pending: dict[str, dict] = {}
         # silk 临时目录：webadmin 从这里对外提供 QQ 可拉取的 silk 文件
         self.song_silk_dir = data_dir / "song_silk"
@@ -972,18 +972,22 @@ class PetParkPlugin(Star):
     # ------------------------------------------------------------------
     # 勾选面板
     # ------------------------------------------------------------------
-    def _assistant_keyboard(self, picked: list[str]) -> dict:
-        """助手勾选面板：19 个任务 + 「确定生效」，每行 4 个（QQ 按钮上限 5 行）。"""
-        picked_set = set(picked)
+    def _assistant_keyboard(self) -> dict:
+        """助手勾选面板：19 个任务 + 「确定」，每行 4 个（QQ 按钮上限 5 行）。
+
+        按钮标签一律是**光标签**，不带 ✅/⬜ 前缀：QQ 对按钮 label 卡约 6 字节，
+        `⬜砸蛋` 是 9 字节会被截成「⬜...」，反而连任务名都看不见了。勾选态由
+        面板正文的「已选 N/4：…」一行呈现（那里没有长度限制，且用的是完整 key 名）。
+        「确定生效」也因此只能压成「确定」（4 个汉字 = 12 字节同样超限）。
+        """
         rows: list[list[tuple]] = []
         row: list[tuple] = []
-        for i, (key, label, _desc, _axis) in enumerate(data.ASSISTANT_TASKS, start=1):
-            mark = "✅" if key in picked_set else "⬜"
-            row.append((f"{mark}{label}", f"助手选 {i}"))
+        for i, (_key, label, _desc, _axis) in enumerate(data.ASSISTANT_TASKS, start=1):
+            row.append((label, f"助手选 {i}"))
             if len(row) == 4:
                 rows.append(row)
                 row = []
-        row.append(("✅ 确定生效", "助手确定"))
+        row.append(("确定", "助手确定"))
         rows.append(row)
         # 回调按钮：点击不在群里冒消息（需框架支持互动事件）
         return self._build_qq_keyboard(rows, action_type=1)
@@ -998,8 +1002,10 @@ class PetParkPlugin(Star):
             f"🐾 **宠物**　{pet['nickname']}\n"
             f"🎫 **剩余次数**　{quota}\n"
             f"⚙️ **状态**　{'🟢 运行中' if a.get('enabled') else '🔴 已停止'}\n\n"
-            f"点下方按钮勾选要代跑的任务（最多 **{data.ASSISTANT_MAX_TASKS}** 个），选好后点「✅ 确定生效」。\n"
-            f"已选 {len(picked)}/{data.ASSISTANT_MAX_TASKS}：{picked_txt}\n\n"
+            f"**已选 {len(picked)}/{data.ASSISTANT_MAX_TASKS}：{picked_txt}**\n\n"
+            f"点下方按钮勾选要代跑的任务（最多 **{data.ASSISTANT_MAX_TASKS}** 个），再点一次取消；"
+            f"选好后点「确定」。\n"
+            f"按钮上写的是简称（QQ 对按钮文字有长度上限），完整任务名以上面「已选」与『助手状态』为准。\n\n"
             f"> 每成功执行 1 个任务扣 1 次额度（玩家级，本群所有宠物共用）。\n"
             f"> 额度为 0 或发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
         )
@@ -1089,7 +1095,7 @@ class PetParkPlugin(Star):
                 return (
                     "还没有选择代跑任务。\n\n"
                     "> 发送『自动助手』打开面板，点选最多 "
-                    f"{data.ASSISTANT_MAX_TASKS} 个任务后点「✅ 确定生效」。"
+                    f"{data.ASSISTANT_MAX_TASKS} 个任务后点「确定」。"
                 )
             if self.store.assistant_quota(player) <= 0:
                 return (
@@ -1702,18 +1708,13 @@ class PetParkPlugin(Star):
         tokens = text.split()
         cmd = tokens[0] if tokens else text
         if cmd in self._ASSISTANT_CMDS:
-            # 助手勾选面板：每次点击都重绘一条新面板（QQ 无消息编辑能力），
-            # ✅/⬜ 由待选态决定。没有 group_id/qq 时（如测试直调）退回已保存的配置。
+            # 助手勾选面板：每次点击都重绘一条新面板（QQ 无消息编辑能力）。
+            # 按钮不带勾选标记（6 字节上限放不下前缀），勾选态在面板正文里，
+            # 见 _assistant_keyboard 的说明。没有宠物就没有面板可挂。
             player = self.store.get_player(qq, group_id, create=False) if (group_id and qq) else None
-            pet = (player or {}).get("pet")
-            if not pet:
+            if not (player or {}).get("pet"):
                 return None
-            picked = (
-                self._assistant_picked(group_id, qq, pet)
-                if player else
-                [t for t in self._assistant_state(pet).get("tasks", []) if t in data.ASSISTANT_TASK_BY_KEY]
-            )
-            return self._assistant_keyboard(picked)
+            return self._assistant_keyboard()
         if cmd in BOARD_COMMANDS:
             context = text + "\n" + reply
             board_kind = "斗兽棋" if "斗兽棋" in context else "围棋" if "围棋" in context else "军棋" if "军棋" in context else "象棋" if "象棋" in context else "五子棋"
