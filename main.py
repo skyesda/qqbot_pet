@@ -5545,6 +5545,8 @@ class PetParkPlugin(Star):
         fmt = self._format_event_rewards(reward_texts)
         if fmt:
             lines.append(fmt)
+        if energy:
+            lines.append(self._energy_note(p, energy))
         return "\n".join(lines)
 
     def _event_gacha_list(self, cfg: dict) -> str:
@@ -5627,7 +5629,7 @@ class PetParkPlugin(Star):
         p["energy"] -= energy
         self.store.set_cooldown(player, cd_key, d.get("cooldown", 600))
         self.store.inc_event_daily(player, eid, action_key)
-        return self._event_dungeon_battle(player, eid, cfg, p, name, d)
+        return self._event_dungeon_battle(player, eid, cfg, p, name, d) + self._energy_note(p, energy)
 
     def _event_dungeon_battle(
         self, player: dict, eid: str, cfg: dict, p: dict, name: str, d: dict
@@ -6156,7 +6158,7 @@ class PetParkPlugin(Star):
         p["energy"] -= energy
         self.store.set_cooldown(player, cd_key, boss.get("cooldown", 600))
         self.store.inc_event_daily(player, eid, cmd)
-        return self._event_boss_battle(player, group_id, eid, cfg, p, state)
+        return self._event_boss_battle(player, group_id, eid, cfg, p, state) + self._energy_note(p, energy)
 
     def _event_boss_battle(
         self, player: dict, group_id: str, eid: str, cfg: dict, p: dict, state: dict
@@ -11242,6 +11244,7 @@ class PetParkPlugin(Star):
         if cd:
             return cd
         p["energy"] -= conf["energy"]
+        note = self._energy_note(p, conf["energy"])
         self.store.set_cooldown(
             player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
         )
@@ -11259,7 +11262,7 @@ class PetParkPlugin(Star):
                         data.FAVOR_MAX, tp["pet"]["favor"] + gain
                     )
                     extra = f"\n💕 道侣 `{self._display_uid(p['love_target'])}` 的灵宠好感度也 +{gain}。"
-            return f"💕 你与道侣赴约，灵宠好感度 +{gain}，当前 {p['favor']}。" + extra
+            return f"💕 你与道侣赴约，灵宠好感度 +{gain}，当前 {p['favor']}。" + extra + note
         if action in ("修炼", "双修"):
             base = random.randint(50, 120) + p["level"] * 15
             exp = base * (2 if action == "双修" else 1)
@@ -11270,21 +11273,22 @@ class PetParkPlugin(Star):
             return (
                 f"🧘 {verb}，经验 +{exp}，当前经验 {p['exp']}。"
                 + self._auto_level_note(player, p)
+                + note
             )
         if action == "打工":
             gain = random.randint(200, 600) + p["level"] * 5
             self.store.add_currency(player, "玄晶", gain)
-            return f"💰 打工辛苦了，玄晶 +{gain}，当前 {player['jifen']}。"
+            return f"💰 打工辛苦了，玄晶 +{gain}，当前 {player['jifen']}。" + note
         if action == "闭关":
             p["hp"] = p["hp_max"]
-            return "🛡 闭关完成，血量已回满。"
+            return "🛡 闭关完成，血量已回满。" + note
         if action == "学习":
             gain = random.randint(3, 10)
             p["intel"] += gain
-            return f"📖 学习完成，智力 +{gain}，当前 {p['intel']}。"
+            return f"📖 学习完成，智力 +{gain}，当前 {p['intel']}。" + note
         if action == "玩耍":
             p["mood"] = 5
-            return "🎈 玩耍开心，心情恢复到 ★★★★★。"
+            return "🎈 玩耍开心，心情恢复到 ★★★★★。" + note
         if action == "洗髓":
             if p["intel"] <= 20:
                 return "智力过低，无法洗髓。"
@@ -11292,11 +11296,11 @@ class PetParkPlugin(Star):
             p["intel"] -= conv
             if random.random() < 0.5:
                 p["atk"] += conv * 2
-                return f"🌀 洗髓：智力 -{conv}，攻击 +{conv * 2}。"
+                return f"🌀 洗髓：智力 -{conv}，攻击 +{conv * 2}。" + note
             p["def"] += conv * 2
-            return f"🌀 洗髓：智力 -{conv}，防御 +{conv * 2}。"
+            return f"🌀 洗髓：智力 -{conv}，防御 +{conv * 2}。" + note
         if action == "探险":
-            return self._explore(player, p)
+            return self._explore(player, p) + note
         if action == "冥想":
             attr = random.choice(["atk", "def", "intel", "hp_max"])
             gain = random.randint(50, 200)
@@ -11307,7 +11311,7 @@ class PetParkPlugin(Star):
                 "intel": "智力",
                 "hp_max": "生命上限",
             }[attr]
-            return f"🧠 冥想：永久{label} +{gain}。"
+            return f"🧠 冥想：永久{label} +{gain}。" + note
         return "完成。"
 
     def _explore(self, player: dict, p: dict) -> str:
@@ -12216,7 +12220,7 @@ class PetParkPlugin(Star):
         self.store.set_cooldown(
             player, "对战", random.randint(*data.BATTLE_COOLDOWN_RANGE)
         )
-        return self._battle(p, tpet, player, tp)
+        return self._battle(p, tpet, player, tp) + self._energy_note(p, self.attack_energy)
 
     def _cross_attack(self, player: dict, group: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -12266,7 +12270,7 @@ class PetParkPlugin(Star):
         self.store.set_cooldown(
             player, "对战", random.randint(*data.BATTLE_COOLDOWN_RANGE)
         )
-        return self._battle(p, target_player["pet"], player, target_player)
+        return self._battle(p, target_player["pet"], player, target_player) + self._energy_note(p, self.attack_energy)
 
     @staticmethod
     def _fmt_power(bp: int) -> str:
@@ -12411,6 +12415,18 @@ class PetParkPlugin(Star):
             parts.append(self._add_ore(player, ore, src).strip("\n"))
         return ("\n" + "\n".join(parts)) if parts else ""
 
+    def _energy_note(self, p: dict, spent: int) -> str:
+        """精力消耗提示尾巴：`🔋 精力 -X（剩 Y/Z）`。spent<=0 返回空串。
+
+        所有扣精力的指令回执末尾统一挂这一行，让玩家看到本次扣了多少、还剩多少。
+        用 ``\\n\\n`` 分段，规避 QQ Markdown 吞单换行（既有约定）。
+        """
+        if not spent:
+            return ""
+        en = int(p.get("energy", 0) or 0)
+        en_m = int(p.get("energy_max", 1) or 1)
+        return f"\n\n🔋 精力 -{spent}（剩 {en}/{en_m}）"
+
     def _auto_level_note(self, player: dict, p: dict) -> str:
         """经验满则自动一键升级，返回提示文本（无升级则空串）。"""
         if not petmod.exp_enough_to_level(p):
@@ -12469,7 +12485,7 @@ class PetParkPlugin(Star):
             return f"精力不足（需 {d['energy']}）。"
         p["energy"] -= d["energy"]
         self.store.set_cooldown(player, "副本", data.DUNGEON_COOLDOWN)
-        return self._dungeon_battle(player, p, name, d)
+        return self._dungeon_battle(player, p, name, d) + self._energy_note(p, d["energy"])
 
     def _dungeon_battle(self, player: dict, p: dict, name: str, d: dict) -> str:
         monster = d["monster"]
@@ -12591,7 +12607,7 @@ class PetParkPlugin(Star):
             return f"精力不足（需 {d['energy']}，当前 {p['energy']}）。"
         p["energy"] -= d["energy"]
         self.store.set_cooldown(player, "ascend_dungeon", data.ASCEND_DUNGEON_COOLDOWN)
-        return self._ascend_dungeon_battle(player, p, level, d)
+        return self._ascend_dungeon_battle(player, p, level, d) + self._energy_note(p, d["energy"])
 
     def _ascend_dungeon_battle(self, player: dict, p: dict, level: int, d: dict) -> str:
         monster = d["name"]
@@ -12915,7 +12931,7 @@ class PetParkPlugin(Star):
         if blessing:
             self.store.clear_abyss_blessing(player)
 
-        return "\n".join(lines) + self._auto_level_note(player, p)
+        return "\n".join(lines) + self._energy_note(p, energy_cost) + self._auto_level_note(player, p)
 
     def _abyss_intro(self) -> str:
         """返回深渊秘境的简洁玩法介绍。"""
@@ -13691,8 +13707,8 @@ class PetParkPlugin(Star):
                 return f"队友：{err}", None
             self._tomb_consume_entry(tp, tp_st, tp_pet, difficulty, cfg)
 
-        # 消耗主玩家资源
-        self._tomb_consume_entry(player, st, p, difficulty, cfg)
+        # 消耗主玩家资源（捕获精力提示，稍后追加到入场文案）
+        entry_energy_note = self._tomb_consume_entry(player, st, p, difficulty, cfg)
 
         # 生成地图（双排缩放）
         cells = self._tomb_generate_map(difficulty, coop=is_coop)
@@ -13822,6 +13838,7 @@ class PetParkPlugin(Star):
             f"图例：红菱=出口　金箱=宝箱　白骷髅=怪物　紫刺=陷阱　蓝珠=祭坛　黄圆=金币　绿雾=毒雾　紫环=传送　青滴=生命泉　红骷髅=BOSS\n"
             f"操作：上/下/左/右　摸看　摸态\n"
             f"> 你当前在 ({ex},{ey})，剩余时间 {cfg['time'] // 60}:00"
+            + entry_energy_note
         )
         # 命运卡牌选择
         choices = self._tomb_draw_cards()
@@ -13925,12 +13942,13 @@ class PetParkPlugin(Star):
             return f"精力不足（需 {cfg['energy']}，当前 {p['energy']}）。"
         return None
 
-    def _tomb_consume_entry(self, player: dict, st: dict, p: dict, difficulty: int, cfg: dict) -> None:
-        """消耗入场资源（令牌、精力），不重复校验。"""
+    def _tomb_consume_entry(self, player: dict, st: dict, p: dict, difficulty: int, cfg: dict) -> str:
+        """消耗入场资源（令牌、精力），不重复校验。返回精力消耗提示（主玩家入场展示用）。"""
         tokens_needed = cfg.get("entry_tokens", 0)
         if tokens_needed > 0:
             self.store.consume_tomb_token(player, tokens_needed)
         p["energy"] -= cfg["energy"]
+        return self._energy_note(p, cfg["energy"])
 
     def _tomb_coop_pass_checks(self, player: dict, qq: str, group_id: str) -> bool:
         """快速检查队友是否满足基本条件（不消耗资源），用于双排入场前验证。"""
@@ -16597,6 +16615,8 @@ class PetParkPlugin(Star):
         total_coin = 0
         total_jifen = 0
         total_exp = 0
+        energy_spent = 0
+        energy_pet = None
         lines = ["## 📦 家园收取", ""]
         for name, b in buildings.items():
             cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
@@ -16625,6 +16645,8 @@ class PetParkPlugin(Star):
                     pets = player.get("pets", [])
                     if 0 <= pet_idx < len(pets):
                         pets[pet_idx]["energy"] = max(0, pets[pet_idx].get("energy", 100) - energy_cost)
+                        energy_spent += energy_cost
+                        energy_pet = pets[pet_idx]
             h, m = divmod(int(elapsed // 60), 60)
             time_str = f"{h}时{m}分" if h > 0 else f"{m}分钟"
             parts = []
@@ -16731,6 +16753,8 @@ class PetParkPlugin(Star):
         lines.append(f"✅ 收取完成！{' · '.join(summary)}")
         if levelup:
             lines.append(levelup)
+        if energy_spent and energy_pet:
+            lines.append(self._energy_note(energy_pet, energy_spent))
         self.store.set_cooldown(player, "homestead:collect", 300)
         return "\n".join(lines)
 
