@@ -303,20 +303,58 @@ class CommandSweepTests(unittest.TestCase):
                 self.assertIn('enter', action, f'{cmd} 的 {b["id"]} 指令按钮应保留 enter')
                 self.assertNotIn('unsupport_tips', action, f'{cmd} 的 {b["id"]} 不该带回调按钮字段')
 
-    def test_assistant_brief_takes_first_meaningful_line(self):
-        """执行日志摘要要取第一条有实义的文字，跳过标题井号与纯分隔线。
+    def test_assistant_log_keeps_full_text(self):
+        """执行日志必须存**完整**结果，不再压成一行 60 字摘要。
 
-        回归：判定原写成 `set(line) > set('━─-—= ')`，要求整行**同时包含**每一种
-        分隔符才认可，实际永不成立 → 每条日志都退化成「✅ 砸蛋：已执行」，
-        玩家在『助手状态』里看不到任何执行内容。
+        回归：原先每轮只存 `✅ 任务名：<首行前 60 字>`，而实战报是 5~16 行、最长
+        281 字（外出历练 11 行、深渊秘境 16 行），被砍到 60 字后玩家在『助手状态』
+        里根本看不出这轮发生了什么。摘要函数（_assistant_brief）已随之删除。
         """
-        brief = self.plugin._assistant_brief
-        self.assertEqual(brief('## 🧘 打工归来\n━━━━━\n玄晶 +1200'), '🧘 打工归来')
-        self.assertEqual(brief('━━━━━\n获得灵材、修为\n更多'), '获得灵材、修为')
-        self.assertEqual(brief('**砸蛋** 得到神级碎片'), '砸蛋 得到神级碎片')
-        self.assertEqual(brief(''), '已执行')
-        self.assertEqual(brief('━━━━━\n─────\n'), '已执行')
-        self.assertEqual(brief('x' * 120), 'x' * 60, '超长摘要应截断到 60 字')
+        pet = self.store.get_player('root', 'g')['pet']
+        body = '## ⚔ 狐狸 VS 陨落星神\n' + '━' * 14 + '\n' + '\n'.join(
+            f'第 {i} 回合：造成伤害 {i * 37}' for i in range(1, 17))
+        self.plugin._assistant_log(pet, '进入副本', body)
+        entry = self.plugin._assistant_state(pet)['log'][-1]
+        self.assertTrue(entry.endswith(body), '日志必须原样保留完整结果（含分隔线与全部行）')
+        self.assertEqual(len(entry.split('\n')), body.count('\n') + 2,
+                         '首行时间/任务名 + 完整正文')
+        self.assertNotIn('...', entry)
+
+        # 空结果也要留一条，且不能存成空串
+        self.plugin._assistant_log(pet, '秋冬Boss', '')
+        self.assertTrue(self.plugin._assistant_state(pet)['log'][-1].endswith('已执行'))
+
+        # 环形上限：超出后只留最近 ASSISTANT_LOG_MAX 条
+        for i in range(data.ASSISTANT_LOG_MAX + 5):
+            self.plugin._assistant_log(pet, '打工', f'第 {i} 轮')
+        log = self.plugin._assistant_state(pet)['log']
+        self.assertEqual(len(log), data.ASSISTANT_LOG_MAX)
+        self.assertTrue(log[-1].endswith(f'第 {data.ASSISTANT_LOG_MAX + 4} 轮'))
+
+    def test_assistant_status_shows_full_log_and_cooldown(self):
+        """『助手状态』要铺开完整日志正文，并把冷却写成具体剩余时间。"""
+        player = self.store.get_player('root', 'g')
+        pet = player['pet']
+        self.plugin._assistant_state(pet)['tasks'] = ['打工', '砸蛋']
+        self.plugin._assistant_log(pet, '打工', '💰 打工辛苦了，玄晶 +1491\n当前 101920')
+        # 给两个任务各压一段冷却（冷却按宠物存）
+        player['pet'] = pet
+        self.store.set_cooldown(player, '日常:打工', 1500)   # 25 分钟
+        self.store.set_player_cooldown(player, '砸蛋', 90)   # 1 分 30 秒
+
+        text = self.plugin._assistant_status(player, 'g')
+        self.assertIn('玄晶 +1491', text, '日志正文必须完整出现')
+        self.assertIn('当前 101920', text, '日志正文的第二行也要在')
+        self.assertIn('打工冷却中（剩 25分钟）', text)
+        self.assertIn('砸蛋冷却中（单发/十连共用，剩 1分30秒）', text)
+
+    def test_assistant_status_renders_legacy_log_lines(self):
+        """旧存档里是早年的一行摘要（无换行），渲染不能崩。"""
+        player = self.store.get_player('root', 'g')
+        pet = player['pet']
+        self.plugin._assistant_state(pet)['log'] = ['09-21 15:32 ✅ 砸蛋：得到神级碎片']
+        text = self.plugin._assistant_status(player, 'g')
+        self.assertIn('09-21 15:32 ✅ 砸蛋：得到神级碎片', text)
 
     def test_adventure_commands_are_registered(self):
         """每条冒险指令都必须注册进 main 层 KNOWN_COMMANDS（否则会被过滤器吞掉）。"""

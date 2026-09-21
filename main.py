@@ -925,27 +925,17 @@ class PetParkPlugin(Star):
         """「修炼」任务内部按月老状态自动选 修炼 / 双修（沿用旧的挂机规则）。"""
         return "双修" if pet.get("love_state") == "已婚" else "修炼"
 
-    def _assistant_log(self, pet: dict, text: str) -> None:
-        """记一条执行结果（环形，只留最近 ASSISTANT_LOG_MAX 条）。"""
-        log = self._assistant_state(pet).setdefault("log", [])
-        log.append(f"{time.strftime('%m-%d %H:%M', time.localtime())} {text}")
-        del log[:-data.ASSISTANT_LOG_MAX]
+    def _assistant_log(self, pet: dict, key: str, text: str) -> None:
+        """记一条执行结果（环形，只留最近 ASSISTANT_LOG_MAX 条）。
 
-    @staticmethod
-    def _assistant_brief(text: str, limit: int = 60) -> str:
-        """把 handler 返回的 Markdown 战报压成一行摘要。
-
-        跳过纯分隔线（整行只由 ━─-—= 与空格组成）和 Markdown 标题井号，取第一行
-        有实义的文字。注意判定要用「含有分隔符集之外的字符」，写成 `set(line) >
-        set(sep)` 是本末倒置——那要求整行**同时包含**每一种分隔符，实际永远不成立，
-        函数会一直退化返回「已执行」。
+        存**完整**的执行文本，不再压成一行 60 字摘要：战报类结果（外出历练 11 行、
+        深渊秘境 16 行、进入副本/挑战神仙 5~6 行）被截断后玩家根本看不出这一轮发生
+        了什么。实测各任务输出 13~281 字，20 条上限下每只宠物最多约 6KB，存档无压力。
         """
-        separators = set("━─-—= ")
-        for line in (text or "").splitlines():
-            line = line.strip().lstrip("#").strip().replace("**", "")
-            if line and not set(line) <= separators:
-                return line[:limit]
-        return "已执行"
+        log = self._assistant_state(pet).setdefault("log", [])
+        body = (text or "").strip() or "已执行"
+        log.append(f"{time.strftime('%m-%d %H:%M', time.localtime())} ✅ {key}\n{body}")
+        del log[:-data.ASSISTANT_LOG_MAX]
 
     # ------------------------------------------------------------------
     # 待选勾选态（内存，TTL 过期；只有「确定生效」才写进宠物存档）
@@ -1180,7 +1170,16 @@ class PetParkPlugin(Star):
         if log:
             lines.append("")
             lines.append("**最近执行**")
-            lines.extend(f"- {entry}" for entry in log[-5:])
+            for i, entry in enumerate(log[-5:]):
+                # 每条是「时间 ✅ 任务名\n完整结果」，只把首行时间/任务名加粗，
+                # 正文原样铺开（不再截断）。旧存档里是早年的一行摘要、没有换行，
+                # partition 后 body 为空，照样能显示。
+                head, _, body = str(entry).partition("\n")
+                if i:
+                    lines.append("")
+                lines.append(f"**{head}**")
+                if body:
+                    lines.append(body)
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -1197,8 +1196,9 @@ class PetParkPlugin(Star):
             if self._pet_is_ascended(p):
                 return "已飞升，请改用『幻境寻宝』『宠物神仙劫』"
             action = self._assistant_cult_action(p)
-            if self.store.cooldown_remaining(player, f"日常:{action}") > 0:
-                return f"{action}冷却中"
+            cd = self.store.cooldown_remaining(player, f"日常:{action}")
+            if cd > 0:
+                return f"{action}冷却中（剩 {self._fmt_duration(cd)}）"
             petmod.refresh_energy(p)
             need = data.DAILY_ACTIONS[action]["energy"]
             if p["energy"] < need:
@@ -1213,8 +1213,9 @@ class PetParkPlugin(Star):
             if not reachable:
                 return "等级未达任何副本门槛"
             d = data.DUNGEONS[max(reachable, key=lambda n: data.DUNGEONS[n]["level_req"])]
-            if self.store.cooldown_remaining(player, "副本") > 0:
-                return "进入副本冷却中"
+            cd = self.store.cooldown_remaining(player, "副本")
+            if cd > 0:
+                return f"进入副本冷却中（剩 {self._fmt_duration(cd)}）"
             petmod.refresh_energy(p)
             if p["energy"] < d["energy"]:
                 return f"精力不足（需 {d['energy']}）"
@@ -1230,8 +1231,9 @@ class PetParkPlugin(Star):
             if not reachable:
                 return "等级未达任何神仙门槛（最低 Lv120）"
             d = data.ASCEND_DUNGEONS[max(reachable)]
-            if self.store.cooldown_remaining(player, "ascend_dungeon") > 0:
-                return "挑战神仙冷却中"
+            cd = self.store.cooldown_remaining(player, "ascend_dungeon")
+            if cd > 0:
+                return f"挑战神仙冷却中（剩 {self._fmt_duration(cd)}）"
             petmod.refresh_energy(p)
             if p["energy"] < d["energy"]:
                 return f"精力不足（需 {d['energy']}）"
@@ -1243,8 +1245,9 @@ class PetParkPlugin(Star):
             busy = self._busy_reason(p)
             if busy:
                 return busy
-            if self.store.cooldown_remaining(player, "深渊秘境") > 0:
-                return "深渊秘境冷却中"
+            cd = self.store.cooldown_remaining(player, "深渊秘境")
+            if cd > 0:
+                return f"深渊秘境冷却中（剩 {self._fmt_duration(cd)}）"
             self.store.refresh_abyss(player)
             corruption = self.store.get_abyss_corruption(player)
             cost = min(data.ABYSS_MAX_ENERGY, data.ABYSS_BASE_ENERGY + corruption * 3)
@@ -1259,8 +1262,9 @@ class PetParkPlugin(Star):
                 return busy
             if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
                 return "灵宠飞升后才能挑战神仙劫"
-            if self.store.cooldown_remaining(player, "immortal_calamity") > 0:
-                return "宠物神仙劫冷却中"
+            cd = self.store.cooldown_remaining(player, "immortal_calamity")
+            if cd > 0:
+                return f"宠物神仙劫冷却中（剩 {self._fmt_duration(cd)}）"
             petmod.refresh_energy(p)
             if p["energy"] < 50:
                 return "精力不足（需 50）"
@@ -1272,8 +1276,9 @@ class PetParkPlugin(Star):
                 return busy
             if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
                 return "灵宠飞升后才能幻境寻宝"
-            if self.store.cooldown_remaining(player, "fantasy_treasure") > 0:
-                return "幻境寻宝冷却中"
+            cd = self.store.cooldown_remaining(player, "fantasy_treasure")
+            if cd > 0:
+                return f"幻境寻宝冷却中（剩 {self._fmt_duration(cd)}）"
             petmod.refresh_energy(p)
             need = data.ASCEND_TREASURE["energy"]
             if p["energy"] < need:
@@ -1282,15 +1287,17 @@ class PetParkPlugin(Star):
 
         if key in ("砸蛋", "砸蛋十连"):
             # 单发与十连共用玩家级冷却键「砸蛋」，互斥
-            if self.store.player_cooldown_remaining(player, "砸蛋") > 0:
-                return "砸蛋冷却中（单发/十连共用）"
+            cd = self.store.player_cooldown_remaining(player, "砸蛋")
+            if cd > 0:
+                return f"砸蛋冷却中（单发/十连共用，剩 {self._fmt_duration(cd)}）"
             return None
 
         if key == "家园收取":
             if not (self.store.homestead_state(player).get("buildings") or {}):
                 return "家园还没有建筑"
-            if self.store.cooldown_remaining(player, "homestead:collect") > 0:
-                return "家园收取冷却中"
+            cd = self.store.cooldown_remaining(player, "homestead:collect")
+            if cd > 0:
+                return f"家园收取冷却中（剩 {self._fmt_duration(cd)}）"
             return None
 
         if key in ("打工", "学习", "洗髓", "探险", "冥想", "约会"):
@@ -1301,8 +1308,9 @@ class PetParkPlugin(Star):
                 return "冥想需要定制宠物"
             if key == "洗髓" and p["intel"] <= 20:
                 return "智力过低，无法洗髓"
-            if self.store.cooldown_remaining(player, f"日常:{key}") > 0:
-                return f"{key}冷却中"
+            cd = self.store.cooldown_remaining(player, f"日常:{key}")
+            if cd > 0:
+                return f"{key}冷却中（剩 {self._fmt_duration(cd)}）"
             petmod.refresh_energy(p)
             need = data.DAILY_ACTIONS[key]["energy"]
             if p["energy"] < need:
@@ -1325,10 +1333,12 @@ class PetParkPlugin(Star):
             busy = self._busy_reason(p)
             if busy:
                 return busy
-            if self.store.cooldown_remaining(player, f"event:{eid}:boss") > 0:
-                return f"{cmd}冷却中"
-            if self._event_boss_state(cfg).get("respawn_until", 0) > int(time.time()):
-                return f"『{boss.get('name', '活动Boss')}』正在复活"
+            cd = self.store.cooldown_remaining(player, f"event:{eid}:boss")
+            if cd > 0:
+                return f"{cmd}冷却中（剩 {self._fmt_duration(cd)}）"
+            respawn = int(self._event_boss_state(cfg).get("respawn_until", 0) or 0) - int(time.time())
+            if respawn > 0:
+                return f"『{boss.get('name', '活动Boss')}』正在复活（剩 {self._fmt_duration(respawn)}）"
             petmod.refresh_energy(p)
             need = boss.get("energy", 0)
             if p["energy"] < need:
@@ -1352,12 +1362,16 @@ class PetParkPlugin(Star):
                 return "已准备出发，请先退出队伍"
             if isinstance(a.get("hp"), int) and a["hp"] <= 0:
                 return "修士已陨落，需静养或服用复苏丹"
-            if float(a.get("explore_cd", 0) or 0) > now:
-                return "外出历练冷却中"
+            cd = float(a.get("explore_cd", 0) or 0) - now
+            if cd > 0:
+                # 向上取整：还剩 0.4 秒时显示「1秒」而不是「0秒」
+                return f"外出历练冷却中（剩 {self._fmt_duration(int(cd) + 1)}）"
             return None
         if key == "修士修炼":
-            if now - int(a.get("last_train", 0) or 0) < 60:
-                return "修为积累不足 1 分钟"
+            wait = 60 - (now - int(a.get("last_train", 0) or 0))
+            if wait > 0:
+                # 不是冷却而是「修为还在积累」，所以用「还需」而不是「剩」
+                return f"修为积累中（还需 {self._fmt_duration(int(wait) + 1)}）"
             return None
         if key == "修士突破":
             if self._assistant_team_ready(group_id, qq):
@@ -1483,7 +1497,7 @@ class PetParkPlugin(Star):
                         quota -= 1
                         a["total_runs"] = int(a.get("total_runs", 0)) + 1
                         a["last_run_at"] = now
-                        self._assistant_log(p, f"✅ {tkey}：{self._assistant_brief(text)}")
+                        self._assistant_log(p, tkey, text)
                         any_changed = True
                 finally:
                     player["pet"] = prev_ref
