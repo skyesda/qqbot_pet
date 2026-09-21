@@ -194,7 +194,10 @@ class CommandSweepTests(unittest.TestCase):
         # 全部是光标签：不加 ✅/⬜ 前缀（前缀会把标签撑过 6 字节上限而被截断）
         labels = [b['render_data']['label'] for b in btns]
         self.assertEqual(labels, [t[1] for t in data.ASSISTANT_TASKS] + ['确定'])
-        self.assertIn('助手确定', [b['action']['data'] for b in btns])
+        self.assertIn('助手确定', [b['action']['data'].split()[0] for b in btns])
+        # 载荷尾必须带「面板主人」，否则别人点了会弹出他自己的面板（见下一用例）
+        self.assertTrue(all(b['action']['data'].endswith(' #root') for b in btns),
+                        '每个按钮载荷都要带面板主人标记')
 
     def test_assistant_button_labels_fit_qq_cap(self):
         """回归：QQ 对按钮 label 卡约 6 字节，超出会被截成「首字 + ...」。
@@ -223,6 +226,64 @@ class CommandSweepTests(unittest.TestCase):
         self.assertIn('已选 2/4：砸蛋、打工', text, '勾选态必须出现在面板正文里')
         self.assertEqual(self.plugin._assistant_state(pet)['tasks'], [],
                          '「确定」之前不得写进宠物存档')
+
+    def test_assistant_result_replies_get_single_entry_button(self):
+        """结果类回复（「已生效」/「助手状态」）只给一个回面板的入口，不贴整块 20 按钮。
+
+        贴整块面板会让玩家以为那是本次结果的可选项，既冗余又容易误点。
+        已勾选 → 「修改」（回去重挑那 4 个任务）；未勾选 → 「选择」（提醒去勾选）。
+        """
+        pet = self.store.get_player('root', 'g')['pet']
+        for cmd in ('助手确定', '助手状态', '自动修炼状态', '修炼状态'):
+            kb = self.plugin._keyboard_for_cmd(cmd, '', 'g', 'root')
+            self.assertIsNotNone(kb, f'{cmd} 应有入口按钮')
+            btns = self._btns(kb)
+            self.assertEqual(len(btns), 1, f'{cmd} 只该有 1 个入口按钮，实得 {len(btns)} 个')
+            b = btns[0]
+            self.assertEqual(b['action']['type'], 1, f'{cmd} 入口应是回调按钮')
+            self.assertNotIn('enter', b['action'], f'{cmd} 回调按钮不得带 enter')
+            self.assertTrue(b['action']['data'].startswith('自动助手'),
+                            f'{cmd} 入口应回到勾选面板，实为 {b["action"]["data"]}')
+            self.assertTrue(b['action']['data'].endswith(' #root'),
+                            f'{cmd} 入口载荷应带面板主人')
+            self.assertEqual(b['render_data']['label'], '选择', f'{cmd} 未勾选时应提醒去选择')
+
+        # 有勾选后换成「修改」
+        self.plugin._assistant_state(pet)['tasks'] = ['砸蛋', '打工']
+        for cmd in ('助手确定', '助手状态'):
+            btns = self._btns(self.plugin._keyboard_for_cmd(cmd, '', 'g', 'root'))
+            self.assertEqual(btns[0]['render_data']['label'], '修改',
+                             f'{cmd} 已勾选时应给「修改」')
+
+    def test_assistant_panel_commands_still_get_full_panel(self):
+        """画面板本身的指令仍必须是完整 20 按钮面板（别把入口按钮误用到它们身上）。"""
+        for cmd in ('自动助手', '自动修炼', '助手选', '助手清空'):
+            kb = self.plugin._keyboard_for_cmd(cmd, '', 'g', 'root')
+            self.assertEqual(len(self._btns(kb)), len(data.ASSISTANT_TASKS) + 1,
+                             f'{cmd} 应仍附完整勾选面板')
+
+    def test_assistant_panel_is_bound_to_its_owner(self):
+        """回调按钮群里任何人都能点，载荷必须带「面板主人」，他人点击一律拒绝。
+
+        回归：助手面板是 `action.type=1` 回调按钮，没有任何「只给本人可见」的机制，
+        同群成员都能点。载荷不带主人时，别人一点就会弹出**他自己的**面板并操作他
+        自己的助手——从旁看像在改别人的配置。现在载荷尾带 `#<openid>`，分发时核对。
+        """
+        # 手打指令（无主人标记）与本人点击都照常可用
+        self.assertNotIn('这不是你的助手面板', self._dispatch('助手选 1'))
+        self.assertNotIn('这不是你的助手面板', self._dispatch('助手选 1 #root'))
+        # 他人点击被拒绝
+        self.plugin._assistant_pending.clear()
+        for cmd in ('助手选 1 #other', '助手确定 #other', '助手清空 #other',
+                    '自动助手 #other', '助手状态 #other', '开启自动助手 #other'):
+            self.assertIn('这不是你的助手面板', self._dispatch(cmd), f'{cmd} 应被拒绝')
+        self.assertEqual(self.plugin._assistant_pending, {},
+                         '被拒的点击不得替别人建立待选态')
+        self.assertEqual(
+            self.plugin._assistant_state(self.store.get_player('root', 'g')['pet'])['tasks'], [],
+            '被拒的点击不得写入宠物配置')
+        # 鉴权只覆盖助手指令：别的指令里出现 `#` 不得被牵连
+        self.assertNotIn('这不是你的助手面板', self._dispatch('灵契仙途 #other') or '')
 
     def test_assistant_panel_needs_pet(self):
         """无宠物时面板不出现（助手是按宠物配置的，没有宠物无处挂载）。"""

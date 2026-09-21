@@ -972,7 +972,19 @@ class PetParkPlugin(Star):
     # ------------------------------------------------------------------
     # 勾选面板
     # ------------------------------------------------------------------
-    def _assistant_keyboard(self) -> dict:
+    @staticmethod
+    def _assistant_owner_of(tokens: list[str]) -> str:
+        """从助手按钮载荷里取「面板主人」标记（`#` 前缀），手打指令则返回空串。
+
+        回调按钮是**群里任何人都能点**的，载荷里必须带上这是谁的面板，否则别人
+        一点就会弹出他自己的面板，看着像在操作别人的助手。
+        """
+        for t in tokens:
+            if t.startswith("#"):
+                return t[1:]
+        return ""
+
+    def _assistant_keyboard(self, owner: str = "") -> dict:
         """助手勾选面板：19 个任务 + 「确定」，每行 4 个（QQ 按钮上限 5 行）。
 
         按钮标签一律是**光标签**，不带 ✅/⬜ 前缀：QQ 对按钮 label 卡约 6 字节，
@@ -980,17 +992,32 @@ class PetParkPlugin(Star):
         面板正文的「已选 N/4：…」一行呈现（那里没有长度限制，且用的是完整 key 名）。
         「确定生效」也因此只能压成「确定」（4 个汉字 = 12 字节同样超限）。
         """
+        tail = f" #{owner}" if owner else ""
         rows: list[list[tuple]] = []
         row: list[tuple] = []
         for i, (_key, label, _desc, _axis) in enumerate(data.ASSISTANT_TASKS, start=1):
-            row.append((label, f"助手选 {i}"))
+            row.append((label, f"助手选 {i}{tail}"))
             if len(row) == 4:
                 rows.append(row)
                 row = []
-        row.append(("确定", "助手确定"))
+        row.append(("确定", f"助手确定{tail}"))
         rows.append(row)
         # 回调按钮：点击不在群里冒消息（需框架支持互动事件）
         return self._build_qq_keyboard(rows, action_type=1)
+
+    def _assistant_action_keyboard(self, pet: dict, owner: str = "") -> dict:
+        """结果类回复（「已生效」/「助手状态」）下方的单个入口按钮。
+
+        已勾选 → 「修改」（回去重挑那 4 个任务）；还没有 → 「选择」（提醒去勾选）。
+        两者载荷都是 `自动助手`，点开就是完整勾选面板；同样用回调按钮，不在群里
+        冒出一条玩家消息。标签也受 QQ 的 6 字节上限约束，只能 2 个汉字
+        （所以是「选择」而非「去选择」）。
+        """
+        tasks = [t for t in self._assistant_state(pet).get("tasks", [])
+                 if t in data.ASSISTANT_TASK_BY_KEY]
+        tail = f" #{owner}" if owner else ""
+        return self._build_qq_keyboard([[("修改" if tasks else "选择", f"自动助手{tail}")]],
+                                       action_type=1)
 
     def _assistant_panel_text(self, player: dict, pet: dict, picked: list[str]) -> str:
         a = self._assistant_state(pet)
@@ -1071,7 +1098,7 @@ class PetParkPlugin(Star):
                 f"## 🧘 自动助手\n"
                 f"━━━━━━━━━━━━━━\n"
                 f"已清空『{p['nickname']}』的代跑任务，助手已停止。\n"
-                f"> 发送『自动助手』重新勾选。"
+                f"> 点下方「选择」重新勾选要代跑的任务。"
             )
         return (
             f"## ✅ 自动助手已生效\n"
@@ -1079,7 +1106,7 @@ class PetParkPlugin(Star):
             f"🐾 **宠物**　{p['nickname']}\n"
             f"📋 **代跑任务**　{'、'.join(picked)}\n"
             f"🎫 **剩余次数**　{self.store.assistant_quota(player)}\n\n"
-            f"发送『开启自动助手』开始挂机，『助手状态』查看运行明细。"
+            f"点下方「修改」可重挑任务；发送『开启自动助手』开始挂机，『助手状态』查看运行明细。"
         )
 
     def _assistant_toggle(self, player: dict, enable: bool) -> str:
@@ -1138,7 +1165,7 @@ class PetParkPlugin(Star):
         lines.append(f"最后执行：{time.strftime('%Y/%m/%d %H:%M:%S', time.localtime(last)) if last else '—'}")
         lines.append("")
         if not tasks:
-            lines.append("尚未选择代跑任务。发送『自动助手』打开勾选面板。")
+            lines.append("尚未选择代跑任务，点下方「选择」打开勾选面板。")
         else:
             lines.append(f"**代跑任务（{len(tasks)}/{data.ASSISTANT_MAX_TASKS}）**")
             prev_ref = player.get("pet")
@@ -1695,9 +1722,14 @@ class PetParkPlugin(Star):
     _MENU_CARD_CMDS = {"灵契仙途", "管理菜单", "仙途帮助", "我的修士", "今日修行", "修士装备",
                        "仙途地图", "我的宠物", "宠物图", "查看宠物"}
 
-    # 附带自动助手勾选面板的指令（面板与旧命令名共用同一套按钮）
-    _ASSISTANT_CMDS = {"自动助手", "自动修炼", "助手选", "助手确定", "助手清空", "助手状态",
-                       "自动修炼状态", "修炼状态"}
+    # 回复本身就是勾选面板的指令 → 附完整 19+1 按钮
+    _ASSISTANT_PANEL_CMDS = {"自动助手", "自动修炼", "助手选", "助手清空"}
+    # 结果类指令（「已生效」/「助手状态」）→ 回复是结果汇报，底下只给一个回面板的入口。
+    # 贴整块 20 按钮既冗余又容易误点（玩家会以为那是本次结果的可选项）。
+    _ASSISTANT_ACTION_CMDS = {"助手确定", "助手状态", "自动修炼状态", "修炼状态"}
+    # 助手全部指令（含开关机）→ 分发前统一鉴权：面板载荷带「主人」，非本人点击拒绝
+    _ASSISTANT_CMDS = (_ASSISTANT_PANEL_CMDS | _ASSISTANT_ACTION_CMDS |
+                       {"开启自动助手", "开启自动修炼", "关闭自动助手", "关闭自动修炼"})
 
     def _keyboard_for_cmd(self, text: str, reply: str = "", group_id: str = "", qq: str = "") -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。
@@ -1707,14 +1739,18 @@ class PetParkPlugin(Star):
         """
         tokens = text.split()
         cmd = tokens[0] if tokens else text
-        if cmd in self._ASSISTANT_CMDS:
-            # 助手勾选面板：每次点击都重绘一条新面板（QQ 无消息编辑能力）。
+        if cmd in self._ASSISTANT_PANEL_CMDS or cmd in self._ASSISTANT_ACTION_CMDS:
+            # 助手面板：每次点击都重绘一条新面板（QQ 无消息编辑能力）。
             # 按钮不带勾选标记（6 字节上限放不下前缀），勾选态在面板正文里，
             # 见 _assistant_keyboard 的说明。没有宠物就没有面板可挂。
             player = self.store.get_player(qq, group_id, create=False) if (group_id and qq) else None
-            if not (player or {}).get("pet"):
+            pet = (player or {}).get("pet")
+            if not pet:
                 return None
-            return self._assistant_keyboard()
+            # 载荷带上主人，别人点了才知道该拒绝（见 _assistant_owner_of）
+            if cmd in self._ASSISTANT_ACTION_CMDS:
+                return self._assistant_action_keyboard(pet, qq)
+            return self._assistant_keyboard(qq)
         if cmd in BOARD_COMMANDS:
             context = text + "\n" + reply
             board_kind = "斗兽棋" if "斗兽棋" in context else "围棋" if "围棋" in context else "军棋" if "军棋" in context else "象棋" if "象棋" in context else "五子棋"
@@ -4552,6 +4588,14 @@ class PetParkPlugin(Star):
             return self._energy_transfer(player, group_id, tokens)
 
         # ---- 自动助手（旧名「自动修炼」为隐藏别名）----
+        if cmd in self._ASSISTANT_CMDS:
+            # 面板按钮是**群里任何人都能点**的回调按钮，所以载荷尾带着「面板主人」；
+            # 不是本人点的一律拒绝，否则别人一点就会弹出他自己的面板
+            # （看着像在操作别人的助手）。手打指令没有该标记，owner 为空串，放行。
+            owner = self._assistant_owner_of(tokens)
+            if owner and owner != str(qq):
+                return ("⚠️ 这不是你的助手面板。\n\n"
+                        "> 发送『自动助手』打开你自己的勾选面板。")
         if cmd in ("自动助手", "自动修炼"):
             return self._assistant_open(player, group_id)
         if cmd in ("助手选",):
