@@ -2384,7 +2384,7 @@ HOMESTEAD_MERCHANT_ITEMS = [
     {"name": "史诗卡", "price_type": "coin", "price": 50000, "desc": "品质提升至史诗", "item": "史诗卡"},
     {"name": "小精力瓶", "price_type": "coin", "price": 1000, "desc": "恢复 10 点精力", "item": "小精力瓶"},
     {"name": "普通经验书", "price_type": "jifen", "price": 3000, "desc": "宠物经验 +200", "item": "普通经验书"},
-    {"name": "聚灵丹", "price_type": "jifen", "price": 200000, "desc": "宠物经验 +10 万", "item": "聚灵丹"},
+    {"name": "聚灵丹", "price_type": "jifen", "price": 50000, "desc": "宠物经验 +10 万", "item": "聚灵丹"},
     {"name": "进化神石×3", "price_type": "coin", "price": 12000, "desc": "3 颗进化神石", "item": "进化神石", "item_count": 3},
     {"name": "相思豆×5", "price_type": "jifen", "price": 2000, "desc": "5 颗相思豆", "item": "相思豆", "item_count": 5},
     {"name": "建筑加速券", "price_type": "coin", "price": 2000, "desc": "立即跳过 2 小时建筑累积", "effect": "speed_2h"},
