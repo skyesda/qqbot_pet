@@ -61,6 +61,7 @@ def _plugin(store, tmpdir):
     plugin._tomb_coop_index = {}
     plugin._broadcast_tasks = set()
     plugin._group_msg_log = {}
+    plugin._assistant_pending = {}
     plugin._web = None
     plugin.zhongyuan = None
     plugin._zy_commands = set()
@@ -162,6 +163,85 @@ class CommandSweepTests(unittest.TestCase):
         # 扫雷/棋类按钮各自保留
         self.assertIsNotNone(self.plugin._keyboard_for_cmd('扫雷', '...'))
         self.assertIsNotNone(self.plugin._keyboard_for_cmd('五子棋', '...'))
+
+    # ------------------------------------------------------------------
+    # 自动助手面板：唯一的回调按钮（action.type=1）用例
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _btns(kb):
+        return [b for r in (kb or {}).get('rows', []) for b in r.get('buttons', [])]
+
+    def test_assistant_panel_is_callback_keyboard(self):
+        """助手面板必须是回调按钮（type=1）：点击只推互动事件，不会在群里冒出玩家消息。
+
+        action.type=2 是「指令按钮」——点击等于让玩家发一条 ``@机器人 助手选 3``；
+        type=1 才是「回调按钮」，由框架 on_interaction_create 收事件后合成消息走同一条路由。
+        """
+        kb = self.plugin._keyboard_for_cmd('自动助手', '## 🧘 自动助手', 'g', 'root')
+        self.assertIsNotNone(kb, '自动助手应附勾选面板')
+        rows = kb['rows']
+        self.assertEqual(len(rows), 5, '面板应正好 5 行（QQ 按钮上限）')
+        btns = self._btns(kb)
+        self.assertEqual(len(btns), len(data.ASSISTANT_TASKS) + 1, '19 个任务 + 确定生效')
+        for b in btns:
+            action = b['action']
+            self.assertEqual(action['type'], 1, f"{b['id']} 应为回调按钮")
+            # 官方 schema：enter/reply/anchor 是「指令按钮可用」，回调按钮必须不带；
+            # unsupport_tips 是低版本客户端不认回调按钮时的兜底文案。
+            self.assertNotIn('enter', action, f"{b['id']} 回调按钮不得带 enter")
+            self.assertIn('unsupport_tips', action, f"{b['id']} 回调按钮应带 unsupport_tips")
+            self.assertTrue(action['data'].startswith('助手'), f"{b['id']} 载荷应是助手指令")
+        # 未勾选时全部为 ⬜；确定按钮固定存在
+        labels = [b['render_data']['label'] for b in btns]
+        self.assertEqual(sum(1 for l in labels if l.startswith('⬜')), len(data.ASSISTANT_TASKS))
+        self.assertIn('✅ 确定生效', labels)
+        self.assertIn('助手确定', [b['action']['data'] for b in btns])
+
+    def test_assistant_panel_labels_toggle_with_pending_selection(self):
+        """点击后重绘的面板要把已勾选项标成 ✅（待选态在内存，确定前不落盘）。"""
+        pet = self.store.get_player('root', 'g')['pet']
+        self.plugin._assistant_pending[self.plugin._assistant_pending_key('g', 'root', pet)] = {
+            'picked': ['砸蛋', '打工'], 'ts': int(time.time())}
+        kb = self.plugin._keyboard_for_cmd('助手选 1', '', 'g', 'root')
+        # 「✅ 确定生效」固定带 ✅，只数任务按钮
+        marked = [b['render_data']['label'] for b in self._btns(kb)
+                  if b['action']['data'] != '助手确定' and b['render_data']['label'].startswith('✅')]
+        self.assertEqual(marked, ['✅砸蛋', '✅打工'], f'应勾中砸蛋/打工，实得 {marked}')
+        self.assertEqual(self.plugin._assistant_state(pet)['tasks'], [],
+                         '「确定生效」之前不得写进宠物存档')
+
+    def test_assistant_panel_needs_pet(self):
+        """无宠物时面板不出现（助手是按宠物配置的，没有宠物无处挂载）。"""
+        self.assertEqual(self.plugin._keyboard_for_cmd('自动助手', '', 'g', 'nobody'), None)
+
+    def test_other_keyboards_stay_command_buttons(self):
+        """其它既有键盘保持指令按钮（type=2），本次改动只动助手面板。"""
+        for cmd, reply in [('灵契仙途', '## 灵契仙途'), ('我的修士', '![](...) 修士卡'),
+                           ('扫雷', '...'), ('五子棋', '...')]:
+            kb = self.plugin._keyboard_for_cmd(cmd, reply, 'g', 'root')
+            self.assertIsNotNone(kb, f'{cmd} 应保留键盘')
+            btns = self._btns(kb)
+            self.assertTrue(btns, f'{cmd} 键盘不应为空')
+            for b in btns:
+                action = b['action']
+                self.assertEqual(action['type'], 2, f'{cmd} 的 {b["id"]} 应仍是指令按钮')
+                self.assertIn('enter', action, f'{cmd} 的 {b["id"]} 指令按钮应保留 enter')
+                self.assertNotIn('unsupport_tips', action, f'{cmd} 的 {b["id"]} 不该带回调按钮字段')
+
+    def test_assistant_brief_takes_first_meaningful_line(self):
+        """执行日志摘要要取第一条有实义的文字，跳过标题井号与纯分隔线。
+
+        回归：判定原写成 `set(line) > set('━─-—= ')`，要求整行**同时包含**每一种
+        分隔符才认可，实际永不成立 → 每条日志都退化成「✅ 砸蛋：已执行」，
+        玩家在『助手状态』里看不到任何执行内容。
+        """
+        brief = self.plugin._assistant_brief
+        self.assertEqual(brief('## 🧘 打工归来\n━━━━━\n玄晶 +1200'), '🧘 打工归来')
+        self.assertEqual(brief('━━━━━\n获得灵材、修为\n更多'), '获得灵材、修为')
+        self.assertEqual(brief('**砸蛋** 得到神级碎片'), '砸蛋 得到神级碎片')
+        self.assertEqual(brief(''), '已执行')
+        self.assertEqual(brief('━━━━━\n─────\n'), '已执行')
+        self.assertEqual(brief('x' * 120), 'x' * 60, '超长摘要应截断到 60 字')
 
     def test_adventure_commands_are_registered(self):
         """每条冒险指令都必须注册进 main 层 KNOWN_COMMANDS（否则会被过滤器吞掉）。"""

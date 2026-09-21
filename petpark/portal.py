@@ -502,7 +502,11 @@ class PlayerPortal:
                 "image": self.store.remaining_custom_changes(player, "image") if rp else 0,
                 "species_name": self.store.remaining_custom_changes(player, "species_name") if rp else 0,
             },
-            "auto_cultivation": dict(rp.get("auto_cultivation", {})) if rp else {},
+            # 自动助手：宠物级配置 + 玩家级剩余次数（门户开关与群内指令共用同一份数据）
+            "assistant": {
+                **((rp.get("assistant") or {}) if rp else {}),
+                "quota": self.store.assistant_quota(player),
+            },
         }
 
     def _cooldown_list(self, player: dict, pet_index: int = 0) -> list:
@@ -571,7 +575,7 @@ class PlayerPortal:
         app.router.add_post("/api/portal/bind/reclaim", self._api_bind_reclaim)
         app.router.add_post("/api/portal/bind", self._api_bind)
         app.router.add_get("/api/portal/pet", self._api_pet)
-        app.router.add_post("/api/portal/auto_cultivation", self._api_auto_cultivation)
+        app.router.add_post("/api/portal/assistant", self._api_assistant)
         app.router.add_post("/api/portal/custom_redeem", self._api_custom_redeem)
         app.router.add_post("/api/portal/custom_submit", self._api_custom_submit)
         app.router.add_post("/api/portal/mount_custom_redeem", self._api_mount_custom_redeem)
@@ -1060,7 +1064,7 @@ class PlayerPortal:
             raise web.HTTPForbidden(text="你没有绑定该宠物")
         return web.json_response({"ok": True, **self._player_summary(group_id, qq, pet_index)})
 
-    async def _api_auto_cultivation(self, request: web.Request) -> web.Response:
+    async def _api_assistant(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
         self._require_session(request)
         body = await request.json()
@@ -1079,24 +1083,33 @@ class PlayerPortal:
             return web.json_response({"ok": False, "msg": "未找到该宠物"})
         pet_index = int(body.get("pet_index", 0))
         pet = self._resolve_player_pet(player, pet_index)
-        ascended = pet and data.STAGES.index(pet.get("stage", "")) >= data.STAGES.index("飞升")
-        if not pet or (not pet.get("custom") and not ascended):
-            return web.json_response({"ok": False, "msg": "自动修炼仅限定制宠物或飞升宠物"})
-        ac = pet.setdefault("auto_cultivation", {
+        if not pet:
+            return web.json_response({"ok": False, "msg": "未找到该宠物"})
+        # 门禁从「定制/飞升宠物永久免费」改成「有剩余执行次数」（旧旁路已废止）
+        if not self.store.assistant_active(player):
+            return web.json_response({
+                "ok": False,
+                "msg": "自动助手次数不足：请先在群内发送 `兑换 <卡密>` 使用自动助手卡",
+            })
+        a = pet.setdefault("assistant", {
             "enabled": False,
-            "started_at": 0,
-            "total_sessions": 0,
-            "total_exp": 0,
+            "tasks": [],
+            "total_runs": 0,
             "last_run_at": 0,
+            "log": [],
         })
-        ac["enabled"] = enabled
-        if enabled:
-            ac["started_at"] = int(time.time())
+        tasks = [t for t in (a.get("tasks") or []) if t in data.ASSISTANT_TASK_BY_KEY]
+        if enabled and not tasks:
+            return web.json_response({
+                "ok": False,
+                "msg": "请先在群内发送「自动助手」勾选要代跑的任务，再回来开启",
+            })
+        a["enabled"] = bool(enabled and tasks)
         await self.store.save()
         return web.json_response({
             "ok": True,
-            "msg": "已开启自动修炼" if enabled else "已关闭自动修炼",
-            "auto_cultivation": dict(ac),
+            "msg": "已开启自动助手" if a["enabled"] else "已关闭自动助手",
+            "assistant": {**dict(a), "quota": self.store.assistant_quota(player)},
         })
 
     async def _api_custom_redeem(self, request: web.Request) -> web.Response:
@@ -1702,7 +1715,9 @@ class PlayerPortal:
             logger.exception("[petpark] 门户卡密兑换失败")
             return web.json_response({"ok": False, "msg": f"兑换失败：{e}"})
         await self.store.save()
-        success = "兑换成功" in str(text)
+        # 不能靠「兑换成功」四个字判定：自动助手卡的成功文案是
+        # 「🧘 自动助手卡使用成功」，会被误判成失败。改为看失败前缀。
+        success = not str(text).lstrip().startswith(("❌", "⚠️"))
         if success:
             self._reset_rate(f"redeem:{sess.get('aid')}")
         return web.json_response({
@@ -2079,10 +2094,26 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
             <div class="custom-remaining">本月剩余次数：图片 {{ data.custom_remaining.image }} 次 / 名称 {{ data.custom_remaining.species_name }} 次</div>
             <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap">
               <el-button type="primary" round @click="openCustomEdit">修改形象 / 名称</el-button>
+            </div>
+            <el-alert v-for="(r,i) in data.custom_pending || []" :key="'p'+i" type="success" :closable="false" style="margin-top:10px"
+              :title="'已提交审核，预计 3 个工作日内完成。' + (r.new.species_name ? '名称：'+r.new.species_name+' ' : '') + (r.new.image ? '图片' : '')"></el-alert>
+            <el-alert v-for="(r,i) in data.custom_rejected || []" :key="'r'+i" type="error" :closable="false" style="margin-top:10px"
+              :title="'审核未通过：' + (r.reason || '未说明原因')"></el-alert>
+          </div>
+          <!-- 自动助手：门禁只看该玩家有无剩余执行次数，与宠物是否定制无关 -->
+          <div class="custom-box">
+            <div class="custom-badge">🧘 自动助手</div>
+            <div class="custom-remaining">
+              剩余执行次数 <b>{{ data.assistant.quota || 0 }}</b> 次 · 该宠物累计代跑 {{ data.assistant.total_runs || 0 }} 次
+            </div>
+            <div class="custom-remaining">
+              代跑任务：{{ (data.assistant.tasks && data.assistant.tasks.length) ? data.assistant.tasks.join('、') : '未勾选（请在群内发送「自动助手」勾选，最多 4 个）' }}
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap">
               <div style="display:flex;align-items:center;gap:8px;background:#fff;padding:8px 14px;border-radius:999px;border:1px solid #e2e0f7">
-                <span style="font-size:13px;color:#5b657d">自动修炼</span>
+                <span style="font-size:13px;color:#5b657d">自动助手</span>
                 <el-switch
-                  v-model="data.auto_cultivation.enabled"
+                  v-model="data.assistant.enabled"
                   :loading="autoCultivating"
                   inline-prompt
                   active-text="开"
@@ -2090,14 +2121,11 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                   @change="toggleAutoCultivation"
                 />
               </div>
+              <span class="muted" style="font-size:12.5px">每执行 1 个任务扣 1 次，次数用尽自动停机</span>
             </div>
-            <div v-if="data.auto_cultivation.enabled" class="custom-remaining" style="color:#0c7a45">
-              🧘 自动修炼运行中 · 累计 {{ data.auto_cultivation.total_sessions || 0 }} 次 · 经验 +{{ data.auto_cultivation.total_exp || 0 }}
+            <div v-if="data.assistant.enabled" class="custom-remaining" style="color:#0c7a45">
+              🧘 运行中 · 最近：{{ (data.assistant.log && data.assistant.log.length) ? data.assistant.log[data.assistant.log.length-1] : '暂无记录（等待下一次代跑）' }}
             </div>
-            <el-alert v-for="(r,i) in data.custom_pending || []" :key="'p'+i" type="success" :closable="false" style="margin-top:10px"
-              :title="'已提交审核，预计 3 个工作日内完成。' + (r.new.species_name ? '名称：'+r.new.species_name+' ' : '') + (r.new.image ? '图片' : '')"></el-alert>
-            <el-alert v-for="(r,i) in data.custom_rejected || []" :key="'r'+i" type="error" :closable="false" style="margin-top:10px"
-              :title="'审核未通过：' + (r.reason || '未说明原因')"></el-alert>
           </div>
         </div>
         <div v-else class="card empty-tip">{{ (data && (data.adventure || (data.mounts && data.mounts.length))) ? '该角色暂无宠物，可在下方的「我的坐骑」继续查看坐骑' : '该账号下暂无宠物' }}</div>
@@ -2509,7 +2537,7 @@ createApp({
       autoCultivating.value = true;
       try{
         const p = current.value;
-        const r = await api('/api/portal/auto_cultivation','POST',{
+        const r = await api('/api/portal/assistant','POST',{
           group_id: p.group_id,
           qq: p.qq,
           pet_index: p.pet_index || 0,
@@ -2517,7 +2545,7 @@ createApp({
         });
         if(r && r.ok){
           ElMessage.success(r.msg || '设置成功');
-          if(data.value) data.value.auto_cultivation = r.auto_cultivation || data.value.auto_cultivation;
+          if(data.value) data.value.assistant = r.assistant || data.value.assistant;
         } else {
           ElMessage.error((r && r.msg) || '设置失败');
           // 回滚开关状态：重新加载宠物数据

@@ -55,6 +55,7 @@ from .petpark.adventure.power import compute_unified_power
 from .petpark.adventure.content import REALMS as ADVENTURE_REALMS
 from .petpark.adventure.content import SPIRIT_ROOTS as ADVENTURE_SPIRIT_ROOTS
 from .petpark.adventure.content import realm_cap as adventure_realm_cap
+from .petpark.adventure.content import MAX_LEVEL as ADVENTURE_MAX_LEVEL
 from .petpark.boardgames import BoardGames, COMMANDS as BOARD_COMMANDS
 
 # 中元节活动（独立模块）。缺失/损坏时降级为关闭，不影响灵契仙途主程序。
@@ -153,6 +154,7 @@ KNOWN_COMMANDS = {
     "兑换",
     "卡密兑换",
     "修炼卡",
+    "助手卡",
     "我要氪金",
     "查看说明",
     # 群授权
@@ -307,7 +309,14 @@ KNOWN_COMMANDS = {
     "治愈",
     "复活",
     "精力转移",
-    # 自动修炼
+    # 自动助手（旧名「自动修炼」仍作隐藏别名）
+    "自动助手",
+    "开启自动助手",
+    "关闭自动助手",
+    "助手状态",
+    "助手选",
+    "助手确定",
+    "助手清空",
     "自动修炼",
     "开启自动修炼",
     "关闭自动修炼",
@@ -606,7 +615,7 @@ class PetParkPlugin(Star):
     # 导致 __init__ 的取消判断拿不到旧任务 → 旧任务泄漏，与新任务并存重复触发。
     _BG_TASK_REFS = (
         "_board_clock_task_ref",
-        "_auto_cultivation_task_ref",
+        "_assistant_task_ref",
         "_bank_interest_task_ref",
         "_group_auto_approve_task_ref",
         "_lottery_task_ref",
@@ -697,6 +706,9 @@ class PetParkPlugin(Star):
             logger.warning("[petpark] 点歌 silk_url_base 未配置，使用默认公网地址")
         # 点歌会话：{group_id: {"keyword", "songs", "page", "ts"}}（15 分钟过期）
         self._song_sessions: dict[str, dict] = {}
+        # 自动助手勾选态：{群\x1f用户\x1f宠物ID: {"picked", "ts"}}（内存，10 分钟过期）。
+        # 只有点「✅ 确定生效」才写进 pet["assistant"]["tasks"]，中途放弃不留痕。
+        self._assistant_pending: dict[str, dict] = {}
         # silk 临时目录：webadmin 从这里对外提供 QQ 可拉取的 silk 文件
         self.song_silk_dir = data_dir / "song_silk"
         self.song_silk_dir.mkdir(parents=True, exist_ok=True)
@@ -759,7 +771,7 @@ class PetParkPlugin(Star):
         self._image_renderer.warmup()
         # 启动后台循环：任务引用存到 self（实例属性）。重载插件时 terminate()
         # 会先取消旧实例的全部后台任务再走到这里，避免旧任务和新任务并存、重复触发。
-        self._auto_cultivation_task_ref = asyncio.create_task(self._auto_cultivation_loop())
+        self._assistant_task_ref = asyncio.create_task(self._assistant_loop())
         self._bank_interest_task_ref = asyncio.create_task(self._bank_interest_loop())
         self._group_auto_approve_task_ref = asyncio.create_task(self._group_auto_approve_loop())
         self._lottery_task_ref = asyncio.create_task(self._lottery_loop())
@@ -878,188 +890,582 @@ class PetParkPlugin(Star):
             logger.warning("[petpark] 无运行中的事件循环，管理网站未启动")
 
     # =====================================================================
-    # 自动修炼挂机
+    # 自动助手（原「自动修炼」）：玩家勾选最多 4 个任务 → 后台按次数代跑
     # =====================================================================
-    AUTO_CULTIVATION_INTERVAL = 30  # 秒
+    ASSISTANT_INTERVAL = 30          # 后台扫描间隔（秒）
+    ASSISTANT_PENDING_TTL = 10 * 60  # 勾选后未点「确定生效」的待选态保留时长
 
-    async def _auto_cultivation_loop(self) -> None:
-        """后台循环：定期为开启自动挂机的定制宠物执行修炼/双修。"""
+    async def _assistant_loop(self) -> None:
+        """后台循环：定期为开启自动助手的宠物按勾选顺序代跑任务。"""
         while True:
             try:
-                await self._auto_cultivation_tick()
+                await self._assistant_tick()
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("[petpark] 自动修炼循环异常")
+                logger.exception("[petpark] 自动助手循环异常")
             try:
-                await asyncio.sleep(self.AUTO_CULTIVATION_INTERVAL)
+                await asyncio.sleep(self.ASSISTANT_INTERVAL)
             except asyncio.CancelledError:
                 break
 
-    async def _auto_cultivation_tick(self) -> None:
-        """单次扫描并执行所有符合条件的自动修炼/幻境寻宝（每个宠物独立修炼）。"""
-        now = int(time.time())
-        any_changed = False
-        for key, player in list(self.store.all_players().items()):
-            pets = player.get("pets", [])
-            if not pets:
-                continue
-            for i, p in enumerate(pets):
-                if not p:
-                    continue
-                # 每只宠物独立的自动修炼状态
-                ac = p.get("auto_cultivation")
-                if not ac or not ac.get("enabled"):
-                    continue
-                if not self.store.auto_cultivation_active(player, p):
-                    # 权限失效时自动关闭该宠物的挂机
-                    ac["enabled"] = False
-                    any_changed = True
-                    continue
-                # 宠物异常时跳过，等恢复后再继续
-                if self._busy_reason(p):
-                    continue
-                if self._pet_is_ascended(p):
-                    # 飞升后自动切换为幻境寻宝
-                    if self.store.cooldown_remaining(player, "fantasy_treasure") > 0:
-                        continue
-                    petmod.refresh_energy(p)
-                    energy_cost = data.ASCEND_TREASURE.get("energy", 60)
-                    if p["energy"] < energy_cost:
-                        continue
-                    p["energy"] -= energy_cost
-                    self.store.set_cooldown(
-                        player, "fantasy_treasure", random.randint(*data.ASCEND_TREASURE["cooldown"])
-                    )
-                    xianyuan = random.randint(*data.ascend_treasure_xianyuan(p["level"]))
-                    petmod.add_xianyuan(p, xianyuan)
-                    if random.random() < data.ASCEND_TREASURE.get("jifen_chance", 0.5):
-                        jifen = random.randint(*data.ASCEND_TREASURE.get("jifen", (500, 3000)))
-                        self.store.add_currency(player, "玄晶", jifen)
-                    self._inc_stat(player, "ascended_fantasy_treasure")
-                    ac["total_sessions"] = ac.get("total_sessions", 0) + 1
-                    ac["total_exp"] = ac.get("total_exp", 0) + xianyuan
-                    ac["last_run_at"] = now
-                    any_changed = True
-                else:
-                    # 未飞升：优先双修，否则修炼
-                    action = "双修" if p.get("love_state") == "已婚" else "修炼"
-                    if self.store.cooldown_remaining(player, f"日常:{action}") > 0:
-                        continue
-                    petmod.refresh_energy(p)
-                    conf = data.DAILY_ACTIONS[action]
-                    if p["energy"] < conf["energy"]:
-                        continue
-                    # 执行修炼/双修
-                    p["energy"] -= conf["energy"]
-                    self.store.set_cooldown(
-                        player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
-                    )
-                    base = random.randint(50, 120) + p["level"] * 15
-                    exp = base * (2 if action == "双修" else 1)
-                    petmod.add_exp(p, exp)
-                    if action == "双修":
-                        self._inc_stat(player, "shuangxiu")
-                    # 自动升级（不发送消息，静默处理；玩家可关闭）
-                    if player.get("auto_level", True):
-                        petmod.auto_level_up(p)
-                    # 更新统计
-                    ac["total_sessions"] = ac.get("total_sessions", 0) + 1
-                    ac["total_exp"] = ac.get("total_exp", 0) + exp
-                    ac["last_run_at"] = now
-                any_changed = True
-        if any_changed:
-            await self.store.save()
+    # ------------------------------------------------------------------
+    # 状态读写
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _assistant_state(pet: dict) -> dict:
+        """取（必要时创建）宠物级助手配置。"""
+        return pet.setdefault("assistant", {
+            "enabled": False, "tasks": [], "total_runs": 0,
+            "last_run_at": 0, "log": [],
+        })
 
-    def _auto_cultivation_toggle(self, player: dict, enable: bool) -> str:
-        """开启或关闭当前宠物的自动修炼（每只宠物独立修炼状态）。"""
+    @staticmethod
+    def _assistant_cult_action(pet: dict) -> str:
+        """「修炼」任务内部按月老状态自动选 修炼 / 双修（沿用旧的挂机规则）。"""
+        return "双修" if pet.get("love_state") == "已婚" else "修炼"
+
+    def _assistant_log(self, pet: dict, text: str) -> None:
+        """记一条执行结果（环形，只留最近 ASSISTANT_LOG_MAX 条）。"""
+        log = self._assistant_state(pet).setdefault("log", [])
+        log.append(f"{time.strftime('%m-%d %H:%M', time.localtime())} {text}")
+        del log[:-data.ASSISTANT_LOG_MAX]
+
+    @staticmethod
+    def _assistant_brief(text: str, limit: int = 60) -> str:
+        """把 handler 返回的 Markdown 战报压成一行摘要。
+
+        跳过纯分隔线（整行只由 ━─-—= 与空格组成）和 Markdown 标题井号，取第一行
+        有实义的文字。注意判定要用「含有分隔符集之外的字符」，写成 `set(line) >
+        set(sep)` 是本末倒置——那要求整行**同时包含**每一种分隔符，实际永远不成立，
+        函数会一直退化返回「已执行」。
+        """
+        separators = set("━─-—= ")
+        for line in (text or "").splitlines():
+            line = line.strip().lstrip("#").strip().replace("**", "")
+            if line and not set(line) <= separators:
+                return line[:limit]
+        return "已执行"
+
+    # ------------------------------------------------------------------
+    # 待选勾选态（内存，TTL 过期；只有「确定生效」才写进宠物存档）
+    # ------------------------------------------------------------------
+    def _assistant_pending_key(self, group_id: str, qq: str, pet: dict) -> str:
+        return f"{group_id}\x1f{qq}\x1f{pet.get('pet_id', '')}"
+
+    def _assistant_picked(self, group_id: str, qq: str, pet: dict) -> list[str]:
+        """取当前待选任务列表（首次点击时以宠物已保存的配置为起点）。"""
+        now = int(time.time())
+        for k in [k for k, v in self._assistant_pending.items()
+                  if now - int(v.get("ts", 0)) > self.ASSISTANT_PENDING_TTL]:
+            del self._assistant_pending[k]
+        key = self._assistant_pending_key(group_id, qq, pet)
+        sess = self._assistant_pending.get(key)
+        if sess is None:
+            saved = [t for t in self._assistant_state(pet).get("tasks", [])
+                     if t in data.ASSISTANT_TASK_BY_KEY]
+            sess = {"picked": saved[:data.ASSISTANT_MAX_TASKS], "ts": now}
+            self._assistant_pending[key] = sess
+        sess["ts"] = now
+        return sess["picked"]
+
+    # ------------------------------------------------------------------
+    # 勾选面板
+    # ------------------------------------------------------------------
+    def _assistant_keyboard(self, picked: list[str]) -> dict:
+        """助手勾选面板：19 个任务 + 「确定生效」，每行 4 个（QQ 按钮上限 5 行）。"""
+        picked_set = set(picked)
+        rows: list[list[tuple]] = []
+        row: list[tuple] = []
+        for i, (key, label, _desc, _axis) in enumerate(data.ASSISTANT_TASKS, start=1):
+            mark = "✅" if key in picked_set else "⬜"
+            row.append((f"{mark}{label}", f"助手选 {i}"))
+            if len(row) == 4:
+                rows.append(row)
+                row = []
+        row.append(("✅ 确定生效", "助手确定"))
+        rows.append(row)
+        # 回调按钮：点击不在群里冒消息（需框架支持互动事件）
+        return self._build_qq_keyboard(rows, action_type=1)
+
+    def _assistant_panel_text(self, player: dict, pet: dict, picked: list[str]) -> str:
+        a = self._assistant_state(pet)
+        quota = self.store.assistant_quota(player)
+        picked_txt = "、".join(picked) if picked else "（未选）"
+        return (
+            f"## 🧘 自动助手\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"🐾 **宠物**　{pet['nickname']}\n"
+            f"🎫 **剩余次数**　{quota}\n"
+            f"⚙️ **状态**　{'🟢 运行中' if a.get('enabled') else '🔴 已停止'}\n\n"
+            f"点下方按钮勾选要代跑的任务（最多 **{data.ASSISTANT_MAX_TASKS}** 个），选好后点「✅ 确定生效」。\n"
+            f"已选 {len(picked)}/{data.ASSISTANT_MAX_TASKS}：{picked_txt}\n\n"
+            f"> 每成功执行 1 个任务扣 1 次额度（玩家级，本群所有宠物共用）。\n"
+            f"> 额度为 0 或发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
+        )
+
+    # ------------------------------------------------------------------
+    # 指令入口
+    # ------------------------------------------------------------------
+    def _assistant_open(self, player: dict, group_id: str) -> str:
+        """打开助手面板（`自动助手`，旧名 `自动修炼`）。"""
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物，发送『砸蛋』获取一只。"
-        if not self.store.auto_cultivation_active(player, p):
+        picked = self._assistant_picked(group_id, str(player.get("qq", "")), p)
+        return self._assistant_panel_text(player, p, picked)
+
+    def _assistant_pick(self, player: dict, group_id: str, tokens: list[str]) -> str:
+        """按钮回调：切换第 N 个任务的勾选态，并重绘面板。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        try:
+            idx = int(tokens[1]) if len(tokens) > 1 else 0
+        except (TypeError, ValueError):
+            idx = 0
+        if not 1 <= idx <= len(data.ASSISTANT_TASKS):
+            return f"⚠️ 用法：`助手选 1`~`助手选 {len(data.ASSISTANT_TASKS)}`。"
+        task_key = data.ASSISTANT_TASKS[idx - 1][0]
+        picked = self._assistant_picked(group_id, str(player.get("qq", "")), p)
+        if task_key in picked:
+            picked.remove(task_key)
+        elif len(picked) >= data.ASSISTANT_MAX_TASKS:
             return (
-                "你的宠物尚未获得自动修炼权限。\n"
-                "定制宠物永久享有该权限；非定制宠物请使用『修炼卡 卡密』激活。"
-            )
-        ac = p.setdefault("auto_cultivation", {
-            "enabled": False,
-            "started_at": 0,
-            "total_sessions": 0,
-            "total_exp": 0,
-            "last_run_at": 0,
-        })
-        ascended = self._pet_is_ascended(p)
-        if enable:
-            if ac.get("enabled"):
-                return "你的宠物已经在自动修炼中，发送『自动修炼状态』查看进度。"
-            ac["enabled"] = True
-            ac["started_at"] = int(time.time())
-            if ascended:
-                return (
-                    f"✅ 已开启『{p['nickname']}』的自动幻境寻宝！\n"
-                    f"后台会自动在满足条件时探索幻境获取仙元，精力/冷却不足时自动等待。\n"
-                    f"发送『关闭自动修炼』停止，发送『自动修炼状态』查看进度。"
-                )
-            return (
-                f"✅ 已开启『{p['nickname']}』的自动修炼！\n"
-                f"后台会自动在满足条件时进行修炼，已婚优先双修，精力/冷却不足时自动等待。\n"
-                f"发送『关闭自动修炼』停止，发送『自动修炼状态』查看进度。"
+                f"⚠️ 最多只能选 **{data.ASSISTANT_MAX_TASKS}** 个任务，"
+                f"请先取消一个再选『{task_key}』。"
             )
         else:
-            if not ac.get("enabled"):
-                return "你的宠物当前没有开启自动修炼。"
-            ac["enabled"] = False
-            unit = "仙元" if ascended else "经验"
-            return f"⏹ 已关闭『{p['nickname']}』的自动修炼。累计挂机 {ac.get('total_sessions', 0)} 次，共获得 {ac.get('total_exp', 0)} {unit}。"
+            picked.append(task_key)
+        return self._assistant_panel_text(player, p, picked)
 
-    def _auto_cultivation_status(self, player: dict) -> str:
-        """查看当前宠物自动修炼状态（每只宠物独立）。"""
+    def _assistant_clear(self, player: dict, group_id: str) -> str:
+        """按钮回调：清空待选。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        picked = self._assistant_picked(group_id, str(player.get("qq", "")), p)
+        picked.clear()
+        return self._assistant_panel_text(player, p, picked)
+
+    def _assistant_confirm(self, player: dict, group_id: str) -> str:
+        """按钮回调：把待选写入宠物配置并生效（不自动开机）。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        picked = self._assistant_picked(group_id, str(player.get("qq", "")), p)
+        a = self._assistant_state(p)
+        a["tasks"] = list(picked)
+        self._assistant_pending.pop(
+            self._assistant_pending_key(group_id, str(player.get("qq", "")), p), None
+        )
+        if not picked:
+            a["enabled"] = False
+            return (
+                f"## 🧘 自动助手\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"已清空『{p['nickname']}』的代跑任务，助手已停止。\n"
+                f"> 发送『自动助手』重新勾选。"
+            )
+        return (
+            f"## ✅ 自动助手已生效\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"🐾 **宠物**　{p['nickname']}\n"
+            f"📋 **代跑任务**　{'、'.join(picked)}\n"
+            f"🎫 **剩余次数**　{self.store.assistant_quota(player)}\n\n"
+            f"发送『开启自动助手』开始挂机，『助手状态』查看运行明细。"
+        )
+
+    def _assistant_toggle(self, player: dict, enable: bool) -> str:
+        """开启 / 关闭当前宠物的自动助手（每只宠物独立开关）。"""
+        p = self._need_pet(player)
+        if not p:
+            return "你还没有宠物，发送『砸蛋』获取一只。"
+        a = self._assistant_state(p)
+        if enable:
+            if a.get("enabled"):
+                return "你的宠物自动助手已在运行中，发送『助手状态』查看进度。"
+            if not a.get("tasks"):
+                return (
+                    "还没有选择代跑任务。\n\n"
+                    "> 发送『自动助手』打开面板，点选最多 "
+                    f"{data.ASSISTANT_MAX_TASKS} 个任务后点「✅ 确定生效」。"
+                )
+            if self.store.assistant_quota(player) <= 0:
+                return (
+                    "自动助手次数不足。\n\n"
+                    "> 请使用『自动助手卡』或发送『修炼卡 卡密』兑换后重试。"
+                )
+            a["enabled"] = True
+            return (
+                f"✅ 已开启『{p['nickname']}』的自动助手！\n"
+                f"代跑任务：{'、'.join(a['tasks'])}\n"
+                f"剩余次数：{self.store.assistant_quota(player)}\n\n"
+                f"> 后台每 {self.ASSISTANT_INTERVAL} 秒按顺序检查一次，冷却好且资源够的任务自动执行，"
+                f"每执行 1 个扣 1 次。\n"
+                f"> 发送『关闭自动助手』停止，『助手状态』查看进度。"
+            )
+        if not a.get("enabled"):
+            return "你的宠物当前没有开启自动助手。"
+        a["enabled"] = False
+        return (
+            f"⏹ 已关闭『{p['nickname']}』的自动助手。\n"
+            f"累计代跑 {a.get('total_runs', 0)} 次，剩余次数 {self.store.assistant_quota(player)}。"
+        )
+
+    def _assistant_status(self, player: dict, group_id: str) -> str:
+        """查看当前宠物的助手状态：勾选任务 + 每个任务此刻为何能/不能跑。"""
         p = self._need_pet(player)
         if not p:
             return "你还没有宠物。"
-        ac = p.get("auto_cultivation", {})
-        if not ac:
-            return "该宠物尚未开启过自动修炼。"
-        status = "🟢 运行中" if ac.get("enabled") else "🔴 已停止"
-        started = ac.get("started_at", 0)
-        started_txt = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(started)) if started else "—"
-        last = ac.get("last_run_at", 0)
-        last_txt = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(last)) if last else "—"
-        ascended = self._pet_is_ascended(p)
-        if ascended:
-            mode = "自动幻境寻宝（仙元）"
-            cd_key = "fantasy_treasure"
-            stat_label = "累计仙元"
+        a = self._assistant_state(p)
+        tasks = [t for t in a.get("tasks", []) if t in data.ASSISTANT_TASK_BY_KEY]
+        lines = [
+            "## 🧘 自动助手状态",
+            "━━━━━━━━━━━━━━",
+            f"状态：{'🟢 运行中' if a.get('enabled') else '🔴 已停止'}",
+            f"宠物：{p['nickname']}",
+            f"剩余次数：{self.store.assistant_quota(player)}",
+            f"累计代跑：{a.get('total_runs', 0)} 次",
+        ]
+        last = int(a.get("last_run_at", 0) or 0)
+        lines.append(f"最后执行：{time.strftime('%Y/%m/%d %H:%M:%S', time.localtime(last)) if last else '—'}")
+        lines.append("")
+        if not tasks:
+            lines.append("尚未选择代跑任务。发送『自动助手』打开勾选面板。")
         else:
-            action = "双修" if p.get("love_state") == "已婚" else "修炼"
-            mode = f"优先 {action}"
-            cd_key = f"日常:{action}"
-            stat_label = "累计经验"
-        remain_cd = self.store.cooldown_remaining(player, cd_key)
-        cd_txt = self._fmt_duration(remain_cd) if remain_cd > 0 else "已就绪"
-        petmod.refresh_energy(p)
-        if p.get("custom"):
-            perm_txt = "永久（定制宠物）"
-        else:
-            pac = player.get("auto_cultivation", {})
-            until = int(pac.get("card_until", 0) or 0)
-            if until > int(time.time()):
-                perm_txt = self._fmt_remain(until)
-            else:
-                perm_txt = "已到期"
-        return (
-            f"## 🧘 自动修炼状态\n"
-            f"状态：{status}\n"
-            f"宠物：{p['nickname']}\n"
-            f"权限：{perm_txt}\n"
-            f"模式：{mode}\n"
-            f"精力：{p['energy']}/{p['energy_max']}\n"
-            f"下次可行动：{cd_txt}\n"
-            f"累计挂机：{ac.get('total_sessions', 0)} 次\n"
-            f"{stat_label}：{ac.get('total_exp', 0)}\n"
-            f"开启时间：{started_txt}\n"
-            f"最后执行：{last_txt}"
-        )
+            lines.append(f"**代跑任务（{len(tasks)}/{data.ASSISTANT_MAX_TASKS}）**")
+            prev_ref = player.get("pet")
+            player["pet"] = p  # 冷却按宠物存，比对时必须指向本宠物
+            try:
+                for tkey in tasks:
+                    reason = self._assistant_ready(tkey, player, p, group_id, str(player.get("qq", "")))
+                    lines.append(f"{'🟢' if reason is None else '⚪'} {tkey}：{reason or '可执行'}")
+            finally:
+                player["pet"] = prev_ref
+        log = a.get("log") or []
+        if log:
+            lines.append("")
+            lines.append("**最近执行**")
+            lines.extend(f"- {entry}" for entry in log[-5:])
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # 执行前置判定：返回 None = 可执行（扣 1 次），返回原因 = 本轮跳过（不扣次）
+    # ------------------------------------------------------------------
+    def _assistant_ready(
+        self, key: str, player: dict, pet: dict, group_id: str, qq: str
+    ) -> str | None:
+        p = pet
+        if key == "修炼":
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            if self._pet_is_ascended(p):
+                return "已飞升，请改用『幻境寻宝』『宠物神仙劫』"
+            action = self._assistant_cult_action(p)
+            if self.store.cooldown_remaining(player, f"日常:{action}") > 0:
+                return f"{action}冷却中"
+            petmod.refresh_energy(p)
+            need = data.DAILY_ACTIONS[action]["energy"]
+            if p["energy"] < need:
+                return f"精力不足（需 {need}）"
+            return None
+
+        if key == "进入副本":
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            reachable = [n for n, d in data.DUNGEONS.items() if p["level"] >= d["level_req"]]
+            if not reachable:
+                return "等级未达任何副本门槛"
+            d = data.DUNGEONS[max(reachable, key=lambda n: data.DUNGEONS[n]["level_req"])]
+            if self.store.cooldown_remaining(player, "副本") > 0:
+                return "进入副本冷却中"
+            petmod.refresh_energy(p)
+            if p["energy"] < d["energy"]:
+                return f"精力不足（需 {d['energy']}）"
+            return None
+
+        if key == "挑战神仙":
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
+                return "灵宠飞升后才能挑战神仙"
+            reachable = [lv for lv, d in data.ASCEND_DUNGEONS.items() if p["level"] >= d["level_req"]]
+            if not reachable:
+                return "等级未达任何神仙门槛（最低 Lv120）"
+            d = data.ASCEND_DUNGEONS[max(reachable)]
+            if self.store.cooldown_remaining(player, "ascend_dungeon") > 0:
+                return "挑战神仙冷却中"
+            petmod.refresh_energy(p)
+            if p["energy"] < d["energy"]:
+                return f"精力不足（需 {d['energy']}）"
+            return None
+
+        if key == "深渊秘境":
+            if p["level"] < data.ABYSS_LEVEL_REQ:
+                return f"需要宠物 Lv{data.ABYSS_LEVEL_REQ}"
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            if self.store.cooldown_remaining(player, "深渊秘境") > 0:
+                return "深渊秘境冷却中"
+            self.store.refresh_abyss(player)
+            corruption = self.store.get_abyss_corruption(player)
+            cost = min(data.ABYSS_MAX_ENERGY, data.ABYSS_BASE_ENERGY + corruption * 3)
+            petmod.refresh_energy(p)
+            if p["energy"] < cost:
+                return f"精力不足（需 {cost}）"
+            return None
+
+        if key == "宠物神仙劫":
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
+                return "灵宠飞升后才能挑战神仙劫"
+            if self.store.cooldown_remaining(player, "immortal_calamity") > 0:
+                return "宠物神仙劫冷却中"
+            petmod.refresh_energy(p)
+            if p["energy"] < 50:
+                return "精力不足（需 50）"
+            return None
+
+        if key == "幻境寻宝":
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
+                return "灵宠飞升后才能幻境寻宝"
+            if self.store.cooldown_remaining(player, "fantasy_treasure") > 0:
+                return "幻境寻宝冷却中"
+            petmod.refresh_energy(p)
+            need = data.ASCEND_TREASURE["energy"]
+            if p["energy"] < need:
+                return f"精力不足（需 {need}）"
+            return None
+
+        if key in ("砸蛋", "砸蛋十连"):
+            # 单发与十连共用玩家级冷却键「砸蛋」，互斥
+            if self.store.player_cooldown_remaining(player, "砸蛋") > 0:
+                return "砸蛋冷却中（单发/十连共用）"
+            return None
+
+        if key == "家园收取":
+            if not (self.store.homestead_state(player).get("buildings") or {}):
+                return "家园还没有建筑"
+            if self.store.cooldown_remaining(player, "homestead:collect") > 0:
+                return "家园收取冷却中"
+            return None
+
+        if key in ("打工", "学习", "洗髓", "探险", "冥想", "约会"):
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            if key == "冥想" and not p.get("custom"):
+                return "冥想需要定制宠物"
+            if key == "洗髓" and p["intel"] <= 20:
+                return "智力过低，无法洗髓"
+            if self.store.cooldown_remaining(player, f"日常:{key}") > 0:
+                return f"{key}冷却中"
+            petmod.refresh_energy(p)
+            need = data.DAILY_ACTIONS[key]["energy"]
+            if p["energy"] < need:
+                return f"精力不足（需 {need}）"
+            return None
+
+        if key == "秋冬Boss":
+            found = self._assistant_event_boss()
+            if not found:
+                return "当前没有进行中的活动 Boss"
+            eid, cfg = found
+            boss = cfg.get("boss", {})
+            cmd = boss.get("cmd", "活动Boss")
+            self.store.reset_event_daily(player, eid, time.strftime("%Y-%m-%d"))
+            limit = boss.get("daily_limit")
+            if limit and self.store.event_daily_count(player, eid, cmd) >= limit:
+                return f"今日『{cmd}』次数已用完"
+            if p["level"] < boss.get("level_req", 1):
+                return f"需要宠物 Lv{boss.get('level_req', 1)}"
+            busy = self._busy_reason(p)
+            if busy:
+                return busy
+            if self.store.cooldown_remaining(player, f"event:{eid}:boss") > 0:
+                return f"{cmd}冷却中"
+            if self._event_boss_state(cfg).get("respawn_until", 0) > int(time.time()):
+                return f"『{boss.get('name', '活动Boss')}』正在复活"
+            petmod.refresh_energy(p)
+            need = boss.get("energy", 0)
+            if p["energy"] < need:
+                return f"精力不足（需 {need}）"
+            return None
+
+        if key in ("修士修炼", "修士突破", "外出历练"):
+            return self._assistant_ready_adventure(key, player, group_id, qq)
+
+        return "未知任务"
+
+    def _assistant_ready_adventure(
+        self, key: str, player: dict, group_id: str, qq: str
+    ) -> str | None:
+        a = player.get("adventure")
+        if not a:
+            return "尚未踏入仙途（先发送『踏入仙途 剑修』）"
+        now = time.time()
+        if key == "外出历练":
+            if self._assistant_team_ready(group_id, qq):
+                return "已准备出发，请先退出队伍"
+            if isinstance(a.get("hp"), int) and a["hp"] <= 0:
+                return "修士已陨落，需静养或服用复苏丹"
+            if float(a.get("explore_cd", 0) or 0) > now:
+                return "外出历练冷却中"
+            return None
+        if key == "修士修炼":
+            if now - int(a.get("last_train", 0) or 0) < 60:
+                return "修为积累不足 1 分钟"
+            return None
+        if key == "修士突破":
+            if self._assistant_team_ready(group_id, qq):
+                return "已准备出发，请先退出队伍"
+            cap = adventure_realm_cap(a.get("realm", 0))
+            lv = int(a.get("level", 0) or 0)
+            if lv >= ADVENTURE_MAX_LEVEL:
+                return "已臻真仙圆满"
+            if lv >= cap:
+                return "已达境界巅峰，须『渡劫』破境"
+            need = 60 + lv * 20
+            if int(a.get("cultivation", 0) or 0) < need:
+                return f"修为不足（需 {need}）"
+            return None
+        return "未知任务"
+
+    def _assistant_team_ready(self, group_id: str, qq: str) -> bool:
+        """该修士是否处于「已准备出发」的队伍中（与 AdventureService.can_edit 同义）。"""
+        key = self.store.make_key(group_id, qq)
+        now = time.time()
+        world = self.store._data.get("adventure_world") or {}
+        for team in (world.get("teams") or {}).values():
+            if not isinstance(team, dict) or team.get("expires", 0) <= now:
+                continue
+            if key in (team.get("members") or {}) and key in (team.get("ready") or ()):
+                return True
+        return False
+
+    def _assistant_event_boss(self) -> tuple[str, dict] | None:
+        """当前进行中、且启用了 Boss 的活动（取第一个）。"""
+        for eid, cfg in (self.store.active_events() or {}).items():
+            boss = (cfg or {}).get("boss") or {}
+            if boss.get("enabled") and boss.get("cmd"):
+                return eid, cfg
+        return None
+
+    # ------------------------------------------------------------------
+    # 执行
+    # ------------------------------------------------------------------
+    def _assistant_exec(
+        self, key: str, player: dict, pet: dict, group_id: str, qq: str
+    ) -> str:
+        """调用对应 handler 执行一个任务，返回其展示文本。"""
+        if key == "修炼":
+            return self._daily(player, group_id, self._assistant_cult_action(pet))
+        if key == "进入副本":
+            # 不带副本名 → handler 自动挑可进的最高档
+            return self._enter_dungeon(player, ["进入副本"])
+        if key == "挑战神仙":
+            return self._enter_ascend_dungeon(player, ["挑战神仙"])
+        if key == "深渊秘境":
+            return self._abyss_dungeon(player)
+        if key == "宠物神仙劫":
+            return self._immortal_calamity(player)
+        if key == "幻境寻宝":
+            return self._fantasy_treasure(player)
+        if key == "砸蛋":
+            return self._smash_egg(player)
+        if key == "砸蛋十连":
+            return self._smash_ten(player)
+        if key == "家园收取":
+            return self._homestead_collect(player)
+        if key in ("打工", "学习", "洗髓", "探险", "冥想", "约会"):
+            return self._daily(player, group_id, key)
+        if key == "秋冬Boss":
+            found = self._assistant_event_boss()
+            if not found:
+                return ""
+            eid, cfg = found
+            return self._event_boss_challenge(player, group_id, eid, cfg)
+        if key in ("修士修炼", "修士突破", "外出历练"):
+            # 修士轴走 AdventureService（同步、自带事务回滚）
+            service = AdventureService(self.store, config=getattr(self, "config", None))
+            return service.handle(group_id, qq, [key])
+        return ""
+
+    async def _assistant_tick(self) -> None:
+        """单次扫描：为每只开启自动助手的宠物按勾选顺序代跑可执行的任务。
+
+        静默执行（不发群消息，避免每 30 秒刷屏）；成功结果写进 pet["assistant"]["log"]
+        供『助手状态』查看；每成功执行 1 个任务扣 1 次玩家级额度，额度归零自动停机。
+        未就绪的任务本轮直接跳过，不扣次数、不落盘。
+        """
+        now = int(time.time())
+        any_changed = False
+        for key, player in list(self.store.all_players().items()):
+            if not isinstance(player, dict):
+                continue
+            pets = player.get("pets") or []
+            if not pets:
+                continue
+            quota = self.store.assistant_quota(player)
+            group_id, _, qq = str(key).partition("\x1f")
+            for p in pets:
+                if not isinstance(p, dict):
+                    continue
+                a = p.get("assistant")
+                if not a or not a.get("enabled"):
+                    continue
+                if quota <= 0:
+                    # 额度用完自动停机（保留勾选，充值后可直接重新开启）
+                    a["enabled"] = False
+                    any_changed = True
+                    continue
+                tasks = [t for t in (a.get("tasks") or []) if t in data.ASSISTANT_TASK_BY_KEY]
+                if not tasks or self._busy_reason(p):
+                    continue
+                # 冷却存在宠物身上（store.set_cooldown 写 player["pet"]），
+                # 代跑非活跃宠物时必须把运行时引用切过去，结束后恢复。
+                prev_ref = player.get("pet")
+                player["pet"] = p
+                try:
+                    for tkey in tasks[:data.ASSISTANT_MAX_TASKS]:
+                        if quota <= 0:
+                            break
+                        if self._assistant_ready(tkey, player, p, group_id, qq):
+                            continue
+                        try:
+                            text = self._assistant_exec(tkey, player, p, group_id, qq)
+                        except Exception as exc:  # 单个任务失败不影响其它任务
+                            logger.warning(f"[petpark] 自动助手执行『{tkey}』异常：{exc}")
+                            continue
+                        quota -= 1
+                        a["total_runs"] = int(a.get("total_runs", 0)) + 1
+                        a["last_run_at"] = now
+                        self._assistant_log(p, f"✅ {tkey}：{self._assistant_brief(text)}")
+                        any_changed = True
+                finally:
+                    player["pet"] = prev_ref
+                if quota <= 0:
+                    # 本轮把这个宠物的额度跑干了，立刻停机——不能等下一轮（30 秒后）
+                    # 才在循环开头发现，否则「助手状态」会顶着 🟢 运行中显示剩余 0 次，
+                    # 且同一玩家名下多只宠物时，只有排在后面的那只会当场停机。
+                    a["enabled"] = False
+                    any_changed = True
+            info = player.setdefault("assistant", {"quota": 0})
+            if int(info.get("quota", 0) or 0) != quota:
+                info["quota"] = max(0, quota)
+                any_changed = True
+        if any_changed:
+            await self.store.save()
 
     def _patch_qqofficial_message_extensions(self) -> None:
         """为 QQ 官方适配器补齐 Markdown 主动推送与消息按钮支持。
@@ -1187,17 +1593,42 @@ class PetParkPlugin(Star):
         logger.info("[petpark] 已打补丁：QQ 官方消息支持 Markdown 与消息按钮")
 
     @staticmethod
-    def _build_qq_keyboard(rows: list[list[tuple]]) -> dict:
+    def _build_qq_keyboard(rows: list[list[tuple]], action_type: int = 2) -> dict:
         """构造 QQ 官方机器人的 InlineKeyboard 数据字典。
 
         rows: 每一行是 (显示文字, 点击后发送的文本) 元组列表。
+
+        action_type：
+        - ``2``（默认）指令按钮——点击等于在群里发一条 ``@机器人 data`` 消息，
+          所有人都看得见，但零框架依赖。
+        - ``1`` 回调按钮——点击只推 INTERACTION_CREATE 事件（需框架开启 intent 1<<26
+          并有 ``on_interaction_create``），群里不会冒出玩家消息。官方 schema 里
+          ``enter`` / ``reply`` / ``anchor`` 是「指令按钮可用」，回调按钮必须不带，
+          否则整条消息可能被判非法。
         """
+        is_callback = int(action_type) == 1
         out_rows: list[dict] = []
         for r, row in enumerate(rows):
             buttons: list[dict] = []
             for c, item in enumerate(row):
                 label, data = item[:2]
                 enter = item[2] if len(item) > 2 else True
+                action = {
+                    "type": 1 if is_callback else 2,
+                    "permission": {
+                        "type": 2,
+                        "specify_role_ids": [],
+                        "specify_user_ids": [],
+                    },
+                    "click_limit": 100,
+                    "data": data,
+                    "at_bot_show_channel_list": False,
+                }
+                if is_callback:
+                    # 老客户端不认回调按钮时显示的兼容文案
+                    action["unsupport_tips"] = "请升级 QQ 后重试"
+                else:
+                    action["enter"] = enter
                 buttons.append(
                     {
                         "id": f"btn_{r}_{c}",
@@ -1206,18 +1637,7 @@ class PetParkPlugin(Star):
                             "visited_label": label,
                             "style": 0,
                         },
-                        "action": {
-                            "type": 2,
-                            "permission": {
-                                "type": 2,
-                                "specify_role_ids": [],
-                                "specify_user_ids": [],
-                            },
-                            "click_limit": 100,
-                            "data": data,
-                            "enter": enter,
-                            "at_bot_show_channel_list": False,
-                        },
+                        "action": action,
                     }
                 )
             out_rows.append({"buttons": buttons})
@@ -1269,7 +1689,11 @@ class PetParkPlugin(Star):
     _MENU_CARD_CMDS = {"灵契仙途", "管理菜单", "仙途帮助", "我的修士", "今日修行", "修士装备",
                        "仙途地图", "我的宠物", "宠物图", "查看宠物"}
 
-    def _keyboard_for_cmd(self, text: str, reply: str = "") -> dict | None:
+    # 附带自动助手勾选面板的指令（面板与旧命令名共用同一套按钮）
+    _ASSISTANT_CMDS = {"自动助手", "自动修炼", "助手选", "助手确定", "助手清空", "助手状态",
+                       "自动修炼状态", "修炼状态"}
+
+    def _keyboard_for_cmd(self, text: str, reply: str = "", group_id: str = "", qq: str = "") -> dict | None:
         """根据用户发送的指令决定要不要附带快捷按钮。
 
         主菜单按钮只在「菜单文本」或「卡片/地图图」视图指令下附带；棋类/扫雷/活动按钮按各自需要保留，
@@ -1277,6 +1701,19 @@ class PetParkPlugin(Star):
         """
         tokens = text.split()
         cmd = tokens[0] if tokens else text
+        if cmd in self._ASSISTANT_CMDS:
+            # 助手勾选面板：每次点击都重绘一条新面板（QQ 无消息编辑能力），
+            # ✅/⬜ 由待选态决定。没有 group_id/qq 时（如测试直调）退回已保存的配置。
+            player = self.store.get_player(qq, group_id, create=False) if (group_id and qq) else None
+            pet = (player or {}).get("pet")
+            if not pet:
+                return None
+            picked = (
+                self._assistant_picked(group_id, qq, pet)
+                if player else
+                [t for t in self._assistant_state(pet).get("tasks", []) if t in data.ASSISTANT_TASK_BY_KEY]
+            )
+            return self._assistant_keyboard(picked)
         if cmd in BOARD_COMMANDS:
             context = text + "\n" + reply
             board_kind = "斗兽棋" if "斗兽棋" in context else "围棋" if "围棋" in context else "军棋" if "军棋" in context else "象棋" if "象棋" in context else "五子棋"
@@ -1406,7 +1843,7 @@ class PetParkPlugin(Star):
         if image_md:
             reply = f"{image_md}\n{reply}"
         # 在合适的地方附加 QQ 官方消息按钮，方便用户快捷发送指令
-        keyboard = self._keyboard_for_cmd(effective_text, reply)
+        keyboard = self._keyboard_for_cmd(effective_text, reply, group_id, qq)
         logger.info(
             "[petpark] reply_ready msg_id=%s elapsed_ms=%.1f",
             getattr(getattr(event, "message_obj", None), "message_id", ""),
@@ -3976,8 +4413,8 @@ class PetParkPlugin(Star):
         # ---- 卡密兑换 ----
         if cmd in ("兑换", "卡密兑换"):
             return self._redeem(player, group_id, qq, tokens)
-        if cmd == "修炼卡":
-            return self._redeem_auto_cultivation_card(player, group_id, qq, tokens)
+        if cmd in ("修炼卡", "助手卡"):
+            return self._redeem_assistant_card(player, group_id, qq, tokens)
         if cmd == "我要氪金":
             return self._pay_link()
 
@@ -4113,13 +4550,21 @@ class PetParkPlugin(Star):
         if cmd == "精力转移":
             return self._energy_transfer(player, group_id, tokens)
 
-        # ---- 自动修炼 ----
-        if cmd in ("自动修炼", "开启自动修炼"):
-            return self._auto_cultivation_toggle(player, True)
-        if cmd == "关闭自动修炼":
-            return self._auto_cultivation_toggle(player, False)
-        if cmd in ("自动修炼状态", "修炼状态"):
-            return self._auto_cultivation_status(player)
+        # ---- 自动助手（旧名「自动修炼」为隐藏别名）----
+        if cmd in ("自动助手", "自动修炼"):
+            return self._assistant_open(player, group_id)
+        if cmd in ("助手选",):
+            return self._assistant_pick(player, group_id, tokens)
+        if cmd == "助手确定":
+            return self._assistant_confirm(player, group_id)
+        if cmd == "助手清空":
+            return self._assistant_clear(player, group_id)
+        if cmd in ("开启自动助手", "开启自动修炼"):
+            return self._assistant_toggle(player, True)
+        if cmd in ("关闭自动助手", "关闭自动修炼"):
+            return self._assistant_toggle(player, False)
+        if cmd in ("助手状态", "自动修炼状态", "修炼状态"):
+            return self._assistant_status(player, group_id)
 
         # ---- 对战 / 排行 ----
         if cmd == "宠物攻击":
@@ -4449,7 +4894,7 @@ class PetParkPlugin(Star):
         ga.setdefault("grand_used", False)
         ga.setdefault("per_win_min", 2)
         ga.setdefault("per_win_max", 10)
-        ga.setdefault("stock", {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动修炼卡": 94})
+        ga.setdefault("stock", {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动助手卡": 94})
         ga.setdefault("stock_remain", dict(ga["stock"]))
         ga.setdefault("rounds", [])
         return ga
@@ -6644,8 +7089,8 @@ class PetParkPlugin(Star):
                 parts.append("重洗灵根（随机）")
             elif k == "reroll_spirit_root_boosted":
                 parts.append("重洗灵根（保底非杂灵根）")
-            elif k == "add_cultivation_days":
-                parts.append(f"自动修炼卡时长 +{v} 天")
+            elif k == "add_assistant_quota":
+                parts.append(f"自动助手执行次数 +{v} 次")
             elif k == "add_pet_slot":
                 parts.append(f"宠物席位 +{v}")
             elif k == "custom_pet":
@@ -7029,10 +7474,10 @@ class PetParkPlugin(Star):
             return "⚠️ 用法：`兑换 卡密`（例如：兑换 ABCD23XY...）"
         code = tokens[1].strip()
         used_by = self.store.make_key(group_id, qq)
-        # 自动修炼卡走专用兑换
+        # 自动助手卡走专用兑换
         card = self.store.cards().get(code.upper())
-        if card and int(card.get("auto_cultivation_days", 0) or 0) > 0:
-            return self._redeem_auto_cultivation_card(player, group_id, qq, tokens)
+        if card and int(card.get("assistant_quota", 0) or 0) > 0:
+            return self._redeem_assistant_card(player, group_id, qq, tokens)
         rewards, items, err = self.store.redeem_card(code, player, used_by)
         if rewards is None and items is None:
             return f"❌ 兑换失败：{err}"
@@ -7049,24 +7494,22 @@ class PetParkPlugin(Star):
         lines.append("━━━━━━━━━━━━━━")
         return "\n".join(lines)
 
-    def _redeem_auto_cultivation_card(
+    def _redeem_assistant_card(
         self, player: dict, group_id: str, qq: str, tokens: list[str]
     ) -> str:
         if len(tokens) < 2 or not tokens[1].strip():
             return "⚠️ 用法：`修炼卡 卡密`（例如：修炼卡 ABCD23XY...）"
         code = tokens[1].strip()
         used_by = self.store.make_key(group_id, qq)
-        days, err = self.store.redeem_auto_cultivation_card(code, player, used_by)
-        if days is None:
+        quota, err = self.store.redeem_assistant_card(code, player, used_by)
+        if quota is None:
             return f"❌ 使用失败：{err}"
-        until = player["auto_cultivation"]["card_until"]
-        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
         return (
-            f"## 🧘 自动修炼卡使用成功\n"
+            f"## 🧘 自动助手卡使用成功\n"
             f"━━━━━━━━━━━━━━\n"
-            f"获得 {days} 天自动修炼权限\n"
-            f"到期时间：{when}\n"
-            f"发送『开启自动修炼』即可开始挂机"
+            f"获得 {quota} 次自动助手执行额度\n"
+            f"当前剩余：{self.store.assistant_quota(player)} 次\n"
+            f"发送『自动助手』勾选代跑任务，『开启自动助手』开始挂机"
         )
 
     def _pay_link(self) -> str:
@@ -10163,30 +10606,20 @@ class PetParkPlugin(Star):
             player["pet_slots"] = new_slots
             self.store.remove_item(player, name, count)
             return f"✅ 使用『{name}』x{count}：宠物席位 +{actual_add}！当前席位上限：{player['pet_slots']}。"
-        # 自动修炼卡：玩家级别效果，落地到当前宠物（加「自动修炼权限天数」）
-        if it_check and it_check.get("effect", {}).get("add_cultivation_days"):
+        # 自动助手卡：玩家级效果，直接充进「自动助手执行次数」池（不依赖宠物）
+        if it_check and it_check.get("effect", {}).get("add_assistant_quota"):
             if not self.store.has_item(player, name):
                 return f"背包里没有『{name}』。"
             count = self._parse_count(tokens, 2)
             if not self.store.has_item(player, name, count):
                 return f"背包里『{name}』数量不足。"
-            p = self._need_pet(player)
-            if not p:
-                return "你没有宠物，无法使用『自动修炼卡』。"
-            if p.get("custom"):
-                return "定制宠物已永久享有自动修炼权限，无需使用此卡。"
-            days = it_check["effect"]["add_cultivation_days"] * count
-            now = int(time.time())
-            ac = player.setdefault("auto_cultivation", {"card_until": 0})
-            cur = int(ac.get("card_until", 0) or 0)
-            base = cur if cur > now else now
-            ac["card_until"] = base + days * 86400
+            add = int(it_check["effect"]["add_assistant_quota"]) * count
+            total = self.store.add_assistant_quota(player, add)
             self.store.remove_item(player, name, count)
-            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ac["card_until"]))
             return (
-                f"🧘 使用『{name}』x{count}：自动修炼权限 +{days} 天！\n"
-                f"> 有效期至 **{when}**\n"
-                f"> 发送『开启自动修炼』即可开始挂机修炼。"
+                f"🧘 使用『{name}』x{count}：自动助手执行次数 +{add}！\n"
+                f"> 当前剩余 **{total}** 次\n"
+                f"> 发送『自动助手』勾选代跑任务，『开启自动助手』开始挂机。"
             )
         # 宠物定制卡：解锁主宠「定制」权限（自定义名称/图片），晋升混沌并加「定制」标签。
         if it_check and it_check.get("effect", {}).get("custom_pet"):

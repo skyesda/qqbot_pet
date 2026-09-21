@@ -399,6 +399,10 @@ class WebAdmin:
         mode = str(body.get("mode", "")).strip()
         if mode == "used":
             keys = [k for k, v in cards.items() if isinstance(v, dict) and v.get("used")]
+        elif mode == "assistant":
+            # 一键清理全部自动助手卡（后台改版后清旧卡用）
+            keys = [k for k, v in cards.items()
+                    if isinstance(v, dict) and "assistant_quota" in v]
         else:
             req_keys = body.get("keys")
             if not isinstance(req_keys, list) or not req_keys:
@@ -431,8 +435,8 @@ class WebAdmin:
                     count=int(body.get("count", 1)),
                     prefix=body.get("prefix", ""),
                 )
-            elif card_type == "auto_cultivation":
-                codes = self.store.create_auto_cultivation_cards(
+            elif card_type == "assistant":
+                codes = self.store.create_assistant_cards(
                     count=int(body.get("count", 1)),
                     prefix=body.get("prefix", ""),
                 )
@@ -1475,7 +1479,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
  <option value="">货币/道具卡</option>
  <option value="custom_pet">宠物定制卡</option>
  <option value="mount_custom">坐骑定制卡</option>
- <option value="auto_cultivation">自动修炼卡</option>
+ <option value="assistant">自动助手卡（500 次）</option>
 </select>
 <input id="amt_coin" type="number" placeholder="灵石面额" style="width:120px">
 <input id="amt_jifen" type="number" placeholder="玄晶面额" style="width:120px">
@@ -2483,8 +2487,8 @@ function packageHtml(v){
  return parts.length?parts.join(' ＋ '):'<span class="muted">—</span>';
 }
 function cardContentHtml(v){
- const acDays=+(v.auto_cultivation_days||0);
- if(acDays>0)return `<span class="diamond">🧘 自动修炼 ${acDays} 天</span>`;
+ const acQuota=+(v.assistant_quota||0);
+ if(acQuota>0)return `<span class="diamond">🧘 自动助手 ${acQuota} 次</span>`;
  if(v.mount_custom)return `<span class="diamond">🎨 坐骑外观定制卡</span>`;
  const days=+(v.auth_days||0);
  if(days>0)return `<span class="diamond">🔐 群授权 ${days} 天·${(v.server_type==='infinite'?'无限服':'官方服')}</span>`;
@@ -2937,8 +2941,8 @@ async function genCards(){
   payload={card_type:'custom_pet',count:+g('cnt').value,prefix:g('pre').value};
  }else if(cardType==='mount_custom'){
   payload={card_type:'mount_custom',count:+g('cnt').value,prefix:g('pre').value};
- }else if(cardType==='auto_cultivation'){
-  payload={card_type:'auto_cultivation',count:+g('cnt').value,prefix:g('pre').value};
+ }else if(cardType==='assistant'){
+  payload={card_type:'assistant',count:+g('cnt').value,prefix:g('pre').value};
  }else{
   const authdays=+g('amt_authdays').value||0;
   if(authdays>0){
@@ -2961,11 +2965,11 @@ async function genCards(){
 }
 function cardTypeChange(){
  const t=g('card_type').value;
- const hideRewards=(t==='custom_pet'||t==='mount_custom'||t==='auto_cultivation');
+ const hideRewards=(t==='custom_pet'||t==='mount_custom'||t==='assistant');
  ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays','amt_server_type'].forEach(id=>{const el=g(id);if(el)el.style.display=hideRewards?'none':'';});
 }
 function exportUnused(){
- const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.auto_cultivation_days||0)>0){pkg='自动修炼'+v.auto_cultivation_days+'天';}else if(v.mount_custom){pkg='坐骑外观定制';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(dsp(c)+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(cache)){const v=cache[k];if(v.used)continue;let pkg;if(+(v.assistant_quota||0)>0){pkg='自动助手'+v.assistant_quota+'次';}else if(v.mount_custom){pkg='坐骑外观定制';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(dsp(c)+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();
 }

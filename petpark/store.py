@@ -108,8 +108,8 @@ class PetStore:
             "gacha": {"enabled": True, "cmd": "生日抽奖", "menu_cmd": "生辰活动",
                       "win_rate": 0.8,                    # 每轮中奖人数≈参与人数×80%
                       "grand_item": "宠物定制卡", "grand_count": 1, "grand_used": False,   # 仅最后一轮保发的大奖（定制卡不进库存）
-                      "stock": {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动修炼卡": 94},          # 抽奖共享库存（配置总量）
-                      "stock_remain": {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动修炼卡": 94},   # 剩余量（动态扣减）
+                      "stock": {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动助手卡": 94},          # 抽奖共享库存（配置总量）
+                      "stock_remain": {"洪荒卡": 1, "变种卡": 5, "史诗卡": 10, "自动助手卡": 94},   # 剩余量（动态扣减）
                       "rounds": []},
             "pool": {"enabled": True, "cmd": "生日快乐", "start_time": "07:00", "cooldown_min": 15, "cooldown_max": 30, "currencies": {}},
             "pool_remain": {},          # {"积分": int, "金币": int, "钻石": int}
@@ -126,6 +126,71 @@ class PetStore:
         self._migrate_homestead_building_names()
         self._migrate_economy_v1()
         self._migrate_bank_overflow()
+        self._migrate_assistant_v1()
+
+    def _migrate_assistant_v1(self) -> None:
+        """自动修炼 → 自动助手 v1（一次性，幂等）。
+
+        计费模型从「按天数」改为「按次数」，且定制宠物不再永久免费，故旧权限
+        一律清零、不补偿：删除全部 auto_cultivation_days 卡密；清掉玩家级
+        card_until 旧权限与宠物级挂机状态，统一改建 assistant 新字段。
+
+        执行环境是 _load() 内、任何 _flush() 之前，故此时 self.path 仍是迁移前的
+        原始存档，直接复制一份留档即可（.bak 由 _flush 另行维护）。
+        """
+        if self._data.get("assistant_migrated_v1"):
+            return
+        self._data["assistant_migrated_v1"] = True
+        try:
+            if self.path.exists():
+                bak = self.path.with_name(self.path.name + ".pre_assistant_migration.bak")
+                if not bak.exists():
+                    bak.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError as exc:
+            logging.getLogger(__name__).warning("[petpark] 自动助手迁移备份失败：%s", exc)
+
+        # 1) 删除全部自动修炼卡密（含已用/未用）
+        cards = self._data.get("cards", {})
+        for code in [c for c, v in cards.items()
+                     if isinstance(v, dict) and "auto_cultivation_days" in v]:
+            del cards[code]
+
+        # 2) 玩家级：清旧权限时间与遗留统计，改建新的次数池（额度 0）
+        for pl in self._data.get("players", {}).values():
+            if not isinstance(pl, dict):
+                continue
+            pl.pop("auto_cultivation", None)
+            pl["assistant"] = {"quota": 0}
+            # 3) 宠物级：清旧挂机状态（含 enabled=True 的运行中挂机）
+            for pet in pl.get("pets", []) or []:
+                if isinstance(pet, dict):
+                    pet.pop("auto_cultivation", None)
+            if isinstance(pl.get("pet"), dict):
+                pl["pet"].pop("auto_cultivation", None)
+
+        # 4) 「自动修炼卡」→「自动助手卡」是**改名**不是删除：抽奖库存与背包里的
+        #    旧名条目保留数量跟随改名，否则库存会指向一个已不存在的道具。
+        gacha = (self._data.get("celebrate") or {}).get("gacha") or {}
+        for field in ("stock", "stock_remain"):
+            mapping = gacha.get(field)
+            if isinstance(mapping, dict) and "自动修炼卡" in mapping:
+                mapping["自动助手卡"] = mapping.pop("自动修炼卡")
+        # 历史开奖记录里的道具名同样改名：奖品在开奖时已即时入包（add_item），
+        # 这里只是播报留档，改名只为让玩家看到的旧记录与他背包里的实物同名。
+        for rnd in gacha.get("rounds") or []:
+            result = (rnd or {}).get("result") or {}
+            entries = list(result.get("winners") or [])
+            if isinstance(result.get("grand"), dict):
+                entries.append(result["grand"])
+            for ent in entries:
+                if isinstance(ent, dict) and ent.get("item") == "自动修炼卡":
+                    ent["item"] = "自动助手卡"
+        for pl in self._data.get("players", {}).values():
+            if not isinstance(pl, dict):
+                continue
+            bag = pl.get("bag")
+            if isinstance(bag, dict) and "自动修炼卡" in bag:
+                bag["自动助手卡"] = bag.pop("自动修炼卡")
 
     def _migrate_homestead_building_names(self) -> None:
         """家园建筑键改名：金币矿→灵石矿、积分工坊→玄晶工坊（仙途语境，重命名不删数据）。
@@ -476,8 +541,9 @@ class PetStore:
                 "quests": {},
                 # 已完成的剧情任务名（每个只能完成一次，重生后清空可重做）
                 "quest_done": [],
-                "auto_cultivation": {
-                    "card_until": 0,
+                # 自动助手执行次数池（玩家级，本群所有宠物共享）
+                "assistant": {
+                    "quota": 0,
                 },
                 "auto_level": True,
                 "abyss_corruption": 0,
@@ -511,6 +577,11 @@ class PetStore:
             pl.setdefault("mount_enter_notify", True)
             pl.setdefault("mount_leave_notify", True)
             pl.setdefault("economy_v1", True)
+            # 自动助手次数池：迁移后必然存在，此处兜底防止手工/异常数据缺键
+            if not isinstance(pl.get("assistant"), dict):
+                pl["assistant"] = {"quota": 0}
+            else:
+                pl["assistant"].setdefault("quota", 0)
         return pl
 
     def all_players(self) -> dict[str, dict]:
@@ -1812,23 +1883,35 @@ class PetStore:
         return int(player.get("mount_custom_slots", 0) or 0)
 
     @staticmethod
-    def auto_cultivation_active(player: dict, pet: dict = None) -> bool:
-        """判断指定宠物是否享有自动修炼权限。
+    def assistant_active(player: dict) -> bool:
+        """玩家是否还有自动助手执行额度（次数池，玩家级、群内所有宠物共享）。
 
-        定制宠物永久有效；非定制宠物需自动修炼卡在有效期内。
+        自 v3.10 起不再有「定制宠物永久免费」旁路：额度只由自动助手卡提供，
+        每成功执行 1 个任务扣 1 次，额度归零即停机。
         """
-        if pet is None:
-            pet = player.get("pet") if player else None
-        if pet and pet.get("custom"):
-            return True
-        ac = player.get("auto_cultivation", {}) if player else {}
-        until = int(ac.get("card_until", 0) or 0)
-        return until > int(time.time())
+        if not player:
+            return False
+        info = player.get("assistant") or {}
+        return int(info.get("quota", 0) or 0) > 0
 
-    def create_auto_cultivation_cards(
+    @staticmethod
+    def assistant_quota(player: dict) -> int:
+        """当前剩余执行次数（不足或未开通返回 0）。"""
+        if not player:
+            return 0
+        return max(0, int((player.get("assistant") or {}).get("quota", 0) or 0))
+
+    @staticmethod
+    def add_assistant_quota(player: dict, amount: int) -> int:
+        """增加自动助手执行次数，返回增加后的剩余次数。"""
+        info = player.setdefault("assistant", {"quota": 0})
+        info["quota"] = max(0, int(info.get("quota", 0) or 0) + int(amount))
+        return info["quota"]
+
+    def create_assistant_cards(
         self, count: int = 1, prefix: str = ""
     ) -> list[str]:
-        """批量生成自动修炼卡密：1 张卡 = 1 天自动修炼权限。"""
+        """批量生成自动助手卡密：1 张卡 = ASSISTANT_QUOTA_PER_CARD 次执行额度。"""
         count = max(1, int(count))
         cards = self.cards()
         created: list[str] = []
@@ -1836,7 +1919,7 @@ class PetStore:
         for _ in range(count):
             code = self.gen_card_code(prefix)
             cards[code] = {
-                "auto_cultivation_days": 1,
+                "assistant_quota": data.ASSISTANT_QUOTA_PER_CARD,
                 "used": False,
                 "used_by": None,
                 "used_at": None,
@@ -1845,36 +1928,26 @@ class PetStore:
             created.append(code)
         return created
 
-    def redeem_auto_cultivation_card(
+    def redeem_assistant_card(
         self, code: str, player: dict, used_by: str
     ) -> tuple[Optional[int], Optional[str]]:
-        """兑换自动修炼卡：成功返回 (天数, None)，失败返回 (None, 原因)。"""
+        """兑换自动助手卡：成功返回 (获得次数, None)，失败返回 (None, 原因)。"""
         code = str(code).strip().upper()
         cards = self.cards()
         card = cards.get(code)
         if card is None:
             return None, "卡密不存在或输入有误"
-        days = int(card.get("auto_cultivation_days", 0) or 0)
-        if days <= 0:
-            return None, "这不是自动修炼卡"
+        quota = int(card.get("assistant_quota", 0) or 0)
+        if quota <= 0:
+            return None, "这不是自动助手卡"
         if card.get("used"):
             return None, "该卡密已被使用"
-        pet = player.get("pet")
-        if not pet:
-            return None, "你没有宠物，无法使用自动修炼卡"
-        if pet.get("custom"):
-            return None, "你的宠物已是定制宠物，已永久享有自动修炼权限，无需此卡"
-        now = int(time.time())
-        ac = player.setdefault("auto_cultivation", {
-            "card_until": 0,
-        })
-        cur = int(ac.get("card_until", 0) or 0)
-        base = cur if cur > now else now
-        ac["card_until"] = base + days * 86400
+        # 次数是玩家级资源、不依赖宠物，故不再要求「先有宠物」。
+        total = self.add_assistant_quota(player, quota)
         card["used"] = True
         card["used_by"] = used_by
-        card["used_at"] = now
-        return days, None
+        card["used_at"] = int(time.time())
+        return quota, None
 
     def unlock_pet_custom(self, player: dict) -> tuple[bool, str]:
         """直接为当前宠物解锁定制权限（内部/测试用）。"""

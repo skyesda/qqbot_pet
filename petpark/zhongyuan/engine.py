@@ -1059,7 +1059,7 @@ class ZhongyuanActivity:
         {"name": "生命神符", "price": 100, "desc": "使用后永久 生命上限 +100 并回满"},
         {"name": "智力神符", "price": 100, "desc": "使用后永久 智力 +100"},
         {"name": "精力神符", "price": 200, "desc": "使用后永久 精力上限 +100 并回满"},
-        {"name": "自动修炼卡", "price": 200, "desc": "使用后获得 1 天自动修炼权限"},
+        {"name": "自动助手卡", "price": 200, "desc": "使用后获得 500 次自动助手执行额度"},
     ]
 
     def _cmd_shop(self, group_id: str, qq: str, arg: str = "") -> str:
