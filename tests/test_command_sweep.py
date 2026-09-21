@@ -345,8 +345,33 @@ class CommandSweepTests(unittest.TestCase):
         text = self.plugin._assistant_status(player, 'g')
         self.assertIn('玄晶 +1491', text, '日志正文必须完整出现')
         self.assertIn('当前 101920', text, '日志正文的第二行也要在')
-        self.assertIn('打工冷却中（剩 25分钟）', text)
-        self.assertIn('砸蛋冷却中（单发/十连共用，剩 1分30秒）', text)
+        # 任务名由行首标签给出，原因里不再重复（旧版是「打工：打工冷却中」双写）
+        self.assertIn('打工：冷却中（剩 25分钟）', text)
+        self.assertIn('砸蛋：冷却中（单发/十连共用，剩 1分30秒）', text)
+        self.assertNotIn('打工：打工', text)
+        self.assertNotIn('砸蛋：砸蛋', text)
+
+    def test_assistant_cooldown_reason_drops_duplicate_task_name(self):
+        """冷却原因不重复行首的任务名；但实际跑的是另一个动作时必须点名。
+
+        「修炼」已婚会自动改跑双修，那是另一个动作——标签写着「修炼」时若不点名，
+        玩家会以为卡住的是修炼的冷却，白白等它。
+        """
+        player = self.store.get_player('root', 'g')
+        pet = player['pet']
+        player['pet'] = pet  # 冷却按宠物存，必须把运行时引用切过去
+
+        # 未婚：跑的就是「修炼」本身 → 不点名（行首已有标签）
+        pet['love_state'] = '未婚'
+        self.store.set_cooldown(player, '日常:修炼', 120)
+        self.assertEqual(self.plugin._assistant_ready('修炼', player, pet, 'g', ''),
+                         '冷却中（剩 2分钟）')
+
+        # 已婚：改跑「双修」→ 必须点名，否则看不出卡的是双修
+        pet['love_state'] = '已婚'
+        self.store.set_cooldown(player, '日常:双修', 120)
+        self.assertEqual(self.plugin._assistant_ready('修炼', player, pet, 'g', ''),
+                         '双修冷却中（剩 2分钟）')
 
     def test_assistant_status_renders_legacy_log_lines(self):
         """旧存档里是早年的一行摘要（无换行），渲染不能崩。"""
