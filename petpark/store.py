@@ -399,15 +399,20 @@ class PetStore:
             pl.setdefault("pet_slots", 2)
         self._restore_pet_refs()
 
+    @staticmethod
+    def _restore_pet_ref(pl: dict) -> None:
+        """按 active_pet 为单个玩家重建 player["pet"] 运行时引用。"""
+        idx = pl.get("active_pet", -1)
+        pets = pl.get("pets", [])
+        if 0 <= idx < len(pets):
+            pl["pet"] = pets[idx]
+        else:
+            pl["pet"] = None
+
     def _restore_pet_refs(self) -> None:
         """重建 player["pet"] 运行时引用，指向 player["pets"][active_pet]。"""
         for pl in self._data["players"].values():
-            idx = pl.get("active_pet", -1)
-            pets = pl.get("pets", [])
-            if 0 <= idx < len(pets):
-                pl["pet"] = pets[idx]
-            else:
-                pl["pet"] = None
+            self._restore_pet_ref(pl)
 
     def _migrate_bank_to_per_group(self) -> None:
         """将旧的全局银行数据（QQ key）迁移为按群隔离（group_id\x1fQQ key）。"""
@@ -488,15 +493,25 @@ class PetStore:
             del hps[k]
 
     def _flush(self) -> None:
-        # 序列化前剥离运行时 pet 引用（避免重复序列化）
-        for pl in self._data["players"].values():
-            pl.pop("pet", None)
+        # 序列化前剥离运行时 pet 引用（避免重复序列化）。
+        # 恢复必须「原样放回」而不是按 active_pet 重建：自动助手代跑非出战宠时会临时把
+        # player["pet"] 指向那只宠（main._assistant_tick），而冒险轴成功路径是**同步**调
+        # _flush() 的（adventure/service.py），若在这里重建引用，同一轮排在后面的任务就
+        # 会落回出战宠身上——表现为「给 A 宠挂机，却报 B 宠已飞升 / B 宠未婚」。
+        absent = object()  # 哨兵：该玩家序列化前本来就没有 pet 键
+        popped = [(pl, pl.pop("pet", absent)) for pl in self._data["players"].values()]
         try:
             # Whitespace is not game data. Compact JSON reduces encoding and disk I/O.
             payload = json.dumps(self._data, ensure_ascii=False, separators=(",", ":"))
         finally:
             # 无论如何都要恢复运行时引用
-            self._restore_pet_refs()
+            for pl, ref in popped:
+                if ref is absent:
+                    # 保持旧不变量：flush 后每个玩家都有 pet 键（按 active_pet 补）
+                    self._restore_pet_ref(pl)
+                else:
+                    # 原样放回，保持调用方临时切换的指向
+                    pl["pet"] = ref
         # 原子写入：先写 .tmp 再替换，写入前备份旧文件
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(payload, encoding="utf-8")

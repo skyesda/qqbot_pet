@@ -1527,6 +1527,9 @@ class PetParkPlugin(Star):
                     for tkey in tasks[:data.ASSISTANT_MAX_TASKS]:
                         if quota <= 0 and not in_free:
                             break
+                        # 每个任务执行前重新钉一次引用：中途若有同步 _flush() 之类的
+                        # 重建（冒险轴成功路径会调），后面的任务就会误落到出战宠身上。
+                        player["pet"] = p
                         if self._assistant_ready(tkey, player, p, group_id, qq):
                             continue
                         try:
