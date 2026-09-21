@@ -11235,7 +11235,11 @@ class PetParkPlugin(Star):
         if action == "冥想" and not p.get("custom"):
             return "『冥想』需要定制宠物才行。"
         if action in ("修炼", "双修") and self._pet_is_ascended(p):
-            return "此灵宠已飞升，凡间的『灵宠修行/道侣双修』已无法带来增益，请通过『幻境寻宝』『神仙劫』获取仙元。"
+            return (
+                f"此灵宠『{p.get('nickname', '?')}』已飞升，凡间的『灵宠修行/道侣双修』已无法带来增益，"
+                f"请通过『幻境寻宝』『神仙劫』获取仙元。"
+                + self._ascended_pet_hint(player, p)
+            )
         if action == "双修" and p.get("love_state") != "已婚":
             return "『道侣双修』需与道侣缔结婚约才行，先通过『求婚 / 同意求婚』结为道侣吧（未缔结可用『灵宠修行』）。"
         if action == "修炼" and p.get("love_state") == "已婚":
@@ -11676,6 +11680,29 @@ class PetParkPlugin(Star):
     @staticmethod
     def _pet_is_ascended(p: dict) -> bool:
         return data.STAGES.index(p["stage"]) >= data.STAGES.index("飞升")
+
+    def _ascended_pet_hint(self, player: dict, p: dict) -> str:
+        """出战宠已飞升、日常修炼被拒时的补充提示。
+
+        多宠系统里「修炼/双修」只作用于出战位（`player["pet"]` = `pets[active_pet]`），
+        玩家极易把「我名下那只幼年宠」当成「我的宠物」——当出战位实际是另一只飞升宠
+        （例如刚接收/召唤的新宠会自动出战）时，就会出现「明明重生过却报已飞升」。
+        此处点名出战宠、列出可修炼的其它宠并给出切换指令，避免玩家误判成重生失效。
+        """
+        others = []
+        for i, x in enumerate(player.get("pets") or []):
+            if not isinstance(x, dict) or x is p:
+                continue
+            if not self._pet_is_ascended(x):
+                others.append((i + 1, x.get("nickname", "?")))
+        if not others:
+            return ""
+        shown = "、".join(f"{i}『{n}』" for i, n in others[:3])
+        tail = f" 等 {len(others)} 只" if len(others) > 3 else ""
+        return (
+            f"\n\n💡 当前出战位是它；你名下还有 {shown}{tail}未飞升，"
+            f"发送『切换宠物 序号』切换后即可修炼。"
+        )
 
     def _charge_cost(self, player: dict, p: dict, cost: dict, action: str) -> tuple[str | None, str]:
         """按消耗表检查并扣除（jifen/exp/xianyuan/energy）。
