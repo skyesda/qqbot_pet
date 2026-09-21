@@ -7796,7 +7796,7 @@ class PetParkPlugin(Star):
                 "- 协同出战 用户ID · 跨群协同出战 群号 用户ID（修士+灵宠协作）",
                 "- 仙途战力榜(本群) · 仙途战力榜全服 · 领取仙途奖励（旧名 宠物排行/宠物神榜/领取神榜奖励 仍可用）",
                 "> ⏳ 副本 15 分钟冷却",
-                "- 历练副本 · 进入副本 名称（旧名 宠物副本 仍可用）",
+                "- 历练副本 · 进入副本 名称（不带名称则自动打可进的最高档；旧名 宠物副本 仍可用）",
                 "- 深渊秘境 · 深渊介绍 · 深渊商店 · 深渊祝福 · 深渊结晶兑换 数量",
                 "- 灵宠剧情任务 · 领取任务 名称 · 提交任务 名称",
                 "- 我的剧情任务 · 取消剧情任务（`取消剧情任务 任务名` 只取消单个）",
@@ -11795,6 +11795,7 @@ class PetParkPlugin(Star):
         lines = [
             "## 🏰 宠物副本",
             "> 进入方式：`进入副本 副本名称`（冷却 15 分钟）",
+            "> 也可以只发 `进入副本`，自动挑战当前等级可进的**最高档**副本。",
             "",
         ]
         for n, d in data.DUNGEONS.items():
@@ -11890,10 +11891,21 @@ class PetParkPlugin(Star):
         if busy:
             return busy
         if len(tokens) < 2:
-            return "用法：进入副本 副本名称"
-        name = tokens[1]
-        if name not in data.DUNGEONS:
-            return f"没有名为『{name}』的副本。"
+            # 不写副本名 → 自动挑当前等级可进的最高档副本
+            reachable = [
+                n for n, d in data.DUNGEONS.items() if p["level"] >= d["level_req"]
+            ]
+            if not reachable:
+                lowest = min(d["level_req"] for d in data.DUNGEONS.values())
+                return (
+                    f"你还没有达到任何副本的等级门槛（最低 Lv{lowest}）。\n\n"
+                    "> 发送 `宠物副本` 查看副本列表。"
+                )
+            name = max(reachable, key=lambda n: data.DUNGEONS[n]["level_req"])
+        else:
+            name = tokens[1]
+            if name not in data.DUNGEONS:
+                return f"没有名为『{name}』的副本。"
         d = data.DUNGEONS[name]
         if p["level"] < d["level_req"]:
             return f"进入『{name}』需要等级 Lv{d['level_req']}。"
@@ -11980,7 +11992,10 @@ class PetParkPlugin(Star):
                 f"- **{d['name']}** `Lv{lv}`　战力 {d['power']}\n"
                 f"　　仙元 {low}~{high}　玄晶 {d['jifen']}"
             )
-        lines.append("\n> 使用 `挑战神仙 等级` 进入对应副本（如 `挑战神仙 120`）。")
+        lines.append(
+            "\n> 使用 `挑战神仙 等级` 进入对应副本（如 `挑战神仙 120`）。\n"
+            "> 也可以只发 `挑战神仙`，自动挑战当前等级可进的**最高档**神仙。"
+        )
         return "\n".join(lines)
 
     def _enter_ascend_dungeon(self, player: dict, tokens: list[str]) -> str:
@@ -11993,13 +12008,26 @@ class PetParkPlugin(Star):
         if data.STAGES.index(p["stage"]) < data.STAGES.index("飞升"):
             return "只有灵宠飞升后才能挑战神仙。"
         if len(tokens) < 2:
-            return "用法：挑战神仙 等级（如：挑战神仙 120）"
-        try:
-            level = int(tokens[1])
-        except ValueError:
-            return "请输入正确的等级数字（120/130/.../220）。"
-        if level not in data.ASCEND_DUNGEONS:
-            return "飞升副本等级为 120~220，每 10 级一档。"
+            # 不写等级 → 自动挑当前等级可进的最高档神仙
+            reachable = [
+                lv
+                for lv, d in data.ASCEND_DUNGEONS.items()
+                if p["level"] >= d["level_req"]
+            ]
+            if not reachable:
+                lowest = min(data.ASCEND_DUNGEONS)
+                return (
+                    f"你还没有达到任何飞升副本的等级门槛（最低 Lv{lowest}）。\n\n"
+                    "> 发送 `飞升副本` 查看神仙列表。"
+                )
+            level = max(reachable)
+        else:
+            try:
+                level = int(tokens[1])
+            except ValueError:
+                return "请输入正确的等级数字（120/130/.../220）。"
+            if level not in data.ASCEND_DUNGEONS:
+                return "飞升副本等级为 120~220，每 10 级一档。"
         d = data.ASCEND_DUNGEONS[level]
         if p["level"] < d["level_req"]:
             return f"挑战『{d['name']}』需要宠物达到 Lv{d['level_req']}。"
