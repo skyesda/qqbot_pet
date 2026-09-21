@@ -115,6 +115,11 @@ class PetStore:
             "pool_remain": {},          # {"积分": int, "金币": int, "钻石": int}
             "players": {},              # openid -> {"pool_ts": int, "pool_next": int}
         })
+        self._data.setdefault("assistant_free", {   # 限时免费使用自动助手（全局一次性时间窗口）
+            "enabled": False,                       # 开关（后台可配）
+            "start_at": 0,                          # 窗口开始（秒级时间戳）
+            "end_at": 0,                            # 窗口结束（秒级时间戳）
+        })
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()
@@ -1900,6 +1905,19 @@ class PetStore:
         if not player:
             return 0
         return max(0, int((player.get("assistant") or {}).get("quota", 0) or 0))
+
+    def assistant_free_active(self, now: int | None = None) -> bool:
+        """当前是否处于「限时免费使用自动助手」窗口内（全局一次性时间窗口）。
+
+        窗口期由后台配置（`_data["assistant_free"]`），开启且当前时间落在
+        start_at~end_at 之间时生效：期间执行任务不消耗次数，剩余次数为 0 的
+        玩家也能正常开启与使用。判定口径与 `active_events()` 一致。
+        """
+        cfg = self._data.get("assistant_free") or {}
+        if not cfg.get("enabled"):
+            return False
+        now = now or int(time.time())
+        return int(cfg.get("start_at", 0) or 0) <= now <= int(cfg.get("end_at", 0) or 0)
 
     @staticmethod
     def add_assistant_quota(player: dict, amount: int) -> int:

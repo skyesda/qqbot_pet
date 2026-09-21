@@ -110,6 +110,8 @@ class WebAdmin:
         app.router.add_post("/api/celebrate/reset_pool", self._api_celebrate_reset_pool)
         app.router.add_post("/api/celebrate/reset_stock", self._api_celebrate_reset_stock)
         app.router.add_post("/api/celebrate/broadcast", self._api_celebrate_broadcast)
+        app.router.add_post("/api/assistant_free/state", self._api_assistant_free_state)
+        app.router.add_post("/api/assistant_free/save", self._api_assistant_free_save)
         app.router.add_get("/api/song_silk/{name}", self._api_song_silk)
         # 后台审核图片：以进程内 file read 直接返回二进制，绕开 /custom_images 静态路由
         # （framework 容器化运行后 host 与容器文件视图可能不一致，需 in-process 提供）
@@ -1009,6 +1011,41 @@ class WebAdmin:
         self._require(request)
         return self._json({"ok": True, "data": self._celebrate_state()})
 
+    # ------------------- 限时免费使用自动助手（全局窗口） -------------------
+    def _assistant_free_state(self) -> dict:
+        return self.store._data.setdefault(
+            "assistant_free", {"enabled": False, "start_at": 0, "end_at": 0}
+        )
+
+    async def _api_assistant_free_state(self, request):
+        self._require(request)
+        cfg = self._assistant_free_state()
+        return self._json({
+            "ok": True,
+            "data": dict(cfg),
+            "active": self.store.assistant_free_active(),
+            "now": int(time.time()),
+        })
+
+    async def _api_assistant_free_save(self, request):
+        self._require(request)
+        body = await request.json()
+        cfg = body.get("assistant_free") or {}
+        st = self._assistant_free_state()
+        st["enabled"] = bool(cfg.get("enabled", st.get("enabled")))
+        st["start_at"] = max(0, int(cfg.get("start_at") or 0))
+        st["end_at"] = max(0, int(cfg.get("end_at") or 0))
+        await self.store.save()
+        logger.info(
+            f"[petpark][webadmin] 限时免费助手窗口已保存 {st} by {request.remote}"
+        )
+        active = self.store.assistant_free_active()
+        return self._json({
+            "ok": True,
+            "msg": f"已保存（当前{'生效中' if active else '未生效'}）",
+            "active": active,
+        })
+
     async def _api_celebrate_save(self, request):
         self._require(request)
         body = await request.json()
@@ -1469,6 +1506,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="zhongyuan" onclick="tab('zhongyuan')">中元活动</button>
 <button data-t="push" onclick="tab('push')">群推送</button>
 <button data-t="celebrate" onclick="tab('celebrate')">生辰盛典</button>
+<button data-t="assistant_free" onclick="tab('assistant_free')">免费助手</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -1850,8 +1888,8 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate'||t==='assistant_free')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate'||t==='assistant_free')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
@@ -1861,10 +1899,11 @@ function tab(t){
  else if(t==='zhongyuan') loadZhongyuan();
  else if(t==='push') loadPush();
  else if(t==='celebrate') loadCelebrate();
+ else if(t==='assistant_free') loadAssistantFree();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='push') return loadPush(); if(cur==='celebrate') return loadCelebrate(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='push') return loadPush(); if(cur==='celebrate') return loadCelebrate(); if(cur==='assistant_free') return loadAssistantFree(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1880,6 +1919,7 @@ function render(){
  else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘 */ }
  else if(cur==='push'){ /* 由 renderPush 自绘 */ }
  else if(cur==='celebrate'){ /* 由 renderCelebrate 自绘 */ }
+ else if(cur==='assistant_free'){ /* 由 renderAssistantFree 自绘 */ }
  else renderCards();
 }
 // ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
@@ -2380,6 +2420,56 @@ async function broadcastAnnounce(which){
  if(!confirm(which==='start'?'确认向所有已授权群真实广播「开启公告」？':'确认向所有已授权群真实广播「结束公告」？')) return;
  const r=await api('/api/celebrate/broadcast',{which});
  alert(r.ok?(r.msg||'已广播'):(r.msg||'广播失败'));
+}
+// ---------------- 限时免费使用自动助手（全局一次性时间窗口） ----------------
+let AFREE=null;
+async function loadAssistantFree(){
+ const r=await api('/api/assistant_free/state',{});
+ AFREE=(r&&r.ok)?r.data:{enabled:false,start_at:0,end_at:0};
+ AFREE._active=!!(r&&r.active);
+ AFREE._now=(r&&r.now)||Math.floor(Date.now()/1000);
+ renderAssistantFree();
+}
+function renderAssistantFree(){
+ const cnt=document.getElementById('count'); if(cnt) cnt.textContent='';
+ const ex=document.getElementById('extrawrap'); if(ex) ex.innerHTML='';
+ const c=AFREE||{};
+ let stateTxt='⚪ 未在窗口内';
+ if(!c.enabled) stateTxt='⚪ 未启用';
+ else if(c._active) stateTxt='🟢 免费窗口生效中：执行任务不消耗次数，剩余 0 次也能正常运行';
+ else if(Number(c.start_at||0)>Number(c._now||0)) stateTxt='⏳ 未开始（还没到开始时间）';
+ else stateTxt='⚪ 已结束（结束时间已过）';
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:820px">
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+   <h3 style="margin:0 0 6px">🎁 限时免费使用自动助手 <span class="muted" style="font-weight:400">（全局生效）</span></h3>
+   <div style="color:#9aa3b8;font-size:12px;margin-bottom:16px">在设置的时间范围内，全服玩家执行自动助手任务均不消耗次数，剩余次数为 0 的玩家也能正常开启与使用。窗口结束后自动恢复原有计费与停机规则，无需人工干预。</div>
+   <div class="row">
+    <label class="fld">启用 <input type="checkbox" id="af_on" ${c.enabled?'checked':''}></label>
+   </div>
+   <div class="row">
+    <label class="fld">开始 <input id="af_start" type="datetime-local" value="${eventTsToLocal(c.start_at)}"></label>
+    <label class="fld">结束 <input id="af_end" type="datetime-local" value="${eventTsToLocal(c.end_at)}"></label>
+   </div>
+   <div style="margin-top:12px;font-size:13px">当前状态：<b>${stateTxt}</b></div>
+   <div style="color:#9aa3b8;font-size:12px;margin-top:6px">起止均为本机时区时间；结束时间早于开始时间则该窗口不会生效。</div>
+   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
+    <button class="act" onclick="saveAssistantFree()">保存配置</button>
+    <button class="act ghost" onclick="loadAssistantFree()">刷新</button>
+   </div>
+   <div class="muted" id="af_msg" style="margin-top:10px"></div>
+  </div>
+ </div>`;
+}
+async function saveAssistantFree(){
+ const body={assistant_free:{
+  enabled: g('af_on')?g('af_on').checked:false,
+  start_at: eventLocalToTs(g('af_start').value)||0,
+  end_at: eventLocalToTs(g('af_end').value)||0
+ }};
+ const r=await api('/api/assistant_free/save',body);
+ const m=g('af_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
+ if(r.ok) loadAssistantFree();
 }
 async function testDeepSeek(){
  const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在测试连接…';

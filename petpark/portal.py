@@ -1085,8 +1085,9 @@ class PlayerPortal:
         pet = self._resolve_player_pet(player, pet_index)
         if not pet:
             return web.json_response({"ok": False, "msg": "未找到该宠物"})
-        # 门禁从「定制/飞升宠物永久免费」改成「有剩余执行次数」（旧旁路已废止）
-        if not self.store.assistant_active(player):
+        # 门禁从「定制/飞升宠物永久免费」改成「有剩余执行次数」（旧旁路已废止）；
+        # 处于后台配置的「限时免费使用自动助手」窗口内时同样放行（剩余 0 次也能开启）。
+        if not self.store.assistant_active(player) and not self.store.assistant_free_active():
             return web.json_response({
                 "ok": False,
                 "msg": "自动助手次数不足：请先在群内发送 `兑换 <卡密>` 使用自动助手卡",
@@ -1109,7 +1110,8 @@ class PlayerPortal:
         return web.json_response({
             "ok": True,
             "msg": "已开启自动助手" if a["enabled"] else "已关闭自动助手",
-            "assistant": {**dict(a), "quota": self.store.assistant_quota(player)},
+            "assistant": {**dict(a), "quota": self.store.assistant_quota(player),
+                          "free": self.store.assistant_free_active()},
         })
 
     async def _api_custom_redeem(self, request: web.Request) -> web.Response:

@@ -1012,19 +1012,30 @@ class PetParkPlugin(Star):
     def _assistant_panel_text(self, player: dict, pet: dict, picked: list[str]) -> str:
         a = self._assistant_state(pet)
         quota = self.store.assistant_quota(player)
+        free = self.store.assistant_free_active()
         picked_txt = "、".join(picked) if picked else "（未选）"
-        return (
+        head = (
             f"## 🧘 自动助手\n"
             f"━━━━━━━━━━━━━━\n"
             f"🐾 **宠物**　{pet['nickname']}\n"
             f"🎫 **剩余次数**　{quota}\n"
-            f"⚙️ **状态**　{'🟢 运行中' if a.get('enabled') else '🔴 已停止'}\n\n"
+            f"⚙️ **状态**　{'🟢 运行中' if a.get('enabled') else '🔴 已停止'}\n"
+        )
+        if free:
+            head += "🎁 **限时免费中**　执行任务不消耗次数，剩余 0 次也能运行\n"
+        return (
+            head + "\n"
             f"**已选 {len(picked)}/{data.ASSISTANT_MAX_TASKS}：{picked_txt}**\n\n"
             f"点下方按钮勾选要代跑的任务（最多 **{data.ASSISTANT_MAX_TASKS}** 个），再点一次取消；"
             f"选好后点「确定」。\n"
             f"按钮上写的是简称（QQ 对按钮文字有长度上限），完整任务名以上面「已选」与『助手状态』为准。\n\n"
-            f"> 每成功执行 1 个任务扣 1 次额度（玩家级，本群所有宠物共用）。\n"
-            f"> 额度为 0 或发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
+            + (
+                "> 🎁 限时免费期：每成功执行 1 个任务不扣次数（玩家级，本群所有宠物共用）。\n"
+                "> 发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
+                if free else
+                "> 每成功执行 1 个任务扣 1 次额度（玩家级，本群所有宠物共用）。\n"
+                "> 额度为 0 或发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
+            )
         )
 
     # ------------------------------------------------------------------
@@ -1090,14 +1101,18 @@ class PetParkPlugin(Star):
                 f"已清空『{p['nickname']}』的代跑任务，助手已停止。\n"
                 f"> 点下方「选择」重新勾选要代跑的任务。"
             )
-        return (
-            f"## ✅ 自动助手已生效\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"🐾 **宠物**　{p['nickname']}\n"
-            f"📋 **代跑任务**　{'、'.join(picked)}\n"
-            f"🎫 **剩余次数**　{self.store.assistant_quota(player)}\n\n"
-            f"点下方「修改」可重挑任务；发送『开启自动助手』开始挂机，『助手状态』查看运行明细。"
-        )
+        lines = [
+            "## ✅ 自动助手已生效",
+            "━━━━━━━━━━━━━━",
+            f"🐾 **宠物**　{p['nickname']}",
+            f"📋 **代跑任务**　{'、'.join(picked)}",
+            f"🎫 **剩余次数**　{self.store.assistant_quota(player)}",
+        ]
+        if self.store.assistant_free_active():
+            lines.append("🎁 限时免费中：执行任务不消耗次数（剩余 0 次也能运行）")
+        lines.append("")
+        lines.append("点下方「修改」可重挑任务；发送『开启自动助手』开始挂机，『助手状态』查看运行明细。")
+        return "\n".join(lines)
 
     def _assistant_toggle(self, player: dict, enable: bool) -> str:
         """开启 / 关闭当前宠物的自动助手（每只宠物独立开关）。"""
@@ -1114,20 +1129,27 @@ class PetParkPlugin(Star):
                     "> 发送『自动助手』打开面板，点选最多 "
                     f"{data.ASSISTANT_MAX_TASKS} 个任务后点「确定」。"
                 )
-            if self.store.assistant_quota(player) <= 0:
+            if self.store.assistant_quota(player) <= 0 and not self.store.assistant_free_active():
                 return (
                     "自动助手次数不足。\n\n"
                     "> 请使用『自动助手卡』或发送『修炼卡 卡密』兑换后重试。"
                 )
             a["enabled"] = True
-            return (
-                f"✅ 已开启『{p['nickname']}』的自动助手！\n"
-                f"代跑任务：{'、'.join(a['tasks'])}\n"
-                f"剩余次数：{self.store.assistant_quota(player)}\n\n"
-                f"> 后台每 {self.ASSISTANT_INTERVAL} 秒按顺序检查一次，冷却好且资源够的任务自动执行，"
-                f"每执行 1 个扣 1 次。\n"
-                f"> 发送『关闭自动助手』停止，『助手状态』查看进度。"
-            )
+            lines = [
+                f"✅ 已开启『{p['nickname']}』的自动助手！",
+                f"代跑任务：{'、'.join(a['tasks'])}",
+                f"剩余次数：{self.store.assistant_quota(player)}",
+                "",
+            ]
+            if self.store.assistant_free_active():
+                lines.append("> 🎁 当前处于限时免费期：执行任务不消耗次数，剩余 0 次也能正常运行。")
+            else:
+                lines.append(
+                    f"> 后台每 {self.ASSISTANT_INTERVAL} 秒按顺序检查一次，冷却好且资源够的任务自动执行，"
+                    f"每执行 1 个扣 1 次。"
+                )
+            lines.append("> 发送『关闭自动助手』停止，『助手状态』查看进度。")
+            return "\n".join(lines)
         if not a.get("enabled"):
             return "你的宠物当前没有开启自动助手。"
         a["enabled"] = False
@@ -1149,8 +1171,10 @@ class PetParkPlugin(Star):
             f"状态：{'🟢 运行中' if a.get('enabled') else '🔴 已停止'}",
             f"宠物：{p['nickname']}",
             f"剩余次数：{self.store.assistant_quota(player)}",
-            f"累计代跑：{a.get('total_runs', 0)} 次",
         ]
+        if self.store.assistant_free_active():
+            lines.append("🎁 限时免费中：执行任务不消耗次数（剩余 0 次也可运行）。")
+        lines.append(f"累计代跑：{a.get('total_runs', 0)} 次")
         last = int(a.get("last_run_at", 0) or 0)
         lines.append(f"最后执行：{time.strftime('%Y/%m/%d %H:%M:%S', time.localtime(last)) if last else '—'}")
         lines.append("")
@@ -1459,9 +1483,12 @@ class PetParkPlugin(Star):
         静默执行（不发群消息，避免每 30 秒刷屏）；成功结果写进 pet["assistant"]["log"]
         供『助手状态』查看；每成功执行 1 个任务扣 1 次玩家级额度，额度归零自动停机。
         未就绪的任务本轮直接跳过，不扣次数、不落盘。
+        处于「限时免费使用自动助手」窗口内时（后台可配），本轮不扣次数、剩余
+        次数为 0 也不停机；真实额度原样保持（绝不伪造成正数）。
         """
         now = int(time.time())
         any_changed = False
+        in_free = self.store.assistant_free_active(now)
         for key, player in list(self.store.all_players().items()):
             if not isinstance(player, dict):
                 continue
@@ -1476,7 +1503,7 @@ class PetParkPlugin(Star):
                 a = p.get("assistant")
                 if not a or not a.get("enabled"):
                     continue
-                if quota <= 0:
+                if quota <= 0 and not in_free:
                     # 额度用完自动停机（保留勾选，充值后可直接重新开启）
                     a["enabled"] = False
                     any_changed = True
@@ -1490,7 +1517,7 @@ class PetParkPlugin(Star):
                 player["pet"] = p
                 try:
                     for tkey in tasks[:data.ASSISTANT_MAX_TASKS]:
-                        if quota <= 0:
+                        if quota <= 0 and not in_free:
                             break
                         if self._assistant_ready(tkey, player, p, group_id, qq):
                             continue
@@ -1499,20 +1526,23 @@ class PetParkPlugin(Star):
                         except Exception as exc:  # 单个任务失败不影响其它任务
                             logger.warning(f"[petpark] 自动助手执行『{tkey}』异常：{exc}")
                             continue
-                        quota -= 1
+                        if not in_free:
+                            quota -= 1
                         a["total_runs"] = int(a.get("total_runs", 0)) + 1
                         a["last_run_at"] = now
                         self._assistant_log(p, tkey, text)
                         any_changed = True
                 finally:
                     player["pet"] = prev_ref
-                if quota <= 0:
+                if quota <= 0 and not in_free:
                     # 本轮把这个宠物的额度跑干了，立刻停机——不能等下一轮（30 秒后）
                     # 才在循环开头发现，否则「助手状态」会顶着 🟢 运行中显示剩余 0 次，
                     # 且同一玩家名下多只宠物时，只有排在后面的那只会当场停机。
                     a["enabled"] = False
                     any_changed = True
             info = player.setdefault("assistant", {"quota": 0})
+            # 免费窗口内 quota 从不递减，故这里的真实额度原样保留（0 仍是 0），
+            # 不会把「没次数的玩家」写成有次数。
             if int(info.get("quota", 0) or 0) != quota:
                 info["quota"] = max(0, quota)
                 any_changed = True
