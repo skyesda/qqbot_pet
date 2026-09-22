@@ -1769,7 +1769,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>灵契仙途 · 玩家中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<link rel="stylesheet" href="/webstatic/portal.css?v=20260922">
+<link rel="stylesheet" href="/webstatic/portal.css?v=20260922-2">
 </head>
 <body class="portal-page">
 <div id="app" v-cloak>
@@ -1783,26 +1783,13 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
       <button type="button" v-for="s in slots" :key="s.group_id + ':' + s.qq" class="pet-chip"
            :class="{active: currentSlot && currentSlot.group_id===s.group_id && currentSlot.qq===s.qq}"
            @click="switchSlot(s);roleMenu=false" :aria-pressed="!!(currentSlot && currentSlot.group_id===s.group_id && currentSlot.qq===s.qq)">
-        <img v-if="slotImage(s)!==blankImg" :src="slotImage(s)" alt="" style="object-fit:contain">
-        <span v-else class="role-symbol" aria-hidden="true">修</span>
+        <span class="role-symbol" aria-hidden="true">修</span>
         <div class="info">
           <div class="name">{{ slotLabel(s) }}</div>
           <div class="sub">{{ slotSub(s) }}</div>
         </div>
       </button>
       <span v-if="!slots.length" class="muted" style="padding:0 8px">暂无绑定角色（修士/宠物/坐骑）</span>
-    </div>
-    <div v-if="slotPets.length" class="side-sec" style="margin-top:6px">宠物</div>
-    <div v-if="slotPets.length" class="side-pets">
-      <button type="button" v-for="(p,i) in slotPets" :key="'pet'+i" class="pet-chip"
-           :class="{active: current && current.group_id===p.group_id && current.qq===p.qq && (current.pet_index||0)===p.pet_index}"
-           @click="loadPet(p);activePanel='pet';roleMenu=false">
-        <img :src="p.image_url || blankImg" alt="">
-        <div class="info">
-          <div class="name">{{ p.nickname }}</div>
-          <div class="sub">Lv{{ p.level }} · {{ p.quality }}</div>
-        </div>
-      </button>
     </div>
     <div class="side-btns">
       <el-button type="primary" plain round @click="openBind()">＋ 绑定角色</el-button>
@@ -1905,6 +1892,18 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
         </section>
         <section v-show="activePanel==='pet'" aria-label="灵宠档案"><h2 class="sec-title first-title">我的灵宠</h2>
+    <div v-if="slotPets.length" class="pet-selector" aria-label="当前修士的灵宠">
+      <button type="button" v-for="(p,i) in slotPets" :key="'pet'+i" class="pet-option"
+           :class="{active: current && current.group_id===p.group_id && current.qq===p.qq && (current.pet_index||0)===(p.pet_index||0)}"
+           @click="loadPet(p)" :aria-pressed="!!(current && (current.pet_index||0)===(p.pet_index||0))">
+        <img :src="p.image_url || blankImg" alt="">
+        <div class="info">
+          <div class="name">{{ p.nickname }}</div>
+          <div class="sub">Lv{{ p.level }} · {{ p.quality }}</div>
+        </div>
+      </button>
+    </div>
+
         <div class="card" v-if="pet && pet.exists">
           <div class="pet-hero">
             <img class="pet-img" :src="pet.image_url || blankImg" :alt="pet.custom_species_name || pet.species || '宠物'">
@@ -2311,19 +2310,13 @@ createApp({
     });
     function slotLabel(s){
       if(s.adventure && s.adventure.name) return '修士 · ' + s.adventure.name;
-      if((s.pets||[]).length) return (s.pets[0].nickname||'角色');
-      return '角色';
+      return '角色 · ' + s.qq;
     }
     function slotSub(s){
       const parts=[];
       if(s.adventure && s.adventure.name) parts.push((s.adventure.realm||'') + ' Lv' + (s.adventure.level||1));
-      if(s.pet_count) parts.push('宠物 '+s.pet_count);
-      if(s.mount_count) parts.push('坐骑 '+s.mount_count);
-      return parts.join(' · ') || '未绑定?';
-    }
-    function slotImage(s){
-      if((s.pets||[]).length && s.pets[0].image_url) return s.pets[0].image_url;
-      return BLANK_IMG;
+      parts.push('群 ' + s.group_id);
+      return parts.join(' · ');
     }
     const petLoading = ref(false);
     const initialLoading=ref(true), loadError=ref(''), roleMenu=ref(false), activePanel=ref('overview');
@@ -2775,7 +2768,7 @@ createApp({
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       bind, pwd, custom, crop,
       auto,
-      slots, currentSlot, slotPets, slotLabel, slotSub, slotImage, switchSlot,
+      slots, currentSlot, slotPets, slotLabel, slotSub, switchSlot,
       mountFileInput, mountC, openMountNew, pickMountImage, onMountFile, doMountRedeem, doMountSubmit,
       mountImgFileInput, mountI, customMountList, isMountImgPending, openMountImage, pickMountImgFile, onMountImgFile, doMountImgSubmit,
       fmt, pct, fmtDate, fmtCd, cdRemaining,
