@@ -362,6 +362,7 @@ class PlayerPortal:
             try:
                 from .adventure.power import compute_unified_power, power_breakdown
                 from .adventure.combat import hero_sheet, roll_hp
+                from .adventure.portal_loadout import loadout_summary
                 from .adventure import content as advc
                 s = hero_sheet(adv, player)
                 _realm = int(adv.get("realm") or 0)
@@ -406,6 +407,7 @@ class PlayerPortal:
                 if not isinstance(cur_hp, int) or cur_hp <= 0:
                     cur_hp = s.get("hp", 0)
                 adventure = {
+                    **loadout_summary(adv),
                     "name": adv.get("name"),
                     "profession": adv.get("profession"),
                     "gender": adv.get("gender", "男"),
@@ -610,6 +612,10 @@ class PlayerPortal:
             "/webstatic",
             path=Path(__file__).parent / "webstatic",
             name="webstatic",
+        )
+        app.router.add_static(
+            "/cultivator_assets", path=Path(__file__).parent / "assets" / "cultivator",
+            name="cultivator_assets", show_index=False,
         )
 
     async def _portal_page(self, request: web.Request) -> web.Response:
@@ -1769,7 +1775,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>灵契仙途 · 玩家中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<link rel="stylesheet" href="/webstatic/portal.css?v=20260922-2">
+<link rel="stylesheet" href="/webstatic/portal.css?v=20260922-3">
 </head>
 <body class="portal-page">
 <div id="app" v-cloak>
@@ -1833,6 +1839,17 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               <div style="font-size:12.5px;color:var(--muted);margin:6px 0 8px">
                 {{ data.adventure.realm }} · Lv{{ data.adventure.level }} · {{ data.adventure.heaven }} ·
                 灵根 {{ data.adventure.spirit_root || '无' }}{{ data.adventure.element ? ' · '+data.adventure.element : '' }}
+              </div>
+              <div v-if="data.adventure.portrait_url" class="cultivator-loadout" aria-label="修士立绘与六件装备">
+                <div class="equipment-column" v-for="side in [0,1]" :key="side" :class="side===0 ? 'equipment-left' : 'equipment-right'">
+                  <article class="equipment-slot" v-for="gear in (data.adventure.equipment || []).slice(side*3,side*3+3)" :key="gear.slot">
+                    <img :src="gear.image_url" :alt="gear.name" loading="lazy" decoding="async" width="96" height="96">
+                    <div class="equipment-name">{{ gear.name }}</div>
+                    <div class="equipment-level">Lv{{ gear.level }} <span>{{ gear.attribute }}</span></div>
+                    <div class="equipment-affix">{{ gear.affix }}</div>
+                  </article>
+                </div>
+                <figure class="cultivator-portrait"><img :src="data.adventure.portrait_url" :alt="data.adventure.name + '的修士立绘'" decoding="async"><figcaption>{{ data.adventure.profession }} · {{ data.adventure.gender || '男' }}</figcaption></figure>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px;margin-bottom:8px">
                 <el-tag type="danger" effect="plain" round> 总战力 {{ fmt(data.adventure.power) }}</el-tag>
