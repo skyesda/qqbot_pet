@@ -112,6 +112,11 @@ class WebAdmin:
         app.router.add_post("/api/celebrate/broadcast", self._api_celebrate_broadcast)
         app.router.add_post("/api/assistant_free/state", self._api_assistant_free_state)
         app.router.add_post("/api/assistant_free/save", self._api_assistant_free_save)
+        app.router.add_post("/api/audit/query", self._api_audit_query)
+        app.router.add_post("/api/audit/flags", self._api_audit_flags)
+        app.router.add_post("/api/audit/scan", self._api_audit_scan)
+        app.router.add_post("/api/audit/flag/update", self._api_audit_flag_update)
+        app.router.add_post("/api/audit/verify", self._api_audit_verify)
         app.router.add_get("/api/song_silk/{name}", self._api_song_silk)
         # 后台审核图片：以进程内 file read 直接返回二进制，绕开 /custom_images 静态路由
         # （framework 容器化运行后 host 与容器文件视图可能不一致，需 in-process 提供）
@@ -1046,6 +1051,93 @@ class WebAdmin:
             "active": active,
         })
 
+    # ------------------- 数据追溯（审计流水 + 异常检测） -------------------
+    async def _api_audit_query(self, request):
+        self._require(request)
+        body = await request.json()
+        log = self.store._data.get("audit_log") or []
+        # 筛选：action / group / pid / 时间范围 / 关键字
+        action = str(body.get("action") or "")
+        group = str(body.get("group") or "")
+        pid = str(body.get("pid") or "")
+        kw = str(body.get("kw") or "").strip().lower()
+        ts_from = int(body.get("ts_from") or 0)
+        ts_to = int(body.get("ts_to") or 0)
+        rows = []
+        for rec in reversed(log):  # 倒序：最新在前
+            if action and rec.get("action") != action:
+                continue
+            if group and rec.get("group") != group:
+                continue
+            if pid and str(rec.get("pid") or "") != pid:
+                continue
+            ts = int(rec.get("ts") or 0)
+            if ts_from and ts < ts_from:
+                continue
+            if ts_to and ts > ts_to:
+                continue
+            if kw:
+                hay = " ".join(str(v) for v in rec.values() if not isinstance(v, (dict, list))).lower()
+                if kw not in hay:
+                    continue
+            rows.append(rec)
+        total = len(rows)
+        page = max(1, int(body.get("page") or 1))
+        size = min(200, max(1, int(body.get("size") or 50)))
+        start = (page - 1) * size
+        return self._json({
+            "ok": True,
+            "total": total,
+            "page": page,
+            "size": size,
+            "items": rows[start:start + size],
+            "now": int(time.time()),
+        })
+
+    async def _api_audit_flags(self, request):
+        self._require(request)
+        body = await request.json()
+        status = str(body.get("status") or "")
+        flags = self.store._data.get("audit_flags") or {}
+        items = []
+        for fid, f in flags.items():
+            if status and f.get("status") != status:
+                continue
+            items.append({"flag_id": fid, **f})
+        items.sort(key=lambda x: x.get("ts", 0), reverse=True)
+        return self._json({"ok": True, "total": len(items), "items": items})
+
+    async def _api_audit_scan(self, request):
+        self._require(request)
+        result = self.store.audit_scan()
+        await self.store.save()
+        logger.info(
+            f"[petpark][webadmin] 全量异常扫描完成 {result} by {request.remote}"
+        )
+        return self._json({"ok": True, **result})
+
+    async def _api_audit_flag_update(self, request):
+        self._require(request)
+        body = await request.json()
+        flag_id = str(body.get("flag_id") or "")
+        status = str(body.get("status") or "")
+        if status not in ("open", "handled", "false_positive"):
+            return self._json({"ok": False, "msg": "状态须为 open/handled/false_positive"})
+        flags = self.store._data.setdefault("audit_flags", {})
+        if flag_id not in flags:
+            return self._json({"ok": False, "msg": "标记不存在"})
+        flags[flag_id]["status"] = status
+        await self.store.save()
+        logger.info(
+            f"[petpark][webadmin] 异常标记 {flag_id} -> {status} by {request.remote}"
+        )
+        return self._json({"ok": True, "flag": flags[flag_id]})
+
+    async def _api_audit_verify(self, request):
+        self._require(request)
+        result = self.store.audit_verify()
+        return self._json({"ok": True, **result})
+
     async def _api_celebrate_save(self, request):
         self._require(request)
         body = await request.json()
@@ -1507,6 +1599,7 @@ textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);ba
 <button data-t="push" onclick="tab('push')">群推送</button>
 <button data-t="celebrate" onclick="tab('celebrate')">生辰盛典</button>
 <button data-t="assistant_free" onclick="tab('assistant_free')">免费助手</button>
+<button data-t="audit" onclick="tab('audit')">数据追溯</button>
 </div>
 <main>
 <div id="cardgen" style="display:none">
@@ -1888,8 +1981,8 @@ function tab(t){
  cur=t;
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===t));
  document.getElementById('cardgen').style.display=(t==='cards')?'block':'none';
- const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate'||t==='assistant_free')?'none':'';
- const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate'||t==='assistant_free')?'none':'';
+ const addBtn=document.getElementById('addBtn'); if(addBtn) addBtn.style.display=(t==='portal_accounts'||t==='custom_reviews'||t==='custom_pets'||t==='feedbacks'||t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate'||t==='assistant_free'||t==='audit')?'none':'';
+ const bar=document.querySelector('main>.bar'); if(bar) bar.style.display=(t==='app_release'||t==='lottery'||t==='zhongyuan'||t==='push'||t==='celebrate'||t==='assistant_free'||t==='audit')?'none':'';
  if(t==='portal_accounts') loadPortalAccounts();
  else if(t==='custom_reviews') loadCustomReviews();
  else if(t==='custom_pets') loadCustomPets();
@@ -1900,10 +1993,11 @@ function tab(t){
  else if(t==='push') loadPush();
  else if(t==='celebrate') loadCelebrate();
  else if(t==='assistant_free') loadAssistantFree();
+ else if(t==='audit') loadAudit();
  else load();
 }
 async function api(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
-async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='push') return loadPush(); if(cur==='celebrate') return loadCelebrate(); if(cur==='assistant_free') return loadAssistantFree(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
+async function load(){ if(cur==='portal_accounts') return loadPortalAccounts(); if(cur==='custom_reviews') return loadCustomReviews(); if(cur==='custom_pets') return loadCustomPets(); if(cur==='feedbacks') return loadFeedbacks(); if(cur==='lottery') return loadLottery(); if(cur==='zhongyuan') return loadZhongyuan(); if(cur==='push') return loadPush(); if(cur==='celebrate') return loadCelebrate(); if(cur==='assistant_free') return loadAssistantFree(); if(cur==='audit') return loadAudit(); const r=await api('/api/list',{table:cur});cache=r.data||{};render();}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function tj(k){return JSON.stringify(k);}
 function fdate(ts){if(!ts)return '—';const d=new Date(ts*1000);return d.toLocaleString('zh-CN',{hour12:false});}
@@ -1920,6 +2014,7 @@ function render(){
  else if(cur==='push'){ /* 由 renderPush 自绘 */ }
  else if(cur==='celebrate'){ /* 由 renderCelebrate 自绘 */ }
  else if(cur==='assistant_free'){ /* 由 renderAssistantFree 自绘 */ }
+ else if(cur==='audit'){ /* 由 renderAudit 自绘 */ }
  else renderCards();
 }
 // ---- 口令抽奖（管理表单；奖品从全部货币 + 全部道具中选择，全群共享）----
@@ -2470,6 +2565,195 @@ async function saveAssistantFree(){
  const r=await api('/api/assistant_free/save',body);
  const m=g('af_msg'); if(m) m.textContent=(r.ok?'✅ ':'❌ ')+(r.msg||'');
  if(r.ok) loadAssistantFree();
+}
+// ---------------- 数据追溯（append-only 审计流水 + 规则/基线异常检测） ----------------
+let AUDIT={log:[],total:0,page:1,size:50,flags:[],loading:false};
+async function loadAudit(){
+ renderAudit();
+ auditQuery(true);
+ auditFlags();
+}
+function renderAudit(){
+ const cnt=document.getElementById('count'); if(cnt) cnt.textContent='';
+ const ex=document.getElementById('extrawrap'); if(ex) ex.innerHTML='';
+ document.getElementById('tablewrap').innerHTML=`
+ <div style="max-width:1100px">
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:20px;margin-bottom:16px">
+   <h3 style="margin:0 0 4px">🔍 审计流水查询</h3>
+   <div style="color:#9aa3b8;font-size:12px;margin-bottom:12px">append-only 操作流水，每条带 SHA-256 哈希链锚定、防篡改可校验。支持按动作/群/用户/时间范围/关键字筛选。</div>
+   <div class="row" style="flex-wrap:wrap">
+    <label class="fld">动作
+     <select id="au_action">
+      <option value="">全部</option>
+      <option value="cmd">cmd 指令</option>
+      <option value="transfer">transfer 转让</option>
+      <option value="buy">buy 购买</option>
+      <option value="sign">sign 签到</option>
+      <option value="redeem">redeem 兑换</option>
+      <option value="get_pet">get_pet 宠物</option>
+      <option value="admin_coin">admin_coin 管理员币</option>
+      <option value="admin_item">admin_item 管理员道具</option>
+      <option value="admin_bonus">admin_bonus 加次数</option>
+      <option value="ban">ban 封号</option>
+      <option value="unban">unban 解封</option>
+      <option value="lottery">lottery 抽奖</option>
+     </select>
+    </label>
+    <label class="fld">群 <input id="au_group" placeholder="群号" style="width:110px"></label>
+    <label class="fld">用户 <input id="au_pid" placeholder="用户ID" style="width:120px"></label>
+    <label class="fld">从 <input id="au_from" type="datetime-local"></label>
+    <label class="fld">到 <input id="au_to" type="datetime-local"></label>
+    <label class="fld">关键字 <input id="au_kw" placeholder="详情/QQ" style="width:120px"></label>
+   </div>
+   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+    <button class="act" onclick="auditQuery(true)">查询</button>
+    <button class="act ghost" onclick="auditVerify()">校验哈希链</button>
+    <button class="act ghost" onclick="auditScan()">全量异常扫描</button>
+   </div>
+   <div id="au_msg" class="muted" style="margin-top:8px"></div>
+  </div>
+  <div id="au_log"></div>
+  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:20px;margin-top:16px">
+   <h3 style="margin:0 0 4px">🚨 异常标记 <span class="muted" style="font-weight:400" id="au_flag_sum"></span></h3>
+   <div style="color:#9aa3b8;font-size:12px;margin-bottom:12px">规则/基线检测命中后落表，可人工标记「已处理/误报」。同规则同目标只保留一条待处理，避免刷屏。</div>
+   <div class="row">
+    <label class="fld">状态
+     <select id="au_flag_status" onchange="auditFlags()">
+      <option value="">全部</option>
+      <option value="open">待处理</option>
+      <option value="handled">已处理</option>
+      <option value="false_positive">误报</option>
+     </select>
+    </label>
+   </div>
+   <div id="au_flags" style="margin-top:8px"></div>
+  </div>
+ </div>`;
+}
+async function auditQuery(reset){
+ if(reset) AUDIT.page=1;
+ AUDIT.size=50;
+ const msg=g('au_msg'); if(msg) msg.textContent='⏳ 查询中…';
+ const body={
+  action: g('au_action')?g('au_action').value:'',
+  group: g('au_group')?g('au_group').value.trim():'',
+  pid: g('au_pid')?g('au_pid').value.trim():'',
+  ts_from: g('au_from')?eventLocalToTs(g('au_from').value)||0:0,
+  ts_to: g('au_to')?eventLocalToTs(g('au_to').value)||0:0,
+  kw: g('au_kw')?g('au_kw').value.trim():'',
+  page: AUDIT.page, size: AUDIT.size
+ };
+ const r=await api('/api/audit/query',body);
+ if(!r||!r.ok){ if(msg) msg.textContent='❌ 查询失败'; return; }
+ AUDIT.log=r.items||[]; AUDIT.total=r.total||0;
+ renderAuditLog();
+ if(msg) msg.textContent=`✅ 共 ${AUDIT.total} 条`;
+}
+function renderAuditLog(){
+ const box=g('au_log'); if(!box) return;
+ const log=AUDIT.log||[];
+ const total=AUDIT.total, page=AUDIT.page, size=AUDIT.size;
+ const pages=Math.max(1,Math.ceil(total/size));
+ let h='<div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:16px">';
+ h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+   <b>流水记录</b>
+   <span class="muted">第 ${page}/${pages} 页 · 共 ${total} 条</span>
+  </div>`;
+ if(!log.length){ h+='<div class="empty">无匹配流水</div>'; }
+ else{
+  h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+  h+='<tr style="text-align:left;color:#9aa3b8"><th style="padding:4px 6px">时间</th><th style="padding:4px 6px">群</th><th style="padding:4px 6px">用户</th><th style="padding:4px 6px">动作</th><th style="padding:4px 6px">详情</th><th style="padding:4px 6px">变动</th></tr>';
+  for(const rec of log){
+   const del=rec.delta;
+   let delTxt='—';
+   if(typeof del==='number') delTxt=(del>=0?'+':'')+del;
+   h+=`<tr style="border-top:1px solid #f0f3fa">
+    <td style="padding:5px 6px;white-space:nowrap">${fdate(rec.ts)}</td>
+    <td style="padding:5px 6px">${esc(rec.group||'')}</td>
+    <td style="padding:5px 6px">${esc(rec.pid||'')}</td>
+    <td style="padding:5px 6px"><span class="tag">${esc(rec.action||'')}</span></td>
+    <td style="padding:5px 6px;max-width:340px;word-break:break-all">${esc(rec.detail||'')}</td>
+    <td style="padding:5px 6px;white-space:nowrap">${delTxt}</td>
+   </tr>`;
+  }
+  h+='</table>';
+  h+=`<div style="display:flex;gap:10px;margin-top:12px">
+   <button class="act ghost" ${page<=1?'disabled':''} onclick="auditPage(-1)">上一页</button>
+   <button class="act ghost" ${page>=pages?'disabled':''} onclick="auditPage(1)">下一页</button>
+  </div>`;
+ }
+ h+='</div>';
+ box.innerHTML=h;
+}
+async function auditPage(d){
+ AUDIT.page=Math.max(1,(AUDIT.page||1)+d);
+ auditQuery(false);
+}
+async function auditFlags(){
+ const st=g('au_flag_status')?g('au_flag_status').value:'';
+ const r=await api('/api/audit/flags',{status:st});
+ AUDIT.flags=(r&&r.ok)?(r.items||[]):[];
+ const sum=g('au_flag_sum'); if(sum) sum.textContent=`（待处理 ${AUDIT.flags.filter(f=>f.status==='open').length} 条）`;
+ renderAuditFlags();
+}
+function renderAuditFlags(){
+ const box=g('au_flags'); if(!box) return;
+ const flags=AUDIT.flags||[];
+ let h='';
+ if(!flags.length){ h='<div class="empty">无异常标记</div>'; }
+ else{
+  h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+  h+='<tr style="text-align:left;color:#9aa3b8"><th style="padding:4px 6px">时间</th><th style="padding:4px 6px">类型</th><th style="padding:4px 6px">严重度</th><th style="padding:4px 6px">群</th><th style="padding:4px 6px">用户</th><th style="padding:4px 6px">描述</th><th style="padding:4px 6px">状态</th><th style="padding:4px 6px">操作</th></tr>';
+  for(const f of flags){
+   const sev=f.severity==='high'?'<span class="tag" style="color:#c0392b">high</span>':(f.severity==='mid'?'<span class="tag" style="color:#e67e22">mid</span>':'<span class="tag">'+esc(f.severity||'')+'</span>');
+   const stMap={open:'<span class="tag" style="color:#c0392b">待处理</span>',handled:'<span class="tag" style="color:#27ae60">已处理</span>',false_positive:'<span class="tag" style="color:#7f8c8d">误报</span>'};
+   let ops='';
+   if(f.status==='open'){
+    ops=`<button class="act ghost" style="padding:2px 8px" onclick="auditFlagUpdate('${escA(f.flag_id)}','handled')">已处理</button> <button class="act ghost" style="padding:2px 8px" onclick="auditFlagUpdate('${escA(f.flag_id)}','false_positive')">误报</button>`;
+   }
+   h+=`<tr style="border-top:1px solid #f0f3fa">
+    <td style="padding:5px 6px;white-space:nowrap">${fdate(f.ts)}</td>
+    <td style="padding:5px 6px">${esc(f.type||'')}</td>
+    <td style="padding:5px 6px">${sev}</td>
+    <td style="padding:5px 6px">${esc(f.group||'')}</td>
+    <td style="padding:5px 6px">${esc(f.pid||'')}</td>
+    <td style="padding:5px 6px;max-width:300px;word-break:break-all">${esc(f.desc||'')}</td>
+    <td style="padding:5px 6px">${stMap[f.status]||esc(f.status||'')}</td>
+    <td style="padding:5px 6px;white-space:nowrap">${ops}</td>
+   </tr>`;
+  }
+  h+='</table>';
+ }
+ box.innerHTML=h;
+}
+async function auditScan(){
+ if(!confirm('将全量扫描审计流水与转让记录，生成新的异常标记。确认继续？')) return;
+ const msg=g('au_msg'); if(msg) msg.textContent='⏳ 扫描中…';
+ const r=await api('/api/audit/scan',{});
+ if(msg) msg.textContent='';
+ if(r&&r.ok){
+  alert(`✅ 扫描完成：新增 ${r.new_flags||0} 条标记，共 ${r.total||0} 条，未处理 ${r.open_count||0} 条`);
+  auditFlags();
+ }else{
+  alert('❌ 扫描失败：'+(r&&r.msg?r.msg:'无响应'));
+ }
+}
+async function auditVerify(){
+ const msg=g('au_msg'); if(msg) msg.textContent='⏳ 校验中…';
+ const r=await api('/api/audit/verify',{});
+ if(msg) msg.textContent='';
+ if(!r) return alert('❌ 校验失败：无响应');
+ if(r.ok){
+  alert(`✅ 哈希链完整：${r.checked||0} 条全部一致`);
+ }else{
+  alert(`❌ 哈希链断链：第 ${r.broken_index||0} 条（时间 ${fdate(r.broken_ts)}）被篡改或丢失！`);
+ }
+}
+async function auditFlagUpdate(fid,status){
+ if(!confirm('确认将该标记标记为「'+((status==='handled')?'已处理':'误报')+'」？')) return;
+ const r=await api('/api/audit/flag/update',{flag_id:fid,status:status});
+ const msg=g('au_msg'); if(msg) msg.textContent=(r&&r.ok?'✅ ':'❌ ')+((r&&r.msg)||'');
+ if(r&&r.ok) auditFlags();
 }
 async function testDeepSeek(){
  const msg=g('zy_test_msg'); if(msg) msg.textContent='⏳ 正在测试连接…';

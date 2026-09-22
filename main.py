@@ -215,6 +215,8 @@ KNOWN_COMMANDS = {
     "加违规词",
     "减违规词",
     "违规词",
+    # 大管理员：审计检查（查本群 open 异常标记列表）
+    "审计检查",
     # 小管理员（分群授权）
     "任命小管理",
     "任命小管理员",
@@ -693,6 +695,15 @@ class PetParkPlugin(Star):
         self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
         # 用户协议：开启后未点击「同意」的用户禁止游玩灵契仙途（安全阀，可在后台关闭）
         self.require_agreement = bool(self.config.get("require_agreement", True))
+        # ===== 数据追溯 / 异常检测（审计）=====
+        self.audit_enabled = bool(self.config.get("audit_enabled", True))
+        self.audit_cap = max(100, int(self.config.get("audit_cap", 20000)))
+        self.audit_rule_big_single = int(self.config.get("audit_rule_big_single", 1000000000))
+        self.audit_rule_cmd_rate = max(1, int(self.config.get("audit_rule_cmd_rate", 60)))
+        self.audit_rule_baseline_mult = float(self.config.get("audit_rule_baseline_mult", 10))
+        self.audit_rule_daily_floor = int(self.config.get("audit_rule_daily_floor", 100000000))
+        self.audit_rule_newbie = int(self.config.get("audit_rule_newbie", 100000000))
+        self.audit_rule_friend_tx = max(1, int(self.config.get("audit_rule_friend_tx", 50)))
         self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
             "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
         )
@@ -2661,6 +2672,22 @@ class PetParkPlugin(Star):
         player["active_streak"] = streak
         player["last_active_date"] = today
 
+    def _audit(self, rec: dict) -> None:
+        """记一条审计流水（追加式 + 哈希链锚定 + 有界裁剪）。
+
+        转发到 store._audit 并补 group/pid/qq 反查；总开关关闭时直接跳过。
+        只追加、不修改已有条目——这是「数据可追溯、改档不认账」的地基。
+        """
+        if not getattr(self, "audit_enabled", True):
+            return
+        rec.setdefault("group", rec.get("group") or "")
+        rec.setdefault("pid", rec.get("pid") or "")
+        rec.setdefault("qq", rec.get("qq") or "")
+        try:
+            self.store._audit(rec)
+        except Exception as e:  # 审计失败绝不影响游玩
+            logger.warning("[audit] 记录失败: %s", e)
+
     def _tx_daily_cap(self, sender: dict) -> int:
         """当日转让/赠送次数上限。
 
@@ -4367,6 +4394,10 @@ class PetParkPlugin(Star):
         if cmd in ("加违规词", "减违规词", "违规词"):
             return self._badword_cmd(event, group_id, tokens, cmd)
 
+        # ---- 大管理员：审计检查（查本群 open 异常标记列表）----
+        if cmd == "审计检查":
+            return self._audit_check(event, group_id)
+
         # ---- 群授权（状态查询 / 卡密授权 / 大管理员直授）----
         if cmd == "授权状态":
             return self._auth_status(group_id)
@@ -4459,6 +4490,16 @@ class PetParkPlugin(Star):
         player = self.store.get_player(qq, group_id)
         player["group"] = group_id
         self._track_activity(player)
+
+        # 指令流水：真指令（已过全部拦截链）落审计日志，作为频率/异常追溯信号。
+        # 普通聊天与被拦指令不落；字段精简防噪（detail 截断 200 字）。
+        self._audit({
+            "action": "cmd",
+            "group": group_id,
+            "pid": qq,
+            "qq": qq,
+            "detail": (text or "")[:200],
+        })
 
         # New adventure owns its role resources and progression; legacy bank freezes
         # do not block the character's free recovery and cooperative gameplay.
@@ -7775,6 +7816,17 @@ class PetParkPlugin(Star):
         before = self.store.get_currency(tp, currency)
         self.store.add_currency(tp, currency, sign * amount)
         after = self.store.get_currency(tp, currency)
+        self._audit({
+            "action": "admin_coin",
+            "group": group_id,
+            "pid": tp.get("id") or tp.get("qq") or target,
+            "qq": target,
+            "by": qq,
+            "currency": currency,
+            "before": before,
+            "after": after,
+            "delta": sign * amount,
+        })
         # 记录小管理员当日已用加币额度（无限服无上限，跳过记录）
         if not is_super and sign > 0 and not no_sub_limit:
             actor = self.store.get_player(qq, group_id)
@@ -7842,6 +7894,17 @@ class PetParkPlugin(Star):
         else:
             self.store.add_item(tp, name, amount)
         after = int((tp.get("bag") or {}).get(name, 0) or 0)
+        self._audit({
+            "action": "admin_item",
+            "group": group_id,
+            "pid": tp.get("id") or tp.get("qq") or tokens[1],
+            "qq": tokens[1],
+            "by": qq,
+            "item": name,
+            "before": before,
+            "after": after,
+            "delta": amount if adding else -amount,
+        })
         verb = "增加" if adding else "减少"
         return (
             f"## ⚙️ 管理操作\n"
@@ -7885,6 +7948,16 @@ class PetParkPlugin(Star):
         daily["bonus"] = int(daily.get("bonus", 0) or 0) + amount
         after = data.TRANSFER_DAILY_MAX_OPS + daily["bonus"]
         remain = max(0, after - used)
+        self._audit({
+            "action": "admin_bonus",
+            "group": group_id,
+            "pid": tp.get("id") or tp.get("qq") or target,
+            "qq": target,
+            "by": qq,
+            "before": before,
+            "after": after,
+            "delta": amount,
+        })
         return (
             f"## ⚙️ 管理操作\n"
             f"已为 `{self._display_uid(target)}` 追加今日转让/赠送次数 **+{amount}**\n"
@@ -7965,6 +8038,43 @@ class PetParkPlugin(Star):
             return "目前没有任何群任命了小管理员。"
         return "\n".join(lines)
 
+    # --------------------------- 审计检查 ---------------------------
+    def _audit_check(self, event, group_id: str) -> str:
+        """「审计检查」：查本群待处理的异常标记列表（open 状态）。"""
+        if not self._is_admin(event):
+            return "❌ 仅大管理员可执行审计检查。"
+        flags = self.store._data.get("audit_flags", {})
+        open_flags = [
+            f for f in flags.values()
+            if f.get("status") == "open" and str(f.get("group")) == str(group_id)
+        ]
+        if not open_flags:
+            return "## 🔍 审计检查\n本群当前没有待处理的异常标记。"
+        sev_icon = {"high": "🔴", "mid": "🟠", "low": "🟡"}
+        type_label = {
+            "big_single": "单次超限",
+            "cmd_rate": "指令频率",
+            "daily_baseline": "日净流入超基线",
+            "newbie_fat": "新号速肥",
+            "friend_tx": "高频转让",
+        }
+        lines = [
+            f"## 🔍 审计检查（本群待处理 {len(open_flags)} 条）",
+            "",
+            "| 时间 | 类型 | 严重度 | 用户 | 说明 |",
+            "|---|---|---|---|---|",
+        ]
+        for f in sorted(open_flags, key=lambda x: x.get("ts", 0)):
+            ts = time.strftime("%m-%d %H:%M", time.localtime(int(f.get("ts", 0))))
+            t = type_label.get(f.get("type"), f.get("type", "?"))
+            sev = f"{sev_icon.get(f.get('severity'), '')}{f.get('severity', '?')}"
+            lines.append(
+                f"| {ts} | {t} | {sev} | `{self._display_uid(f.get('pid', ''))}` | {f.get('desc', '')} |"
+            )
+        lines.append("")
+        lines.append("> 详情请在管理后台「数据追溯」页查看与处理。")
+        return "\n".join(lines)
+
     # --------------------------- 封号 ---------------------------
     def _ban_status(self, group_id: str, tokens: list[str]) -> str:
         """查看封号状态：带用户ID 看单人（含剩余时间），不带则列出本群全部封号。"""
@@ -8022,6 +8132,13 @@ class PetParkPlugin(Star):
             target = self._resolve_user_token(raw)
             if not self._unban(group_id, target):
                 return f"用户 `{self._display_uid(target)}` 在本群未被封号。"
+            self._audit({
+                "action": "unban",
+                "group": group_id,
+                "pid": target,
+                "qq": target,
+                "by": qq,
+            })
             return (
                 f"## ✅ 已解封\n"
                 f"已解除 `{self._display_uid(target)}` 在本群的封号。\n\n"
@@ -8060,6 +8177,15 @@ class PetParkPlugin(Star):
                 f"有限天数不会把它降格。\n\n"
                 f"> 如确需改成限期，请先 `解封 {raw}` 再重新封"
             )
+        self._audit({
+            "action": "ban",
+            "group": group_id,
+            "pid": target,
+            "qq": target,
+            "by": qq,
+            "days": days,
+            "exp": exp,
+        })
         return (
             f"## 🚫 已封号（{self._ban_left_text(exp)}）\n"
             f"已在本群封禁 `{self._display_uid(target)}`\n\n"

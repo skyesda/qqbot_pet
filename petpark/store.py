@@ -23,6 +23,7 @@ player 结构::
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
@@ -121,6 +122,8 @@ class PetStore:
             "start_at": 0,                          # 窗口开始（秒级时间戳）
             "end_at": 0,                            # 窗口结束（秒级时间戳）
         })
+        self._data.setdefault("audit_log", [])    # 追加式操作流水（有界环形，默认保留 20000 条）
+        self._data.setdefault("audit_flags", {})  # 异常标记 {flag_id: {...}}
         self._migrate_group_keys()
         self._migrate_tomb_to_global()
         self._migrate_multi_pet()
@@ -536,6 +539,277 @@ class PetStore:
             self._flush()
         logging.getLogger(__name__).info(
             "[petpark] store_save elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
+
+    # ----------------------------- 审计流水 / 异常检测 -----------------------------
+    def _audit(self, rec: dict) -> None:
+        """追加一条审计流水（哈希链锚定 + 有界裁剪）。只追加、不修改已有条目。
+
+        - 每条记录带 prev = 上一条的 SHA-256（json.dumps sort_keys 后哈希），首条 prev="";
+        - 任意一条被篡改，audit_verify() 即报断链——区块链的务实等价物，防「改档不认账」;
+        - 超 audit_cap 丢最旧（有界环形），默认保留 20000 条; 裁剪后新头重置为锚点（prev=""），
+          保留窗口内整链仍可校验——否则后台「校验哈希链」在裁剪后必然误报断链;
+        - 追加时顺带跑轻量实时规则，命中落 audit_flags。
+        """
+        log = self._data.setdefault("audit_log", [])
+        prev = log[-1] if log else None
+        rec["prev"] = (
+            hashlib.sha256(
+                json.dumps(prev, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            if prev
+            else ""
+        )
+        rec["ts"] = int(time.time())
+        log.append(rec)
+        cap = int(self._data.get("audit_cap", 20000))
+        if len(log) > cap:
+            del log[: len(log) - cap]
+            # 裁剪丢最旧后重新锚定窗口内整条哈希链：新头 prev 置空，其后逐条重链。
+            # 若不重链，被删条目的哈希引用仍留在后续 prev 里，后台「校验哈希链」必然误报断链。
+            log[0]["prev"] = ""
+            for i in range(1, len(log)):
+                _prev = log[i - 1]
+                log[i]["prev"] = hashlib.sha256(
+                    json.dumps(_prev, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest()
+        self._audit_live_rules(rec)
+
+    def _audit_live_rules(self, rec: dict) -> None:
+        """轻量实时规则：只读当前一条流水，O(1)。规则阈值在 main.py 注入。
+
+        rec 约定字段：action/group/pid/qq（可选）+ 金额类 delta。
+        """
+        flags = self._data.setdefault("audit_flags", {})
+        # 去重键：同规则 + 同 pid 只留一条 open（避免刷屏）
+        def _mark(ftype: str, severity: str, desc: str) -> None:
+            for f in flags.values():
+                if (
+                    f.get("type") == ftype
+                    and f.get("pid") == rec.get("pid")
+                    and f.get("status") == "open"
+                ):
+                    return
+            flag_id = "f" + str(int(time.time() * 1000)) + str(len(flags))
+            flags[flag_id] = {
+                "ts": int(time.time()),
+                "type": ftype,
+                "group": rec.get("group", ""),
+                "pid": rec.get("pid", ""),
+                "qq": rec.get("qq", ""),
+                "severity": severity,
+                "desc": desc,
+                "status": "open",
+            }
+
+        delta = rec.get("delta")
+        big = int(getattr(self, "_audit_rule_big_single", 1000000000))
+        if isinstance(delta, (int, float)) and abs(delta) > big:
+            _mark(
+                "big_single",
+                "high",
+                f"单次资源变动 {abs(delta):,.0f} 超限（>{big:,.0f}）",
+            )
+
+    def audit_verify(self) -> dict:
+        """校验哈希链完整性。返回 {ok, checked, broken_index, broken_ts}。
+
+        逐条比对 rec["prev"] 与对前一条的重算哈希；断链时给出第一条断掉的索引。
+        """
+        log = self._data.get("audit_log") or []
+        for i, rec in enumerate(log):
+            prev = log[i - 1] if i > 0 else None
+            expect = (
+                hashlib.sha256(
+                    json.dumps(prev, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest()
+                if prev
+                else ""
+            )
+            if rec.get("prev", None) != expect:
+                return {
+                    "ok": False,
+                    "checked": i,
+                    "broken_index": i,
+                    "broken_ts": rec.get("ts", 0),
+                }
+        return {"ok": True, "checked": len(log), "broken_index": -1, "broken_ts": 0}
+
+    def audit_scan(self) -> dict:
+        """全量扫描：跑全部 5 条规则，命中落 audit_flags（同规则同 pid 去重）。
+
+        返回 {new_flags, total, open_count}。
+        """
+        flags = self._data.setdefault("audit_flags", {})
+        log = self._data.get("audit_log") or []
+        now = int(time.time())
+        day = 86400
+
+        def _mark(ftype: str, severity: str, desc: str, group: str, pid: str, qq: str = "") -> None:
+            for f in flags.values():
+                if (
+                    f.get("type") == ftype
+                    and f.get("pid") == pid
+                    and f.get("status") == "open"
+                ):
+                    return
+            flag_id = "f" + str(now * 1000 + len(flags)) + str(len(flags))
+            flags[flag_id] = {
+                "ts": now,
+                "type": ftype,
+                "group": group,
+                "pid": pid,
+                "qq": qq,
+                "severity": severity,
+                "desc": desc,
+                "status": "open",
+            }
+
+        new_count = 0
+
+        # ① 单次资源变动超限（对每条带 delta 的流水）
+        big = int(getattr(self, "_audit_rule_big_single", 1000000000))
+        for rec in log:
+            delta = rec.get("delta")
+            if isinstance(delta, (int, float)) and abs(delta) > big:
+                before = len(flags)
+                _mark(
+                    "big_single",
+                    "high",
+                    f"单次资源变动 {abs(delta):,.0f} 超限（>{big:,.0f}）",
+                    rec.get("group", ""),
+                    rec.get("pid", ""),
+                    rec.get("qq", ""),
+                )
+                if len(flags) != before:
+                    new_count += 1
+
+        # ② 指令频率爆表（同一 pid+group 1 分钟内指令数 > 阈值）
+        rate_max = max(1, int(getattr(self, "_audit_rule_cmd_rate", 60)))
+        from collections import Counter
+
+        cmd_buckets = Counter(
+            (rec.get("group", ""), rec.get("pid", ""))
+            for rec in log
+            if rec.get("action") == "cmd"
+            and now - int(rec.get("ts", 0)) <= 60
+        )
+        for (group, pid), cnt in cmd_buckets.items():
+            if cnt > rate_max:
+                before = len(flags)
+                _mark(
+                    "cmd_rate",
+                    "mid",
+                    f"1 分钟内指令数 {cnt} 超限（>{rate_max}）",
+                    group,
+                    pid,
+                )
+                if len(flags) != before:
+                    new_count += 1
+
+        # ③ 日净流入超基线（当日资源净流入 > 历史日均 × mult 且 ≥ 下限）
+        mult = float(getattr(self, "_audit_rule_baseline_mult", 10))
+        floor = int(getattr(self, "_audit_rule_daily_floor", 100000000))
+        daily_start = now - (now % day)
+        per_pid: dict[str, dict] = {}
+        for rec in log:
+            pid = rec.get("pid", "")
+            delta = rec.get("delta")
+            if not pid or not isinstance(delta, (int, float)):
+                continue
+            ts = int(rec.get("ts", 0))
+            entry = per_pid.setdefault(pid, {"day_net": 0.0, "hist_sum": 0.0, "hist_n": 0, "group": "", "qq": ""})
+            if ts >= daily_start:
+                entry["day_net"] += delta
+            else:
+                # 历史窗口：仅算正流入（避免把大量转出稀释掉异常进账）
+                if delta > 0:
+                    entry["hist_sum"] += delta
+                    entry["hist_n"] += 1
+            entry["group"] = rec.get("group", entry["group"])
+            entry["qq"] = rec.get("qq", entry["qq"])
+        for pid, e in per_pid.items():
+            if e["day_net"] <= 0 or e["day_net"] < floor:
+                continue
+            if e["hist_n"] == 0:
+                continue  # 无历史，不判基线（新号走规则④）
+            avg = e["hist_sum"] / e["hist_n"]
+            if avg <= 0:
+                continue
+            if e["day_net"] > avg * mult:
+                before = len(flags)
+                _mark(
+                    "daily_baseline",
+                    "high",
+                    f"当日净流入 {e['day_net']:,.0f} 超历史日均 {avg:,.0f}×{mult:.0f}（下限 {floor:,.0f}）",
+                    e["group"],
+                    pid,
+                    e["qq"],
+                )
+                if len(flags) != before:
+                    new_count += 1
+
+        # ④ 新号速肥（注册 < 24h 内累计获得资源超阈值）
+        newbie = int(getattr(self, "_audit_rule_newbie", 100000000))
+        for key, pl in self._data["players"].items():
+            created = pl.get("created_ts", 0) or pl.get("reg_ts", 0) or 0
+            if not created or now - created >= day:
+                continue
+            # 玩家注册时间不齐时按该玩家最早一条流水兜底
+            total_gain = 0.0
+            for rec in log:
+                if rec.get("pid") == pl.get("qq"):
+                    delta = rec.get("delta")
+                    if isinstance(delta, (int, float)) and delta > 0:
+                        total_gain += delta
+            if total_gain > newbie:
+                before = len(flags)
+                _mark(
+                    "newbie_fat",
+                    "mid",
+                    f"新号注册 <24h 累计获得 {total_gain:,.0f} 超限（>{newbie:,.0f}）",
+                    pl.get("group", ""),
+                    pl.get("qq", ""),
+                    pl.get("qq", ""),
+                )
+                if len(flags) != before:
+                    new_count += 1
+
+        # ⑤ 7 天同人高频转让（同一对 pid 7 天转让次数 > 阈值）
+        tx_max = max(1, int(getattr(self, "_audit_rule_friend_tx", 50)))
+        tx_pairs: dict[tuple, int] = {}
+        tx_meta: dict[tuple, dict] = {}
+        for rec in log:
+            if rec.get("action") != "transfer":
+                continue
+            ts = int(rec.get("ts", 0))
+            if now - ts > 7 * day:
+                continue
+            sender = rec.get("pid", "")
+            recv = rec.get("target_pid", "")
+            if not sender or not recv:
+                continue
+            pair = (sender, recv) if sender <= recv else (recv, sender)
+            tx_pairs[pair] = tx_pairs.get(pair, 0) + 1
+            tx_meta.setdefault(
+                pair,
+                {"group": rec.get("group", ""), "pid": sender, "qq": rec.get("qq", "")},
+            )
+        for pair, cnt in tx_pairs.items():
+            if cnt > tx_max:
+                before = len(flags)
+                _mark(
+                    "friend_tx",
+                    "mid",
+                    f"7 天内同人转让 {cnt} 次超限（>{tx_max}）",
+                    tx_meta[pair]["group"],
+                    tx_meta[pair]["pid"],
+                    tx_meta[pair]["qq"],
+                )
+                if len(flags) != before:
+                    new_count += 1
+
+        open_count = sum(1 for f in flags.values() if f.get("status") == "open")
+        return {"new_flags": new_count, "total": len(flags), "open_count": open_count}
 
     # ----------------------------- 玩家 -----------------------------
     def get_player(

@@ -280,5 +280,53 @@
     "hint": "0—1，默认0（关闭=现行为不变）。开为1时，历练/秘境/深渊/世界首领的怪物数值会按玩家『仙途战力』缩放（战力越低敌人越弱，越高越强）。建议在群内回放验证后，再逐步调大（如0.25/0.5）。重载配置后生效。",
     "type": "float",
     "default": 0
+  },
+  "audit_enabled": {
+    "description": "启用数据追溯审计流水",
+    "hint": "开启后，玩家的指令与资源变动会记录进追加式审计流水（哈希链锚定防篡改），供后台『数据追溯』页检索与校验。关闭则不记录任何审计数据（已存的流水与标记保留，不删除）。",
+    "type": "bool",
+    "default": true
+  },
+  "audit_cap": {
+    "description": "审计流水保留上限（条）",
+    "hint": "环形上限：超出后丢弃最旧记录，防止存档无限膨胀。默认 20000。",
+    "type": "int",
+    "default": 20000
+  },
+  "audit_rule_big_single": {
+    "description": "单次资源变动超限阈值",
+    "hint": "任何单条资源变动（含转让/购买/管理员增减）绝对值超过该值即标记『high』异常。默认 1000000000（10 亿）。",
+    "type": "int",
+    "default": 1000000000
+  },
+  "audit_rule_cmd_rate": {
+    "description": "指令频率异常阈值（1 分钟指令数）",
+    "hint": "同一玩家在 1 分钟内发送的指令数超过该值即标记『mid』异常。默认 60。",
+    "type": "int",
+    "default": 60
+  },
+  "audit_rule_baseline_mult": {
+    "description": "日净流入基线倍数",
+    "hint": "玩家当日资源净流入超过『历史日均 × 该倍数』且不低于下方最低触发值时标记『high』异常。默认 10。",
+    "type": "float",
+    "default": 10
+  },
+  "audit_rule_daily_floor": {
+    "description": "日净流入基线最低触发值",
+    "hint": "日净流入基线规则的最低触发门槛：净流入绝对值低于该值不标记，避免小账号也天天报警。默认 100000000（1 亿）。",
+    "type": "int",
+    "default": 100000000
+  },
+  "audit_rule_newbie": {
+    "description": "新号速肥阈值（注册 24h 内累计获得）",
+    "hint": "注册不足 24 小时的玩家累计获得资源超过该值即标记『mid』异常。默认 100000000（1 亿）。",
+    "type": "int",
+    "default": 100000000
+  },
+  "audit_rule_friend_tx": {
+    "description": "7 天同人高频转让阈值（次）",
+    "hint": "同一对玩家 7 天内转让次数超过该值即标记『mid』异常。默认 50。",
+    "type": "int",
+    "default": 50
   }
 }
