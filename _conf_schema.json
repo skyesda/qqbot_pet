@@ -143,6 +143,12 @@
     "type": "bool",
     "default": true
   },
+  "require_agreement": {
+    "description": "强制同意用户协议（开启后须先点「同意」才能游玩）",
+    "hint": "开启后，未同意用户协议的玩家发任何游玩指令都会被拦截，回复协议地址（https://bot.flyyye.cn/agreement）并附一个只有本人可点的「同意」按钮；点击后即可游玩。同意状态跨群通用，按协议版本记录——改版后把 main.py 的 AGREEMENT_VERSION 改成新的生效日期即可让旧同意全部失效、重新确认。菜单/帮助/绑定相关指令不受拦截。关闭则恢复为不强制。",
+    "type": "bool",
+    "default": true
+  },
   "web_enabled": {
     "description": "启用专属管理网站",
     "hint": "开启后插件会在下方端口启动一个网页后台，可查看/增删改查数据库并批量生成卡密。修改后需重载插件生效。",

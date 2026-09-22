@@ -94,6 +94,7 @@ class PetStore:
         self._data.setdefault("sects", {})             # 宗门：{sect_id: sect_state}（一个群可多门）
         self._data.setdefault("sect_membership", {})   # {resolve_group: {qq: sect_id}} 一人一宗索引
         self._data.setdefault("qq_bindings", {})      # 平台用户ID -> QQ号（全局）
+        self._data.setdefault("agreement_consents", {})  # 平台用户ID -> 已同意的用户协议版本（全局）
         self._data.setdefault("email_config", {})      # 邮箱服务配置（SMTP）
         self._data.setdefault("lottery", None)         # 口令抽奖（单例：一个进行中的口令抽奖）
         self._data.setdefault("prize_wallet", {})      # 全局奖品背包：按 openid 主键，全群共享（不按群隔离）
@@ -2679,6 +2680,19 @@ class PetStore:
             if str(q) == qq_num:
                 return pid
         return ""
+
+    # --------------------------- 用户协议同意 ---------------------------
+    def agreement_consents(self) -> dict:
+        """返回用户协议同意表（平台用户ID -> 已同意的协议版本）。"""
+        return self._data.setdefault("agreement_consents", {})
+
+    def get_agreement_version(self, platform_id: str) -> str:
+        """返回某平台用户ID已同意的协议版本，未同意返回空串。"""
+        return str(self.agreement_consents().get(str(platform_id), ""))
+
+    def set_agreement_version(self, platform_id: str, version: str) -> None:
+        """记录某平台用户ID已同意到哪个协议版本（跨群通用）。"""
+        self.agreement_consents()[str(platform_id)] = str(version)
 
     def email_config(self) -> dict:
         """返回邮箱服务配置（SMTP）。"""

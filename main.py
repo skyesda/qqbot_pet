@@ -108,6 +108,17 @@ _BIND_ALWAYS_ALLOWED = {
     "灵契仙途", "仙途帮助", "查看说明",
 }
 
+# 用户协议：官网协议页地址 + 当前版本号。
+# 版本号对齐协议「生效日期」——协议改版后把这里改成新日期，旧同意即失效、全量重新拦截。
+AGREEMENT_URL = "https://bot.flyyye.cn/agreement"
+AGREEMENT_VERSION = "2026-09-22"
+
+# 拦截文案的固定开头：_keyboard_for_cmd 靠它认出「这是协议拦截」，挂上同意按钮
+_AGREEMENT_BLOCK_MARK = "📜 灵契仙途用户协议"
+
+# 未同意用户协议时仍可使用的指令（协议本身 + 绑定相关 + 菜单/帮助）
+_AGREEMENT_ALWAYS_ALLOWED = _BIND_ALWAYS_ALLOWED | {"同意协议"}
+
 # 修士化「成长/培养」命令：玩家用灵宠视角指令（灵宠升级/灵宠进化…）驱动，
 # 内部统一归一到 宠物X 的既有逻辑/冷却/统计，宠物X 仍作别名可用。
 _GROWTH_ALIASES = {
@@ -150,6 +161,7 @@ KNOWN_COMMANDS = {
     "换绑QQ",
     "解绑QQ",
     "绑定教程",
+    "同意协议",
     "签到",
     "兑换",
     "卡密兑换",
@@ -679,6 +691,8 @@ class PetParkPlugin(Star):
         self.leave_push = False
         # 强制绑定QQ：开启后未绑定用户禁止游玩灵契仙途（安全阀，可在后台关闭）
         self.require_qq_bind = bool(self.config.get("require_qq_bind", True))
+        # 用户协议：开启后未点击「同意」的用户禁止游玩灵契仙途（安全阀，可在后台关闭）
+        self.require_agreement = bool(self.config.get("require_agreement", True))
         self.welcome_template = str(self.config.get("welcome_template", "") or "") or (
             "## 👋 欢迎新成员\n欢迎 @{{member}} 加入本群！"
         )
@@ -1816,6 +1830,10 @@ class PetParkPlugin(Star):
         """
         tokens = text.split()
         cmd = tokens[0] if tokens else text
+        if reply.startswith(_AGREEMENT_BLOCK_MARK):
+            # 用户协议拦截文案 → 挂「同意」回调按钮。按钮只属于被拦的这个人：
+            # 官方 type=0 指定用户，别人点客户端直接拦，事件不推给机器人。
+            return self._agreement_keyboard(qq)
         if cmd in self._ASSISTANT_PANEL_CMDS or cmd in self._ASSISTANT_ACTION_CMDS:
             # 助手面板：每次点击都重绘一条新面板（QQ 无消息编辑能力）。
             # 按钮不带勾选标记（6 字节上限放不下前缀），勾选态在面板正文里，
@@ -4375,6 +4393,33 @@ class PetParkPlugin(Star):
         if not group.get("enabled", True):
             return None
 
+        # ---- 用户协议：未同意用户禁止游玩（含中元），仅放行协议本身与绑定/菜单/帮助 ----
+        # 与「强制绑定QQ」同原理：放在已知指令过滤之后，普通聊天仍静默放行；管理员
+        # （配置白名单 / 群主群管）不拦截，免得运营者被自己的协议锁在管理功能之外。
+        # 排在绑定拦截之前：先落「已同意」这步，再谈绑定。
+        if not self._is_admin(event):
+            ab = self._agreement_block(qq, cmd)
+            if ab:
+                return ab
+
+        # ---- 用户协议「同意」按钮回调（官方 type=1，点击不在群里冒消息）----
+        if cmd == "同意协议":
+            # 按钮已用官方 type=0 指定用户，非本人点客户端就拦了、事件不会推到这。
+            # 这里只是兜底：万一某个客户端没拦照推了事件，比对载荷里的主人后静默
+            # 丢弃，绝不弹「无权」提醒（与自动助手面板同一套处理）。
+            owner = self._assistant_owner_of(tokens)
+            if owner and owner != str(qq):
+                return None
+            self.store.set_agreement_version(qq, AGREEMENT_VERSION)
+            return (
+                "## ✅ 已同意用户协议\n"
+                f"协议版本：{AGREEMENT_VERSION}（跨群通用，无需重复同意）\n\n"
+                "感谢守约，现在可以开始游玩灵契仙途了。\n\n"
+                "- 发送「灵契仙途」查看主菜单\n"
+                "- 还没有灵宠？发送「砸蛋」获取第一只\n\n"
+                f"> 协议地址：{AGREEMENT_URL}"
+            )
+
         # ---- 强制绑定QQ：未绑定用户禁止游玩（含中元），仅放行绑定相关与菜单/帮助 ----
         # 管理员（配置白名单 / 群主群管）不拦截，避免把运营者锁死在管理功能之外
         if not self._is_admin(event):
@@ -4445,7 +4490,7 @@ class PetParkPlugin(Star):
                         "重生", "购买重生宝石", "确认重生", "祭奠",
                         "宠物列表", "查看所有宠物", "宠物信息", "切换宠物",
                         "坐骑系统", "坐骑市场", "坐骑图鉴", "我的坐骑", "坐骑列表",
-                        "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程",
+                        "绑定QQ", "验证码", "换绑QQ", "解绑QQ", "绑定教程", "同意协议",
                         "我的奖品", "口令抽奖",
                         "生辰活动", "生日抽奖", "生日快乐"}
         if cmd not in _bank_allow:
@@ -7319,6 +7364,40 @@ class PetParkPlugin(Star):
             "- 系统会向该QQ的 QQ 邮箱发送 6 位验证码\n"
             "- 收到后发送「验证码 123456」即绑定成功\n\n"
             "> 绑定一次，跨群通用；完整步骤发送「绑定教程」"
+        )
+
+    def _agreement_keyboard(self, owner: str = "") -> dict:
+        """用户协议「同意」按钮：官方回调按钮（type=1），点击不在群里冒消息。
+
+        载荷是 `同意协议 #<openid>`：`#` 后带上是**谁的面板**——回调按钮本就是群里
+        任何人都能点，服务端要靠它兜底比对（见 dispatch 里的 `同意协议` 分支）。
+        同时用官方 type=0 指定用户，非本人点由客户端在源头拦住、事件不推给机器人。
+        """
+        tail = f" #{owner}" if owner else ""
+        return self._build_qq_keyboard(
+            [[("同意", f"同意协议{tail}")]],
+            action_type=1,
+            permission_user_ids=[owner] if owner else None,
+        )
+
+    def _agreement_block(self, qq: str, cmd: str) -> str | None:
+        """用户协议拦截：未同意当前版本的用户返回协议入口文案，其余返回 None（放行）。
+
+        与「强制绑定QQ」同原理：拦的是**真指令**（dispatch 里排在已知指令过滤之后），
+        普通聊天照旧静默放行，不会为一句闲聊刷一条协议提示。
+        """
+        if not self.require_agreement:
+            return None
+        if self.store.get_agreement_version(qq) == AGREEMENT_VERSION:
+            return None
+        if cmd in _AGREEMENT_ALWAYS_ALLOWED:
+            return None
+        return (
+            f"{_AGREEMENT_BLOCK_MARK}\n"
+            f"游玩前请先阅读并同意用户协议：\n"
+            f"{AGREEMENT_URL}\n\n"
+            "读完后点击下方「同意」按钮即可开始游玩。\n\n"
+            "> 同意一次，跨群通用；协议若有更新，会再次请你确认。"
         )
 
     def _bind_tutorial(self) -> str:
