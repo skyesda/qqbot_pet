@@ -6,6 +6,7 @@ data/
 *.html
 pv2.js
 *.js
+!petpark/webstatic/admin.js
 
 # local logs
 framework.log
