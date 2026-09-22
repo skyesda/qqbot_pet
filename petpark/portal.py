@@ -3507,7 +3507,7 @@ _AGREEMENT_HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>用户协议 · 灵契仙途</title>
-<meta name="description" content="灵契仙途用户协议：账号与绑定、玩法与虚拟资源、行为规范、数据与隐私、未成年人保护、免责声明、协议变更与争议解决。">
+<meta name="description" content="灵契仙途用户协议：账号与绑定、玩法与虚拟资源、行为规范、数据与隐私、未成年人保护、免责声明、协议变更与生效解释。">
 <meta name="theme-color" content="#112f2d">
 <link rel="stylesheet" href="/webstatic/home.css?v=20260908">
 <style>
@@ -3632,15 +3632,7 @@ _AGREEMENT_HTML = r"""<!DOCTYPE html>
   </section>
 
   <section class="section agree-sec">
-    <div class="section-kicker">玖 · 争议解决</div>
-    <div class="section-head"><h2>若有分歧，先谈后讼。</h2><span>协商优先 · 法律途径</span></div>
-    <div class="clause">
-      <p>因本协议产生的争议，双方应友好协商解决；协商不成的，可向运营方所在地有管辖权的人民法院提起诉讼。</p>
-    </div>
-  </section>
-
-  <section class="section agree-sec">
-    <div class="section-kicker">拾 · 生效与解释</div>
+    <div class="section-kicker">玖 · 生效与解释</div>
     <div class="section-head"><h2>今日立约，自今而始。</h2><span>生效日期 · 解释权归运营方</span></div>
     <div class="clause">
       <p>本协议自 2026 年 9 月 22 日起生效。</p>
