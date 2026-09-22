@@ -1769,194 +1769,48 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>灵契仙途 · 玩家中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<style>
-  :root{
-    --bg:#f4f6fb; --card:#fff; --line:#e6e9f2; --text:#1f2534; --muted:#8a93a8;
-    --brand:#6366f1; --brand2:#a855f7; --grad:linear-gradient(135deg,#6366f1,#a855f7);
-  }
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-    background:var(--bg); color:var(--text); min-height:100vh;
-  }
-  [v-cloak]{display:none}
-  #app{min-height:100vh}
-  .layout{display:flex;min-height:100vh}
-  .sidebar{width:264px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 16px 18px;position:fixed;left:0;top:0;height:100vh;overflow-y:auto;z-index:20}
-  .sidebar::-webkit-scrollbar{width:6px}
-  .sidebar::-webkit-scrollbar-thumb{background:#d6dae6;border-radius:3px}
-  .side-brand{font-size:16px;font-weight:800;padding:2px 8px 16px;border-bottom:1px solid var(--line);margin-bottom:14px;display:flex;align-items:center;gap:9px}
-  .side-brand::before{content:'';width:10px;height:10px;border-radius:3px;background:var(--grad);flex:0 0 auto}
-  .side-sec{font-size:11.5px;color:var(--muted);font-weight:700;letter-spacing:1.2px;margin:4px 8px 9px}
-  .side-pets{display:flex;flex-direction:column;gap:8px}
-  .pet-chip{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:14px;cursor:pointer;transition:.16s;background:#fff}
-  .pet-chip:hover{border-color:#c4c9ff;box-shadow:0 3px 12px rgba(99,102,241,.12)}
-  .pet-chip.active{border-color:transparent;background:linear-gradient(135deg,#eef0ff,#f6efff);box-shadow:inset 0 0 0 1.5px #8a8ef5}
-  .pet-chip img{width:40px;height:40px;border-radius:11px;object-fit:cover;background:#eef1f8;flex:0 0 auto}
-  .pet-chip .name{font-size:13.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pet-chip .sub{font-size:11.5px;color:var(--muted);margin-top:2px}
-  .pet-chip .info{min-width:0}
-  .side-btns{display:flex;flex-direction:column;gap:9px;margin-top:12px}
-  .side-btns .el-button{width:100%;margin:0}
-  .side-tip{color:var(--muted);margin:9px 4px 0;font-size:12px;line-height:1.6}
-  .side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
-  .side-user{font-size:12.5px;color:var(--muted);font-weight:600;padding:0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .side-foot-btns{display:flex;gap:8px}
-  .side-foot-btns .el-button{flex:1;margin:0}
-  .content{flex:1;min-width:0;padding:26px 34px 40px;margin-left:264px}
-  .content-inner{max-width:960px;margin:0 auto}
-  .page-title{font-size:21px;font-weight:800;margin-bottom:18px}
-
-  .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 2px 10px rgba(30,40,80,.04)}
-  .sec-title{font-size:16px;font-weight:800;margin:26px 0 12px;display:flex;align-items:center;gap:9px}
-  .sec-title::before{content:'';width:4px;height:16px;border-radius:2px;background:var(--grad)}
-
-  .pet-hero{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
-  .pet-img{width:148px;height:148px;border-radius:20px;object-fit:cover;background:#eef1f8;border:1px solid var(--line);flex:0 0 auto}
-  .pet-head{flex:1;min-width:220px}
-  .pet-name{font-size:22px;font-weight:800;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
-  .pet-name .lv{font-size:14px;color:var(--muted);font-weight:700}
-  .pet-meta{color:var(--muted);font-size:13.5px;margin-top:5px}
-  .pet-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
-  .pet-bars{margin-top:13px;display:flex;flex-direction:column;gap:8px;max-width:420px}
-  .bar-row{display:flex;align-items:center;gap:10px;font-size:12.5px}
-  .bar-row .bl{width:70px;color:var(--muted);font-weight:600;flex:0 0 auto}
-  .bar-row .el-progress{flex:1}
-  .bar-row .bv{width:120px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
-  .pet-badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
-
-  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:16px}
-  .stat{background:#f8f9fd;border:1px solid var(--line);border-radius:14px;padding:13px 15px}
-  .stat .label{font-size:12px;color:var(--muted);font-weight:600}
-  .stat .value{font-size:17px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums}
-
-  .wallet{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
-  .coin{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px;transition:.16s}
-  .coin:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(30,40,80,.08)}
-  .coin .label{font-size:12.5px;color:var(--muted);font-weight:600}
-  .coin .value{font-size:21px;font-weight:800;margin-top:5px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
-
-  .grow-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  .grow-group{display:flex;gap:8px;align-items:center}
-  .muted{color:var(--muted);font-size:12.5px;line-height:1.7}
-
-  .cd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-  .cd{border:1px solid var(--line);border-radius:13px;padding:11px 13px;background:#fff}
-  .cd .cd-name{font-size:13px;font-weight:700}
-  .cd .cd-time{font-size:12.5px;margin-top:4px;font-weight:700;font-variant-numeric:tabular-nums}
-  .cd.ready .cd-time{color:#16a34a}
-  .cd.busy .cd-time{color:#d97706}
-  .cd.ready{border-color:#bbf0cd;background:#f4fdf7}
-
-  .bag{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
-  .item{border:1px solid var(--line);border-radius:14px;padding:14px 15px;background:#fff;position:relative;transition:.16s}
-  .item:hover{box-shadow:0 6px 18px rgba(30,40,80,.08)}
-  .item-name{font-size:14px;font-weight:700;padding-right:44px}
-  .item .count{font-size:12px;color:var(--muted);margin-top:3px;display:block}
-  .info-link{color:var(--brand);cursor:pointer;font-weight:600}
-  .info-link:hover{text-decoration:underline}
-  .item .use-row{display:flex;gap:8px;margin-top:11px;align-items:center}
-  .item .use-row .el-input-number{width:100px;flex:0 0 auto}
-  .item .use-row .el-button{flex:1;margin:0}
-  .item .item-tag{position:absolute;top:12px;right:12px}
-
-  .empty-tip{color:var(--muted);font-size:13.5px;padding:22px 0;text-align:center}
-
-  .redeem-row{display:flex;gap:10px}
-  .redeem-row .el-input{flex:1}
-  .redeem-result{margin-top:12px;padding:12px 14px;border-radius:12px;background:#f6f8ff;border:1px solid #dfe4ff;font-size:13px;white-space:pre-wrap;line-height:1.7}
-
-  .custom-box{margin-top:16px;padding:18px;background:linear-gradient(135deg,#f4f0ff,#eef5ff);border-radius:16px;border:1px solid #e2e0f7}
-  .custom-badge{color:var(--brand2);font-size:14px;font-weight:700;margin-bottom:6px}
-  .custom-remaining{font-size:12px;color:var(--muted);margin-bottom:12px}
-
-  .pet-source{margin-top:18px;text-align:center;color:#b0b8ca;font-size:12px;word-break:break-all}
-
-  .upload-zone{border:1.5px dashed #c9cede;border-radius:14px;padding:18px;text-align:center;cursor:pointer;transition:.16s;background:#fafbfe}
-  .upload-zone:hover{border-color:var(--brand);background:#f5f6ff}
-  .upload-plus{font-size:26px;color:#aab1c5;line-height:1}
-  .upload-text{font-size:13px;font-weight:700;margin-top:5px}
-  .upload-hint{font-size:12px;color:var(--muted);margin-top:3px}
-  .fld{display:block;font-size:12.5px;font-weight:700;color:#3c455c;margin:12px 0 7px}
-
-  .crop-wrap{display:flex;justify-content:center;margin:10px 0}
-  #cropCanvas{max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line);cursor:grab;touch-action:none}
-  .crop-zoom{display:flex;align-items:center;gap:12px;margin:12px 0 4px}
-  .crop-zoom .el-slider{flex:1}
-  .crop-preview{margin:10px 0;text-align:center}
-  .crop-preview img{max-width:150px;max-height:150px;border-radius:14px;border:1px solid var(--line)}
-
-  .result-pre{white-space:pre-wrap;line-height:1.8;font-size:14px}
-
-  @media(max-width:760px){
-    .layout{flex-direction:column}
-    .sidebar{width:100%;position:static;height:auto;border-right:none;border-bottom:1px solid var(--line);padding:14px 14px 12px}
-    .side-brand{padding-bottom:10px;margin-bottom:10px}
-    .side-pets{flex-direction:row;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
-    .pet-chip{flex:0 0 auto;min-width:150px}
-    .side-btns{flex-direction:row}
-    .side-btns .el-button{width:auto;flex:1}
-    .side-tip{display:none}
-    .side-foot{margin-top:12px;padding-top:10px;flex-direction:row;align-items:center;justify-content:space-between}
-    .side-foot-btns{flex:0 0 auto}
-    .content{padding:18px 12px 32px;margin-left:0}
-    .page-title{font-size:18px;margin-bottom:14px}
-    .card{padding:16px;border-radius:15px}
-    .pet-hero{flex-direction:column;align-items:center;text-align:center}
-    .pet-name,.pet-tags,.pet-badges{justify-content:center}
-    .pet-img{width:120px;height:120px}
-    .pet-bars{max-width:none;width:100%}
-    .bar-row .bl{width:56px}
-    .bar-row .bv{width:96px;font-size:11.5px}
-    .stat-grid{grid-template-columns:repeat(2,1fr)}
-    .wallet{grid-template-columns:repeat(2,1fr)}
-    .cd-grid{grid-template-columns:repeat(2,1fr)}
-    .bag{grid-template-columns:1fr}
-    .grow-row{gap:8px}
-    .redeem-row{flex-direction:column}
-    .el-dialog{--el-dialog-width:calc(100vw - 28px) !important;width:calc(100vw - 28px) !important;max-width:calc(100vw - 28px)}
-    .el-message-box{max-width:calc(100vw - 28px)}
-    .el-message{max-width:calc(100vw - 24px)}
-  }
-</style>
+<link rel="stylesheet" href="/webstatic/portal.css?v=20260922">
 </head>
-<body>
+<body class="portal-page">
 <div id="app" v-cloak>
 <div class="layout">
-  <aside class="sidebar">
-    <div class="side-brand">灵契仙途 · 玩家中心</div>
+  <aside class="sidebar" :class="{expanded:roleMenu}" aria-label="角色与账号">
+    <a class="side-brand" href="/"><span class="seal" aria-hidden="true">契</span><span>灵契仙途<small>玩家中心</small></span></a>
+    <button class="role-toggle" @click="roleMenu=!roleMenu" :aria-expanded="roleMenu" aria-controls="role-picker">切换角色 <span aria-hidden="true">⌄</span></button>
+    <div id="role-picker" class="role-picker">
     <div class="side-sec">我的角色</div>
     <div class="side-pets">
-      <div v-for="s in slots" :key="s.group_id + ':' + s.qq" class="pet-chip"
+      <button type="button" v-for="s in slots" :key="s.group_id + ':' + s.qq" class="pet-chip"
            :class="{active: currentSlot && currentSlot.group_id===s.group_id && currentSlot.qq===s.qq}"
-           @click="switchSlot(s)">
-        <img :src="slotImage(s)" :alt="slotLabel(s)" style="object-fit:contain;background:#f6f7fb">
+           @click="switchSlot(s);roleMenu=false" :aria-pressed="!!(currentSlot && currentSlot.group_id===s.group_id && currentSlot.qq===s.qq)">
+        <img v-if="slotImage(s)!==blankImg" :src="slotImage(s)" alt="" style="object-fit:contain">
+        <span v-else class="role-symbol" aria-hidden="true">修</span>
         <div class="info">
           <div class="name">{{ slotLabel(s) }}</div>
           <div class="sub">{{ slotSub(s) }}</div>
         </div>
-      </div>
+      </button>
       <span v-if="!slots.length" class="muted" style="padding:0 8px">暂无绑定角色（修士/宠物/坐骑）</span>
     </div>
     <div v-if="slotPets.length" class="side-sec" style="margin-top:6px">宠物</div>
     <div v-if="slotPets.length" class="side-pets">
-      <div v-for="(p,i) in slotPets" :key="'pet'+i" class="pet-chip"
+      <button type="button" v-for="(p,i) in slotPets" :key="'pet'+i" class="pet-chip"
            :class="{active: current && current.group_id===p.group_id && current.qq===p.qq && (current.pet_index||0)===p.pet_index}"
-           @click="loadPet(p)">
+           @click="loadPet(p);activePanel='pet';roleMenu=false">
         <img :src="p.image_url || blankImg" alt="">
         <div class="info">
           <div class="name">{{ p.nickname }}</div>
           <div class="sub">Lv{{ p.level }} · {{ p.quality }}</div>
         </div>
-      </div>
+      </button>
     </div>
     <div class="side-btns">
       <el-button type="primary" plain round @click="openBind()">＋ 绑定角色</el-button>
-      <el-button type="success" round @click="goChat">💬 宠物对话</el-button>
-      <el-button type="warning" round @click="goFeedback">📣 问题反馈</el-button>
+      <el-button type="success" round @click="goChat"> 网页游玩</el-button>
+      <el-button type="warning" round @click="goFeedback"> 问题反馈</el-button>
     </div>
     <p class="side-tip">绑定群号+用户ID 一次，其下修士/宠物/坐骑即可统一管理。</p>
-    <div class="side-foot">
+    </div><div class="side-foot">
       <div class="side-user" v-if="account">QQ {{ account.qq }}</div>
       <div class="side-foot-btns">
         <el-button size="small" round @click="openPwd">修改密码</el-button>
@@ -1967,13 +1821,26 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
   <section class="content">
     <div class="content-inner">
+      <header class="portal-header">
+        <div><a href="/" class="home-link">官网首页</a><h1>我的仙途</h1><p>{{ account ? '修士、灵宠与坐骑，都在这一处。' : '正在读取你的角色…' }}</p></div>
+        <a class="play-link" href="/chat">进入网页游玩</a>
+      </header>
+      <nav class="panel-nav" aria-label="玩家中心功能">
+        <button v-for="tab in panelTabs" :key="tab.key" @click="activePanel=tab.key" :class="{active:activePanel===tab.key}" :aria-current="activePanel===tab.key ? 'page' : undefined">{{ tab.label }}</button>
+      </nav>
+      <div v-if="loadError" class="card load-error" role="alert"><h2>暂时无法读取角色</h2><p>{{ loadError }}</p><el-button @click="current ? loadPet(current) : init()">重新加载</el-button></div>
+      <div v-else-if="initialLoading || petLoading" class="card loading-state" role="status"><span class="loading-dot"></span>正在读取角色档案…</div>
+      <div v-else-if="!current" class="card welcome-state"><h2>从绑定你的角色开始</h2><p>填写所在群的群号与用户 ID，即可查看修士、灵宠和坐骑。</p><el-button type="primary" @click="openBind()">绑定已有角色</el-button><a href="/">返回官网查看入门指引</a></div>
+      <template v-else-if="data">
+        <div class="role-context"><span>群 {{ data.group_id }} <span class="context-divider">/</span> 用户 {{ data.qq }}</span><el-button text @click="loadPet(current)">刷新档案</el-button></div>
+        <section v-show="activePanel==='overview'" aria-label="角色总览">
       <template v-if="data && data.adventure">
-        <div class="sec-title">☯ 我的修士</div>
-        <div class="card" style="margin-bottom:12px">
+        <div class="sec-title"> 我的修士</div>
+        <div class="card cultivator-card" style="margin-bottom:12px">
           <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
             <div style="flex:1;min-width:240px">
               <div style="font-size:18px;font-weight:800">
-                ☯ {{ data.adventure.name }}
+                 {{ data.adventure.name }}
                 <span style="font-size:12px;font-weight:500;color:var(--brand2);margin-left:6px">{{ data.adventure.profession }} · {{ data.adventure.gender || '男' }}</span>
               </div>
               <div style="font-size:12.5px;color:var(--muted);margin:6px 0 8px">
@@ -1981,27 +1848,27 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                 灵根 {{ data.adventure.spirit_root || '无' }}{{ data.adventure.element ? ' · '+data.adventure.element : '' }}
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px;margin-bottom:8px">
-                <el-tag type="danger" effect="plain" round>⚔️ 总战力 {{ fmt(data.adventure.power) }}</el-tag>
-                <span>💓 气血 {{ fmt(data.adventure.hp) }}/{{ data.adventure.hp_max }}</span>
-                  <span v-if="data.adventure.hp_dead" style="color:#c0392b">💀 陨落</span>
-                <el-tag effect="plain" round>⚔ 攻击 {{ fmt(data.adventure.atk) }}</el-tag>
-                <el-tag effect="plain" round>🛡 防御 {{ fmt(data.adventure.defense) }}</el-tag>
-                <el-tag effect="plain" round>⚡ 速度 {{ fmt(data.adventure.speed) }}</el-tag>
+                <el-tag type="danger" effect="plain" round> 总战力 {{ fmt(data.adventure.power) }}</el-tag>
+                <span> 气血 {{ fmt(data.adventure.hp) }}/{{ data.adventure.hp_max }}</span>
+                  <span v-if="data.adventure.hp_dead" style="color:#c0392b"> 陨落</span>
+                <el-tag effect="plain" round> 攻击 {{ fmt(data.adventure.atk) }}</el-tag>
+                <el-tag effect="plain" round> 防御 {{ fmt(data.adventure.defense) }}</el-tag>
+                <el-tag effect="plain" round> 速度 {{ fmt(data.adventure.speed) }}</el-tag>
                 <el-tag type="warning" effect="plain" round>悟性 {{ data.adventure.wudao }} · 根骨 {{ data.adventure.gengu }}</el-tag>
               </div>
-              <div style="margin-bottom:10px;font-size:12.5px;color:#4a5470">
-                💍 道侣：<b>{{ data.adventure.partner.love_state }}</b>{{ data.adventure.partner.married ? ' · 已婚于『'+data.adventure.partner.pet_name+'』' : ' · 结契灵宠『'+data.adventure.partner.pet_name+'』' }}
-                <span style="margin-left:10px">🎁 剩余悟性点 <b>{{ data.adventure.insight }}</b></span>
+              <div style="margin-bottom:10px;font-size:12.5px;color:#50604a">
+                 道侣：<b>{{ data.adventure.partner.love_state }}</b>{{ data.adventure.partner.married ? ' · 已婚于『'+data.adventure.partner.pet_name+'』' : ' · 结契灵宠『'+data.adventure.partner.pet_name+'』' }}
+                <span style="margin-left:10px"> 剩余悟性点 <b>{{ data.adventure.insight }}</b></span>
               </div>
               <div style="display:flex;align-items:center;gap:10px;font-size:12.5px">
                 <span style="flex:0 0 50px">体力</span>
-                <el-progress :percentage="pct(data.adventure.stamina, data.adventure.stamina_max)" :stroke-width="10" :show-text="false" color="#6366f1" style="flex:1"></el-progress>
+                <el-progress :percentage="pct(data.adventure.stamina, data.adventure.stamina_max)" :stroke-width="10" :show-text="false" color="#286356" style="flex:1"></el-progress>
                 <span style="flex:0 0 auto">{{ data.adventure.stamina }} / {{ data.adventure.stamina_max }}</span>
               </div>
               <div v-if="data.adventure.tactics && data.adventure.tactics.length" style="margin-top:8px;font-size:12.5px;color:var(--muted)">
-                🌀 已悟神通：<span v-for="(t,i) in data.adventure.tactics" :key="i"><b>{{ t[0] }}</b><span v-if="t[1]">（{{ t[1] }}）</span><span v-if="i < data.adventure.tactics.length-1">、 </span></span>
+                 已悟神通：<span v-for="(t,i) in data.adventure.tactics" :key="i"><b>{{ t[0] }}</b><span v-if="t[1]">（{{ t[1] }}）</span><span v-if="i < data.adventure.tactics.length-1">、 </span></span>
               </div>
-              <div style="margin-top:10px;padding:8px 12px;border-left:3px solid #b79149;background:#f1ead8;border-radius:6px;font-size:12.5px;color:#4a5470">
+              <details class="power-detail"><summary>查看战力构成</summary><div>
                 <b>战力构成</b>：本体 {{ fmt(data.adventure.breakdown.hero) }} ＋
                 灵宠「{{ data.adventure.breakdown.pet_name }}」{{ fmt(data.adventure.breakdown.pet_power) }} × {{ (data.adventure.breakdown.pet_ratio*100).toFixed(1) }}%
                 （随修士等级，满级 {{ (data.adventure.breakdown.pet_ratio_max*100).toFixed(0) }}%）＝ {{ fmt(data.adventure.breakdown.pet_contrib) }} ＋
@@ -2010,38 +1877,34 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                 × 道侣 ×{{ data.adventure.breakdown.partner.toFixed(2) }} ·
                 洞天 ×{{ data.adventure.breakdown.heaven_margin.toFixed(2) }}
                 → <b>{{ fmt(data.adventure.breakdown.total) }}</b>
-              </div>
+              </div></details>
             </div>
           </div>
         </div>
       </template>
 
-      <template v-if="data && data.mount_custom">
-        <div class="card" style="margin-bottom:12px">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span style="font-size:14px;font-weight:700">🏇 定制坐骑</span>
-            <el-tag v-if="(data.mount_custom.slots||0) > 0" type="success" size="small" effect="light" round>
-              可用定制资格 ×{{ data.mount_custom.slots }}</el-tag>
-            <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
-            <span style="flex:1"></span>
-            <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
-            <el-button round size="small" @click="openMountImage()">🎨 更换坐骑外观</el-button>
-          </div>
-          <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效，并全服祝贺广播。</p>
-          <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
-            :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
-          <el-alert v-for="(pn,i) in (data.mount_custom.img_pending||[])" :key="'mip'+i" type="warning" :closable="false" style="margin-top:10px"
-            :title="'『'+pn+'』外观更换审核中，通过后生效'"></el-alert>
-          <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
-            :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
+
+          <div v-if="!data.adventure" class="card overview-welcome"><h2>{{ pet && pet.exists ? pet.nickname : '角色档案' }}</h2><p class="muted">{{ pet && pet.exists ? '灵宠已结契，前往灵宠页查看属性、养成与自动助手。' : '当前角色尚未创建修士。可在群内查看玩法指引。' }}</p><el-button v-if="pet && pet.exists" @click="activePanel='pet'">查看灵宠</el-button></div>
+      <div class="sec-title">修行资源</div>
+        <div class="wallet">
+          <div class="coin"><div class="label"> 灵石</div><div class="value">{{ fmt(data.coin) }}</div></div>
+          <div class="coin"><div class="label"> 玄晶</div><div class="value">{{ fmt(data.jifen) }}</div></div>
+          <div class="coin"><div class="label"> 天晶</div><div class="value">{{ fmt(data.diamond) }}</div></div>
+          <div class="coin"><div class="label"> 深渊结晶</div><div class="value">{{ fmt(data.abyss && data.abyss.crystal || 0) }}</div></div>
         </div>
-      </template>
 
-      <div class="page-title">宠物档案</div>
+        <div class="sec-title">活动冷却</div>
+        <div class="cd-grid" v-if="cooldowns.length">
+          <div v-for="c in cooldowns" :key="c.name" class="cd" :class="cdRemaining(c) > 0 ? 'busy' : 'ready'">
+            <div class="cd-name">{{ c.name }}</div>
+            <div class="cd-time">{{ cdRemaining(c) > 0 ? fmtCd(cdRemaining(c)) : '可用' }}</div>
+          </div>
+        </div>
+        <div v-else class="card empty-tip">暂无活动</div>
 
-      <div v-if="!current" class="card empty-tip">请先在左侧绑定并选择宠物</div>
-      <div v-else-if="petLoading" class="card" v-loading="petLoading" style="min-height:220px"></div>
-      <template v-else-if="data">
+
+        </section>
+        <section v-show="activePanel==='pet'" aria-label="灵宠档案"><h2 class="sec-title first-title">我的灵宠</h2>
         <div class="card" v-if="pet && pet.exists">
           <div class="pet-hero">
             <img class="pet-img" :src="pet.image_url || blankImg" :alt="pet.custom_species_name || pet.species || '宠物'">
@@ -2054,23 +1917,23 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               <div class="pet-bars">
                 <div class="bar-row">
                   <span class="bl">{{ pet.ascended ? '仙元' : '经验' }}</span>
-                  <el-progress :percentage="pct(pet.ascended ? pet.xianyuan : pet.exp, pet.exp_to_next)" :stroke-width="10" :show-text="false" color="#8b5cf6"></el-progress>
+                  <el-progress :percentage="pct(pet.ascended ? pet.xianyuan : pet.exp, pet.exp_to_next)" :stroke-width="10" :show-text="false" color="#8b7350"></el-progress>
                   <span class="bv">{{ fmt(pet.ascended ? (pet.xianyuan||0) : (pet.exp||0)) }} / {{ fmt(pet.exp_to_next||0) }}</span>
                 </div>
                 <div class="bar-row">
-                  <span class="bl">❤️ 生命</span>
-                  <el-progress :percentage="pct(pet.hp, pet.hp_max)" :stroke-width="10" :show-text="false" color="#f43f5e"></el-progress>
+                  <span class="bl"> 生命</span>
+                  <el-progress :percentage="pct(pet.hp, pet.hp_max)" :stroke-width="10" :show-text="false" color="#a54132"></el-progress>
                   <span class="bv">{{ fmt(pet.hp||0) }} / {{ fmt(pet.hp_max||0) }}</span>
                 </div>
                 <div class="bar-row">
-                  <span class="bl">⚡ 精力</span>
-                  <el-progress :percentage="pct(pet.energy, pet.energy_max)" :stroke-width="10" :show-text="false" color="#f59e0b"></el-progress>
+                  <span class="bl"> 精力</span>
+                  <el-progress :percentage="pct(pet.energy, pet.energy_max)" :stroke-width="10" :show-text="false" color="#a48148"></el-progress>
                   <span class="bv">{{ fmt(pet.energy||0) }} / {{ fmt(pet.energy_max||0) }}</span>
                 </div>
               </div>
               <div class="pet-badges">
-                <el-tag type="danger" effect="plain" round>⚔️ 战力 {{ fmt(pet.battle_power) }}</el-tag>
-                <el-tag type="warning" effect="plain" round>😊 心情 {{ fmt(pet.mood||0) }}</el-tag>
+                <el-tag type="danger" effect="plain" round> 战力 {{ fmt(pet.battle_power) }}</el-tag>
+                <el-tag type="warning" effect="plain" round> 心情 {{ fmt(pet.mood||0) }}</el-tag>
                 <el-tag v-if="pet.ascended" type="success" effect="plain" round>余 {{ fmt(pet.exp||0) }} 经验</el-tag>
               </div>
             </div>
@@ -2084,6 +1947,19 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
             <div class="stat"><div class="label">姻缘</div><div class="value">{{ pet.love_state || '单身' }}</div></div>
           </div>
 
+        <div class="sec-title">宠物养成</div>
+        <div class="growth-actions">
+          <div class="grow-row">
+            <el-button type="primary" round :loading="acting==='auto_level'" @click="petAction('auto_level')"> 一键升级</el-button>
+            <span class="grow-group">
+              <el-input-number v-model="levelTimes" :min="1" :max="9999" size="default"></el-input-number>
+              <el-button round :loading="acting==='level'" @click="petAction('level')">⬆ 升级</el-button>
+            </span>
+            <el-button type="warning" round :loading="acting==='evolve'" @click="petAction('evolve')"> 宠物进化</el-button>
+          </div>
+          <p class="muted" style="margin-top:9px">效果与群聊指令一致；升级消耗经验与精力，进化需『进化神石』。</p>
+        </div>
+
           <div class="custom-box" v-if="!pet.custom">
             <el-input v-model="custom.code" placeholder="定制卡密" clearable></el-input>
             <p class="muted" style="margin:8px 0 0">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为混沌。</p>
@@ -2096,7 +1972,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
             <el-button type="primary" round :loading="custom.redeeming" @click="redeemCustom">解锁定制</el-button>
           </div>
           <div class="custom-box" v-else>
-            <div class="custom-badge">✨ 定制权限已解锁（混沌品质）</div>
+            <div class="custom-badge"> 定制权限已解锁（混沌品质）</div>
             <div class="custom-remaining">本月剩余次数：图片 {{ data.custom_remaining.image }} 次 / 名称 {{ data.custom_remaining.species_name }} 次</div>
             <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap">
               <el-button type="primary" round @click="openCustomEdit">修改形象 / 名称</el-button>
@@ -2108,7 +1984,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
           </div>
           <!-- 自动助手：门禁只看该玩家有无剩余执行次数，与宠物是否定制无关 -->
           <div class="custom-box">
-            <div class="custom-badge">🧘 自动助手</div>
+            <div class="custom-badge"> 自动助手</div>
             <div class="custom-remaining">
               剩余执行次数 <b>{{ data.assistant.quota || 0 }}</b> 次 · 该宠物累计代跑 {{ data.assistant.total_runs || 0 }} 次
             </div>
@@ -2116,8 +1992,8 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               代跑任务：{{ (data.assistant.tasks && data.assistant.tasks.length) ? data.assistant.tasks.join('、') : '未勾选（请在群内发送「自动助手」勾选，最多 4 个）' }}
             </div>
             <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap">
-              <div style="display:flex;align-items:center;gap:8px;background:#fff;padding:8px 14px;border-radius:999px;border:1px solid #e2e0f7">
-                <span style="font-size:13px;color:#5b657d">自动助手</span>
+              <div style="display:flex;align-items:center;gap:8px;background:#fff;padding:8px 14px;border-radius:999px;border:1px solid #d8d7c9">
+                <span style="font-size:13px;color:#50604a">自动助手</span>
                 <el-switch
                   v-model="data.assistant.enabled"
                   :loading="autoCultivating"
@@ -2130,14 +2006,16 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               <span class="muted" style="font-size:12.5px">每执行 1 个任务扣 1 次，次数用尽自动停机</span>
             </div>
             <div v-if="data.assistant.enabled" class="custom-remaining" style="color:#0c7a45">
-              🧘 运行中 · 最近：{{ (data.assistant.log && data.assistant.log.length) ? data.assistant.log[data.assistant.log.length-1] : '暂无记录（等待下一次代跑）' }}
+               运行中 · 最近：{{ (data.assistant.log && data.assistant.log.length) ? data.assistant.log[data.assistant.log.length-1] : '暂无记录（等待下一次代跑）' }}
             </div>
           </div>
         </div>
-        <div v-else class="card empty-tip">{{ (data && (data.adventure || (data.mounts && data.mounts.length))) ? '该角色暂无宠物，可在下方的「我的坐骑」继续查看坐骑' : '该账号下暂无宠物' }}</div>
+        <div v-else class="card empty-tip">该角色暂无灵宠。可在群内领养，或切换到「总览」「坐骑」查看已有角色。</div>
 
+</section>
+        <section v-show="activePanel==='mounts'" aria-label="坐骑管理">
         <template v-if="data && data.mounts && data.mounts.length">
-        <div class="sec-title">🐴 我的坐骑</div>
+        <div class="sec-title"> 我的坐骑</div>
         <div class="card">
           <div class="muted" style="font-size:12px;margin-bottom:8px">含官方与玩家定制的全部坐骑</div>
           <div v-for="m in data.mounts" :key="m.name"
@@ -2146,46 +2024,39 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               <div style="font-size:14px;font-weight:700">{{ m.name }}
                 <el-tag v-if="m.custom_spec" type="danger" size="small" effect="light" round style="margin-left:6px">⭐ 玩家定制</el-tag>
               </div>
-              <div class="muted" style="font-size:12px;margin-top:2px">★{{ m.stars }} · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
+              <div class="muted" style="font-size:12px;margin-top:2px">{{ m.stars }} 星 · Lv{{ m.level }} · 战力 {{ fmt(m.power) }}</div>
             </div>
           </div>
         </div>
       </template>
 
-      <div class="sec-title">我的财产</div>
-        <div class="wallet">
-          <div class="coin"><div class="label">🪙 灵石</div><div class="value">{{ fmt(data.coin) }}</div></div>
-          <div class="coin"><div class="label">✨ 玄晶</div><div class="value">{{ fmt(data.jifen) }}</div></div>
-          <div class="coin"><div class="label">💎 天晶</div><div class="value">{{ fmt(data.diamond) }}</div></div>
-          <div class="coin"><div class="label">🔮 深渊结晶</div><div class="value">{{ fmt(data.abyss && data.abyss.crystal || 0) }}</div></div>
-        </div>
-
-        <div class="sec-title">宠物养成</div>
-        <div class="card">
-          <div class="grow-row">
-            <el-button type="primary" round :loading="acting==='auto_level'" @click="petAction('auto_level')">⚡ 一键升级</el-button>
-            <span class="grow-group">
-              <el-input-number v-model="levelTimes" :min="1" :max="9999" size="default"></el-input-number>
-              <el-button round :loading="acting==='level'" @click="petAction('level')">⬆ 升级</el-button>
-            </span>
-            <el-button type="warning" round :loading="acting==='evolve'" @click="petAction('evolve')">🌟 宠物进化</el-button>
+<div v-if="!(data.mounts && data.mounts.length)" class="card empty-tip">暂无坐骑。可在群内获取坐骑，或使用定制资格申请专属坐骑。</div>      <template v-if="data && data.mount_custom">
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:700"> 定制坐骑</span>
+            <el-tag v-if="(data.mount_custom.slots||0) > 0" type="success" size="small" effect="light" round>
+              可用定制资格 ×{{ data.mount_custom.slots }}</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain" round>无定制资格</el-tag>
+            <span style="flex:1"></span>
+            <el-button type="primary" round size="small" @click="openMountNew()">＋ 新建定制坐骑</el-button>
+            <el-button round size="small" @click="openMountImage()"> 更换坐骑外观</el-button>
           </div>
-          <p class="muted" style="margin-top:9px">效果与群聊指令一致；升级消耗经验与精力，进化需『进化神石』。</p>
+          <p class="muted" style="font-size:12px;margin:8px 0 0">定制坐骑 = 自定义名字 + 专属外观图，初始战力 <b>30 万</b>（Lv.1 起可升级，属性不可自定义）。每张「坐骑定制卡」可新建 1 只；外观图经后台人工审核后生效，并全服祝贺广播。</p>
+          <el-alert v-for="(pn,i) in (data.mount_custom.pending||[])" :key="'mp'+i" type="warning" :closable="false" style="margin-top:10px"
+            :title="'『'+pn+'』外观已提交审核，预计 3 个工作日内处理完毕'"></el-alert>
+          <el-alert v-for="(pn,i) in (data.mount_custom.img_pending||[])" :key="'mip'+i" type="warning" :closable="false" style="margin-top:10px"
+            :title="'『'+pn+'』外观更换审核中，通过后生效'"></el-alert>
+          <el-alert v-if="(data.mount_custom.rejected||[]).length" type="error" :closable="false" style="margin-top:10px"
+            :title="'上次定制被驳回：『'+(data.mount_custom.rejected[0].name||'')+'』' + (data.mount_custom.rejected[0].reason||'')"></el-alert>
         </div>
+      </template>
 
-        <div class="sec-title">活动冷却</div>
-        <div class="cd-grid" v-if="cooldowns.length">
-          <div v-for="c in cooldowns" :key="c.name" class="cd" :class="cdRemaining(c) > 0 ? 'busy' : 'ready'">
-            <div class="cd-name">{{ c.name }}</div>
-            <div class="cd-time">{{ cdRemaining(c) > 0 ? fmtCd(cdRemaining(c)) : '可用' }}</div>
-          </div>
-        </div>
-        <div v-else class="card empty-tip">暂无活动</div>
-
-        <div class="sec-title">背包</div>
+</section>
+        <section v-show="activePanel==='bag'" aria-label="背包道具">        <div class="sec-title">背包</div>
         <p class="muted" style="margin:-4px 0 10px">道具可直接使用（支持数量），神器可佩戴、秘技书可参悟，效果与群聊指令一致。</p>
-        <div class="bag" v-if="bagItems.length">
-          <div v-for="it in bagItems" :key="it.name" class="item">
+        <div class="bag-toolbar"><el-input v-model="bagQuery" placeholder="搜索道具、神器或秘技" aria-label="搜索背包" clearable @input="bagPage=1"></el-input><span class="muted">共 {{ filteredBag.length }} 项</span></div>
+        <div class="bag" v-if="filteredBag.length">
+          <div v-for="it in visibleBag" :key="it.name" class="item">
             <el-tag v-if="it.kind==='art'" class="item-tag" type="danger" size="small" effect="dark" round>神器</el-tag>
             <el-tag v-else-if="it.kind==='skill'" class="item-tag" type="primary" size="small" effect="dark" round>秘技</el-tag>
             <div class="item-name">{{ it.name }}</div>
@@ -2198,9 +2069,10 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
             </div>
           </div>
         </div>
-        <div v-else class="card empty-tip">背包空空如也</div>
+        <div v-else class="card empty-tip">{{ bagQuery ? '未找到匹配的道具，试试其他名称。' : '背包暂无道具。可在群内历练获取，或通过卡密兑换。' }}</div>
 
-        <div class="sec-title">卡密兑换</div>
+<div class="bag-pagination" v-if="filteredBag.length"><span>每页 10 项</span><el-pagination v-model:current-page="bagPage" :page-size="10" :total="filteredBag.length" layout="prev, pager, next" :pager-count="5" aria-label="背包分页"></el-pagination></div></section>
+        <section v-show="activePanel==='redeem'" aria-label="卡密兑换">        <div class="sec-title">卡密兑换</div>
         <div class="card">
           <div class="redeem-row">
             <el-input v-model="redeemCode" placeholder="输入卡密，可兑换灵石 / 玄晶 / 天晶 / 道具" clearable @keyup.enter="redeem"></el-input>
@@ -2209,24 +2081,25 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
           <div v-if="redeemResult" class="redeem-result">{{ redeemResult }}</div>
         </div>
 
-        <div class="pet-source">群号：{{ data.group_id }} ｜ 用户ID：{{ data.qq }}</div>
+<p class="muted redeem-note">兑换将用于当前选中的角色。宠物定制请前往「灵宠」，坐骑定制请前往「坐骑」。</p></section>
       </template>
+      <footer class="portal-footer"><span>灵契仙途</span><div><a href="/feedback">问题反馈</a><a href="/agreement">用户协议</a><a href="/">官网首页</a></div></footer>
     </div>
   </section>
 </div>
 
 <!-- 绑定角色（槽位） -->
-<el-dialog v-model="bind.show" title="＋ 绑定角色（修士/宠物/坐骑）" width="480px" align-center>
-  <div v-if="auto.loading" class="muted" style="padding:4px 2px 8px">🔍 正在自动识别（按登录 QQ {{ auto.qq || '...' }}）…</div>
+<el-dialog v-model="bind.show" title="绑定角色" width="480px" align-center>
+  <div v-if="auto.loading" class="muted" style="padding:4px 2px 8px"> 正在自动识别（按登录 QQ {{ auto.qq || '...' }}）…</div>
   <div v-else-if="auto.list && auto.list.length" style="margin-bottom:10px">
-    <div style="color:#8f97ab;font-size:12px;margin:0 0 6px">✅ 已按登录 QQ（{{ auto.qq }}）自动列出名下角色：未绑定点「选择」、被其它账号绑定的可「强要回」。每个（群号+用户ID）只需绑定一次。</div>
+    <div style="color:#6b766c;font-size:12px;margin:0 0 6px"> 已按登录 QQ（{{ auto.qq }}）自动列出名下角色：未绑定点「选择」、被其它账号绑定的可「强要回」。每个（群号+用户ID）只需绑定一次。</div>
     <div style="max-height:240px;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:8px">
       <div v-for="grp in auto.list" :key="grp.group_id" style="padding:8px;border-bottom:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:12px;color:#cfd6e4;margin-bottom:2px"><b>群 ID</b> <code>{{ grp.group_id }}</code></div>
+        <div style="font-size:12px;color:#50604a;margin-bottom:2px"><b>群 ID</b> <code>{{ grp.group_id }}</code></div>
         <div v-for="pl in grp.players" :key="grp.group_id + '|' + pl.qq" style="padding:6px 0 6px 10px">
-          <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#e6e9f0">
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#233b36">
             <span style="flex:1;min-width:0">用户ID <code>{{ pl.qq }}</code>
-              <span style="color:#aeb6c9">{{ pl.has_adventure ? '修士' + (pl.adventure_name ? '·' + pl.adventure_name : '') + ' ' : '' }}{{ pl.pet_count ? '宠物'+pl.pet_count+'只 ' : '' }}{{ pl.mount_count ? '坐骑'+pl.mount_count+'只' : '' }}</span>
+              <span style="color:#6b766c">{{ pl.has_adventure ? '修士' + (pl.adventure_name ? '·' + pl.adventure_name : '') + ' ' : '' }}{{ pl.pet_count ? '宠物'+pl.pet_count+'只 ' : '' }}{{ pl.mount_count ? '坐骑'+pl.mount_count+'只' : '' }}</span>
             </span>
             <el-button v-if="pl.bound==='other'" size="small" round plain type="danger" @click="reclaimBind(grp.group_id, pl.qq, 0)">强要回</el-button>
             <el-button v-else-if="pl.bound==='me'" size="small" round plain disabled>已绑定</el-button>
@@ -2245,12 +2118,12 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
       <el-input v-model="bind.qq" placeholder="你在该群使用灵契仙途的用户 ID" clearable @keyup.enter="doBindQuery"></el-input>
     </el-form-item>
   </el-form>
-  <div v-if="bind.info && !bind.querying" style="padding:10px 12px;border-radius:10px;border:1px solid rgba(103,194,58,.35);background:rgba(103,194,58,.08);font-size:13px;color:#e8ffe9">
+  <div v-if="bind.info && !bind.querying" style="padding:10px 12px;border-radius:10px;border:1px solid rgba(103,194,58,.35);background:rgba(103,194,58,.08);font-size:13px;color:#286356">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span>将绑定：{{ bind.info.has_adventure ? '修士' + (bind.info.adventure.name ? '『' + bind.info.adventure.name + '』' : '') + ' ' : '' }}{{ (bind.info.pets||[]).length ? '宠物 ' + (bind.info.pets||[]).length + ' 只 ' : '' }}{{ (bind.info.mounts||[]).length ? '坐骑 ' + (bind.info.mounts||[]).length + ' 只' : '' }}</span>
     </div>
   </div>
-  <div v-if="bind.error" style="padding:8px 10px;border-radius:8px;background:rgba(245,108,108,.12);border:1px solid rgba(245,108,108,.3);color:#ffb7b7;font-size:12.5px;margin-bottom:4px">{{ bind.error }}</div>
+  <div v-if="bind.error" style="padding:8px 10px;border-radius:8px;background:rgba(245,108,108,.12);border:1px solid rgba(245,108,108,.3);color:#a54132;font-size:12.5px;margin-bottom:4px">{{ bind.error }}</div>
   <template #footer>
     <el-button round @click="bind.show=false">取消</el-button>
     <el-button type="primary" round :loading="bind.querying" @click="doBindQuery">查询角色</el-button>
@@ -2259,7 +2132,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 </el-dialog>
 
 <!-- 新建定制坐骑 -->
-<el-dialog v-model="mountC.dialog" title="🏇 新建定制坐骑" width="500px" align-center>
+<el-dialog v-model="mountC.dialog" title=" 新建定制坐骑" width="500px" align-center>
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
     <span style="font-size:13.5px">可用定制资格</span>
     <el-tag v-if="(data.mount_custom && data.mount_custom.slots) > 0" type="success" round>×{{ data.mount_custom.slots }}</el-tag>
@@ -2267,7 +2140,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
     <span style="flex:1"></span>
     <span style="font-size:12px;color:var(--muted)">初始战力 300,000 · Lv.1</span>
   </div>
-  <div v-if="!((data.mount_custom && data.mount_custom.slots) > 0)" style="padding:12px;border-radius:10px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.06);margin-bottom:12px">
+  <div v-if="!((data.mount_custom && data.mount_custom.slots) > 0)" style="padding:12px;border-radius:10px;border:1px solid #d8d7c9;background:#eef0e5;margin-bottom:12px">
     <div style="font-size:13px;margin-bottom:8px">还没有定制资格，输入「坐骑定制卡」卡密兑换（每张可新建 1 只）：</div>
     <div style="display:flex;gap:8px">
       <el-input v-model="mountC.code" placeholder="坐骑定制卡密" clearable @keyup.enter="doMountRedeem"></el-input>
@@ -2301,8 +2174,8 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 </el-dialog>
 
 <!-- 更换定制坐骑外观 -->
-<el-dialog v-model="mountI.dialog" title="🎨 更换坐骑外观" width="500px" align-center>
-  <div style="padding:10px 12px;border-radius:10px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.06);font-size:13px;margin-bottom:12px">
+<el-dialog v-model="mountI.dialog" title=" 更换坐骑外观" width="500px" align-center>
+  <div style="padding:10px 12px;border-radius:10px;border:1px solid #d8d7c9;background:#eef0e5;font-size:13px;margin-bottom:12px">
     每只定制坐骑<b>每月可更换 3 次外观</b>；新图经人工审核通过后生效，旧图自动替换。
   </div>
   <div v-if="!customMountList.length" style="padding:14px;color:var(--muted);font-size:13px">当前角色还没有定制坐骑。先『新建定制坐骑』吧。</div>
@@ -2329,7 +2202,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 </el-dialog>
 
 <!-- 修改密码 -->
-<el-dialog v-model="pwd.show" title="🔒 修改密码" width="420px" align-center>
+<el-dialog v-model="pwd.show" title=" 修改密码" width="420px" align-center>
   <p class="muted" style="margin:-6px 0 10px">验证码将发送至绑定邮箱{{ account && account.email_masked ? '：' + account.email_masked : '' }}</p>
   <el-form label-position="top" @submit.prevent="changePwd">
     <el-form-item label="邮箱验证码">
@@ -2352,7 +2225,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 </el-dialog>
 
 <!-- 修改宠物形象 -->
-<el-dialog v-model="custom.editShow" title="✨ 修改宠物形象" width="480px" align-center>
+<el-dialog v-model="custom.editShow" title=" 修改宠物形象" width="480px" align-center>
   <p class="muted" style="margin:-6px 0 4px">定制专属形象与种类名称，审核通过后生效。</p>
   <label class="fld">种类名称（显示名称）</label>
   <el-input v-model="custom.species" placeholder="例如：灭世魔龙" clearable></el-input>
@@ -2450,9 +2323,15 @@ createApp({
     }
     function slotImage(s){
       if((s.pets||[]).length && s.pets[0].image_url) return s.pets[0].image_url;
-      return blankImg;
+      return BLANK_IMG;
     }
     const petLoading = ref(false);
+    const initialLoading=ref(true), loadError=ref(''), roleMenu=ref(false), activePanel=ref('overview');
+    const panelTabs=[{key:'overview',label:'总览'},{key:'pet',label:'灵宠'},{key:'mounts',label:'坐骑'},{key:'bag',label:'背包'},{key:'redeem',label:'兑换'}];
+    const bagQuery=ref(''),bagPage=ref(1);
+    const filteredBag=computed(()=>bagItems.value.filter(it=>it.name.toLocaleLowerCase().includes(bagQuery.value.trim().toLocaleLowerCase())));
+    const visibleBag=computed(()=>filteredBag.value.slice((bagPage.value-1)*10,bagPage.value*10));
+    let petRequest=0;
     const now = ref(Math.floor(Date.now()/1000));
     setInterval(()=>{ now.value = Math.floor(Date.now()/1000); }, 1000);
 
@@ -2487,6 +2366,8 @@ createApp({
     const cdRemaining = c => (c.ready_at || 0) - now.value;
 
     async function init(){
+      initialLoading.value=true;loadError.value='';
+      try{
       const me = await api('/api/portal/me');
       if(!me || !me.ok){ location.href = '/'; return; }
       account.value = me.account;
@@ -2503,16 +2384,21 @@ createApp({
       } else {
         await loadPet({group_id:first.group_id, qq:first.qq, pet_index:0});
       }
+      }catch(error){loadError.value='连接未完成，请检查网络后重试。';}
+      finally{initialLoading.value=false;}
     }
 
     async function loadPet(p){
+      const requestId=++petRequest;
+      loadError.value='';
       current.value = p;
       currentSlot.value = {group_id: p.group_id, qq: p.qq};
       petLoading.value = true;
       try{
         const d = await api(`/api/portal/pet?group_id=${encodeURIComponent(p.group_id)}&qq=${encodeURIComponent(p.qq)}&pet_index=${p.pet_index||0}`);
-        if(!d || !d.ok){ ElMessage.error((d && d.msg) || '宠物数据加载失败'); data.value = null; return; }
-        data.value = d;
+        if(requestId!==petRequest)return;
+        if(!d || !d.ok){ loadError.value=(d && d.msg)||'角色数据加载失败，请重试。'; data.value=null; return; }
+        data.value = d;bagPage.value=1;bagQuery.value='';
         redeemResult.value = '';
         const artSet = new Set(d.artifact_names || []);
         const skillSet = new Set(d.skill_names || []);
@@ -2523,7 +2409,8 @@ createApp({
         }));
         const base = Math.floor(Date.now()/1000);
         cooldowns.value = (d.cooldowns || []).map(c=>({name:c.name, ready_at: base + (c.remaining||0)}));
-      } finally { petLoading.value = false; }
+      }catch(error){if(requestId===petRequest)loadError.value='连接未完成，请检查网络后重试。';}
+      finally {if(requestId===petRequest)petLoading.value=false;}
     }
 
     function switchSlot(s){
@@ -2884,6 +2771,7 @@ createApp({
     onMounted(init);
 
     return {account, pets, current, data, pet, petLoading, blankImg:BLANK_IMG,
+      initialLoading,loadError,roleMenu,activePanel,panelTabs,bagQuery,bagPage,filteredBag,visibleBag,init,
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       bind, pwd, custom, crop,
       auto,
