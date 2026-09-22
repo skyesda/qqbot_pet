@@ -158,9 +158,9 @@ class WebAdmin:
                 # 占位：返回一张 SVG 提示「图片缺失」，前端 <img onerror> 也会兜底
                 svg = (
                     '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="240">'
-                    '<rect width="100%" height="100%" fill="repeating-linear-gradient(45deg,#f3f4f6,#f3f4f6 12px,#fafafa 12px,#fafafa 24px)"/>'
-                    '<text x="50%" y="46%" font-size="16" text-anchor="middle" fill="#5b657d">📂 图片缺失</text>'
-                    '<text x="50%" y="64%" font-size="11" text-anchor="middle" fill="#8a93a8">该定制图文件可能已被清理；建议让玩家重新提交。</text>'
+                    '<rect width="100%" height="100%" fill="repeating-linear-gradient(45deg,#efece1,#efece1 12px,#f7f5eb 12px,#f7f5eb 24px)"/>'
+                    '<text x="50%" y="46%" font-size="16" text-anchor="middle" fill="#4f5c50">📂 图片缺失</text>'
+                    '<text x="50%" y="64%" font-size="11" text-anchor="middle" fill="#6b766c">该定制图文件可能已被清理；建议让玩家重新提交。</text>'
                     '</svg>')
                 return web.Response(body=svg, content_type="image/svg+xml")
             data = p.read_bytes()
@@ -1489,24 +1489,40 @@ LOGIN_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>灵契仙途 · 管理登录</title>
 <style>
-body{margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f6f8fd;color:#141a2a;display:flex;min-height:100vh;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
-body::before{content:'';position:fixed;top:-260px;left:-160px;width:640px;height:640px;border-radius:50%;background:radial-gradient(closest-side,rgba(47,107,255,.14),transparent);pointer-events:none}
-body::after{content:'';position:fixed;bottom:-280px;right:-180px;width:720px;height:720px;border-radius:50%;background:radial-gradient(closest-side,rgba(147,51,234,.10),transparent);pointer-events:none}
-.box{background:#fff;padding:36px 32px;border-radius:22px;width:340px;border:1px solid #e8ecf6;box-shadow:0 24px 64px -12px rgba(47,107,255,.18),0 2px 6px rgba(20,26,42,.06);position:relative;overflow:hidden;z-index:1}
-.box::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(120deg,#2f6bff,#6d4aff,#9333ea)}
-h1{font-size:19px;font-weight:800;margin:0 0 22px;text-align:center;letter-spacing:-.2px}
-input{width:100%;box-sizing:border-box;padding:12px 15px;margin:7px 0;border-radius:12px;border:1.5px solid transparent;background:#f7f9fd;color:#141a2a;font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s,background .2s}
-input:focus{background:#fff;border-color:#2f6bff;box-shadow:0 0 0 4px rgba(47,107,255,.12)}
-button{width:100%;padding:12px;margin-top:14px;border:0;border-radius:12px;background:linear-gradient(120deg,#2f6bff,#6d4aff,#9333ea);color:#fff;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 8px 20px -6px rgba(47,107,255,.5);transition:transform .15s,box-shadow .2s}
-button:hover{transform:translateY(-1px);box-shadow:0 12px 26px -6px rgba(47,107,255,.55)}
-.err{color:#e5484d;text-align:center;min-height:18px;font-size:13px}
+:root{--ink:#112f2d;--paper:#f3efe5;--text:#233b36;--muted:#6b766c;--line:#d8d7c9;--gold:#d6ba80;--red:#a54132;--green:#286356}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--text);background:var(--ink);overflow:hidden;-webkit-font-smoothing:antialiased}
+.bg{position:absolute;inset:0;background:url(/webstatic/home/hero-mountains.webp) center/cover no-repeat;opacity:.5}
+.veil{position:absolute;inset:0;background:radial-gradient(58% 52% at 50% 42%,rgba(17,47,45,.15),rgba(17,47,45,.9) 100%),linear-gradient(0deg,rgba(17,47,45,.92),transparent 42%)}
+.card{position:relative;z-index:1;width:368px;max-width:calc(100vw - 36px);background:rgba(243,239,229,.97);border:1px solid var(--gold);box-shadow:0 34px 90px -24px rgba(0,0,0,.6);padding:40px 36px 32px;text-align:center;animation:rise .5s ease both}
+.card:before{content:"";position:absolute;inset:6px;border:1px solid rgba(214,186,128,.45);pointer-events:none}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.seal{display:inline-flex;width:44px;height:50px;align-items:center;justify-content:center;background:var(--red);border:1px solid #d77d57;color:#ffe8ce;font-family:"STKaiti","KaiTi","Kaiti SC","Songti SC","SimSun",serif;font-size:28px;transform:rotate(-4deg);letter-spacing:0}
+.eyebrow{margin-top:16px;font-size:11px;letter-spacing:4px;color:#8b7350;display:flex;align-items:center;justify-content:center;gap:12px;text-transform:uppercase}
+.eyebrow:before,.eyebrow:after{content:"";height:1px;width:26px;background:currentColor;opacity:.7}
+h1{font-family:"STKaiti","KaiTi","Kaiti SC","Songti SC","SimSun",serif;font-weight:500;font-size:26px;letter-spacing:5px;margin:10px 0 4px;color:var(--ink)}
+.sub{font-size:12px;color:var(--muted);letter-spacing:1px;margin-bottom:20px}
+input{width:100%;padding:12px 14px;margin:6px 0;border-radius:3px;border:1px solid var(--line);background:#fffdf8;color:var(--text);font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(40,99,86,.14)}
+input::placeholder{color:#a9b0a4}
+button{width:100%;padding:12px;margin-top:16px;border:1px solid var(--red);border-radius:3px;background:var(--red);color:#fff3df;font-size:15px;letter-spacing:6px;cursor:pointer;transition:background .18s,transform .15s}
+button:hover{background:#8f3429;border-color:#8f3429;transform:translateY(-1px)}
+.err{color:var(--red);text-align:center;min-height:18px;font-size:13px;font-weight:600}
+.foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);letter-spacing:1px}
+.foot a{color:#8b7350;border-bottom:1px solid rgba(139,115,80,.4);text-decoration:none}
+.foot a:hover{color:var(--red);border-color:var(--red)}
 </style></head><body>
-<form class="box" method="post" action="/login">
-<h1>灵契仙途 · 管理后台</h1>
+<div class="bg" aria-hidden="true"></div><div class="veil" aria-hidden="true"></div>
+<form class="card" method="post" action="/login">
+<span class="seal" aria-hidden="true">契</span>
+<div class="eyebrow">管理后台</div>
+<h1>验印入仙途</h1>
+<div class="sub">灵契仙途 · 运营管理端</div>
 <div class="err"><!--ERR--></div>
-<input name="user" placeholder="账号" autocomplete="username">
-<input name="password" type="password" placeholder="密码" autocomplete="current-password">
-<button type="submit">登录</button>
+<input name="user" placeholder="账号" autocomplete="username" aria-label="账号">
+<input name="password" type="password" placeholder="密码" autocomplete="current-password" aria-label="密码">
+<button type="submit">登 录</button>
+<div class="foot"><a href="/">← 返回官网首页</a></div>
 </form></body></html>"""
 
 
@@ -1515,75 +1531,78 @@ DASHBOARD_HTML = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>灵契仙途 · 管理后台</title>
 <style>
+:root{--ink:#112f2d;--ink2:#193c34;--paper:#f3efe5;--card:#faf8f1;--text:#233b36;--muted:#6b766c;--line:#d8d7c9;--gold:#d6ba80;--gold-d:#846739;--red:#a54132;--green:#286356}
 *{box-sizing:border-box}
-body{margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f6f8fd;color:#141a2a;-webkit-font-smoothing:antialiased}
-header{background:rgba(255,255,255,.85);backdrop-filter:blur(10px);padding:14px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10;border-bottom:1px solid #e8ecf6}
-header h1{font-size:16px;font-weight:800;margin:0;flex:1;letter-spacing:-.2px}
-header h1::before{content:'';display:inline-block;width:10px;height:10px;border-radius:3px;background:linear-gradient(120deg,#2f6bff,#9333ea);margin-right:9px}
-header a{color:#8a93a8;text-decoration:none;font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px;border:1px solid #e8ecf6;background:#fff;transition:color .2s,border-color .2s}
-header a:hover{color:#2f6bff;border-color:#2f6bff}
-.tabs{display:flex;gap:6px;padding:16px 24px 0;flex-wrap:wrap}
-.tabs button{padding:9px 18px;border:1px solid transparent;border-radius:999px;background:transparent;color:#8a93a8;cursor:pointer;font-size:13.5px;font-weight:600;transition:background .2s,color .2s}
-.tabs button:hover{background:#eef3ff;color:#2f6bff}
-.tabs button.active{background:linear-gradient(120deg,#2f6bff,#6d4aff);color:#fff;box-shadow:0 6px 16px -6px rgba(47,107,255,.5)}
-main{padding:18px 24px 28px}
+body{margin:0;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--paper);color:var(--text);-webkit-font-smoothing:antialiased;background-image:radial-gradient(rgba(17,47,45,.04) 1px,transparent 1px);background-size:22px 22px}
+header{background:var(--ink);color:#f4eedf;padding:0 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10;border-bottom:1px solid var(--gold)}
+header .seal{display:inline-flex;width:26px;height:30px;align-items:center;justify-content:center;background:var(--red);border:1px solid #d77d57;color:#ffe8ce;font-family:"STKaiti","KaiTi","Kaiti SC","Songti SC","SimSun",serif;font-size:17px;transform:rotate(-4deg);margin-right:10px;letter-spacing:0}
+header h1{font-family:"STKaiti","KaiTi","Kaiti SC","Songti SC","SimSun",serif;font-weight:500;font-size:19px;margin:0;flex:1;letter-spacing:3px;display:flex;align-items:center}
+header a{color:#d9dece;text-decoration:none;font-size:13px;padding:7px 16px;border-radius:3px;border:1px solid rgba(212,207,173,.4);background:transparent;letter-spacing:2px;transition:color .2s,border-color .2s,background .2s}
+header a:hover{color:var(--gold);border-color:var(--gold);background:rgba(214,186,128,.08)}
+.tabs{display:flex;gap:4px;padding:14px 24px 0;flex-wrap:wrap;background:var(--ink2);border-bottom:1px solid rgba(214,186,128,.35);margin:0}
+.tabs button{padding:9px 18px;border:1px solid transparent;border-radius:3px;background:transparent;color:#aabdaf;cursor:pointer;font-size:13.5px;letter-spacing:1px;transition:background .2s,color .2s,border-color .2s}
+.tabs button:hover{background:rgba(214,186,128,.12);color:var(--gold)}
+.tabs button.active{background:var(--red);color:#fff3df;border-color:#d77d57;box-shadow:0 4px 12px -5px rgba(165,65,50,.6)}
+main{padding:20px 24px 32px;max-width:1280px;margin:auto}
 .cards-stat{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
-.stat{background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:14px 20px;min-width:130px;box-shadow:0 1px 2px rgba(20,26,42,.04)}
-.stat .n{font-size:23px;font-weight:800;background:linear-gradient(120deg,#2f6bff,#9333ea);-webkit-background-clip:text;background-clip:text;color:transparent;font-variant-numeric:tabular-nums}
-.stat .l{font-size:12px;color:#8a93a8;margin-top:2px;font-weight:500}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:14px 20px;min-width:130px;box-shadow:0 1px 2px rgba(17,47,45,.05)}
+.stat .n{font-family:Georgia,"Times New Roman",serif;font-size:26px;font-weight:700;color:var(--gold-d);font-variant-numeric:tabular-nums}
+.stat .l{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:2px}
 .bar{margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-input,select{padding:9px 13px;border-radius:10px;border:1.5px solid #e8ecf6;background:#fff;color:#141a2a;font-size:13px;outline:none;transition:border-color .2s,box-shadow .2s}
-input:focus,select:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12)}
-input::placeholder{color:#aab3c7}
-label.fld{display:block;margin:10px 0 4px;font-size:13px;color:#5b657d;font-weight:600}
-button.act{padding:9px 16px;border:0;border-radius:10px;background:linear-gradient(120deg,#2f6bff,#6d4aff);color:#fff;cursor:pointer;font-size:13px;font-weight:600;box-shadow:0 4px 12px -4px rgba(47,107,255,.45);transition:transform .15s,box-shadow .2s,filter .15s}
-button.act:hover{transform:translateY(-1px);filter:saturate(1.08)}
-button.del{background:linear-gradient(120deg,#ef4444,#dc2626);box-shadow:0 4px 12px -4px rgba(220,38,38,.4)}
-button.del:hover{filter:brightness(1.05)}
-.tag{display:inline-block;font-size:11px;background:#eef3ff;color:#2f6bff;border:1px solid rgba(47,107,255,.25);border-radius:999px;padding:2px 9px;margin:1px;font-weight:600}
-button.ghost{background:#fff;color:#5b657d;border:1.5px solid #d8dfef;box-shadow:none}
-button.ghost:hover{color:#2f6bff;border-color:#2f6bff;background:#eef3ff;transform:none}
-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;background:#fff;border:1px solid #e8ecf6;border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(20,26,42,.04)}
-th,td{padding:12px 14px;border-bottom:1px solid #eef1f8;text-align:left}
+input,select{padding:9px 13px;border-radius:3px;border:1px solid var(--line);background:#fffdf8;color:var(--text);font-size:13px;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(40,99,86,.13)}
+input::placeholder{color:#a9b0a4}
+label.fld{display:block;margin:10px 0 4px;font-size:12px;color:#4f5c50;font-weight:600;letter-spacing:1px}
+button.act{padding:9px 16px;border:1px solid var(--green);border-radius:3px;background:var(--green);color:#f3efe5;cursor:pointer;font-size:13px;letter-spacing:1px;box-shadow:0 3px 10px -4px rgba(40,99,86,.5);transition:transform .15s,filter .15s}
+button.act:hover{transform:translateY(-1px);filter:brightness(1.08)}
+button.del{background:var(--red);border-color:var(--red);box-shadow:0 3px 10px -4px rgba(165,65,50,.5)}
+button.del:hover{filter:brightness(1.06)}
+.tag{display:inline-block;font-size:11px;background:#eef1e6;color:var(--green);border:1px solid rgba(40,99,86,.3);border-radius:999px;padding:2px 9px;margin:1px;font-weight:600}
+button.ghost{background:#fffdf8;color:#4f5c50;border:1px solid var(--line);box-shadow:none}
+button.ghost:hover{color:var(--red);border-color:var(--red);background:#f8f1e9;transform:none}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:4px;overflow:hidden;box-shadow:0 1px 2px rgba(17,47,45,.05)}
+th,td{padding:12px 14px;border-bottom:1px solid #e7e4d5;text-align:left}
 tr:last-child td{border-bottom:0}
-th{color:#8a93a8;background:#fafbfe;font-weight:700;font-size:12px;letter-spacing:.3px}
-tr:hover td{background:#f7f9fd}
-td.k{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#6d4aff;word-break:break-all;max-width:240px}
+th{color:#73816b;background:#efeee3;font-weight:700;font-size:12px;letter-spacing:1px}
+tr:hover td{background:#f1efe3}
+td.k{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--green);word-break:break-all;max-width:240px}
 .num{font-variant-numeric:tabular-nums}
-.coin{color:#d97706;font-weight:700}.jifen{color:#059669;font-weight:700}.diamond{color:#0891b2;font-weight:700}
+.coin{color:#9a6b1f;font-weight:700}.jifen{color:#2f6b4f;font-weight:700}.diamond{color:#2f6a7a;font-weight:700}
 .tag{padding:2px 10px;border-radius:999px;font-size:12px;white-space:nowrap}
-.used{background:#feeef0;color:#c53a3f;border-color:rgba(229,72,77,.25)}.unused{background:#e9f8f0;color:#0c7a45;border-color:rgba(15,157,88,.25)}
-.on{background:#eef3ff;color:#2f6bff;border-color:rgba(47,107,255,.25)}.off{background:#f1f3f9;color:#8a93a8;border-color:#e8ecf6}
-.modal{position:fixed;inset:0;background:rgba(20,26,42,.4);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:20}
-.modal .card{background:#fff;padding:26px;border-radius:20px;width:min(720px,96vw);max-height:90vh;overflow:auto;border:1px solid #e8ecf6;box-shadow:0 32px 80px -12px rgba(20,26,42,.3)}
-.modal h3{margin:0 0 6px;font-weight:800;letter-spacing:-.2px}
+.used{background:#f9eae6;color:#a54132;border-color:rgba(165,65,50,.3)}.unused{background:#e8f1e9;color:#1e6b45;border-color:rgba(30,107,69,.3)}
+.on{background:#e8f1e9;color:#286356;border-color:rgba(40,99,86,.3)}.off{background:#efece1;color:#6b766c;border-color:var(--line)}
+.modal{position:fixed;inset:0;background:rgba(17,47,45,.55);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;z-index:20}
+.modal .card{background:var(--card);padding:26px;border-radius:6px;width:min(720px,96vw);max-height:90vh;overflow:auto;border:1px solid var(--gold);box-shadow:0 32px 80px -12px rgba(17,47,45,.55)}
+.modal h3{margin:0 0 6px;font-weight:600;font-family:"STKaiti","KaiTi","Kaiti SC","Songti SC","SimSun",serif;letter-spacing:2px;color:var(--ink)}
 .content-ellipsis{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;line-height:1.5;max-width:340px}
-.fb-detail-content{white-space:pre-wrap;line-height:1.7;color:#1f2937;font-size:15px;word-break:break-word}
-.fb-detail-meta{color:#64748b;font-size:13px;margin-top:10px}
+.fb-detail-content{white-space:pre-wrap;line-height:1.7;color:var(--text);font-size:15px;word-break:break-word}
+.fb-detail-meta{color:var(--muted);font-size:13px;margin-top:10px}
 .fb-detail-images{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
-.fb-detail-images img{width:120px;height:120px;object-fit:cover;border-radius:12px;border:1px solid #e2e8f0;cursor:pointer;transition:transform .2s}
+.fb-detail-images img{width:120px;height:120px;object-fit:cover;border-radius:4px;border:1px solid var(--line);cursor:pointer;transition:transform .2s}
 .fb-detail-images img:hover{transform:scale(1.03)}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>div{flex:1;min-width:120px}
 .row input{width:100%}
-textarea{width:100%;height:240px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;border-radius:12px;border:1.5px solid #e8ecf6;background:#f7f9fd;color:#141a2a;padding:12px;outline:none}
-textarea:focus{border-color:#2f6bff;box-shadow:0 0 0 3px rgba(47,107,255,.12);background:#fff}
-.muted{color:#8a93a8;font-size:12px}
+textarea{width:100%;height:240px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;border-radius:3px;border:1px solid var(--line);background:#fffdf8;color:var(--text);padding:12px;outline:none}
+textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(40,99,86,.13);background:#fff}
+.muted{color:var(--muted);font-size:12px}
 .adv{margin-top:12px}
-.adv summary{cursor:pointer;color:#5b657d;font-size:13px;font-weight:600}
+.adv summary{cursor:pointer;color:#4f5c50;font-size:13px;font-weight:600}
 .chk{display:flex;align-items:center;gap:8px;margin:10px 0}
 .chk input{width:auto}
-.sec{margin:18px 0 8px;font-weight:800;font-size:13px;color:#5b657d;border-bottom:1px solid #e8ecf6;padding-bottom:6px;letter-spacing:.3px}
+.sec{margin:18px 0 8px;font-weight:700;font-size:13px;color:#8b7350;border-bottom:1px solid var(--line);padding-bottom:6px;letter-spacing:2px}
 .bagrow{margin:6px 0}
-.empty{padding:32px;text-align:center;color:#8a93a8;background:#fff;border:1px dashed #d8dfef;border-radius:14px}
+.empty{padding:32px;text-align:center;color:var(--muted);background:var(--card);border:1px dashed #c5c2ad;border-radius:4px}
 .cr-imgrow{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
-.cr-imgbox{display:inline-flex;flex-direction:column;gap:4px;background:#fafbff;border:1px solid #e8ecf6;border-radius:10px;padding:8px;min-width:160px}
-.cr-imgbox img{max-width:420px;max-height:420px;display:block;background:#fff;border-radius:6px}
+.cr-imgbox{display:inline-flex;flex-direction:column;gap:4px;background:#f1efe3;border:1px solid var(--line);border-radius:4px;padding:8px;min-width:160px}
+.cr-imgbox img{max-width:420px;max-height:420px;display:block;background:#fff;border-radius:3px}
 .cr-imgbox a{cursor:zoom-in}
-.cr-imgbox .img-missing{display:flex;align-items:center;justify-content:center;flex-direction:column;width:420px;max-width:100%;height:240px;background:repeating-linear-gradient(45deg,#f3f4f6,#f3f4f6 12px,#fafafa 12px,#fafafa 24px);border:1px dashed #c9cede;color:#5b657d;border-radius:6px;font-size:13px;text-align:center;line-height:1.7}
-.cr-imgbox .img-missing small{display:block;color:#8a93a8;margin-top:6px;font-size:11.5px}
+.cr-imgbox .img-missing{display:flex;align-items:center;justify-content:center;flex-direction:column;width:420px;max-width:100%;height:240px;background:repeating-linear-gradient(45deg,#efece1,#efece1 12px,#f7f5eb 12px,#f7f5eb 24px);border:1px dashed #c5c2ad;color:#4f5c50;border-radius:3px;font-size:13px;text-align:center;line-height:1.7}
+.cr-imgbox .img-missing small{display:block;color:var(--muted);margin-top:6px;font-size:11.5px}
+a{color:var(--green)}
+a:hover{color:var(--red)}
 </style></head><body>
-<header><h1>灵契仙途 · 管理后台</h1><a href="/logout">退出登录</a></header>
+<header><h1><span class="seal" aria-hidden="true">契</span>灵契仙途 · 管理后台</h1><a href="/logout">退出登录</a></header>
 <div class="tabs">
 <button data-t="players" class="active" onclick="tab('players')">玩家</button>
 <button data-t="groups" onclick="tab('groups')">群设置</button>
@@ -1703,7 +1722,7 @@ function paDetail(aid){
  for(const s of slots){
   const bp=bps.find(p=>p.group===s.group&&p.qq===s.qq);
   const petTxt=bp?` · ${esc(bp.nickname||'未命名')}`:'';
-  pets+=`<div class="row" style="align-items:center;margin:6px 0;padding:8px;border:1px solid #e8ecf6;border-radius:8px">
+  pets+=`<div class="row" style="align-items:center;margin:6px 0;padding:8px;border:1px solid #d8d7c9;border-radius:4px">
    <div style="flex:1"><div class="muted">群号 / 用户ID</div>${esc(s.group||'')} / ${esc(s.qq||'')}</div>
    <div style="flex:1"><div class="muted">角色</div>修士/坐骑${petTxt?' · 宠物'+petTxt:''}</div>
    <div><button class="act del" onclick='paUnbind(${tj(aid)},${tj(s.group)},${tj(s.qq)})'>解绑</button></div>
@@ -1802,7 +1821,7 @@ function renderCustomPets(){
  let rows='';
  for(const p of cpCache){
   if(q && !String(p.group).toLowerCase().includes(q) && !String(p.qq).toLowerCase().includes(q) && !String(p.account_qq).toLowerCase().includes(q) && !String(p.nickname).toLowerCase().includes(q)) continue;
-  const img=p.custom_image?`<img src="/custom_images/${esc(p.custom_image)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e8ecf6">`:'—';
+  const img=p.custom_image?`<img src="/custom_images/${esc(p.custom_image)}" style="width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid #d8d7c9">`:'—';
   const tags=(p.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join(' ');
   rows+=`<tr>
    <td class="num">${esc(p.group)}</td>
@@ -1824,7 +1843,7 @@ function renderCustomPets(){
  let mrows='';
  cmCache.forEach((m,i)=>{
   if(q && !String(m.group).toLowerCase().includes(q) && !String(m.qq).toLowerCase().includes(q) && !String(m.account_qq).toLowerCase().includes(q) && !String(m.name).toLowerCase().includes(q)) return;
-  const img=m.custom_image?`<img src="/custom_images/${esc(m.custom_image)}" onerror="this.replaceWith(document.createTextNode('（图缺失）'))" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e8ecf6">`:'（未设置）';
+  const img=m.custom_image?`<img src="/custom_images/${esc(m.custom_image)}" onerror="this.replaceWith(document.createTextNode('（图缺失）'))" style="width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid #d8d7c9">`:'（未设置）';
   mrows+=`<tr>
    <td class="num">${esc(m.group)}</td>
    <td class="num">${esc(m.qq)}</td>
@@ -1864,12 +1883,12 @@ async function loadAppRelease(){
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:640px">
   <div class="muted" style="margin-bottom:14px;line-height:1.7">${cur}</div>
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:20px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:20px">
    <h3 style="margin:0 0 14px">发布新版本</h3>
    <div style="display:flex;flex-direction:column;gap:12px">
-    <label>版本号 versionCode（必须比当前大的整数）<input id="ar_code" type="number" placeholder="如 2" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8dfef;border-radius:9px" value="${esc((rel.version_code||0)+1)}"></label>
-    <label>版本名 versionName（展示给用户，如 1.0.1）<input id="ar_name" placeholder="如 1.0.1" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8dfef;border-radius:9px"></label>
-    <label>更新说明（可选，多行）<textarea id="ar_log" rows="4" placeholder="本次更新内容…" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical"></textarea></label>
+    <label>版本号 versionCode（必须比当前大的整数）<input id="ar_code" type="number" placeholder="如 2" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8d7c9;border-radius:3px" value="${esc((rel.version_code||0)+1)}"></label>
+    <label>版本名 versionName（展示给用户，如 1.0.1）<input id="ar_name" placeholder="如 1.0.1" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8d7c9;border-radius:3px"></label>
+    <label>更新说明（可选，多行）<textarea id="ar_log" rows="4" placeholder="本次更新内容…" style="width:100%;margin-top:5px;padding:9px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical"></textarea></label>
     <label>APK 文件（不选则仅更新版本信息）<input id="ar_apk" type="file" accept=".apk,application/vnd.android.package-archive" style="margin-top:5px"></label>
     <div><button class="act" onclick="uploadApp()">发布</button> <span class="muted" id="ar_msg"></span></div>
    </div>
@@ -1907,7 +1926,7 @@ function renderFeedbacks(){
  let rows='';
  for(const f of fbCache){
   if(q && !String(f.qq).toLowerCase().includes(q) && !String(f.group).toLowerCase().includes(q) && !String(f.user_id).toLowerCase().includes(q) && !String(f.content).toLowerCase().includes(q)) continue;
-  const imgs=(f.images||[]).map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #e8ecf6"></a>`).join(' ')||'—';
+  const imgs=(f.images||[]).map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}" style="width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid #d8d7c9"></a>`).join(' ')||'—';
   const meta=f.kind==='bug'?`<div class="muted">发生时间：${esc(f.occur_time||'—')}</div><div class="muted">群号：${esc(f.group||'—')} · 用户ID：${esc(f.user_id||'—')}</div>`:'';
   rows+=`<tr>
    <td><span class="tag ${f.kind==='bug'?'off':'on'}" onclick='fbDetail(${tj(f.id)})' style="cursor:pointer" title="查看详情">${f.kind==='bug'?'Bug':'建议'}</span></td>
@@ -1945,7 +1964,7 @@ function fbDetail(id){
   ? `<div class="fb-detail-meta">发生时间：${esc(f.occur_time||'—')}　|　群号：${esc(f.group||'—')}　|　用户ID：${esc(f.user_id||'—')}</div>`
   : `<div class="fb-detail-meta">群号：${esc(f.group||'—')}　|　用户ID：${esc(f.user_id||'—')}</div>`;
  const imgs=(f.images||[]).map(im=>`<a href="/feedback_images/${esc(im)}" target="_blank"><img src="/feedback_images/${esc(im)}"></a>`).join('')||'';
- const reply=f.reply?`<div style="margin-top:18px;padding:14px;background:#f1f5f9;border-radius:12px"><div class="muted" style="font-weight:700;margin-bottom:6px">管理员回复（${fdate(f.replied_at)}）</div><div style="white-space:pre-wrap">${esc(f.reply)}</div></div>`:'';
+ const reply=f.reply?`<div style="margin-top:18px;padding:14px;background:#f1efe3;border-radius:6px"><div class="muted" style="font-weight:700;margin-bottom:6px">管理员回复（${fdate(f.replied_at)}）</div><div style="white-space:pre-wrap">${esc(f.reply)}</div></div>`:'';
  g('fbtitle').textContent=(f.kind==='bug'?'🐛 Bug 反馈':'💡 玩家建议')+' 详情';
  g('fbbody').innerHTML=`
   <div class="fb-detail-meta">提交账号：${esc(f.qq||'—')}　|　提交时间：${fdate(f.created_at)}</div>
@@ -2035,7 +2054,7 @@ function renderLottery(){
  const entriesN=l.entries?Object.keys(l.entries).length:0;
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:880px">
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px">
    <h3 style="margin:0 0 16px">口令抽奖 <span class="muted" style="font-weight:400">（玩家输入口令参与；到点自动开奖并全群播报）</span></h3>
    <div class="row">
     <label class="fld">启用 <input id="lt_enabled" type="checkbox" ${l.enabled?'checked':''}></label>
@@ -2054,7 +2073,7 @@ function renderLottery(){
    </div>
    <div class="sec">全群播报文本</div>
    <div class="muted" style="margin:-4px 0 8px">支持占位符：<code>{{password}}</code> <code>{{prize}}</code> <code>{{count}}</code> <code>{{total}}</code> <code>{{mode}}</code> <code>{{winners}}</code>（留空用默认模板）</div>
-   <textarea id="lt_broadcast" rows="4" placeholder="留空使用默认开奖公告" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical">${esc(l.broadcast_text||'')}</textarea>
+   <textarea id="lt_broadcast" rows="4" placeholder="留空使用默认开奖公告" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical">${esc(l.broadcast_text||'')}</textarea>
    <label class="fld" style="margin-top:12px"><input id="lt_reset" type="checkbox"> 重置为全新抽奖（清空已有报名与结果）</label>
    <div style="margin-top:16px;display:flex;gap:10px">
     <button class="act" onclick="saveLottery()">保存</button>
@@ -2063,7 +2082,7 @@ function renderLottery(){
    </div>
    <div class="muted" id="lt_msg" style="margin-top:10px"></div>
   </div>
-  <div style="margin-top:12px;padding:14px;background:#fff;border:1px solid #e8ecf6;border-radius:12px">
+  <div style="margin-top:12px;padding:14px;background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px">
    <span class="muted">报名人数：</span><b>${entriesN}</b>
    &nbsp;&nbsp;<span class="muted">状态：</span><b>${l.drawn?'已开奖':'进行中'}</b>
    &nbsp;&nbsp;<span class="muted">中奖名单：</span><span>${winners}</span>
@@ -2169,14 +2188,14 @@ function renderZhongyuan(){
  const miles=JSON.stringify(c.milestones||[],null,2);
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:960px">
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px">
    <h3 style="margin:0 0 16px">🕯️ 中元节活动 <span class="muted" style="font-weight:400">（独立模块配置，保存即时生效）</span></h3>
    <div class="sec">总控 / 时间 / 抽人 / 解密 / 功德</div>
    <div class="row">${rows}</div>
    <div class="sec">段位（前 20 名功德奖励，JSON：name / min / max / gongde）</div>
-   <textarea id="zy_tiers" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical;font-family:monospace">${esc(tiers)}</textarea>
+   <textarea id="zy_tiers" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(tiers)}</textarea>
    <div class="sec">群里程碑（累计功德达标，JSON：threshold / gongde）</div>
-   <textarea id="zy_milestones" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical;font-family:monospace">${esc(miles)}</textarea>
+   <textarea id="zy_milestones" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(miles)}</textarea>
    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
     <button class="act" onclick="saveZhongyuan()">保存配置</button>
     <button class="act ghost" onclick="loadZhongyuan()">刷新</button>
@@ -2190,7 +2209,7 @@ function renderZhongyuan(){
    <div class="muted" id="zy_msg" style="margin-top:10px"></div>
    <div class="muted" id="zy_test_msg" style="margin-top:6px"></div>
    <div class="muted" id="zy_data_msg" style="margin-top:6px"></div>
-   <textarea id="zy_data_box" rows="16" style="display:none;width:100%;margin-top:8px;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;font-family:monospace;font-size:12px;white-space:pre" readonly></textarea>
+   <textarea id="zy_data_box" rows="16" style="display:none;width:100%;margin-top:8px;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;font-family:monospace;font-size:12px;white-space:pre" readonly></textarea>
   </div>
  </div>`;
 }
@@ -2239,7 +2258,7 @@ function renderPush(){
   let when='';
   if(j.mode==='once') when=j.done?('已完成 · '+fdate(j.target_ts)):('到点 '+fdate(j.target_ts));
   else when=('下次 '+fdate(j.next_run)+' · 每'+j.interval_min+'分钟');
-  const stCol=j.enabled?'<b style="color:#17a05e">启用</b>':'<span class="muted">停用</span>';
+  const stCol=j.enabled?'<b style="color:#1e6b45">启用</b>':'<span class="muted">停用</span>';
   const modeCol=j.mode==='once'?'一次性':'循环';
   const statusBtn=j.enabled?'停用':'启用';
   rows+=`<tr>
@@ -2258,7 +2277,7 @@ function renderPush(){
  const tableHtml=rows?`<table><thead><tr><th>ID</th><th>模式</th><th>文案</th><th>排程</th><th>最近结果</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`:'<div class="empty">暂无定时任务</div>';
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:960px">
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px">
    <h3 style="margin:0 0 16px">📣 自定义文本群推送 <span class="muted" style="font-weight:400">（推送到所有已授权且开启灵契仙途玩法的群）</span></h3>
    <div class="row">
     <label class="fld">模式 <select id="push_mode" onchange="pushModeChange()">
@@ -2267,7 +2286,7 @@ function renderPush(){
     </select></label>
     <label class="fld">任务名称 <input id="push_name" placeholder="可选" style="width:180px"></label>
    </div>
-   <label class="fld">推送文案 <textarea id="push_text" rows="4" placeholder="推送给所有群的内容，支持 Markdown：用空行/列表分段，勿用单个换行" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px;resize:vertical"></textarea></label>
+   <label class="fld">推送文案 <textarea id="push_text" rows="4" placeholder="推送给所有群的内容，支持 Markdown：用空行/列表分段，勿用单个换行" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical"></textarea></label>
    <div class="row">
     <label class="fld" id="push_once_row">指定时间 <input id="push_at" type="datetime-local"></label>
     <label class="fld" id="push_recur_row" style="display:none">间隔(分钟) <input id="push_interval" type="number" value="30" style="width:100px"></label>
@@ -2279,7 +2298,7 @@ function renderPush(){
    </div>
    <div class="muted" id="push_msg" style="margin-top:10px"></div>
   </div>
-  <div style="margin-top:12px;background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:10px 14px">
+  <div style="margin-top:12px;background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:10px 14px">
    <div class="sec">定时任务列表</div>
    ${tableHtml}
   </div>
@@ -2348,7 +2367,7 @@ function ceRoundDrawAt(timeStr){
 }
 function ceRoundRow(r,i){
  r=r||{};
- const drawn=r.drawn?`<span style="color:#17a05e">✓已开奖</span>`:'<span class="muted">未开奖</span>';
+ const drawn=r.drawn?`<span style="color:#1e6b45">✓已开奖</span>`:'<span class="muted">未开奖</span>';
  return `<tr>
   <td class="muted">${drawn}</td>
   <td><input type="time" value="${esc(r.time||'')}" id="ce_rt${i}" style="width:105px"></td>
@@ -2382,7 +2401,7 @@ function renderCelebrate(){
  const st=c.start_at||0, en=c.end_at||0;
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:1000px">
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px">
    <h3 style="margin:0 0 16px">🎂 ${esc(c.name||'生辰盛典')} 后台配置 <span class="muted" style="font-weight:400">（每日多次定时开奖箱 + 奖池瓜分）</span></h3>
    <div class="row">
     <label class="fld">启用 <input type="checkbox" id="ce_on" ${c.enabled?'checked':''}></label>
@@ -2392,14 +2411,14 @@ function renderCelebrate(){
     <label class="fld">开始 <input id="ce_start" type="datetime-local" value="${eventTsToLocal(st)}"></label>
     <label class="fld">结束 <input id="ce_end" type="datetime-local" value="${eventTsToLocal(en)}"></label>
    </div>
-   <label class="fld">开启公告 <textarea id="ce_ann" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.announce||'')}</textarea></label>
-   <label class="fld" style="margin-top:10px">结束公告 <textarea id="ce_ann_end" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.announce_end||'')}</textarea></label>
+   <label class="fld">开启公告 <textarea id="ce_ann" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px">${esc(c.announce||'')}</textarea></label>
+   <label class="fld" style="margin-top:10px">结束公告 <textarea id="ce_ann_end" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px">${esc(c.announce_end||'')}</textarea></label>
    <div class="sec" style="margin-top:16px">📣 每小时推送「如何参与」（盛典窗口内循环提醒）</div>
    <div class="row">
     <label class="fld" style="width:auto">间隔(小时) <input type="number" min="0" value="${c.howto_interval_h||0}" id="ce_how_ih" style="width:90px"></label>
-    <label class="fld" style="flex:1;min-width:280px">文案 <textarea id="ce_how" rows="3" style="width:100%;padding:10px 12px;border:1px solid #d8dfef;border-radius:9px">${esc(c.howto||'')}</textarea></label>
+    <label class="fld" style="flex:1;min-width:280px">文案 <textarea id="ce_how" rows="3" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px">${esc(c.howto||'')}</textarea></label>
    </div>
-   <div style="color:#9aa3b8;font-size:12px">填 1 表示开奖期间每 1 小时全群推一次此文案；填 0 关闭。</div>
+   <div style="color:#6b766c;font-size:12px">填 1 表示开奖期间每 1 小时全群推一次此文案；填 0 关闭。</div>
    <div class="sec" style="margin-top:18px">🎯 抽奖开奖箱（每轮按中奖率抽人，奖品从库存动态抽取）</div>
    <div class="row">
     <label class="fld">指令 <input id="ce_gcmd" value="${esc(ga.cmd||'生日抽奖')}" style="width:150px"></label>
@@ -2413,7 +2432,7 @@ function renderCelebrate(){
     <span class="muted">仅最后一轮保发（${ga.grand_used?'已发放':'未发放'}）</span>
    </div>
    ${rounds.length?`<table><thead><tr><th>状态</th><th>时间</th><th></th></tr></thead><tbody>${rrows}</tbody></table>`:'<div class="empty">尚未配置开奖场次，点击上方「加一场」。</div>'}
-   <div style="color:#9aa3b8;font-size:12px;margin-top:6px">时间填 HH:MM，开奖日期取「开始」时间的当天；每轮中奖人数≈参与人数×中奖率（上限=剩余库存）。</div>
+   <div style="color:#6b766c;font-size:12px;margin-top:6px">时间填 HH:MM，开奖日期取「开始」时间的当天；每轮中奖人数≈参与人数×中奖率（上限=剩余库存）。</div>
    <div class="sec" style="margin-top:16px">🎁 动态库存（中奖者按剩余份数加权随机抽 1 份，抽完即止）</div>
    <table><thead><tr><th>奖品名</th><th>总量</th><th></th></tr></thead><tbody>${(CELEBRATE._stock||[]).map((s,i)=>ceStockRow(s,i)).join('')||'<tr><td colspan="3" class="muted">未配置库存</td></tr>'}</tbody></table>
    <div class="row" style="margin-top:6px">
@@ -2438,7 +2457,7 @@ function renderCelebrate(){
     <span class="muted" style="font-size:12px">玄晶/灵石各等额拿该值（上限=该币剩余）；天晶默认 100；勾选则关闭冷却、可连续点击。</span>
    </div>
    <table><thead><tr><th>货币</th><th>总量（动态库存）</th></tr></thead><tbody>${curRows||'<tr><td colspan="2" class="muted">未配置</td></tr>'}</tbody></table>
-   <div style="color:#9aa3b8;font-size:12px">每日到达开启时间后开放瓜分；每次按等额固定额度抽取（玄晶/灵石各取 per_grab，天晶默认 100），而非随机比例；勾选无冷却可连续瓜分。</div>
+   <div style="color:#6b766c;font-size:12px">每日到达开启时间后开放瓜分；每次按等额固定额度抽取（玄晶/灵石各取 per_grab，天晶默认 100），而非随机比例；勾选无冷却可连续瓜分。</div>
    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
     <button class="act" onclick="saveCelebrate()">保存配置</button>
     <button class="act ghost" onclick="resetPool()">重置奖池剩余</button>
@@ -2536,9 +2555,9 @@ function renderAssistantFree(){
  else stateTxt='⚪ 已结束（结束时间已过）';
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:820px">
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:22px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px">
    <h3 style="margin:0 0 6px">🎁 限时免费使用自动助手 <span class="muted" style="font-weight:400">（全局生效）</span></h3>
-   <div style="color:#9aa3b8;font-size:12px;margin-bottom:16px">在设置的时间范围内，全服玩家执行自动助手任务均不消耗次数，剩余次数为 0 的玩家也能正常开启与使用。窗口结束后自动恢复原有计费与停机规则，无需人工干预。</div>
+   <div style="color:#6b766c;font-size:12px;margin-bottom:16px">在设置的时间范围内，全服玩家执行自动助手任务均不消耗次数，剩余次数为 0 的玩家也能正常开启与使用。窗口结束后自动恢复原有计费与停机规则，无需人工干预。</div>
    <div class="row">
     <label class="fld">启用 <input type="checkbox" id="af_on" ${c.enabled?'checked':''}></label>
    </div>
@@ -2547,7 +2566,7 @@ function renderAssistantFree(){
     <label class="fld">结束 <input id="af_end" type="datetime-local" value="${eventTsToLocal(c.end_at)}"></label>
    </div>
    <div style="margin-top:12px;font-size:13px">当前状态：<b>${stateTxt}</b></div>
-   <div style="color:#9aa3b8;font-size:12px;margin-top:6px">起止均为本机时区时间；结束时间早于开始时间则该窗口不会生效。</div>
+   <div style="color:#6b766c;font-size:12px;margin-top:6px">起止均为本机时区时间；结束时间早于开始时间则该窗口不会生效。</div>
    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
     <button class="act" onclick="saveAssistantFree()">保存配置</button>
     <button class="act ghost" onclick="loadAssistantFree()">刷新</button>
@@ -2578,9 +2597,9 @@ function renderAudit(){
  const ex=document.getElementById('extrawrap'); if(ex) ex.innerHTML='';
  document.getElementById('tablewrap').innerHTML=`
  <div style="max-width:1100px">
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:20px;margin-bottom:16px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:20px;margin-bottom:16px">
    <h3 style="margin:0 0 4px">🔍 审计流水查询</h3>
-   <div style="color:#9aa3b8;font-size:12px;margin-bottom:12px">append-only 操作流水，每条带 SHA-256 哈希链锚定、防篡改可校验。支持按动作/群/用户/时间范围/关键字筛选。</div>
+   <div style="color:#6b766c;font-size:12px;margin-bottom:12px">append-only 操作流水，每条带 SHA-256 哈希链锚定、防篡改可校验。支持按动作/群/用户/时间范围/关键字筛选。</div>
    <div class="row" style="flex-wrap:wrap">
     <label class="fld">动作
      <select id="au_action">
@@ -2613,9 +2632,9 @@ function renderAudit(){
    <div id="au_msg" class="muted" style="margin-top:8px"></div>
   </div>
   <div id="au_log"></div>
-  <div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:20px;margin-top:16px">
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:20px;margin-top:16px">
    <h3 style="margin:0 0 4px">🚨 异常标记 <span class="muted" style="font-weight:400" id="au_flag_sum"></span></h3>
-   <div style="color:#9aa3b8;font-size:12px;margin-bottom:12px">规则/基线检测命中后落表，可人工标记「已处理/误报」。同规则同目标只保留一条待处理，避免刷屏。</div>
+   <div style="color:#6b766c;font-size:12px;margin-bottom:12px">规则/基线检测命中后落表，可人工标记「已处理/误报」。同规则同目标只保留一条待处理，避免刷屏。</div>
    <div class="row">
     <label class="fld">状态
      <select id="au_flag_status" onchange="auditFlags()">
@@ -2654,7 +2673,7 @@ function renderAuditLog(){
  const log=AUDIT.log||[];
  const total=AUDIT.total, page=AUDIT.page, size=AUDIT.size;
  const pages=Math.max(1,Math.ceil(total/size));
- let h='<div style="background:#fff;border:1px solid #e8ecf6;border-radius:14px;padding:16px">';
+ let h='<div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:16px">';
  h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
    <b>流水记录</b>
    <span class="muted">第 ${page}/${pages} 页 · 共 ${total} 条</span>
@@ -2662,12 +2681,12 @@ function renderAuditLog(){
  if(!log.length){ h+='<div class="empty">无匹配流水</div>'; }
  else{
   h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
-  h+='<tr style="text-align:left;color:#9aa3b8"><th style="padding:4px 6px">时间</th><th style="padding:4px 6px">群</th><th style="padding:4px 6px">用户</th><th style="padding:4px 6px">动作</th><th style="padding:4px 6px">详情</th><th style="padding:4px 6px">变动</th></tr>';
+  h+='<tr style="text-align:left;color:#6b766c"><th style="padding:4px 6px">时间</th><th style="padding:4px 6px">群</th><th style="padding:4px 6px">用户</th><th style="padding:4px 6px">动作</th><th style="padding:4px 6px">详情</th><th style="padding:4px 6px">变动</th></tr>';
   for(const rec of log){
    const del=rec.delta;
    let delTxt='—';
    if(typeof del==='number') delTxt=(del>=0?'+':'')+del;
-   h+=`<tr style="border-top:1px solid #f0f3fa">
+   h+=`<tr style="border-top:1px solid #e7e4d5">
     <td style="padding:5px 6px;white-space:nowrap">${fdate(rec.ts)}</td>
     <td style="padding:5px 6px">${esc(rec.group||'')}</td>
     <td style="padding:5px 6px">${esc(rec.pid||'')}</td>
@@ -2703,15 +2722,15 @@ function renderAuditFlags(){
  if(!flags.length){ h='<div class="empty">无异常标记</div>'; }
  else{
   h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
-  h+='<tr style="text-align:left;color:#9aa3b8"><th style="padding:4px 6px">时间</th><th style="padding:4px 6px">类型</th><th style="padding:4px 6px">严重度</th><th style="padding:4px 6px">群</th><th style="padding:4px 6px">用户</th><th style="padding:4px 6px">描述</th><th style="padding:4px 6px">状态</th><th style="padding:4px 6px">操作</th></tr>';
+  h+='<tr style="text-align:left;color:#6b766c"><th style="padding:4px 6px">时间</th><th style="padding:4px 6px">类型</th><th style="padding:4px 6px">严重度</th><th style="padding:4px 6px">群</th><th style="padding:4px 6px">用户</th><th style="padding:4px 6px">描述</th><th style="padding:4px 6px">状态</th><th style="padding:4px 6px">操作</th></tr>';
   for(const f of flags){
-   const sev=f.severity==='high'?'<span class="tag" style="color:#c0392b">high</span>':(f.severity==='mid'?'<span class="tag" style="color:#e67e22">mid</span>':'<span class="tag">'+esc(f.severity||'')+'</span>');
-   const stMap={open:'<span class="tag" style="color:#c0392b">待处理</span>',handled:'<span class="tag" style="color:#27ae60">已处理</span>',false_positive:'<span class="tag" style="color:#7f8c8d">误报</span>'};
+   const sev=f.severity==='high'?'<span class="tag" style="color:#a54132">high</span>':(f.severity==='mid'?'<span class="tag" style="color:#9a6b1f">mid</span>':'<span class="tag">'+esc(f.severity||'')+'</span>');
+   const stMap={open:'<span class="tag" style="color:#a54132">待处理</span>',handled:'<span class="tag" style="color:#1e6b45">已处理</span>',false_positive:'<span class="tag" style="color:#6b766c">误报</span>'};
    let ops='';
    if(f.status==='open'){
     ops=`<button class="act ghost" style="padding:2px 8px" onclick="auditFlagUpdate('${escA(f.flag_id)}','handled')">已处理</button> <button class="act ghost" style="padding:2px 8px" onclick="auditFlagUpdate('${escA(f.flag_id)}','false_positive')">误报</button>`;
    }
-   h+=`<tr style="border-top:1px solid #f0f3fa">
+   h+=`<tr style="border-top:1px solid #e7e4d5">
     <td style="padding:5px 6px;white-space:nowrap">${fdate(f.ts)}</td>
     <td style="padding:5px 6px">${esc(f.type||'')}</td>
     <td style="padding:5px 6px">${sev}</td>
@@ -3450,7 +3469,7 @@ function eventCollectReward(box){
 // actions
 function eventActionHtml(name,conf){
  conf=conf||{};
- return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #d8d7c9;padding:10px;margin:8px 0;border-radius:4px">
   <div class="row">
    <div style="flex:2"><label>玩法指令</label><input class="ev-a-name" value="${escA(name)}"></div>
    <div style="flex:1"><label>宠物精力</label><input class="ev-a-energy" type="number" value="${conf.energy!==undefined?conf.energy:10}"></div>
@@ -3500,7 +3519,7 @@ function eventCollectActions(){
 }
 function eventAddReward(container){
  const div=document.createElement('div');
- div.innerHTML=`<div class="reward-row row" style="align-items:flex-end;margin:6px 0;border:1px dashed #334155;padding:8px;border-radius:6px">
+ div.innerHTML=`<div class="reward-row row" style="align-items:flex-end;margin:6px 0;border:1px dashed #4f5c50;padding:8px;border-radius:6px">
    <div style="flex:2"><label>奖励名</label><input class="ev-r-name" value="" placeholder="贝壳 / 经验 / 物品名"></div>
    <div style="flex:1"><label>最小值</label><input class="ev-r-min" type="number" value="0"></div>
    <div style="flex:1"><label>最大值</label><input class="ev-r-max" type="number" value="0"></div>
@@ -3513,7 +3532,7 @@ function eventRenderRewards(container,rewards){
  container.innerHTML='';
  for(const [name,cfg] of Object.entries(rewards||{})){
   const div=document.createElement('div');
-  div.innerHTML=`<div class="reward-row row" style="align-items:flex-end;margin:6px 0;border:1px dashed #334155;padding:8px;border-radius:6px">
+  div.innerHTML=`<div class="reward-row row" style="align-items:flex-end;margin:6px 0;border:1px dashed #4f5c50;padding:8px;border-radius:6px">
    <div style="flex:2"><label>奖励名</label><input class="ev-r-name" value="${escA(name)}" placeholder="贝壳 / 经验 / 物品名"></div>
    <div style="flex:1"><label>最小值</label><input class="ev-r-min" type="number" value="${cfg.min!==undefined?cfg.min:0}"></div>
    <div style="flex:1"><label>最大值</label><input class="ev-r-max" type="number" value="${cfg.max!==undefined?cfg.max:0}"></div>
@@ -3540,7 +3559,7 @@ function eventCollectRewards(container){
 // shop
 function eventShopHtml(name,it){
  it=it||{};
- return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #d8d7c9;padding:10px;margin:8px 0;border-radius:4px">
   <div class="row">
    <div style="flex:2"><label>商品名</label><input class="ev-s-name" value="${escA(name)}"></div>
    <div style="flex:2"><label>价格（如：贝壳 20 / 灵石 100）</label><input class="ev-s-cost" value="${escA(eventCostToString(it.cost||{}))}"></div>
@@ -3613,7 +3632,7 @@ async function bossRespawn(){
 // gacha
 function eventGachaHtml(entry){
  entry=entry||{};
- return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #d8d7c9;padding:10px;margin:8px 0;border-radius:4px">
   <div class="row">
    <div style="flex:1"><label>权重</label><input class="ev-g-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
    <div style="flex:3"><label>提示文案（可选）</label><input class="ev-g-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
@@ -3650,7 +3669,7 @@ function eventCollectGacha(){
 // dungeons
 function eventDungeonHtml(name,conf){
  conf=conf||{};
- return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #d8d7c9;padding:10px;margin:8px 0;border-radius:4px">
   <div class="row">
    <div style="flex:2"><label>副本名称</label><input class="ev-d-name" value="${escA(name)}"></div>
    <div style="flex:2"><label>怪物名</label><input class="ev-d-monster" value="${escA(conf.monster||'')}"/></div>
@@ -3734,7 +3753,7 @@ function eventAddEffRow(btn){
 }
 function eventItemHtml(name,conf){
  conf=conf||{};
- return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #d8d7c9;padding:10px;margin:8px 0;border-radius:4px">
   <div class="row">
    <div style="flex:2"><label>道具名</label><input class="ev-i-name" value="${escA(name)}" placeholder="夏日冰饮"></div>
    <div style="flex:1"><label>分类</label><select class="ev-i-cat">${['药品','道具','装饰','材料'].map(o=>`<option ${o===(conf.category||'道具')?'selected':''}>${o}</option>`).join('')}</select></div>
@@ -3800,7 +3819,7 @@ function updateEventItemDatalist(){
 // boss
 function eventBossRewardHtml(entry){
  entry=entry||{};
- return `<div class="event-card" style="border:1px solid #e8ecf6;padding:10px;margin:8px 0;border-radius:8px">
+ return `<div class="event-card" style="border:1px solid #d8d7c9;padding:10px;margin:8px 0;border-radius:4px">
   <div class="row">
    <div style="flex:1"><label>分配权重（越高越优先给高伤害）</label><input class="ev-b-weight" type="number" value="${entry.weight!==undefined?entry.weight:1}"></div>
    <div style="flex:3"><label>提示文案（可选）</label><input class="ev-b-msg" value="${escA(entry.msg||'')}" placeholder="例如：恭喜获得大奖！"></div>
