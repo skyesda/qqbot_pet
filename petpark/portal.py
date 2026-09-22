@@ -505,10 +505,7 @@ class PlayerPortal:
                 "species_name": self.store.remaining_custom_changes(player, "species_name") if rp else 0,
             },
             # 自动助手：宠物级配置 + 玩家级剩余次数（门户开关与群内指令共用同一份数据）
-            "assistant": {
-                **((rp.get("assistant") or {}) if rp else {}),
-                "quota": self.store.assistant_quota(player),
-            },
+            "assistant": self._assistant_summary(player, rp),
         }
 
     def _cooldown_list(self, player: dict, pet_index: int = 0) -> list:
@@ -1074,54 +1071,77 @@ class PlayerPortal:
             raise web.HTTPForbidden(text="你没有绑定该宠物")
         return web.json_response({"ok": True, **self._player_summary(group_id, qq, pet_index)})
 
+    def _assistant_summary(self, player: dict, pet: dict | None) -> dict:
+        return {
+            **((pet.get("assistant") or {}) if pet else {}),
+            "quota": self.store.assistant_quota(player),
+            "free": self.store.assistant_free_active(),
+            "max_tasks": data.ASSISTANT_MAX_TASKS,
+            "options": [{"key": key, "description": description, "axis": axis}
+                        for key, _label, description, axis in data.ASSISTANT_TASKS],
+        }
+
     async def _api_assistant(self, request: web.Request) -> web.Response:
         self._check_csrf(request)
-        self._require_session(request)
+        sess = self._require_session(request)
         body = await request.json()
+        if not isinstance(body, dict):
+            return web.json_response({"ok": False, "msg": "无效的助手设置"})
         group_id = str(body.get("group_id", "")).strip()
         qq = str(body.get("qq", "")).strip()
-        enabled = bool(body.get("enabled"))
         if not group_id or not qq:
             return web.json_response({"ok": False, "msg": "缺少群号或用户 ID"})
         owner = self.store.account_for_pet(group_id, qq)
-        sess = self._current_session(request)
         if owner != sess.get("aid"):
             raise web.HTTPForbidden(text="你没有绑定该宠物")
         key = self.store.make_key(group_id, qq)
         player = self.store._data["players"].get(key)
         if not player:
             return web.json_response({"ok": False, "msg": "未找到该宠物"})
-        pet_index = int(body.get("pet_index", 0))
+        pet_index = body.get("pet_index", 0)
+        if (type(pet_index) is not int or pet_index < 0
+                or pet_index >= (len(player.get("pets") or []) or 1)):
+            return web.json_response({"ok": False, "msg": "宠物已变更，请刷新后重新选择"})
         pet = self._resolve_player_pet(player, pet_index)
         if not pet:
             return web.json_response({"ok": False, "msg": "未找到该宠物"})
-        # 门禁从「定制/飞升宠物永久免费」改成「有剩余执行次数」（旧旁路已废止）；
-        # 处于后台配置的「限时免费使用自动助手」窗口内时同样放行（剩余 0 次也能开启）。
-        if not self.store.assistant_active(player) and not self.store.assistant_free_active():
-            return web.json_response({
-                "ok": False,
-                "msg": "自动助手次数不足：请先在群内发送 `兑换 <卡密>` 使用自动助手卡",
-            })
-        a = pet.setdefault("assistant", {
+        a = dict(pet.get("assistant") or {
             "enabled": False,
             "tasks": [],
             "total_runs": 0,
             "last_run_at": 0,
             "log": [],
         })
-        tasks = [t for t in (a.get("tasks") or []) if t in data.ASSISTANT_TASK_BY_KEY]
+        if "tasks" not in body and "enabled" not in body:
+            return web.json_response({"ok": False, "msg": "请选择活动或设置助手开关"})
+        if "enabled" in body and type(body["enabled"]) is not bool:
+            return web.json_response({"ok": False, "msg": "无效的助手开关"})
+        tasks = body.get("tasks", [t for t in (a.get("tasks") or []) if t in data.ASSISTANT_TASK_BY_KEY])
+        if (not isinstance(tasks, list) or len(tasks) > data.ASSISTANT_MAX_TASKS
+                or any(not isinstance(t, str) or t not in data.ASSISTANT_TASK_BY_KEY for t in tasks)
+                or len(set(tasks)) != len(tasks)):
+            return web.json_response({"ok": False, "msg": f"请选择最多 {data.ASSISTANT_MAX_TASKS} 个不同的有效活动"})
+        enabled = body.get("enabled", bool(a.get("enabled") and tasks))
         if enabled and not tasks:
             return web.json_response({
                 "ok": False,
-                "msg": "请先在群内发送「自动助手」勾选要代跑的任务，再回来开启",
+                "msg": "请先点击「选择活动」保存要代跑的活动，再开启助手",
             })
+        # 修改活动和关闭助手不消耗次数；主动开启仍遵守额度及免费窗口。
+        available = self.store.assistant_active(player) or self.store.assistant_free_active()
+        if body.get("enabled") is True and not available:
+            return web.json_response({"ok": False, "msg": "自动助手次数不足，请先兑换自动助手卡"})
+        a["tasks"] = list(tasks)
+        enabled = enabled and available
         a["enabled"] = bool(enabled and tasks)
+        saved = pet.setdefault("assistant", a)
+        saved.update(tasks=a["tasks"], enabled=a["enabled"])
         await self.store.save()
         return web.json_response({
             "ok": True,
-            "msg": "已开启自动助手" if a["enabled"] else "已关闭自动助手",
-            "assistant": {**dict(a), "quota": self.store.assistant_quota(player),
-                          "free": self.store.assistant_free_active()},
+            "msg": (("活动已保存，助手继续运行" if a["enabled"] else "活动已保存，助手当前已关闭")
+                    if "tasks" in body else ("已开启自动助手" if a["enabled"] else "已关闭自动助手")),
+            "assistant": self._assistant_summary(player, pet),
         })
 
     async def _api_custom_redeem(self, request: web.Request) -> web.Response:
@@ -1775,7 +1795,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>灵契仙途 · 玩家中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<link rel="stylesheet" href="/webstatic/portal.css?v=20260922-3">
+<link rel="stylesheet" href="/webstatic/portal.css?v=20260922-4">
 </head>
 <body class="portal-page">
 <div id="app" v-cloak>
@@ -2005,7 +2025,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
               剩余执行次数 <b>{{ data.assistant.quota || 0 }}</b> 次 · 该宠物累计代跑 {{ data.assistant.total_runs || 0 }} 次
             </div>
             <div class="custom-remaining">
-              代跑任务：{{ (data.assistant.tasks && data.assistant.tasks.length) ? data.assistant.tasks.join('、') : '未勾选（请在群内发送「自动助手」勾选，最多 4 个）' }}
+              代跑任务：{{ (data.assistant.tasks && data.assistant.tasks.length) ? data.assistant.tasks.join('、') : '尚未选择活动' }}
             </div>
             <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap">
               <div style="display:flex;align-items:center;gap:8px;background:#fff;padding:8px 14px;border-radius:999px;border:1px solid #d8d7c9">
@@ -2013,15 +2033,30 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                 <el-switch
                   v-model="data.assistant.enabled"
                   :loading="autoCultivating"
+                  :disabled="assistantEdit.saving || assistantEdit.open"
                   inline-prompt
                   active-text="开"
                   inactive-text="关"
                   @change="toggleAutoCultivation"
                 />
               </div>
-              <span class="muted" style="font-size:12.5px">每执行 1 个任务扣 1 次，次数用尽自动停机</span>
+              <el-button :disabled="autoCultivating || assistantEdit.saving" @click="openAssistantEditor">{{ data.assistant.tasks && data.assistant.tasks.length ? '修改活动' : '选择活动' }}</el-button>
+              <span class="muted" style="font-size:12.5px">{{ data.assistant.free ? '限时免费中，执行活动不扣次数' : '每成功执行 1 个任务扣 1 次，次数用尽自动停机' }}</span>
             </div>
-            <div v-if="data.assistant.enabled" class="custom-remaining" style="color:#0c7a45">
+            <div v-if="assistantEdit.open" class="assistant-editor" aria-label="选择自动助手活动">
+              <div class="assistant-selection"><strong>已选 {{ assistantEdit.tasks.length }} / {{ data.assistant.max_tasks }} 项</strong><el-button text :disabled="assistantEdit.saving || !assistantEdit.tasks.length" @click="assistantEdit.tasks=[]">清空重选</el-button></div>
+              <p class="muted">选择要代跑的活动，再次点击可取消。保存后对当前灵宠生效；清空并保存会停止助手。</p>
+              <div class="assistant-options" role="group" aria-label="可选活动">
+                <button v-for="option in data.assistant.options" :key="option.key" type="button"
+                  :aria-pressed="assistantEdit.tasks.includes(option.key)"
+                  :disabled="assistantEdit.saving || (!assistantEdit.tasks.includes(option.key) && assistantEdit.tasks.length>=data.assistant.max_tasks)"
+                  @click="selectAssistantTask(option.key)">
+                  <strong>{{ option.key }}</strong><span v-if="option.description!==option.key">{{ option.description }}</span>
+                </button>
+              </div>
+              <div class="assistant-editor-actions"><el-button :disabled="assistantEdit.saving" @click="assistantEdit.open=false">取消</el-button><el-button type="primary" :loading="assistantEdit.saving" @click="saveAssistantTasks">保存活动</el-button></div>
+            </div>
+            <div v-if="data.assistant.enabled" class="custom-remaining assistant-log" style="color:#0c7a45">
                运行中 · 最近：{{ (data.assistant.log && data.assistant.log.length) ? data.assistant.log[data.assistant.log.length-1] : '暂无记录（等待下一次代跑）' }}
             </div>
           </div>
@@ -2070,7 +2105,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 </section>
         <section v-show="activePanel==='bag'" aria-label="背包道具">        <div class="sec-title">背包</div>
         <p class="muted" style="margin:-4px 0 10px">道具可直接使用（支持数量），神器可佩戴、秘技书可参悟，效果与群聊指令一致。</p>
-        <div class="bag-toolbar"><el-input v-model="bagQuery" placeholder="搜索道具、神器或秘技" aria-label="搜索背包" clearable @input="bagPage=1"></el-input><span class="muted">共 {{ filteredBag.length }} 项</span></div>
+        <div class="bag-toolbar"><el-input v-model="bagQuery" placeholder="搜索道具、神器或秘技" aria-label="搜索背包" clearable></el-input><span class="muted">共 {{ filteredBag.length }} 项</span></div>
         <div class="bag" v-if="filteredBag.length">
           <div v-for="it in visibleBag" :key="it.name" class="item">
             <el-tag v-if="it.kind==='art'" class="item-tag" type="danger" size="small" effect="dark" round>神器</el-tag>
@@ -2087,7 +2122,10 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
         </div>
         <div v-else class="card empty-tip">{{ bagQuery ? '未找到匹配的道具，试试其他名称。' : '背包暂无道具。可在群内历练获取，或通过卡密兑换。' }}</div>
 
-<div class="bag-pagination" v-if="filteredBag.length"><span>每页 10 项</span><el-pagination v-model:current-page="bagPage" :page-size="10" :total="filteredBag.length" layout="prev, pager, next" :pager-count="5" aria-label="背包分页"></el-pagination></div></section>
+        <div class="bag-load-more" v-if="filteredBag.length" ref="bagEnd">
+          <span role="status">已显示 {{ visibleBag.length }} / {{ filteredBag.length }} 项{{ bagHasMore ? ' · 向下滚动继续查看' : ' · 已全部显示' }}</span>
+          <el-button v-if="bagHasMore" text @click="loadMoreBag">加载更多</el-button>
+        </div></section>
         <section v-show="activePanel==='redeem'" aria-label="卡密兑换">        <div class="sec-title">卡密兑换</div>
         <div class="card">
           <div class="redeem-row">
@@ -2285,7 +2323,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <script src="/webstatic/element-plus-zh-cn.min.js"></script>
 <script>
 const CSRF_TOKEN = '{{CSRF_TOKEN}}';
-const { createApp, reactive, ref, computed, onMounted, nextTick } = Vue;
+const { createApp, reactive, ref, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
 const { ElMessage, ElMessageBox } = ElementPlus;
 
 const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -2338,9 +2376,10 @@ createApp({
     const petLoading = ref(false);
     const initialLoading=ref(true), loadError=ref(''), roleMenu=ref(false), activePanel=ref('overview');
     const panelTabs=[{key:'overview',label:'总览'},{key:'pet',label:'灵宠'},{key:'mounts',label:'坐骑'},{key:'bag',label:'背包'},{key:'redeem',label:'兑换'}];
-    const bagQuery=ref(''),bagPage=ref(1);
+    const bagQuery=ref(''),bagLimit=ref(10),bagEnd=ref(null);
     const filteredBag=computed(()=>bagItems.value.filter(it=>it.name.toLocaleLowerCase().includes(bagQuery.value.trim().toLocaleLowerCase())));
-    const visibleBag=computed(()=>filteredBag.value.slice((bagPage.value-1)*10,bagPage.value*10));
+    const visibleBag=computed(()=>filteredBag.value.slice(0,bagLimit.value));
+    const bagHasMore=computed(()=>visibleBag.value.length<filteredBag.value.length);
     let petRequest=0;
     const now = ref(Math.floor(Date.now()/1000));
     setInterval(()=>{ now.value = Math.floor(Date.now()/1000); }, 1000);
@@ -2352,8 +2391,24 @@ createApp({
     const redeeming = ref(false);
     const redeemResult = ref('');
     const bagItems = ref([]);
+    function loadMoreBag(){
+      if(activePanel.value!=='bag' || petLoading.value || !bagHasMore.value)return;
+      bagLimit.value=Math.min(bagLimit.value+10,filteredBag.value.length);
+    }
+    const bagObserver=typeof IntersectionObserver==='undefined' ? null : new IntersectionObserver(entries=>{
+      if(entries.some(entry=>entry.target===bagEnd.value && entry.isIntersecting))loadMoreBag();
+    }, {rootMargin:'0px 0px 180px 0px'});
+    watch(bagQuery,()=>{bagLimit.value=10;});
+    watch([bagEnd,activePanel,petLoading,()=>visibleBag.value.length,()=>filteredBag.value.length],()=>{
+      bagObserver?.disconnect();
+      if(bagEnd.value && activePanel.value==='bag' && !petLoading.value && bagHasMore.value){
+        bagObserver?.observe(bagEnd.value);
+      }
+    }, {flush:'post'});
+    onUnmounted(()=>bagObserver?.disconnect());
     const cooldowns = ref([]);
     const autoCultivating = ref(false);
+    const assistantEdit=reactive({open:false,tasks:[],saving:false});
 
     const bind = reactive({show:false, group:'', qq:'', loading:false, querying:false, info:null, error:'', petIndex:0});
     const auto = reactive({loading:false, list:null, qq:''});
@@ -2400,6 +2455,9 @@ createApp({
 
     async function loadPet(p){
       const requestId=++petRequest;
+      assistantEdit.open=false;
+      const roleChanged=!current.value || current.value.group_id!==p.group_id || current.value.qq!==p.qq;
+      if(roleChanged){bagLimit.value=10;bagQuery.value='';}
       loadError.value='';
       current.value = p;
       currentSlot.value = {group_id: p.group_id, qq: p.qq};
@@ -2408,7 +2466,7 @@ createApp({
         const d = await api(`/api/portal/pet?group_id=${encodeURIComponent(p.group_id)}&qq=${encodeURIComponent(p.qq)}&pet_index=${p.pet_index||0}`);
         if(requestId!==petRequest)return;
         if(!d || !d.ok){ loadError.value=(d && d.msg)||'角色数据加载失败，请重试。'; data.value=null; return; }
-        data.value = d;bagPage.value=1;bagQuery.value='';
+        data.value = d;
         redeemResult.value = '';
         const artSet = new Set(d.artifact_names || []);
         const skillSet = new Set(d.skill_names || []);
@@ -2435,23 +2493,60 @@ createApp({
       if(current.value) await loadPet(current.value);
     }
 
+    function openAssistantEditor(){
+      const assistant=data.value?.assistant;
+      if(!assistant || assistantEdit.saving)return;
+      const options=new Set((assistant.options||[]).map(option=>option.key));
+      assistantEdit.tasks=(assistant.tasks||[]).filter(key=>options.has(key)).slice(0,assistant.max_tasks);
+      assistantEdit.open=true;
+    }
+    function selectAssistantTask(key){
+      if(assistantEdit.saving)return;
+      const index=assistantEdit.tasks.indexOf(key);
+      if(index>=0)assistantEdit.tasks.splice(index,1);
+      else if(assistantEdit.tasks.length<data.value.assistant.max_tasks)assistantEdit.tasks.push(key);
+    }
+    async function saveAssistantTasks(){
+      if(!current.value || assistantEdit.saving)return;
+      const p=current.value,requestId=petRequest;
+      assistantEdit.saving=true;
+      try{
+        const r=await api('/api/portal/assistant','POST',{
+          group_id:p.group_id,qq:p.qq,pet_index:p.pet_index||0,tasks:[...assistantEdit.tasks],
+        });
+        if(requestId!==petRequest)return;
+        if(r && r.ok){
+          data.value.assistant=r.assistant;
+          assistantEdit.open=false;
+          ElMessage.success(r.msg||'活动已保存');
+        }else ElMessage.error(r?.msg||'保存失败，请重试');
+      }catch(error){if(requestId===petRequest)ElMessage.error('连接未完成，未确认保存，请刷新档案后重试');}
+      finally{assistantEdit.saving=false;}
+    }
     async function toggleAutoCultivation(enabled){
       if(!data.value) return;
+      const requestId=petRequest;
+      const p = current.value;
       autoCultivating.value = true;
       try{
-        const p = current.value;
         const r = await api('/api/portal/assistant','POST',{
           group_id: p.group_id,
           qq: p.qq,
           pet_index: p.pet_index || 0,
           enabled: Boolean(enabled),
         });
+        if(requestId!==petRequest)return;
         if(r && r.ok){
           ElMessage.success(r.msg || '设置成功');
           if(data.value) data.value.assistant = r.assistant || data.value.assistant;
         } else {
           ElMessage.error((r && r.msg) || '设置失败');
           // 回滚开关状态：重新加载宠物数据
+          await loadPet(p);
+        }
+      } catch(error){
+        if(requestId===petRequest){
+          ElMessage.error('连接未完成，请检查助手状态后重试');
           await loadPet(p);
         }
       } finally { autoCultivating.value = false; }
@@ -2781,8 +2876,9 @@ createApp({
     onMounted(init);
 
     return {account, pets, current, data, pet, petLoading, blankImg:BLANK_IMG,
-      initialLoading,loadError,roleMenu,activePanel,panelTabs,bagQuery,bagPage,filteredBag,visibleBag,init,
+      initialLoading,loadError,roleMenu,activePanel,panelTabs,bagQuery,bagEnd,bagHasMore,loadMoreBag,filteredBag,visibleBag,init,
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
+      assistantEdit,openAssistantEditor,selectAssistantTask,saveAssistantTasks,
       bind, pwd, custom, crop,
       auto,
       slots, currentSlot, slotPets, slotLabel, slotSub, switchSlot,
