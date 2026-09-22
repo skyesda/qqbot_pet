@@ -1792,17 +1792,19 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="/webstatic/device-ui.js?v=20260922-1"></script>
 <title>灵契仙途 · 玩家中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
 <link rel="stylesheet" href="/webstatic/portal.css?v=20260922-4">
+<link rel="stylesheet" href="/webstatic/mobile.css?v=20260922-1">
 </head>
 <body class="portal-page">
 <div id="app" v-cloak>
 <div class="layout">
   <aside class="sidebar" :class="{expanded:roleMenu}" aria-label="角色与账号">
     <a class="side-brand" href="/"><span class="seal" aria-hidden="true">契</span><span>灵契仙途<small>玩家中心</small></span></a>
-    <button class="role-toggle" @click="roleMenu=!roleMenu" :aria-expanded="roleMenu" aria-controls="role-picker">切换角色 <span aria-hidden="true">⌄</span></button>
+    <button class="role-toggle" @click="roleMenu=!roleMenu" :aria-expanded="roleMenu" aria-controls="role-picker" aria-label="切换角色与账号"><span class="role-toggle-label">{{ data && data.adventure ? data.adventure.name : '切换角色' }}</span><span aria-hidden="true">⌄</span></button>
     <div id="role-picker" class="role-picker">
     <div class="side-sec">我的角色</div>
     <div class="side-pets">
@@ -1836,10 +1838,10 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
     <div class="content-inner">
       <header class="portal-header">
         <div><a href="/" class="home-link">官网首页</a><h1>我的仙途</h1><p>{{ account ? '修士、灵宠与坐骑，都在这一处。' : '正在读取你的角色…' }}</p></div>
-        <a class="play-link" href="/chat">进入网页游玩</a>
+        <a class="play-link" href="/chat">网页游玩 ↗</a>
       </header>
       <nav class="panel-nav" aria-label="玩家中心功能">
-        <button v-for="tab in panelTabs" :key="tab.key" @click="activePanel=tab.key" :class="{active:activePanel===tab.key}" :aria-current="activePanel===tab.key ? 'page' : undefined">{{ tab.label }}</button>
+        <button v-for="tab in panelTabs" :key="tab.key" @click="selectPanel(tab.key)" :class="{active:activePanel===tab.key}" :aria-current="activePanel===tab.key ? 'page' : undefined"><svg class="mobile-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="tab.icon"></path></svg><span>{{ tab.label }}</span></button>
       </nav>
       <div v-if="loadError" class="card load-error" role="alert"><h2>暂时无法读取角色</h2><p>{{ loadError }}</p><el-button @click="current ? loadPet(current) : init()">重新加载</el-button></div>
       <div v-else-if="initialLoading || petLoading" class="card loading-state" role="status"><span class="loading-dot"></span>正在读取角色档案…</div>
@@ -2375,7 +2377,17 @@ createApp({
     }
     const petLoading = ref(false);
     const initialLoading=ref(true), loadError=ref(''), roleMenu=ref(false), activePanel=ref('overview');
-    const panelTabs=[{key:'overview',label:'总览'},{key:'pet',label:'灵宠'},{key:'mounts',label:'坐骑'},{key:'bag',label:'背包'},{key:'redeem',label:'兑换'}];
+    const panelTabs=[
+      {key:'overview',label:'总览',icon:'M3 11 12 3l9 8M5 10v11h14V10M9 21v-7h6v7'},
+      {key:'pet',label:'灵宠',icon:'M8 12c-4 4-5 8 0 8l4-1 4 1c5 0 4-4 0-8-2-2-6-2-8 0ZM4 6v3M9 3v4M15 3v4M20 6v3'},
+      {key:'mounts',label:'坐骑',icon:'M4 20 7 8l6-5 6 4v5l-5-1-2 9M7 12h7M15 7h1M7 3v5'},
+      {key:'bag',label:'背包',icon:'M5 7h14l2 14H3L5 7ZM8 7V5a4 4 0 0 1 8 0v2M8 12h8v5H8Z'},
+      {key:'redeem',label:'兑换',icon:'M3 8h18v4H3ZM5 12v9h14v-9M12 8v13M12 8C3 8 5 1 9 3l3 5ZM12 8c9 0 7-7 3-5l-3 5Z'}
+    ];
+    function selectPanel(key){
+      activePanel.value=key;roleMenu.value=false;
+      if(document.documentElement.dataset.ui==='mobile')nextTick(()=>window.scrollTo({top:0,behavior:'instant'}));
+    }
     const bagQuery=ref(''),bagLimit=ref(10),bagEnd=ref(null);
     const filteredBag=computed(()=>bagItems.value.filter(it=>it.name.toLocaleLowerCase().includes(bagQuery.value.trim().toLocaleLowerCase())));
     const visibleBag=computed(()=>filteredBag.value.slice(0,bagLimit.value));
@@ -2876,7 +2888,7 @@ createApp({
     onMounted(init);
 
     return {account, pets, current, data, pet, petLoading, blankImg:BLANK_IMG,
-      initialLoading,loadError,roleMenu,activePanel,panelTabs,bagQuery,bagEnd,bagHasMore,loadMoreBag,filteredBag,visibleBag,init,
+      initialLoading,loadError,roleMenu,activePanel,panelTabs,selectPanel,bagQuery,bagEnd,bagHasMore,loadMoreBag,filteredBag,visibleBag,init,
       levelTimes, acting, usingItem, redeemCode, redeeming, redeemResult, bagItems, cooldowns, autoCultivating,
       assistantEdit,openAssistantEditor,selectAssistantTask,saveAssistantTasks,
       bind, pwd, custom, crop,
@@ -2901,76 +2913,16 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="/webstatic/device-ui.js?v=20260922-1"></script>
+<meta name="theme-color" content="#112f2d">
 <title>问题反馈 · 灵契仙途</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<style>
-  :root{
-    --bg:#f4f6fb; --card:#fff; --line:#e6e9f2; --text:#1f2534; --muted:#8a93a8;
-    --brand:#6366f1; --brand2:#a855f7; --grad:linear-gradient(135deg,#6366f1,#a855f7);
-  }
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-    background:var(--bg); color:var(--text); min-height:100vh;
-  }
-  [v-cloak]{display:none}
-  .topbar{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-  .topbar-inner{max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:14px;padding:14px 20px}
-  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;text-decoration:none;transition:.16s;padding:6px 10px;border-radius:10px}
-  .back-link:hover{color:var(--brand);background:#f2f3ff}
-  .topbar-title{font-size:16px;font-weight:800}
-  .wrap{max-width:1200px;margin:0 auto;padding:26px 20px 60px;display:grid;grid-template-columns:minmax(340px,5fr) minmax(380px,6fr);gap:22px;align-items:start}
-  .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 2px 10px rgba(30,40,80,.04)}
-  .card-title{font-size:16px;font-weight:800;margin-bottom:6px}
-  .card-desc{color:var(--muted);font-size:13px;line-height:1.7;margin-bottom:14px}
-  .muted{color:var(--muted);font-size:12.5px;line-height:1.7}
-  .fld{display:block;font-size:12.5px;font-weight:700;color:#3c455c;margin:12px 0 7px}
-  .upload-zone{border:1.5px dashed #c9cede;border-radius:14px;padding:18px;text-align:center;cursor:pointer;transition:.16s;background:#fafbfe}
-  .upload-zone:hover{border-color:var(--brand);background:#f5f6ff}
-  .upload-plus{font-size:26px;color:#aab1c5;line-height:1}
-  .upload-text{font-size:13px;font-weight:700;margin-top:5px}
-  .upload-hint{font-size:12px;color:var(--muted);margin-top:3px}
-  .fb-img-preview{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-  .fb-thumb{position:relative}
-  .fb-thumb img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
-  .fb-thumb .rm{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border:none;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;line-height:20px;cursor:pointer;padding:0}
-  .submit-row{display:flex;justify-content:flex-end;margin-top:18px}
-  .list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px}
-  .list-count{color:var(--muted);font-size:12.5px;font-weight:600}
-  .fb-rows{display:flex;flex-direction:column;margin-top:10px}
-  .fb-row{display:flex;align-items:center;gap:12px;padding:14px 4px;border-bottom:1px solid var(--line)}
-  .fb-row:last-child{border-bottom:none}
-  .fb-row-main{flex:1;min-width:0}
-  .fb-row-top{display:flex;align-items:center;gap:8px;margin-bottom:5px}
-  .fb-row-date{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
-  .fb-row-text{font-size:13.5px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3c455c}
-  .fb-row-btns{display:flex;gap:8px;flex:0 0 auto}
-  .fb-row-btns .el-button{margin:0}
-  .empty-tip{color:var(--muted);font-size:13.5px;padding:30px 0;text-align:center}
-  .pager{display:flex;justify-content:center;margin-top:16px}
-  .dt-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-  .dt-date{margin-left:auto;color:var(--muted);font-size:12.5px}
-  .dt-body{white-space:pre-wrap;line-height:1.7;font-size:13.5px;background:#f8f9fd;border:1px solid var(--line);border-radius:12px;padding:13px 15px;max-height:300px;overflow-y:auto;word-break:break-word}
-  .dt-meta{color:var(--muted);font-size:12.5px;margin-top:10px;line-height:1.8}
-  .dt-imgs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-  .dt-reply{margin-top:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:11px 14px;color:#166534;white-space:pre-wrap;line-height:1.7;font-size:13.5px}
-  .dt-reply .rt{font-weight:800;margin-bottom:4px;font-size:12.5px}
-  @media(max-width:900px){
-    .wrap{grid-template-columns:1fr}
-  }
-  @media(max-width:640px){
-    .wrap{padding:18px 12px 44px;gap:16px}
-    .card{padding:17px;border-radius:15px}
-    .fb-row{flex-direction:column;align-items:stretch;gap:9px}
-    .fb-row-btns{justify-content:flex-end}
-    .el-dialog{--el-dialog-width:calc(100vw - 28px) !important;width:calc(100vw - 28px) !important;max-width:calc(100vw - 28px)}
-    .el-message-box{max-width:calc(100vw - 28px)}
-    .el-message{max-width:calc(100vw - 24px)}
-  }
-</style>
+<link rel="stylesheet" href="/webstatic/feedback.css?v=20260922-1">
+<link rel="stylesheet" href="/webstatic/support.css?v=20260922-1">
+<link rel="stylesheet" href="/webstatic/mobile.css?v=20260922-1">
 </head>
-<body>
+<body class="feedback-page">
 <div id="app" v-cloak>
   <header class="topbar">
     <div class="topbar-inner">
@@ -2979,20 +2931,22 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
     </div>
   </header>
 
-  <main class="wrap">
-    <div class="card">
+  <section class="support-intro"><div><span class="support-kicker">灵契仙途 · 玩家反馈</span><h1>你说，我们听。</h1><p>记录遇到的问题，也留下让仙途更好的想法。</p></div><a href="/chat">返回仙途游玩 ↗</a></section>
+  <nav class="feedback-tabs" aria-label="反馈功能"><button @click="feedbackPanel='submit'" :aria-pressed="feedbackPanel==='submit'">提交反馈</button><button @click="feedbackPanel='records'" :aria-pressed="feedbackPanel==='records'">我的记录 <span>{{ list.length }}</span></button></nav>
+  <main class="wrap" :data-panel="feedbackPanel">
+    <div class="card feedback-submit">
       <div class="card-title">提交反馈</div>
-      <p class="card-desc">遇到 Bug 或有好的想法都可以在这里告诉我们，管理员处理后可在下方记录中查看回复。</p>
+      <p class="card-desc">遇到 Bug 或有好的想法都可以在这里告诉我们，管理员处理后可在「我的反馈记录」查看回复。</p>
       <el-tabs v-model="form.kind">
-        <el-tab-pane label="🐞 反馈 Bug" name="bug"></el-tab-pane>
-        <el-tab-pane label="💡 提出建议" name="suggestion"></el-tab-pane>
+        <el-tab-pane label="反馈问题" name="bug"></el-tab-pane>
+        <el-tab-pane label="提出建议" name="suggestion"></el-tab-pane>
       </el-tabs>
       <label class="fld" style="margin-top:2px">{{ form.kind==='bug' ? '问题描述' : '建议内容' }}</label>
-      <el-input v-model="form.content" type="textarea" :rows="4" maxlength="2000" show-word-limit
+      <el-input v-model="form.content" aria-label="反馈内容" type="textarea" :rows="4" maxlength="2000" show-word-limit
         :placeholder="form.kind==='bug' ? '请详细描述遇到的问题：操作了什么、预期结果、实际结果…' : '说说你希望增加或改进的功能…'"></el-input>
       <template v-if="form.kind==='bug'">
         <label class="fld">发生时间</label>
-        <el-date-picker v-model="form.time" type="datetime" placeholder="选择问题发生的时间" style="width:100%" format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm"></el-date-picker>
+        <el-date-picker v-model="form.time" aria-label="发生时间" type="datetime" placeholder="选择问题发生的时间" style="width:100%" format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm"></el-date-picker>
         <div style="display:flex;gap:8px;margin-top:12px">
           <el-input v-model="form.group" placeholder="对应的 QQ 群号"></el-input>
           <el-input v-model="form.user" placeholder="对应的用户 ID"></el-input>
@@ -3000,11 +2954,11 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
       </template>
       <label class="fld">图片截图（可选，最多 3 张）</label>
       <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="pickImages">
-      <div class="upload-zone" @click="$refs.fileInput.click()">
+      <button type="button" class="upload-zone" @click="$refs.fileInput.click()">
         <div class="upload-plus">＋</div>
         <div class="upload-text">点击选择图片</div>
         <div class="upload-hint">支持 jpg / png / gif / webp，单张不超过 5MB</div>
-      </div>
+      </button>
       <div class="fb-img-preview" v-if="form.files.length">
         <div v-for="(f,i) in form.files" :key="i" class="fb-thumb">
           <img :src="f.url"><button class="rm" @click="form.files.splice(i,1)">×</button>
@@ -3015,7 +2969,7 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card feedback-records">
       <div class="list-head">
         <div class="card-title" style="margin-bottom:0">我的反馈记录</div>
         <span class="list-count" v-if="list.length">共 {{ list.length }} 条</span>
@@ -3066,7 +3020,7 @@ _FEEDBACK_HTML = r"""<!DOCTYPE html>
           style="width:76px;height:76px;border-radius:10px;border:1px solid var(--line)"></el-image>
       </div>
       <div v-if="detail.item.reply" class="dt-reply">
-        <div class="rt">💬 管理员回复{{ detail.item.replied_at ? '（' + fmtDate(detail.item.replied_at) + '）' : '' }}</div>{{ detail.item.reply }}
+        <div class="rt">管理员回复{{ detail.item.replied_at ? '（' + fmtDate(detail.item.replied_at) + '）' : '' }}</div>{{ detail.item.reply }}
       </div>
     </template>
     <template #footer>
@@ -3096,6 +3050,7 @@ async function api(path, method='GET', body=null){
 createApp({
   setup(){
     const form = reactive({kind:'bug', content:'', time:'', group:'', user:'', files:[], submitting:false});
+    const feedbackPanel=ref('submit');
     const list = ref([]);
     const listLoading = ref(false);
     const page = ref(1);
@@ -3111,7 +3066,7 @@ createApp({
       try{
         const r = await api('/api/portal/feedback');
         const data = (r && r.data) || [];
-        data.sort((a,b)=>(a.created_at||0)-(b.created_at||0));
+        data.sort((a,b)=>(b.created_at||0)-(a.created_at||0));
         list.value = data;
         const maxPage = Math.max(1, Math.ceil(data.length/pageSize));
         if(page.value > maxPage) page.value = maxPage;
@@ -3149,6 +3104,7 @@ createApp({
           ElMessage.success(r.msg || '反馈已提交');
           form.content=''; form.files=[]; form.time=''; form.group=''; form.user='';
           await loadList();
+          page.value=1; feedbackPanel.value='records';
         } else {
           ElMessage.error((r && r.msg) || '提交失败，请稍后重试');
         }
@@ -3178,7 +3134,7 @@ createApp({
 
     onMounted(loadList);
 
-    return {form, list, listLoading, page, pageSize, detail, deleting, pageList,
+    return {feedbackPanel, form, list, listLoading, page, pageSize, detail, deleting, pageList,
       fmtDate, pickImages, submitFeedback, openDetail, removeFeedback};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
@@ -3192,89 +3148,28 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="/webstatic/device-ui.js?v=20260922-1"></script>
+<meta name="theme-color" content="#112f2d">
 <title>灵契仙途 · 修行对话</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<style>
-  :root{
-    --bg:#eef1f7; --line:#e2e6f0; --text:#1f2534; --muted:#8a93a8;
-    --brand:#6366f1; --bubble-me:#4f9bff; --bubble-bot:#ffffff;
-  }
-  *{margin:0;padding:0;box-sizing:border-box}
-  html,body{height:100%}
-  body{
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-    background:var(--bg); color:var(--text);
-  }
-  [v-cloak]{display:none}
-  .frame{width:100%;height:100vh;height:100dvh;display:flex;flex-direction:column;background:#f3f5fa}
-  .topbar{flex:0 0 auto;background:rgba(255,255,255,.95);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-  .topbar-inner{display:flex;align-items:center;gap:12px;padding:11px 16px}
-  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;transition:.16s;padding:6px 9px;border-radius:10px;white-space:nowrap}
-  .back-link:hover{color:var(--brand);background:#f2f3ff}
-  .top-title{min-width:0}
-  .top-title .t{font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .top-title .s{font-size:11.5px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
-  .chat-body{flex:1 1 auto;overflow-y:auto;padding:18px 16px 8px;scroll-behavior:smooth}
-  .day-tip{text-align:center;margin:6px 0 14px}
-  .day-tip span{display:inline-block;background:#dde2ee;color:#7a8299;font-size:11.5px;border-radius:9px;padding:3px 10px}
-  .msg{display:flex;gap:9px;margin-bottom:16px;align-items:flex-start}
-  .msg.me{flex-direction:row-reverse}
-  .avatar{flex:0 0 38px;width:38px;height:38px;border-radius:50%;overflow:hidden;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:19px}
-  .avatar img{width:100%;height:100%;object-fit:cover}
-  .msg-col{max-width:74%;min-width:0;display:flex;flex-direction:column}
-  .msg.me .msg-col{align-items:flex-end}
-  .msg-name{font-size:11.5px;color:#98a0b4;margin:0 2px 4px}
-  .bubble{position:relative;background:var(--bubble-bot);border-radius:4px 14px 14px 14px;padding:10px 13px;font-size:14px;line-height:1.65;word-break:break-word;box-shadow:0 1px 3px rgba(30,40,80,.07);overflow-x:auto}
-  .msg.me .bubble{background:var(--bubble-me);color:#fff;border-radius:14px 4px 14px 14px}
-  .bubble.pending{color:var(--muted)}
-  .bubble b{font-weight:800}
-  .bubble .h{display:block;font-weight:800;font-size:14.5px;margin:2px 0}
-  .bubble img{max-width:100%;border-radius:10px;display:block;margin:4px 0}
-  .bubble table{border-collapse:collapse;margin:6px 0;font-size:12.5px;width:max-content;max-width:100%}
-  .bubble th,.bubble td{border:1px solid #e4e8f2;padding:4px 8px;text-align:center;white-space:nowrap}
-  .bubble th{background:#f4f6fc;font-weight:800}
-  .bubble tr:nth-child(even) td{background:#fafbfe}
-  .msg.me .bubble table th,.msg.me .bubble td{border-color:rgba(255,255,255,.4)}
-  .bubble .quote{display:block;border-left:3px solid #c9cede;background:#f6f8fc;color:#5b6478;border-radius:0 8px 8px 0;padding:5px 10px;margin:5px 0;font-size:13px}
-  .bubble hr{border:none;border-top:1px solid #e4e8f2;margin:8px 0}
-  .typing{display:inline-flex;gap:4px;align-items:center;padding:4px 2px}
-  .typing i{width:6px;height:6px;border-radius:50%;background:#b6bdd0;animation:blink 1.2s infinite}
-  .typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
-  @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
-  .chips{flex:0 0 auto;display:flex;gap:8px;overflow-x:auto;padding:8px 16px;scrollbar-width:none}
-  .chips::-webkit-scrollbar{display:none}
-  .chip{flex:0 0 auto;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:12.5px;color:#3c455c;cursor:pointer;transition:.15s;user-select:none;white-space:nowrap}
-  .chip:hover{border-color:var(--brand);color:var(--brand);background:#f5f6ff}
-  .inputbar{flex:0 0 auto;display:flex;gap:10px;align-items:flex-end;padding:10px 16px 14px;background:rgba(255,255,255,.95);border-top:1px solid var(--line)}
-  .inputbar textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:14px;background:#fff;padding:10px 13px;font-size:14px;line-height:1.5;font-family:inherit;outline:none;max-height:110px;transition:border-color .15s}
-  .inputbar textarea:focus{border-color:var(--brand)}
-  .send-btn{flex:0 0 auto;border:none;border-radius:14px;background:var(--bubble-me);color:#fff;font-size:14px;font-weight:700;padding:10px 22px;cursor:pointer;transition:.15s}
-  .send-btn:disabled{background:#c2cbde;cursor:not-allowed}
-  .empty-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--muted)}
-  .empty-wrap .e{font-size:42px}
-  @media(max-width:640px){
-    .msg-col{max-width:82%}
-    .chat-body{padding:14px 10px 6px}
-    .inputbar{padding:8px 10px 12px}
-    .chips{padding:8px 10px}
-  }
-</style>
+<link rel="stylesheet" href="/webstatic/chat.css?v=20260922-1">
+<link rel="stylesheet" href="/webstatic/support.css?v=20260922-1">
+<link rel="stylesheet" href="/webstatic/mobile.css?v=20260922-1">
 </head>
-<body>
+<body class="chat-page">
 <div id="app" v-cloak>
   <div class="frame">
     <header class="topbar">
       <div class="topbar-inner">
         <a class="back-link" href="/portal">← 玩家中心</a>
         <div class="top-title" v-if="current">
-          <div class="t">{{ current.nickname }} 的小窝</div>
+          <div class="t">{{ current.nickname }} · 仙途游玩</div>
           <div class="s">群 {{ current.group_id }} · ID {{ current.qq }}</div>
         </div>
-        <div class="top-title" v-else><div class="t">宠物对话</div></div>
+        <div class="top-title" v-else><div class="t">仙途游玩</div></div>
         <div class="top-right">
-          <el-select v-if="pets.length > 1" v-model="petIdx" size="small" style="width:150px" @change="switchPet">
+          <el-select v-if="pets.length > 1" v-model="petIdx" aria-label="切换游玩角色" :disabled="sending" size="small" style="width:150px" @change="switchPet">
             <el-option v-for="(p,i) in pets" :key="i" :label="p.nickname + '（群' + p.group_id + '）'" :value="i"></el-option>
           </el-select>
           <el-button size="small" round @click="clearHistory" v-if="msgs.length">清空记录</el-button>
@@ -3283,13 +3178,14 @@ _CHAT_HTML = r"""<!DOCTYPE html>
     </header>
 
     <template v-if="current">
-      <main class="chat-body" ref="bodyEl">
+      <main class="chat-body" ref="bodyEl" aria-label="对话记录">
+        <div v-if="!msgs.length" class="chat-welcome"><span class="chat-seal" aria-hidden="true">契</span><h1>与{{ current.nickname }}，再赴仙途。</h1><p>发送游戏指令继续历练，也可以从下方常用指令开始。</p><span>例如：我的修士 · 仙途地图 · 我的宠物</span></div>
         <div class="day-tip"><span>与『{{ current.nickname }}』的对话 · 模拟群 {{ current.group_id }}</span></div>
         <div v-for="(m,i) in msgs" :key="i" class="msg" :class="{me: m.role==='me'}">
           <div class="avatar">
             <img v-if="m.role==='me' && userAvatar" :src="userAvatar">
             <img v-else-if="m.role==='bot' && current.image_url" :src="current.image_url">
-            <span v-else>{{ m.role==='me' ? '🙂' : '🐾' }}</span>
+            <span v-else>{{ m.role==='me' ? '我' : '契' }}</span>
           </div>
           <div class="msg-col">
             <div class="msg-name">{{ m.role==='me' ? myName : current.nickname }}</div>
@@ -3302,20 +3198,20 @@ _CHAT_HTML = r"""<!DOCTYPE html>
       </main>
 
       <div class="chips">
-        <span class="chip" v-for="c in quickCmds" :key="c" @click="sendText(c)">{{ c }}</span>
+        <button type="button" class="chip" v-for="c in quickCmds" :key="c" :disabled="sending" @click="sendText(c)">{{ c }}</button>
       </div>
 
       <div class="inputbar">
-        <textarea ref="inputEl" v-model="draft" rows="1" maxlength="200"
-          placeholder="像在 QQ 群里一样发消息，例如：签到、我的宠物、帮我升级…"
-          @keydown.enter.exact.prevent="sendText()"
+        <textarea ref="inputEl" v-model="draft" aria-label="输入游戏指令" rows="1" maxlength="200"
+          placeholder="输入指令，如：签到"
+          @keydown.enter.exact="onChatEnter"
           @input="autoGrow"></textarea>
         <button class="send-btn" :disabled="sending || !draft.trim()" @click="sendText()">发送</button>
       </div>
     </template>
 
     <div class="empty-wrap" v-else-if="loaded">
-      <div class="e">🐣</div>
+      <div class="chat-seal" aria-hidden="true">契</div>
       <div>还没有绑定宠物，先去玩家中心绑定一只吧</div>
       <el-button type="primary" round @click="location.href='/portal'">前往绑定</el-button>
     </div>
@@ -3445,6 +3341,11 @@ createApp({
       const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(110, el.scrollHeight) + 'px';
     }
 
+    function onChatEnter(event){
+      if(event.isComposing || event.keyCode===229)return;
+      if(document.documentElement.dataset.ui==='mobile')return;
+      event.preventDefault();sendText();
+    }
     function switchPet(){ loadHistory(); }
 
     async function sendText(preset){
@@ -3486,7 +3387,7 @@ createApp({
 
     return {pets, petIdx, account, loaded, msgs, draft, sending, bodyEl, inputEl,
       quickCmds, current, myName, userAvatar, location,
-      sendText, switchPet, clearHistory, autoGrow};
+      sendText, onChatEnter, switchPet, clearHistory, autoGrow};
   }
 }).use(ElementPlus, {locale: ElementPlusLocaleZhCn}).mount('#app');
 </script>
@@ -3649,7 +3550,8 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="/webstatic/device-ui.js?v=20260922-1"></script>
 <title>灵契仙途 · 与灵宠结契，共赴仙途</title>
 <meta name="description" content="灵契仙途 QQ 群聊修仙游戏：剑修、体修、灵修、魔修四职业，灵宠结契、洞天突破、宗门秘境、坐骑养成。玩家中心支持绑定角色、查看修士与灵宠、坐骑外观定制。">
 <meta name="theme-color" content="#112f2d">
@@ -3657,8 +3559,9 @@ _HOME_HTML = r"""<!DOCTYPE html>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
 
 <link rel="stylesheet" href="/webstatic/home.css?v=20260908">
+<link rel="stylesheet" href="/webstatic/mobile.css?v=20260922-1">
 </head>
-<body>
+<body class="home-page">
 <a class="skip-link" href="#explore">跳到玩法介绍</a>
 <noscript><p class="no-script">灵契仙途 · 请启用 JavaScript 查看游戏首页。<a href="https://qm.qq.com/q/S6ql07Q72m">加入官方群 547205828</a></p></noscript>
 <div id="app" v-cloak>
@@ -3698,6 +3601,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
 </div>
 </header>
 <main class="wrap" id="explore">
+  <nav class="mobile-shortcuts" aria-label="手机快捷入口"><a href="#professions"><b aria-hidden="true">修</b>四道同修</a><a href="#start"><b aria-hidden="true">启</b>入门指引</a><a href="#rankings"><b aria-hidden="true">榜</b>风云榜</a><a href="/chat"><b aria-hidden="true">游</b>网页游玩</a></nav>
   <div class="update-strip"><strong>仙途新事</strong><p>修士、灵宠、坐骑，一处查看。坐骑外观定制现已开放。</p><a class="text-link" href="#player-center">查看玩家中心新功能 ↗</a></div>
 
   <section class="section" id="professions" aria-labelledby="profession-title">
@@ -3758,6 +3662,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
     <div class="boards">
       <div class="board full">
+        <ol class="mobile-rank-list" aria-label="修士排行"><li v-for="(row,index) in cultRank" :key="index"><span class="rank-position">{{ index+1 }}</span><div class="rank-person"><b>{{ row.name }}</b><small>{{ row.realm + ' · ' + row.profession }} · Lv{{ row.level }}</small></div><strong class="rank-power">{{ fmtPower(row.power) }}</strong></li><li v-if="!cultRank.length" class="rank-empty">{{ loading ? '正在读取榜单…' : '暂无上榜数据' }}</li></ol>
         <el-table :data="cultRank" v-loading="loading" element-loading-background="transparent" empty-text="暂无修士上榜">
           <el-table-column label="排名" width="80">
             <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
@@ -3782,6 +3687,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
     <div class="boards">
       <div class="board full">
+        <ol class="mobile-rank-list" aria-label="灵宠排行"><li v-for="(row,index) in petRank" :key="index"><span class="rank-position">{{ index+1 }}</span><div class="rank-person"><b>{{ row.nickname }}</b><small>{{ row.stage + ' · ' + row.quality }} · Lv{{ row.level }}</small></div><strong class="rank-power">{{ fmtPower(row.power) }}</strong></li><li v-if="!petRank.length" class="rank-empty">{{ loading ? '正在读取榜单…' : '暂无上榜数据' }}</li></ol>
         <el-table :data="petRank" v-loading="loading" element-loading-background="transparent" empty-text="暂无宠物上榜">
           <el-table-column label="排名" width="80">
             <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
@@ -3808,6 +3714,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
       <div class="board full">
         <h3>摸金排行 · 全服</h3>
         <div class="sub">按永久冥币总量排序</div>
+        <ol class="mobile-rank-list" aria-label="摸金排行"><li v-for="(row,index) in tombRank" :key="index"><span class="rank-position">{{ index+1 }}</span><div class="rank-person"><b>{{ row.qq }}</b><small>{{ '累计冥币' }}</small></div><strong class="rank-power">{{ fmt(row.value) }}</strong></li><li v-if="!tombRank.length" class="rank-empty">{{ loading ? '正在读取榜单…' : '暂无上榜数据' }}</li></ol>
         <el-table :data="tombRank" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="80">
             <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
@@ -3821,6 +3728,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
       <div class="board">
         <h3>今日摸金榜</h3>
         <div class="sub">{{ todaySub }}</div>
+        <ol class="mobile-rank-list" aria-label="摸金排行"><li v-for="(row,index) in tombToday" :key="index"><span class="rank-position">{{ index+1 }}</span><div class="rank-person"><b>{{ row.qq }}</b><small>{{ '今日获得' }}</small></div><strong class="rank-power">{{ fmt(row.value) }}</strong></li><li v-if="!tombToday.length" class="rank-empty">{{ loading ? '正在读取榜单…' : '暂无上榜数据' }}</li></ol>
         <el-table :data="tombToday" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="70">
             <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
@@ -3834,6 +3742,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
       <div class="board">
         <h3>昨日摸金榜</h3>
         <div class="sub">{{ ystSub }}</div>
+        <ol class="mobile-rank-list" aria-label="摸金排行"><li v-for="(row,index) in tombYst" :key="index"><span class="rank-position">{{ index+1 }}</span><div class="rank-person"><b>{{ row.qq }}</b><small>{{ '昨日获得' }}</small></div><strong class="rank-power">{{ fmt(row.value) }}</strong></li><li v-if="!tombYst.length" class="rank-empty">{{ loading ? '正在读取榜单…' : '暂无上榜数据' }}</li></ol>
         <el-table :data="tombYst" empty-text="暂无上榜数据">
           <el-table-column label="排名" width="70">
             <template #default="s"><span class="rk" :class="s.$index<3 ? 'g'+(s.$index+1) : ''">{{ s.$index+1 }}</span></template>
@@ -3880,6 +3789,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
   <footer><div>灵契仙途 · 与灵宠结契，共赴仙途。<br>榜单每 30 秒刷新；不同玩法按各自规则统计。</div><div><a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> &nbsp; / &nbsp; <a href="/agreement" style="display:inline-block;border:1px solid #a68d5e;border-radius:2px;padding:0 9px;line-height:21px;color:#7d6a45">用户协议</a></div></footer>
 </main>
 
+<nav class="mobile-home-dock" aria-label="手机玩家入口" v-show="!auth.show"><a href="#start">新手指引</a><el-button @click="loggedIn ? goPortal() : openAuth('login')">{{ loggedIn ? '回到我的角色' : '进入玩家中心' }} &nbsp; ↗</el-button></nav>
 <el-dialog v-model="auth.show" :title="authTitle" width="400px" class="auth-dialog" align-center>
   <div class="auth-hint">{{ authHint }}</div>
   <el-tabs v-if="auth.mode==='login'" v-model="auth.tab">
