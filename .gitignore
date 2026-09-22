@@ -10,3 +10,6 @@ pv2.js
 # local logs
 framework.log
 astrbot.log
+
+# 本地 API 密钥（tools/jev_client.py 用），不要提交
+.jev_key

@@ -561,6 +561,7 @@ class PlayerPortal:
     # --------------------------- 路由 ---------------------------
     def setup(self, app: web.Application) -> None:
         app.router.add_get("/", self._home_page)
+        app.router.add_get("/agreement", self._agreement_page)
         app.router.add_get("/api/portal/home", self._api_home)
         app.router.add_get("/portal", self._portal_page)
         app.router.add_post("/api/portal/register", self._api_register)
@@ -636,6 +637,9 @@ class PlayerPortal:
         sess = self._current_session(request)
         html = _HOME_HTML.replace("{{CSRF_TOKEN}}", sess.get("csrf", "") if sess else "")
         return web.Response(text=html, content_type="text/html")
+
+    async def _agreement_page(self, request: web.Request) -> web.Response:
+        return web.Response(text=_AGREEMENT_HTML, content_type="text/html")
 
     @staticmethod
     def _mask_qq(qq: str) -> str:
@@ -3497,6 +3501,164 @@ createApp({
 """
 
 
+_AGREEMENT_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用户协议 · 灵契仙途</title>
+<meta name="description" content="灵契仙途用户协议：账号与绑定、玩法与虚拟资源、行为规范、数据与隐私、未成年人保护、免责声明、协议变更与争议解决。">
+<meta name="theme-color" content="#112f2d">
+<link rel="stylesheet" href="/webstatic/home.css?v=20260908">
+<style>
+  .agree-mast { min-height:360px; }
+  .agree-mast .landscape { height:100%; }
+  .agree-head { position:relative; z-index:2; padding:58px 0 78px; max-width:900px; }
+  .agree-head .eyebrow { margin-bottom:20px; }
+  .agree-head h1 { font-size:50px; letter-spacing:4px; color:#f4eedf; margin:0 0 18px; }
+  .agree-head .intro { font-size:15px; color:#c6cfc0; margin:0 0 26px; line-height:1.9; }
+  .agree-head .meta { display:flex; flex-wrap:wrap; gap:12px 28px; font-size:12px; color:#a9b09b; border-top:1px solid #f4eedf26; padding-top:16px; }
+  .agree-main { padding:18px 0 90px; }
+  .agree-sec { margin:54px 0; }
+  .agree-sec .section-head { margin-bottom:22px; }
+  .clause { max-width:880px; color:#3c4a44; font-size:15px; line-height:2; }
+  .clause p { margin:0 0 14px; }
+  .clause strong { color:#233b36; font-weight:600; }
+  .clause ul { margin:0 0 14px; padding:0; list-style:none; }
+  .clause li { position:relative; padding-left:20px; margin:7px 0; }
+  .clause li:before { content:"·"; position:absolute; left:2px; top:0; color:#a54132; }
+  .clause .tail { margin-top:22px; padding-top:16px; border-top:1px dashed #d8d7c9; font-size:12px; color:#8b7350; }
+  @media (max-width:760px) {
+    .agree-head { padding:42px 0 54px; }
+    .agree-head h1 { font-size:34px; letter-spacing:2px; }
+    .agree-sec { margin:44px 0; }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<header class="masthead agree-mast">
+  <img class="landscape" src="/webstatic/home/hero-mountains.webp" alt="" width="1672" height="941">
+  <div class="wrap">
+    <nav aria-label="主导航">
+      <a class="brand" href="/" aria-label="灵契仙途首页"><span class="seal" aria-hidden="true">契</span>灵契仙途</a>
+      <div class="nav-links"><a href="/">返回首页</a><a href="/portal">玩家中心</a><a href="/chat">网页游玩</a><a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a></div>
+    </nav>
+    <div class="agree-head">
+      <div class="eyebrow">灵契仙途 / 用户协议</div>
+      <h1>仙途有规，进门即约。</h1>
+      <p class="intro">使用本游戏服务前，请您仔细阅读本协议。您在任一授权群内开始游戏，即视为已阅读并同意本协议全部条款。</p>
+      <div class="meta"><span>生效日期：2026 年 9 月 22 日</span><span>协议版本：v1</span><span>如有疑问：官方群 547205828</span></div>
+    </div>
+  </div>
+</header>
+<main class="wrap agree-main" id="main">
+
+  <section class="section agree-sec">
+    <div class="section-kicker">壹 · 总则</div>
+    <div class="section-head"><h2>仙途有规，进门即约。</h2><span>适用主体与服务范围</span></div>
+    <div class="clause">
+      <p>灵契仙途（下称「本游戏」）是一款运行于 QQ 群聊环境、由小飞机器人提供服务的文字修仙游戏。本协议是您与本游戏运营方（下称「运营方」）就使用本游戏服务所订立的约定。</p>
+      <p>您在任一授权群内发送第一条游戏指令、或通过玩家中心完成绑定，即视为已阅读并同意本协议。若您不同意本协议任一条款，请停止使用本游戏服务。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">贰 · 账号与绑定</div>
+    <div class="section-head"><h2>一名一档，认群不认人。</h2><span>身份对应 · 玩家中心绑定</span></div>
+    <div class="clause">
+      <p>本游戏以 QQ 群内身份参与，无需另行注册。您的游戏数据与您的群号、用户 ID（QQ 号或平台账号标识）一一对应，换群游玩时数据各自独立。</p>
+      <p>您可在玩家中心（bot.flyyye.cn）绑定群号与用户 ID，用于跨端查看角色、管理修士、灵宠与坐骑。绑定仅用于身份对应与数据展示，请您妥善保管账号信息，勿将账号交由他人使用；因账号转借或泄露造成的后果由您自行承担。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">叁 · 玩法与虚拟资源</div>
+    <div class="section-head"><h2>虚拟之物，只在局中作数。</h2><span>货币无现金价值 · 卡密即时到账</span></div>
+    <div class="clause">
+      <p>本游戏包含剑修、体修、灵修、魔修四职业修炼，灵宠结契、坐骑养成、道侣结缘、宗门建设、洞天修炼、秘境历练、摸金探宝、深渊抉择等玩法。</p>
+      <p>游戏中的灵石、玄晶、天晶等均为虚拟货币，装备、丹药、卡牌等均为虚拟物品，仅限在本游戏内使用，不具任何现实货币价值，亦不可反向兑换为现金。</p>
+      <p>您可通过卡密兑换的方式获取部分虚拟资源，兑换即时到账。请妥善保管卡密，卡密一经使用即告失效；因卡密泄露、转售造成的损失由您自行承担。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">肆 · 行为规范</div>
+    <div class="section-head"><h2>群中修行，也讲规矩。</h2><span>违规处置：撤回 / 封号 / 清档 / 移群</span></div>
+    <div class="clause">
+      <p>为维护群内环境，请您在游戏过程中遵守法律法规与公序良俗，不发布辱骂、刷屏、引战、造谣等干扰他人游玩的内容，不利用本游戏从事任何违法违规活动。</p>
+      <p>禁止通过多开小号、利用漏洞、篡改数据等方式获取不正当利益；禁止转让、交易账号以规避正常游戏规则。</p>
+      <p>凡利用游戏漏洞进行违规刷取资源（包括但不限于货币、道具、修为、次数等）的，一经查实，处置包括但不限于：封号、清空数据、回溯违规用户数据等。因回溯导致的虚拟资源变动，不予另行补偿。一切处罚的解释权归开发者所有。</p>
+      <p>对违规行为的处置包括但不限于：撤回消息、本群封禁（可设天数或永久）、清空游戏数据、移出群聊。情节严重的，开发者保留进一步追责的权利；游戏内大管理员依运营安排行使相应管理权限。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">伍 · 数据与隐私</div>
+    <div class="section-head"><h2>存档在侧，私事不传。</h2><span>服务器存档 · 可申请清空</span></div>
+    <div class="clause">
+      <p>您的游戏存档保存在服务器上，仅用于本游戏的数据运算与展示，不会用于其他用途。</p>
+      <p>除法律法规要求或经您本人授权外，运营方不会向第三方提供您的个人信息与游戏数据。</p>
+      <p>您可通过运营方渠道申请清空您在本群内的游戏数据；数据一经清空不可恢复，请在操作前确认。为排查问题、改善服务，游戏过程中产生的操作记录仅在内部留存，不作他用。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">陆 · 未成年人保护</div>
+    <div class="section-head"><h2>年少入道，宜有陪护。</h2><span>监护人陪同 · 理性游玩</span></div>
+    <div class="clause">
+      <p>若您为未成年人，请在监护人陪同下阅读本协议，并在征得监护人同意后使用本游戏服务。</p>
+      <p>运营方提示未成年人合理安排游戏时间，理性消费，避免沉迷网络，影响学业与健康。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">柒 · 免责声明</div>
+    <div class="section-head"><h2>天有不测，尽力而为。</h2><span>维护暂停 · 第三方渠道</span></div>
+    <div class="clause">
+      <p>因系统维护、升级或不可抗力（包括但不限于网络故障、服务器故障、第三方平台限制）导致服务暂停、中断或数据异常的，运营方将尽力恢复，但不因此承担额外赔偿责任。</p>
+      <p>经第三方渠道（如充值平台、卡密售卖渠道）产生的交易行为，由您与该渠道自行协商解决。</p>
+      <p>本游戏为文字修仙游戏，游戏内设定、剧情与真实世界无关，请您理性看待。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">捌 · 协议变更</div>
+    <div class="section-head"><h2>条款有改，公示为准。</h2><span>官网与群公告公示</span></div>
+    <div class="clause">
+      <p>运营方可能根据实际情况对本协议进行修订。修订后的协议将通过官网或群公告进行公示。</p>
+      <p>您在协议变更后继续使用本游戏服务的，视为已接受修订后的条款；如不同意，请停止使用本游戏服务。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">玖 · 争议解决</div>
+    <div class="section-head"><h2>若有分歧，先谈后讼。</h2><span>协商优先 · 法律途径</span></div>
+    <div class="clause">
+      <p>因本协议产生的争议，双方应友好协商解决；协商不成的，可向运营方所在地有管辖权的人民法院提起诉讼。</p>
+    </div>
+  </section>
+
+  <section class="section agree-sec">
+    <div class="section-kicker">拾 · 生效与解释</div>
+    <div class="section-head"><h2>今日立约，自今而始。</h2><span>生效日期 · 解释权归运营方</span></div>
+    <div class="clause">
+      <p>本协议自 2026 年 9 月 22 日起生效。</p>
+      <p>本协议的解释权归开发者所有。开发者可依据本协议对相关条款进行解释与适用，并依据游戏运营情况对本协议进行调整。对协议条款如有疑问，可加入官方群 547205828 咨询。</p>
+      <p class="tail">灵契仙途 · 与灵宠结契，共赴仙途。愿诸君守约而行，同登彼岸。</p>
+    </div>
+  </section>
+
+</main>
+<footer>
+  <div>灵契仙途 · 与灵宠结契，共赴仙途。<br>本页为《用户协议》，游戏内相关约定以本页为准。</div>
+  <div><a href="/">返回首页</a> &nbsp; / &nbsp; <a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a></div>
+</footer>
+</body>
+</html>
+"""
+
+
 _HOME_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -3729,7 +3891,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <footer><div>灵契仙途 · 与灵宠结契，共赴仙途。<br>榜单每 30 秒刷新；不同玩法按各自规则统计。</div><div><a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a></div></footer>
+  <footer><div>灵契仙途 · 与灵宠结契，共赴仙途。<br>榜单每 30 秒刷新；不同玩法按各自规则统计。</div><div><a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> &nbsp; / &nbsp; <a href="/agreement" style="display:inline-block;border:1px solid #a68d5e;border-radius:2px;padding:0 9px;line-height:21px;color:#7d6a45">用户协议</a></div></footer>
 </main>
 
 <el-dialog v-model="auth.show" :title="authTitle" width="400px" class="auth-dialog" align-center>
