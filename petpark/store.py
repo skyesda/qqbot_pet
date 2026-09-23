@@ -136,6 +136,60 @@ class PetStore:
         self._migrate_economy_v1()
         self._migrate_bank_overflow()
         self._migrate_assistant_v1()
+        self._migrate_custom_quality_v1()
+
+    def _migrate_custom_quality_v1(self) -> None:
+        """定制宠物混沌→超脱迁移（一次性，幂等）。
+
+        ① 所有已有「定制」宠物品质晋升为【超脱】，属性按 9.2→11.0 成长系数
+          同步飞跃（复用 upgrade_quality 的比例重算）；品质字段异常时兜底直写。
+        ② 名下持有定制宠物的玩家，自动助手次数池保底提升至
+          ASSISTANT_QUOTA_CUSTOM_PET（只升不降，不动已高于 5 万的玩家）。
+
+        执行环境是 _load() 内、任何 _flush() 之前，此时 self.path 仍是迁移前的
+        原始存档，先复制一份留档（与 _migrate_assistant_v1 同款约定）。
+        """
+        if self._data.get("custom_quality_v1"):
+            return
+        self._data["custom_quality_v1"] = True
+        try:
+            if self.path.exists():
+                bak = self.path.with_name(self.path.name + ".pre_custom_quality_migration.bak")
+                if not bak.exists():
+                    bak.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError as exc:
+            logging.getLogger(__name__).warning("[petpark] 定制超脱迁移备份失败：%s", exc)
+
+        from . import pet as petmod
+
+        n_pets = 0
+        n_players = 0
+        for pl in self._data.get("players", {}).values():
+            if not isinstance(pl, dict):
+                continue
+            has_custom = False
+            # multi_pet 迁移已先行执行，定制宠物只会在 pets 列表里；
+            # pl["pet"] 是按 active_pet 重建的同对象引用，无需重复处理。
+            for pet in pl.get("pets") or []:
+                if not isinstance(pet, dict) or not pet.get("custom"):
+                    continue
+                has_custom = True
+                if pet.get("quality") == "超脱":
+                    continue
+                ok, _msg = petmod.upgrade_quality(pet, "超脱")
+                if not ok:
+                    # 品质字段异常（不在表内/不低于超脱）时兜底直写，保证定制宠=超脱
+                    pet["quality"] = "超脱"
+                n_pets += 1
+            if has_custom:
+                before = self.assistant_quota(pl)
+                after = self.raise_custom_assistant_quota(pl)
+                if after > before:
+                    n_players += 1
+        logging.getLogger(__name__).info(
+            "[petpark] 定制超脱迁移完成：%d 只定制宠晋升超脱，%d 名玩家助手次数保底 5 万",
+            n_pets, n_players,
+        )
 
     def _migrate_assistant_v1(self) -> None:
         """自动修炼 → 自动助手 v1（一次性，幂等）。
@@ -2085,7 +2139,7 @@ class PetStore:
         return self.custom_images_dir / filename
 
     def create_custom_cards(self, count: int = 1, prefix: str = "") -> list[str]:
-        """批量生成宠物定制卡密：兑换后为当前宠物解锁定制权限并晋升为混沌品质。"""
+        """批量生成宠物定制卡密：兑换后为当前宠物解锁定制权限并晋升为超脱品质。"""
         count = max(1, int(count))
         cards = self.cards()
         created: list[str] = []
@@ -2124,8 +2178,8 @@ class PetStore:
         if pet.get("custom"):
             return None, "该宠物已解锁定制权限"
         from . import pet as petmod
-        if pet.get("quality") != "混沌":
-            ok, msg = petmod.upgrade_quality(pet, "混沌")
+        if pet.get("quality") != "超脱":
+            ok, msg = petmod.upgrade_quality(pet, "超脱")
             if not ok:
                 return None, msg
         pet["custom"] = True
@@ -2133,6 +2187,7 @@ class PetStore:
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
         self.add_pet_tag(pet, "定制")
+        self.raise_custom_assistant_quota(player)
         return pet, None
 
     def create_mount_custom_cards(self, count: int = 1, prefix: str = "") -> list[str]:
@@ -2216,6 +2271,16 @@ class PetStore:
         info["quota"] = max(0, int(info.get("quota", 0) or 0) + int(amount))
         return info["quota"]
 
+    @staticmethod
+    def raise_custom_assistant_quota(player: dict) -> int:
+        """定制宠物主人的次数池保底：不足 ASSISTANT_QUOTA_CUSTOM_PET 时提到该值（只升不降），返回当前值。"""
+        info = player.setdefault("assistant", {"quota": 0})
+        cur = max(0, int(info.get("quota", 0) or 0))
+        if cur < data.ASSISTANT_QUOTA_CUSTOM_PET:
+            info["quota"] = data.ASSISTANT_QUOTA_CUSTOM_PET
+            return data.ASSISTANT_QUOTA_CUSTOM_PET
+        return cur
+
     def create_assistant_cards(
         self, count: int = 1, prefix: str = ""
     ) -> list[str]:
@@ -2265,13 +2330,14 @@ class PetStore:
         if pet.get("custom"):
             return False, "该宠物已解锁定制权限"
         from . import pet as petmod
-        if pet.get("quality") != "混沌":
-            ok, msg = petmod.upgrade_quality(pet, "混沌")
+        if pet.get("quality") != "超脱":
+            ok, msg = petmod.upgrade_quality(pet, "超脱")
             if not ok:
                 return False, msg
         pet["custom"] = True
         self.add_pet_tag(pet, "定制")
-        return True, "宠物定制权限已解锁，品质已晋升为【混沌】"
+        self.raise_custom_assistant_quota(player)
+        return True, "宠物定制权限已解锁，品质已晋升为【超脱】，自动助手次数已保底至 50000"
 
     @staticmethod
     def add_pet_tag(pet: dict, tag: str) -> None:

@@ -1185,11 +1185,11 @@ class PlayerPortal:
                     pet_nick = pet.get("nickname", "宠物") if pet else "宠物"
                     species = pet.get("custom_species_name") or pet.get("species", "神秘生物") if pet else "神秘生物"
                     text = (
-                        "🎉 **全服贺电！灵契仙途迎来全新混沌定制大师！** 🎉\n\n"
+                        "🎉 **全服贺电！灵契仙途迎来全新超脱定制大师！** 🎉\n\n"
                         f"👑 尊贵的训练家 **{nickname}**（QQ：{show_qq}）\n"
-                        f"为心爱的 **{pet_nick}** 解锁了【混沌定制】权限！\n\n"
+                        f"为心爱的 **{pet_nick}** 解锁了【超脱定制】权限！\n\n"
                         f"✨ **{pet_nick}** 已褪去凡躯，化身为独一无二的 **{species}**，\n"
-                        "品质晋升为【混沌】，傲视群宠，闪耀全服！\n\n"
+                        "品质晋升为【超脱】，傲视群宠，闪耀全服！\n\n"
                         "💎 这是实力与热爱的象征，让我们共同祝贺这位大师登上灵契仙途的巅峰！\n"
                         "🚀 各位训练家也快去努力，打造属于自己的专属传奇宠物吧！"
                     )
@@ -2000,7 +2000,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 
           <div class="custom-box" v-if="!pet.custom">
             <el-input v-model="custom.code" placeholder="定制卡密" clearable></el-input>
-            <p class="muted" style="margin:8px 0 0">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为混沌。</p>
+            <p class="muted" style="margin:8px 0 0">输入宠物定制卡密，解锁后该宠物可修改形象和种类名称，品质将晋升为超脱。</p>
             <div class="fld">全群祝贺信息</div>
             <div style="display:flex;gap:8px">
               <el-input v-model="custom.nickname" placeholder="你的 QQ 昵称"></el-input>
@@ -2010,7 +2010,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
             <el-button type="primary" round :loading="custom.redeeming" @click="redeemCustom">解锁定制</el-button>
           </div>
           <div class="custom-box" v-else>
-            <div class="custom-badge"> 定制权限已解锁（混沌品质）</div>
+            <div class="custom-badge"> 定制权限已解锁（超脱品质）</div>
             <div class="custom-remaining">本月剩余次数：图片 {{ data.custom_remaining.image }} 次 / 名称 {{ data.custom_remaining.species_name }} 次</div>
             <div style="display:flex;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap">
               <el-button type="primary" round @click="openCustomEdit">修改形象 / 名称</el-button>

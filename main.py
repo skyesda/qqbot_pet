@@ -9753,7 +9753,7 @@ class PetParkPlugin(Star):
         lines.append("**【变种卡】**")
         lines.append(f"- **{sc['name']}** — {sc['price']} 玄晶　`使用 {sc['name']} 宠物名` 随机改变该宠物种类（保留等级/品质/属性）")
         lines.append("")
-        lines.append("> 注：圣灵/洪荒/创世/混沌为活动/定制限定品质，不在市场出售。")
+        lines.append("> 注：圣灵/洪荒/创世/混沌为活动限定品质，不在市场出售；超脱为顶级合成限定，仅可由 30 张混沌卡合成获得。")
         return "\n".join(lines)
 
     # =====================================================================
@@ -9821,14 +9821,16 @@ class PetParkPlugin(Star):
 
     def _exchange_fragment(self, player: dict, tokens: list[str]) -> str:
         """碎片转卡：同品质 10 片兑换 1 张该品质卡。"""
+        # 超脱无碎片（唯一途径是 30 张混沌卡合成超脱卡），故可用品质按「碎片已定义」过滤
+        frag_qualities = [q for q in data.QUALITIES if f"{q}碎片" in data.ITEMS]
         if len(tokens) < 2:
-            avg = "、".join(data.QUALITIES)
+            avg = "、".join(frag_qualities)
             return f"用法：碎片转卡 <品质>（例如：碎片转卡 普通）\n当前品质：{avg}"
         quality = tokens[1]
         fragment = f"{quality}碎片"
         card = f"{quality}卡"
         if quality not in data.QUALITIES or fragment not in data.ITEMS:
-            return f"没有『{fragment}』这种碎片。可用品质：{'、'.join(data.QUALITIES)}。"
+            return f"没有『{fragment}』这种碎片。可用品质：{'、'.join(frag_qualities)}。"
         need = data.FRAGMENT_TO_CARD
         have = player.get("bag", {}).get(fragment, 0)
         if have < need:
@@ -9904,7 +9906,7 @@ class PetParkPlugin(Star):
             return (
                 "用法：`合成卡 目标卡名`（例如：`合成卡 圣灵卡`）\n"
                 f"当前可合成：{available}\n"
-                "规则：通常 10 张低一级品质卡合成 1 张高一级品质卡；顶级【混沌卡】需 20 张【创世卡】。"
+                "规则：通常 10 张低一级品质卡合成 1 张高一级品质卡；特例：创世→混沌需 20 张，顶级混沌→超脱需 30 张。"
             )
         target = tokens[1]
         if target not in data.QUALITY_CARD_UPGRADE:
@@ -9972,7 +9974,7 @@ class PetParkPlugin(Star):
             if not any_cards:
                 return "你背包里没有任何『品质卡』，无法合成。"
             hold = "、".join(f"{c}×{has[c]}" for c in any_cards)
-            return f"品质卡数量不足，无法级联合成（需 10 张低级卡换 1 张高级卡，创世→混沌需 20 张）。当前持有：{hold}。"
+            return f"品质卡数量不足，无法级联合成（需 10 张低级卡换 1 张高级卡，创世→混沌需 20 张，混沌→超脱需 30 张）。当前持有：{hold}。"
         # 写回背包（按净变化：同一种卡既被消耗又产出时取差值）
         for q in data.QUALITIES:
             card = f"{q}卡"
@@ -10595,23 +10597,26 @@ class PetParkPlugin(Star):
             return f"炼化需要 **{cost} 玄晶**，当前玄晶不足。"
         quality = target.get("quality", "普通") or "普通"
         nick = target.get("nickname", "?")
+        # 超脱卡仅可由 30 张混沌卡合成：超脱宠炼化一律降级为混沌产出，封死回收绕道
+        refine_q = "混沌" if quality == "超脱" else quality
+        downgrade = "\n> ⚠️ 超脱卡仅可由 30 张混沌卡合成，超脱宠炼化按【混沌】档折算产出。" if refine_q != quality else ""
         self.store.add_currency(player, "玄晶", -cost)
         removed = self._remove_pet(player, idx)
         if not removed:
             self.store.add_currency(player, "玄晶", cost)  # 回滚
             return "炼化失败，宠物移除异常。"
         if random.random() < data.REFINE_CARD_CHANCE:
-            card = f"{quality}卡"
+            card = f"{refine_q}卡"
             self.store.add_item(player, card, 1)
             out = f"🎴 **炼化成功！**『{nick}』化作 **{card} ×1**！"
             hint = f"> 【{card}】可召唤同品质宠物，或用于提升品质。"
         else:
-            frag = f"{quality}碎片"
+            frag = f"{refine_q}碎片"
             n = random.randint(*data.REFINE_FRAGMENT_RANGE)
             self.store.add_item(player, frag, n)
             out = f"🧩 **炼化成功！**『{nick}』化作 **{frag} ×{n}**。"
-            hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{quality}卡】。"
-        return f"{out}\n\n💠 消耗 **{cost} 玄晶**。\n{hint}"
+            hint = f"> {data.FRAGMENT_TO_CARD} 片【{frag}】可兑换 1 张【{refine_q}卡】。"
+        return f"{out}{downgrade}\n\n💠 消耗 **{cost} 玄晶**。\n{hint}"
 
     def _refine_pet_card(self, player: dict, count_str: str | None = None) -> str:
         """炼化「宠物卡」（神秘卡）：品质随机结算，20% 出对应品质卡，80% 出对应品质碎片 3-8。
@@ -10950,7 +10955,7 @@ class PetParkPlugin(Star):
                 f"> 当前剩余 **{total}** 次\n"
                 f"> 发送『自动助手』勾选代跑任务，『开启自动助手』开始挂机。"
             )
-        # 宠物定制卡：解锁主宠「定制」权限（自定义名称/图片），晋升混沌并加「定制」标签。
+        # 宠物定制卡：解锁主宠「定制」权限（自定义名称/图片），晋升超脱并加「定制」标签。
         if it_check and it_check.get("effect", {}).get("custom_pet"):
             if not self.store.has_item(player, name):
                 return f"背包里没有『{name}』。"
@@ -10959,15 +10964,19 @@ class PetParkPlugin(Star):
                 return "你没有宠物，无法使用『宠物定制卡』。"
             if p.get("custom"):
                 return "该宠物已解锁「定制」权限，无需重复使用。"
+            # 先升品后标记，避免升品失败时 custom 已置真、卡未消耗的部分状态
+            if p.get("quality") != "超脱":
+                ok, msg = petmod.upgrade_quality(p, "超脱")
+                if not ok:
+                    return msg
             p["custom"] = True
-            ok, msg = petmod.upgrade_quality(p, "混沌")
-            if not ok:
-                return msg
             self.store.add_pet_tag(p, "定制")
             self.store.remove_item(player, name, 1)
+            quota = self.store.raise_custom_assistant_quota(player)
             return (
                 f"🎨 使用『{name}』：主宠已解锁**定制权限**（可自定义名称/图片）！\n"
-                "> 品质已晋升为 **【混沌】**，并附带「定制」专属标签。"
+                f"> 品质已晋升为 **【超脱】**，并附带「定制」专属标签。\n"
+                f"> 🎁 自动助手次数已保底至 **{quota}** 次。"
             )
         # 宠物卡：召唤出随机品质+随机物种的宠物。召唤无需已有宠物，故须在 _need_pet 门槛前处理。
         if it_check and it_check.get("effect", {}).get("summon_pet_card"):
@@ -10993,7 +11002,7 @@ class PetParkPlugin(Star):
                 f"> 灵光散尽，一只【{q}】品质的『{species}』随契而生，与你道心相通、缔结因缘。\n"
                 f"> 消耗 {name} ×1，发送 `我的宠物` 与它一见。"
             )
-        # 品质卡（普通卡~混沌卡）：双用途 —— ①「召唤」该品质随机宠物；②对指定宠物升品质。
+        # 品质卡（普通卡~超脱卡）：双用途 —— ①「召唤」该品质随机宠物；②对指定宠物升品质。
         # 召唤不需要已有宠物，故必须在此分支处理（在 _need_pet 门槛之前）。
         if it_check and it_check.get("effect", {}).get("upgrade_quality"):
             if not self.store.has_item(player, name):

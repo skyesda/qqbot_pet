@@ -36,7 +36,7 @@ STAGE_LEVEL_CAP = {
 EVOLVE_MIN_LEVEL = 60
 
 # ----------------------------------------------------------------------------
-# 宠物级别（品质）：普通 -> 混沌
+# 宠物级别（品质）：普通 -> 超脱
 # ----------------------------------------------------------------------------
 QUALITIES = [
     "普通",
@@ -49,6 +49,7 @@ QUALITIES = [
     "洪荒",
     "创世",
     "混沌",
+    "超脱",
 ]
 
 # 不同品质的基础成长系数（品质越高，每级成长值越高）
@@ -63,10 +64,15 @@ QUALITY_GROWTH = {
     "洪荒": 6.2,
     "创世": 7.6,
     "混沌": 9.2,
+    "超脱": 11.0,
 }
 
 # 砸蛋 / 随机宠物时各品质出现的权重（数值之和≈100，即约等于百分比概率）
-# 普通占比最高；圣灵/洪荒/创世/混沌为活动/定制限定，砸蛋概率控制在 0.2% 以下。
+# 普通占比最高；圣灵/洪荒/创世/混沌为活动限定，砸蛋概率控制在 0.2% 以下。
+# 超脱**刻意不在本权重表**：砸蛋、宠物卡召唤、炼化宠物卡等一切随机取品质
+# 均走本表，故超脱无法经随机渠道获得——普通玩家唯一途径是
+# 30 张混沌卡合成 1 张超脱卡（见 QUALITY_CARD_UPGRADE），
+# 另有宠物定制卡解锁时直接晋升（定制限定，同样不走随机）。
 QUALITY_WEIGHT = {
     "普通": 60,
     "精品": 19.2,
@@ -81,7 +87,7 @@ QUALITY_WEIGHT = {
 }
 
 # 宠物市场禁止直接购买的品质（留给活动、宠物定制等渠道）
-PET_MARKET_BANNED_QUALITIES = {"圣灵", "洪荒", "创世", "混沌"}
+PET_MARKET_BANNED_QUALITIES = {"圣灵", "洪荒", "创世", "混沌", "超脱"}
 
 # ----------------------------------------------------------------------------
 # 属性与克制：金-木-水-火-土-金；风-雷-冰-风；光-暗-光
@@ -244,7 +250,7 @@ PET_MARKET = {
 }
 
 # 宠物市场改卖品质卡与变种卡（不再按物种直售宠物）。
-# 品质卡定价（积分）：普通→史诗；圣灵/洪荒/创世/混沌仍为活动/定制限定，不可购买。
+# 品质卡定价（积分）：普通→史诗；圣灵/洪荒/创世/混沌/超脱仍为活动/合成限定，不可购买。
 # 卡片可 `使用 XXX卡 召唤` 随机召唤同品质宠物，或 `使用 XXX卡 宠物名` 给指定宠物升品质。
 PET_MARKET_CARDS = {
     "普通卡": 2000,
@@ -278,6 +284,7 @@ CURRENCY_DIAMOND = "钻石"
 # 每成功执行 1 个任务扣 1 次，额度归零自动停机。
 # ----------------------------------------------------------------------------
 ASSISTANT_QUOTA_PER_CARD = 500   # 1 张「自动助手卡」提供的执行次数
+ASSISTANT_QUOTA_CUSTOM_PET = 50000  # 定制宠物主人的次数池保底（解锁定制与存量迁移均提升至该值，只升不降）
 ASSISTANT_MAX_TASKS = 4          # 每只宠物最多勾选的任务数
 ASSISTANT_LOG_MAX = 20           # 每只宠物保留的最近执行记录条数（供「助手状态」查看）
 
@@ -744,6 +751,15 @@ ITEMS = {
         "desc": "将宠物品质提升为【混沌】，属性随品质同步飞跃。已是混沌品质无法使用。",
         "effect": {"upgrade_quality": "混沌"},
     },
+    # 顶级品质卡：普通玩家唯一途径是 30 张混沌卡合成；砸蛋/宠物卡等随机渠道不产出。
+    "超脱卡": {
+        "price": 0,
+        "currency": CURRENCY_JIFEN,
+        "category": "道具",
+        "usable": True,
+        "desc": "将宠物品质提升为【超脱】（顶级品质），属性随品质同步飞跃。已是超脱品质无法使用，且无法经砸蛋、宠物卡等随机途径获得。",
+        "effect": {"upgrade_quality": "超脱"},
+    },
     # ---- 多宠物系统 ----
     "宠物席位卡": {
         "price": 0,
@@ -761,20 +777,23 @@ ITEMS = {
         "desc": "神秘的宠物卡，使用『使用 宠物卡 召唤』时随机获得一只宠物（品质与种类均随机，与品质卡互相独立）。",
         "effect": {"summon_pet_card": True},
     },
-    # 生辰盛典专属：开启主宠「定制」权限（自定义名称/图片），并晋升混沌、加「定制」标签。
+    # 生辰盛典专属：开启主宠「定制」权限（自定义名称/图片），并晋升超脱、加「定制」标签。
     "宠物定制卡": {
         "price": 0,
         "currency": CURRENCY_JIFEN,
         "category": "道具",
         "usable": True,
-        "desc": "开启主宠「定制」权限（自定义名称/图片），并晋升为【混沌】品质、加「定制」标签。用法：『使用 宠物定制卡』。",
+        "desc": "开启主宠「定制」权限（自定义名称/图片），并晋升为【超脱】品质、加「定制」标签，并使自动助手次数保底 50000。用法：『使用 宠物定制卡』。",
         "effect": {"custom_pet": True},
     },
 }
 
 # 品质碎片（砸蛋副产物）：同品质 10 片兑换 1 张该品质卡。不可直接使用，仅作合成素材。
+# 超脱刻意不设碎片：其无任何随机产出来源，唯一获得途径是 30 张混沌卡合成超脱卡。
 FRAGMENT_TO_CARD = 10  # 兑换 1 张卡所需碎片数
 for _q in QUALITIES:
+    if _q == "超脱":
+        continue
     ITEMS[f"{_q}碎片"] = {
         "price": 0,
         "currency": CURRENCY_JIFEN,
@@ -806,17 +825,19 @@ for _frag, _mat in MATERIAL_FRAGMENTS.items():
         "effect": {},
     }
 
-# 品质卡合成链（10 张低一级卡合成 1 张高一级卡；顶级创世→混沌需 20 张，刻意加码）。
+# 品质卡合成链（10 张低一级卡合成 1 张高一级卡；两个特例刻意加码：
+# 创世→混沌 需 20 张、混沌→超脱 需 30 张，避免顶级太易得）。
 # 仅对实际存在的品质卡建立映射；缺少低级卡时链从第一个存在的卡开始。
-TOP_CARD_NAME = "混沌卡"
-TOP_CARD_COST = 20  # 创建世→混沌的合成张数专门上调，避免顶级太易得
+TOP_CARD_NAME = "超脱卡"
+TOP_CARD_COST = 30  # 混沌→超脱 的合成张数（顶级加码）
+CARD_COMBINE_COST = {"混沌卡": 20, "超脱卡": 30}  # 特例：目标卡名 -> 所需低一级卡张数
 QUALITY_CARD_UPGRADE: dict[str, tuple[str, int]] = {}
 for _i, _q in enumerate(QUALITIES):
     _src_card = f"{_q}卡"
     if _i + 1 < len(QUALITIES):
         _dst_card = f"{QUALITIES[_i + 1]}卡"
         if _src_card in ITEMS and _dst_card in ITEMS:
-            _need = TOP_CARD_COST if _dst_card == TOP_CARD_NAME else FRAGMENT_TO_CARD
+            _need = CARD_COMBINE_COST.get(_dst_card, FRAGMENT_TO_CARD)
             QUALITY_CARD_UPGRADE[_dst_card] = (_src_card, _need)
 
 # 在品质卡说明里追加合成信息
@@ -2320,7 +2341,7 @@ def homestead_production(building: str, level: int) -> dict:
 # ============================================================================
 # 派遣对产量的加成系数
 HOMESTEAD_DISPATCH_LEVEL_FACTOR = 0.006   # 宠物每级 +0.6% 产量
-HOMESTEAD_DISPATCH_QUALITY_FACTOR = 0.04  # 品质每档 +4%（普通=0, 混沌=9→36%）
+HOMESTEAD_DISPATCH_QUALITY_FACTOR = 0.04  # 品质每档 +4%（普通=0, 混沌=9→36%, 超脱=10→40%）
 HOMESTEAD_DISPATCH_ELEMENT_MATCH = 0.10   # 属性匹配额外 +10%
 HOMESTEAD_DISPATCH_ENERGY_PER_HOUR = 2    # 派遣每小时消耗宠物精力
 HOMESTEAD_DISPATCH_MIN_ENERGY = 5         # 派遣最低精力要求
@@ -2596,7 +2617,7 @@ EXCHANGE_RATES = {
 }
 
 REBIRTH_KEEP_ITEMS = {              # 重生后保留的物品（长期养成投入，不随重生清零）
-    *(f"{q}卡" for q in QUALITIES),  # 全部品质卡（普通碎片→混沌卡）
+    *(f"{q}卡" for q in QUALITIES),  # 全部品质卡（普通碎片→超脱卡）
     *(f"{q}碎片" for q in QUALITIES),  # 全部品质碎片
     "宠物卡", "自动助手卡", "定制卡",
 }
