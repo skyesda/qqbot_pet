@@ -868,21 +868,9 @@ class PlayerPortal:
         account = self.store.get_account(sess["aid"])
         if not account:
             raise web.HTTPUnauthorized(text="账号不存在")
-        bound = []
-        for bp in account.get("bound_pets", []):
-            key = self.store.make_key(bp.get("group", ""), bp.get("qq", ""))
-            player = self.store._data["players"].get(key)
-            pet = self._resolve_player_pet(player, bp.get("pet_index", 0)) if player else None
-            bound.append({
-                "group_id": bp.get("group"),
-                "qq": bp.get("qq"),
-                "pet_index": bp.get("pet_index", 0),
-                "nickname": pet.get("nickname") if pet else bp.get("nickname", "未命名"),
-                "species": pet.get("species") if pet else bp.get("species", "未知"),
-                "level": pet.get("level", 1) if pet else 1,
-                "quality": pet.get("quality", "普通") if pet else "普通",
-                "image_url": images.pet_image_url(pet.get("species")) if pet else None,
-            })
+        # 绑定语义是「(群, 用户ID) 槽位 = 一位修士」，故灵宠按其**修士数据底下的全部宠物**
+        # 实时展开；账号的 bound_pets 只记绑定当时那一只的快照，不作为展示依据。
+        pets = []
         slots = []
         for slot in self.store.bound_slots_of(account):
             key = self.store.make_key(slot["group"], slot["qq"])
@@ -890,14 +878,31 @@ class PlayerPortal:
             if not player:
                 continue
             role = self._slot_role_summary(player, slot["group"], slot["qq"])
-            slot_pets = [bp for bp in bound if bp["group_id"] == slot["group"] and bp["qq"] == slot["qq"]]
+            active_index = int(player.get("active_pet", 0) or 0)
+            slot_pets = []
+            for index, pt in enumerate(player.get("pets", []) or []):
+                if not isinstance(pt, dict):
+                    continue
+                slot_pets.append({
+                    "group_id": slot["group"],
+                    "qq": slot["qq"],
+                    "pet_index": index,
+                    "nickname": pt.get("nickname") or "未命名",
+                    "species": pt.get("species") or "未知",
+                    "level": pt.get("level", 1),
+                    "quality": pt.get("quality", "普通"),
+                    "image_url": images.pet_image_url(pt.get("species")),
+                    "active": index == active_index,
+                })
+            pets.extend(slot_pets)
             slots.append({
                 "group_id": slot["group"],
                 "qq": slot["qq"],
                 "pets": slot_pets,
+                "active_pet": active_index,
                 "adventure": role["adventure"],
                 "mounts": role["mounts"],
-                "pet_count": len(player.get("pets", []) or []),
+                "pet_count": len(slot_pets),
                 "mount_count": len(role["mounts"]),
             })
         return web.json_response({
@@ -907,7 +912,9 @@ class PlayerPortal:
                 "qq": account["qq"],
                 "email_masked": self._mask_email(account.get("email") or ""),
             },
-            "bound_pets": bound,
+            "pets": pets,
+            # 兼容仍开着旧页面的标签页（字段名沿用，语义同 pets）
+            "bound_pets": pets,
             "slots": slots,
         })
 
@@ -1817,7 +1824,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
 <script src="/webstatic/device-ui.js?v=20260922-1"></script>
 <title>灵契仙途 · 玩家中心</title>
 <link rel="stylesheet" href="/webstatic/element-plus.min.css">
-<link rel="stylesheet" href="/webstatic/portal.css?v=20260922-4">
+<link rel="stylesheet" href="/webstatic/portal.css?v=20260924-1">
 <link rel="stylesheet" href="/webstatic/mobile.css?v=20260922-1">
 </head>
 <body class="portal-page">
@@ -1958,7 +1965,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
            @click="loadPet(p)" :aria-pressed="!!(current && (current.pet_index||0)===(p.pet_index||0))">
         <img :src="p.image_url || blankImg" alt="">
         <div class="info">
-          <div class="name">{{ p.nickname }}</div>
+          <div class="name">{{ p.nickname }}<span v-if="p.active" class="pet-active">出战</span></div>
           <div class="sub">Lv{{ p.level }} · {{ p.quality }}</div>
         </div>
       </button>
@@ -2469,7 +2476,7 @@ createApp({
       const me = await api('/api/portal/me');
       if(!me || !me.ok){ location.href = '/'; return; }
       account.value = me.account;
-      pets.value = me.bound_pets || [];
+      pets.value = me.pets || [];
       slots.value = me.slots || [];
       if(location.hash === '#feedback'){
         location.href = '/feedback';
@@ -2477,11 +2484,7 @@ createApp({
       }
       const first = slots.value[0];
       if(!first){ currentSlot.value = null; data.value = null; return; }
-      if(first.pets && first.pets.length){
-        await loadPet(first.pets[0]);
-      } else {
-        await loadPet({group_id:first.group_id, qq:first.qq, pet_index:0});
-      }
+      await loadPet(defaultPetOf(first));
       }catch(error){loadError.value='连接未完成，请检查网络后重试。';}
       finally{initialLoading.value=false;}
     }
@@ -2516,13 +2519,19 @@ createApp({
 
     function switchSlot(s){
       if(!s) return;
-      if(s.pets && s.pets.length){ loadPet(s.pets[0]); }
-      else { loadPet({group_id:s.group_id, qq:s.qq, pet_index:0}); }
+      loadPet(defaultPetOf(s));
+    }
+
+    // 槽位默认加载的灵宠：优先出战宠物，其次列表首只；无宠物记录时退回索引 0。
+    function defaultPetOf(s){
+      const list = (s && s.pets) || [];
+      const active = list.find(p=>(p.pet_index||0)===(s.active_pet||0));
+      return active || list[0] || {group_id:s.group_id, qq:s.qq, pet_index:0};
     }
 
     async function refreshAll(){
       const me = await api('/api/portal/me');
-      if(me && me.ok){ account.value = me.account; pets.value = me.bound_pets || []; slots.value = me.slots || []; }
+      if(me && me.ok){ account.value = me.account; pets.value = me.pets || []; slots.value = me.slots || []; }
       if(current.value) await loadPet(current.value);
     }
 
@@ -3401,7 +3410,13 @@ createApp({
       const me = await api('/api/portal/me');
       if(!me || !me.ok){ location.href = '/'; return; }
       account.value = me.account;
-      pets.value = me.bound_pets || [];
+      // 网页游玩按**角色（槽位 = 一位修士）**选，不按宠物选：`/api/portal/chat`
+      // 只吃 group_id + qq，同一槽位下的多只灵宠会是重复项。
+      pets.value = (me.slots || []).map(s=>({
+        group_id: s.group_id, qq: s.qq,
+        nickname: (s.adventure && s.adventure.name) || ('QQ ' + s.qq),
+        image_url: (s.adventure && s.adventure.portrait_url) || '',
+      }));
       loaded.value = true;
       if(pets.value.length) loadHistory();
     });
