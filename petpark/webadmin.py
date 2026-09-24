@@ -1536,7 +1536,7 @@ LOGIN_HTML = r"""<!doctype html>
 DASHBOARD_HTML = r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>灵契仙途 · 管理后台</title>
-<link rel="stylesheet" href="/webstatic/admin.css?v=20260922"></head><body class="admin-page">
+<link rel="stylesheet" href="/webstatic/admin.css?v=20260924"></head><body class="admin-page">
 <a class="skip-link" href="#workspace">跳到管理内容</a>
 <aside class="sidebar" id="sidebar">
  <a class="admin-brand" href="/"><span class="seal" aria-hidden="true">契</span><span>灵契仙途<small>运营管理</small></span></a>
@@ -1613,4 +1613,4 @@ DASHBOARD_HTML = r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-
 <button class="act ghost" onclick="closeFbModal()">关闭</button>
 </div>
 </div></div>
-<script src="/webstatic/admin.js?v=20260922" defer></script></body></html>"""
+<script src="/webstatic/admin.js?v=20260924" defer></script></body></html>"""
