@@ -8404,21 +8404,16 @@ class PetParkPlugin(Star):
         return None
 
     def _infinite_group_ids(self) -> set[str]:
-        """全服所有无限服群的规范群 openid 集合，用于从跨群共享层剔除。"""
-        out: set[str] = set()
-        for gid, g in self.store._data.get("groups", {}).items():
-            if str(g.get("server_type", "official")) == "infinite":
-                out.add(self.store.resolve_group(str(gid)))
-        return out
+        """全服所有无限服群的规范群 openid 集合，用于从跨群共享层剔除。
+
+        口径已下沉到 store（单一来源，官网首页 portal 也复用同一份）：
+        petpark/store.py infinite_group_ids。改这里的口径前先看那两处调用点。
+        """
+        return self.store.infinite_group_ids()
 
     def _infinite_member_qqs(self) -> set[str]:
         """所有「在无限服群有玩家档案」的 openid 集合，用于从按-qq共享的排行中剔除。"""
-        inf = self._infinite_group_ids()
-        out: set[str] = set()
-        for pl in self.store.all_players().values():
-            if self.store.resolve_group(str(pl.get("group", ""))) in inf:
-                out.add(str(pl.get("qq", "")))
-        return out
+        return self.store.infinite_member_qqs()
 
     def _is_group_authorized(self, group_id: str) -> bool:
         if not self._is_group(group_id):

@@ -557,6 +557,43 @@ class PetStore:
         g = self.get_group(self.resolve_group(str(group_id)))
         return str(g.get("server_type", "official")) == "infinite"
 
+    def infinite_group_ids(self) -> set[str]:
+        """全服所有无限服群的规范群 openid 集合。
+
+        与 _is_infinite_group 同源：先把键 resolve 到规范群，再读**规范群自己**的
+        server_type（不读别名键上的值），保证「哪些群是无限服」只有一个答案。
+
+        只读：只遍历**已存在**的 groups，绝不调 get_group（那会在群不存在时就地新建
+        记录写进存档）。跨群共享层要剔除无限服时用它，可安全地从公开 GET 接口调用。
+        """
+        groups = self._data.get("groups", {})
+        out: set[str] = set()
+        for gid in groups:
+            canon = self.resolve_group(str(gid))
+            if canon in out:
+                continue
+            g = groups.get(canon)
+            if isinstance(g, dict) and str(g.get("server_type", "official")) == "infinite":
+                out.add(canon)
+        return out
+
+    def infinite_member_qqs(self) -> set[str]:
+        """所有「在无限服群有玩家档案」的 openid 集合。
+
+        用于按-openid 全局共享的表（摸金 tomb_players、扫雷）：那类表按裸 openid 存，
+        无法按群归因，只能连人一起剔。
+        """
+        inf = self.infinite_group_ids()
+        if not inf:
+            return set()
+        out: set[str] = set()
+        for pl in self.all_players().values():
+            if not isinstance(pl, dict):
+                continue
+            if self.resolve_group(str(pl.get("group", ""))) in inf:
+                out.add(str(pl.get("qq", "")))
+        return out
+
     def _state_key(self, game: str, group_id, qq: str) -> str:
         """按服类型挑共享键（官方）或隔离键（无限）。game 如 'hom'/'tomb'/'ms'。"""
         if self._is_infinite_group(group_id):

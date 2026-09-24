@@ -658,8 +658,23 @@ class PlayerPortal:
         if cache and now - cache[0] < 30:
             return web.json_response(cache[1])
         players = self.store.all_players()
+        # 官网首页以官方服排行为准：无限服免税费、小管理员可无上限加灵石/玄晶，再叠加
+        # 无累计上限的重生（全属性 ×2~×10）→ 属性指数爆炸，混进首页会挤掉正常玩家。
+        # 口径与群内「仙途战力榜全服」/「神榜」一致，不是首页自创：
+        #   · 有 group 的档案类榜（灵宠、仙途）→ 按群剔除，无限服玩家的官方服档案保留；
+        #   · 摸金三榜按裸 openid 全局共享（store.tomb_state），无法按群归因 → 只能按
+        #     openid 连人一起剔（与 main._tomb_rank 同口径）。
+        # 注意：这里只读已存在的 groups（infinite_group_ids 不调 get_group），公开 GET 接口
+        # 绝不能因统计而新建群记录改存档。
+        inf_groups = self.store.infinite_group_ids()
+        inf_qqs = self.store.infinite_member_qqs()
+        official = {
+            k: pl for k, pl in players.items()
+            if isinstance(pl, dict)
+            and self.store.resolve_group(str(pl.get("group", ""))) not in inf_groups
+        }
         pet_entries = []
-        for pl in players.values():
+        for pl in official.values():
             pet = pl.get("pet")
             if not pet:
                 continue
@@ -681,7 +696,7 @@ class PlayerPortal:
         except Exception:
             compute_unified_power = None
         if compute_unified_power is not None:
-            for pl in players.values():
+            for pl in official.values():
                 adv = pl.get("adventure") or {}
                 if not adv.get("name"):
                     continue
@@ -708,7 +723,16 @@ class PlayerPortal:
         today = datetime.now().strftime("%Y-%m-%d")
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         tomb_rank, tomb_today, tomb_yesterday = [], [], []
+        tomb_count = 0
         for qq, st in tomb.items():
+            if str(qq) in inf_qqs:
+                # 该 openid 在无限服群有档案 → 从官方服首页摸金榜剔除（按人，非按群）。
+                # 已知局限：摸金表按裸 openid 全局共享，双服玩家在无限服赚的冥币与本表
+                # 无法拆分，故这里是「连人带数据一起不出现在首页」，与群内 _tomb_rank 相同。
+                continue
+            if not isinstance(st, dict):
+                continue
+            tomb_count += 1
             masked = self._mask_qq(qq)
             mingbi = int(st.get("mingbi", 0) or 0)
             if mingbi > 0:
@@ -725,10 +749,10 @@ class PlayerPortal:
         payload = {
             "ok": True,
             "stats": {
-                "players": len(players),
+                "players": len(official),
                 "auth_groups": auth_groups,
                 "pets": len(pet_entries),
-                "tomb_players": len(tomb),
+                "tomb_players": tomb_count,
             },
             "pet_rank": pet_entries[:10],
             "cultivator_rank": cultivators[:10],
@@ -3627,9 +3651,9 @@ _HOME_HTML = r"""<!DOCTYPE html>
     <a class="hero-note" href="#explore">向下展开仙途长卷 &nbsp; ↓</a>
   </div>
   <div class="stats reveal">
-    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.players) : '—' }}</div><div class="lbl">全服玩家</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.players) : '—' }}</div><div class="lbl">官方服玩家</div></div>
     <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.auth_groups) : '—' }}</div><div class="lbl">授权群聊</div></div>
-    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.pets) : '—' }}</div><div class="lbl">在册宠物</div></div>
+    <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.pets) : '—' }}</div><div class="lbl">已领灵宠</div></div>
     <div class="stat-card"><div class="num">{{ hasData ? fmt(disp.tomb_players) : '—' }}</div><div class="lbl">摸金玩家</div></div>
   </div>
 
@@ -3694,7 +3718,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
 
   <section class="section rank-section" id="rankings">
     <div class="section-kicker">问道 · 修士登顶</div>
-    <div class="section-head"><h2>仙途战力榜</h2><span>按修士综合战力排序（修士 + 灵宠 + 坐骑 + 道侣）</span></div>
+    <div class="section-head"><h2>仙途战力榜</h2><span>按修士综合战力排序（修士 + 灵宠 + 坐骑 + 道侣） · 仅官方服</span></div>
     <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
     <div class="boards">
       <div class="board full">
@@ -3719,7 +3743,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
 
   <section class="section rank-section">
     <div class="section-kicker">风云 · 群雄留名</div>
-    <div class="section-head"><h2>灵宠战力榜</h2><span>按灵宠自身战力排序 · 修士综合战力见上方「仙途战力榜」</span></div>
+    <div class="section-head"><h2>灵宠战力榜</h2><span>按灵宠自身战力排序 · 修士综合战力见上方「仙途战力榜」 · 仅官方服</span></div>
     <p v-if="homeError" class="data-state" role="status">{{ homeError }}</p>
     <div class="boards">
       <div class="board full">
@@ -3745,10 +3769,10 @@ _HOME_HTML = r"""<!DOCTYPE html>
   </section>
 
   <div class="section reveal">
-    <div class="section-head"><h2>摸金风云榜</h2><span>地宫探险 · 记录每一笔收获</span></div>
+    <div class="section-head"><h2>摸金风云榜</h2><span>地宫探险 · 记录每一笔收获 · 仅官方服</span></div>
     <div class="boards">
       <div class="board full">
-        <h3>摸金排行 · 全服</h3>
+        <h3>摸金排行 · 官方服</h3>
         <div class="sub">按永久冥币总量排序</div>
         <ol class="mobile-rank-list" aria-label="摸金排行"><li v-for="(row,index) in tombRank" :key="index"><span class="rank-position">{{ index+1 }}</span><div class="rank-person"><b>{{ row.qq }}</b><small>{{ '累计冥币' }}</small></div><strong class="rank-power">{{ fmt(row.value) }}</strong></li><li v-if="!tombRank.length" class="rank-empty">{{ loading ? '正在读取榜单…' : '暂无上榜数据' }}</li></ol>
         <el-table :data="tombRank" empty-text="暂无上榜数据">
@@ -3822,7 +3846,7 @@ _HOME_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
-  <footer><div>灵契仙途 · 与灵宠结契，共赴仙途。<br>榜单每 30 秒刷新；不同玩法按各自规则统计。</div><div><a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> &nbsp; / &nbsp; <a href="/agreement" style="display:inline-block;border:1px solid #a68d5e;border-radius:2px;padding:0 9px;line-height:21px;color:#7d6a45">用户协议</a></div></footer>
+  <footer><div>灵契仙途 · 与灵宠结契，共赴仙途。<br>榜单每 30 秒刷新；仅统计官方服（不含无限服）。</div><div><a href="/portal">玩家中心</a> &nbsp; / &nbsp; <a href="/chat">网页游玩</a> &nbsp; / &nbsp; <a href="https://qm.qq.com/q/S6ql07Q72m" target="_blank" rel="noopener">官方群 547205828</a> &nbsp; / &nbsp; <a href="/agreement" style="display:inline-block;border:1px solid #a68d5e;border-radius:2px;padding:0 9px;line-height:21px;color:#7d6a45">用户协议</a></div></footer>
 </main>
 
 <nav class="mobile-home-dock" aria-label="手机玩家入口" v-show="!auth.show"><a href="#start">新手指引</a><el-button @click="loggedIn ? goPortal() : openAuth('login')">{{ loggedIn ? '回到我的角色' : '进入玩家中心' }} &nbsp; ↗</el-button></nav>
@@ -3891,7 +3915,7 @@ createApp({
       {title:'坐骑与情缘',subtitle:'坐骑养成 / 外观定制 / 道侣双修',desc:'带上坐骑踏入仙途，与另一位修士结为道侣。玩家中心可查看坐骑，并在解锁资格后申请专属外观。',commands:['我的坐骑','道侣情缘','道侣双修']},
       {title:'宗门与家园',subtitle:'开宗立派 / 宗门任务 / 家园经营',desc:'与群友经营宗门、完成任务与探索；闲下来，也可以回到自己的家园。',commands:['宗门帮助','查看宗门','宗门任务','宗门兑换','家园']},
       {title:'摸金与棋局',subtitle:'地宫探险 / 扫雷 / 群聊棋类对弈',desc:'下地宫摸金，或与群友摆一局。象棋、围棋、五子棋、军棋和斗兽棋都有各自的玩法。发送完整菜单查看开局方式。',commands:['摸金介绍','灵契仙途']},
-      {title:'每日与排行',subtitle:'签到 / 商城背包 / 本群与全服战力榜',desc:'签到领取日常奖励，查看背包与商城。群内仙途战力榜展示综合战力，官网下方保留灵宠自身战力和摸金榜。',commands:['签到','查看背包','宠物商城','仙途战力榜','仙途战力榜全服']}
+      {title:'每日与排行',subtitle:'签到 / 商城背包 / 本群与全服战力榜',desc:'签到领取日常奖励，查看背包与商城。群内仙途战力榜展示综合战力，官网下方保留灵宠自身战力和摸金榜（官网榜单仅统计官方服，不含无限服）。',commands:['签到','查看背包','宠物商城','仙途战力榜','仙途战力榜全服']}
     ];
     async function copyCommand(command){
       try { await navigator.clipboard.writeText(command); ElMessage.success('已复制「'+command+'」，请到游戏群发送'); }
@@ -3904,8 +3928,8 @@ createApp({
     const tombRank = ref([]);
     const tombToday = ref([]);
     const tombYst = ref([]);
-    const todaySub = ref('统计今日 00:00 至今获得冥币');
-    const ystSub = ref('前三名可领取随机宠物经验奖励');
+    const todaySub = ref('统计今日 00:00 至今获得冥币（仅官方服）');
+    const ystSub = ref('前三名可领取随机宠物经验奖励（仅官方服）');
     const auth = reactive({show:false, mode:'login', tab:'pwd', qq:'', pwd:'', pwd2:'', email:'', code:'', loading:false, sending:false, countdown:0, hint:''});
     let cdTimer = null;
     const authTitle = Vue.computed(() => auth.mode==='register' ? '注册' : (auth.mode==='bind' ? '绑定邮箱' : '登录'));
@@ -3965,8 +3989,8 @@ createApp({
         tombRank.value = r.tomb_rank || [];
         tombToday.value = r.tomb_today || [];
         tombYst.value = r.tomb_yesterday || [];
-        todaySub.value = `统计 ${r.date_today} 00:00 至今获得冥币，每日 0 点重置`;
-        ystSub.value = `统计 ${r.date_yesterday} 全天 · 前三名可领取随机宠物经验奖励`;
+        todaySub.value = `统计 ${r.date_today} 00:00 至今获得冥币，每日 0 点重置（仅官方服）`;
+        ystSub.value = `统计 ${r.date_yesterday} 全天 · 前三名可领取随机宠物经验奖励（仅官方服）`;
       }catch(e){
         homeError.value = hasData.value ? '数据更新暂时中断，当前显示上次获取结果。' : '榜单暂时未能加载，请稍后重试。';
       }finally{ loading.value = false; }
