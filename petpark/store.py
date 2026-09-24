@@ -137,6 +137,57 @@ class PetStore:
         self._migrate_bank_overflow()
         self._migrate_assistant_v1()
         self._migrate_custom_quality_v1()
+        self._migrate_custom_quota_v2()
+
+    def _migrate_custom_quota_v2(self) -> None:
+        """定制宠物次数池 50000 → 1000 收敛（一次性，带幂等标记）。
+
+        5 万整池保底是当年为补偿「定制宠物永久免费」下线而设的；现在定制宠物的
+        『修炼/双修』『幻境寻宝』已在自动助手里**永久免费**（data.ASSISTANT_CUSTOM_FREE_TASKS
+        由 main._assistant_free_task 判定），整池 5 万不再必要，统一收敛到新的
+        ASSISTANT_QUOTA_CUSTOM_PET。
+
+        只**向下封顶**、不向上提升：额度本就不高于新值的一律不动——那可能是玩家自己
+        用自动助手卡充的（1 张 500 次），削它等于吞掉已购商品。故只削掉旧保底溢出的部分。
+
+        带 `custom_quota_v2` 标记是**必需**的，不能只靠「取 min」做到幂等：玩家日后
+        用自动助手卡把额度充回 5 万以上时，无标记的写法会在下次冷重启把充值吞掉。
+        """
+        if self._data.get("custom_quota_v2"):
+            return
+        self._data["custom_quota_v2"] = True
+        try:
+            if self.path.exists():
+                bak = self.path.with_name(self.path.name + ".pre_custom_quota_migration.bak")
+                if not bak.exists():
+                    bak.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError as exc:
+            logging.getLogger(__name__).warning("[petpark] 定制次数收敛迁移备份失败：%s", exc)
+
+        cap = max(0, int(data.ASSISTANT_QUOTA_CUSTOM_PET))
+        n_players = 0
+        freed = 0
+        for pl in self._data.get("players", {}).values():
+            if not isinstance(pl, dict):
+                continue
+            if not any(
+                isinstance(pet, dict) and pet.get("custom")
+                for pet in (pl.get("pets") or [])
+            ):
+                continue
+            info = pl.get("assistant")
+            if not isinstance(info, dict):
+                continue
+            cur = max(0, int(info.get("quota", 0) or 0))
+            if cur > cap:
+                info["quota"] = cap
+                n_players += 1
+                freed += cur - cap
+        if n_players:
+            logging.getLogger(__name__).info(
+                "[petpark] 定制宠物助手次数收敛：%d 名玩家 5 万 → %d（共回收 %d 次）",
+                n_players, cap, freed,
+            )
 
     def _migrate_custom_quality_v1(self) -> None:
         """定制宠物混沌→超脱迁移（一次性，幂等）。
@@ -144,7 +195,7 @@ class PetStore:
         ① 所有已有「定制」宠物品质晋升为【超脱】，属性按 9.2→11.0 成长系数
           同步飞跃（复用 upgrade_quality 的比例重算）；品质字段异常时兜底直写。
         ② 名下持有定制宠物的玩家，自动助手次数池保底提升至
-          ASSISTANT_QUOTA_CUSTOM_PET（只升不降，不动已高于 5 万的玩家）。
+          ASSISTANT_QUOTA_CUSTOM_PET（只升不降，不动已高于该值的玩家）。
 
         执行环境是 _load() 内、任何 _flush() 之前，此时 self.path 仍是迁移前的
         原始存档，先复制一份留档（与 _migrate_assistant_v1 同款约定）。
@@ -187,8 +238,8 @@ class PetStore:
                 if after > before:
                     n_players += 1
         logging.getLogger(__name__).info(
-            "[petpark] 定制超脱迁移完成：%d 只定制宠晋升超脱，%d 名玩家助手次数保底 5 万",
-            n_pets, n_players,
+            "[petpark] 定制超脱迁移完成：%d 只定制宠晋升超脱，%d 名玩家助手次数保底 %d",
+            n_pets, n_players, data.ASSISTANT_QUOTA_CUSTOM_PET,
         )
 
     def _migrate_assistant_v1(self) -> None:
@@ -2529,7 +2580,7 @@ class PetStore:
         pet["custom"] = True
         self.add_pet_tag(pet, "定制")
         self.raise_custom_assistant_quota(player)
-        return True, "宠物定制权限已解锁，品质已晋升为【超脱】，自动助手次数已保底至 50000"
+        return True, f"宠物定制权限已解锁，品质已晋升为【超脱】，自动助手次数已保底至 {data.ASSISTANT_QUOTA_CUSTOM_PET}"
 
     @staticmethod
     def add_pet_tag(pet: dict, tag: str) -> None:

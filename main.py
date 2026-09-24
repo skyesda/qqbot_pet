@@ -950,6 +950,16 @@ class PetParkPlugin(Star):
         """「修炼」任务内部按月老状态自动选 修炼 / 双修（沿用旧的挂机规则）。"""
         return "双修" if pet.get("love_state") == "已婚" else "修炼"
 
+    @staticmethod
+    def _assistant_free_task(key: str, pet: dict) -> bool:
+        """该任务对该宠物是否**永久免费**（不扣次数、次数为 0 也能跑）。
+
+        只有定制宠物享受，且仅限 data.ASSISTANT_CUSTOM_FREE_TASKS 里的任务；
+        与月卡、「限时免费」后台窗口是两套独立口径（那两个是玩家级、有期限的）。
+        「修炼」一个 key 覆盖双修：已婚宠物改跑『双修』时仍是同一个 key。
+        """
+        return bool(pet.get("custom")) and key in data.ASSISTANT_CUSTOM_FREE_TASKS
+
     def _assistant_log(self, pet: dict, key: str, text: str) -> None:
         """记一条执行结果（环形，只留最近 ASSISTANT_LOG_MAX 条）。
 
@@ -1055,6 +1065,7 @@ class PetParkPlugin(Star):
         quota = self.store.assistant_quota(player)
         free = self.store.assistant_free_active()
         monthly = self.store.monthly_state(player)
+        free_tasks = [t for t in picked if self._assistant_free_task(t, pet)]
         picked_txt = "、".join(picked) if picked else "（未选）"
         head = (
             f"## 🧘 自动助手\n"
@@ -1063,6 +1074,11 @@ class PetParkPlugin(Star):
             f"🎫 **剩余次数**　{quota}\n"
             f"⚙️ **状态**　{'🟢 运行中' if a.get('enabled') else '🔴 已停止'}\n"
         )
+        if free_tasks:
+            head += (
+                f"🎨 **定制宠物免费**　{'、'.join(free_tasks)}"
+                "（永久不扣次数，剩余 0 次也能运行）\n"
+            )
         if free:
             head += "🎁 **限时免费中**　执行任务不消耗次数，剩余 0 次也能运行\n"
         if monthly:
@@ -1076,6 +1092,10 @@ class PetParkPlugin(Star):
             f"点下方按钮勾选要代跑的任务（最多 **{data.ASSISTANT_MAX_TASKS}** 个），再点一次取消；"
             f"选好后点「确定」。\n"
             f"按钮上写的是简称（QQ 对按钮文字有长度上限），完整任务名以上面「已选」与『助手状态』为准。\n\n"
+            + (
+                "> 🎨 定制宠物免费任务：永久不扣次数，剩余 0 次也照跑。\n"
+                if free_tasks else ""
+            )
             + (
                 "> 🎁 限时免费期：每成功执行 1 个任务不扣次数（玩家级，本群所有宠物共用）。\n"
                 "> 发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
@@ -1168,6 +1188,11 @@ class PetParkPlugin(Star):
                 lines.append(
                     f"🗓 {self._monthly_line(monthly)}：执行任务不扣次数"
                 )
+        free_tasks = [t for t in picked if self._assistant_free_task(t, p)]
+        if free_tasks:
+            lines.append(
+                f"🎨 定制宠物免费：{'、'.join(free_tasks)} 永久不扣次数（剩余 0 次也能运行）"
+            )
         lines.append("")
         lines.append("点下方「修改」可重挑任务；发送『开启自动助手』开始挂机，『助手状态』查看运行明细。")
         return "\n".join(lines)
@@ -1189,7 +1214,10 @@ class PetParkPlugin(Star):
                 )
             free = self.store.assistant_free_active()
             monthly = self.store.monthly_state(player)
-            if self.store.assistant_quota(player) <= 0 and not free and not monthly:
+            # 定制宠物的免费任务不吃额度：勾选里有一个，剩余 0 次也允许开启
+            has_free = any(self._assistant_free_task(t, p) for t in a["tasks"])
+            if (self.store.assistant_quota(player) <= 0 and not free
+                    and not monthly and not has_free):
                 return (
                     "自动助手次数不足。\n\n"
                     "> 请使用『自动助手卡』、月卡，或发送『修炼卡 卡密』兑换后重试。"
@@ -1201,6 +1229,13 @@ class PetParkPlugin(Star):
                 f"剩余次数：{self.store.assistant_quota(player)}",
                 "",
             ]
+            if has_free:
+                free_names = "、".join(
+                    t for t in a["tasks"] if self._assistant_free_task(t, p)
+                )
+                lines.append(
+                    f"> 🎨 定制宠物免费任务：{free_names} **永久不扣次数**，剩余 0 次也照跑。"
+                )
             if free:
                 lines.append("> 🎁 当前处于限时免费期：执行任务不消耗次数，剩余 0 次也能正常运行。")
             elif monthly:
@@ -1244,6 +1279,14 @@ class PetParkPlugin(Star):
             lines.append(
                 f"🗓 {self._monthly_line(monthly)}：执行任务不扣次数。"
             )
+        quota = self.store.assistant_quota(player)
+        # 免费口径：限时免费窗口 / 月卡（玩家级，有期限）+ 定制宠物免费任务（永久）
+        unlimited = self.store.assistant_free_active() or bool(monthly)
+        free_tasks = [t for t in tasks if self._assistant_free_task(t, p)]
+        if free_tasks:
+            lines.append(
+                f"🎨 定制宠物免费：{'、'.join(free_tasks)} 永久不扣次数（剩余 0 次也能运行）。"
+            )
         lines.append(f"累计代跑：{a.get('total_runs', 0)} 次")
         last = int(a.get("last_run_at", 0) or 0)
         lines.append(f"最后执行：{time.strftime('%Y/%m/%d %H:%M:%S', time.localtime(last)) if last else '—'}")
@@ -1257,7 +1300,13 @@ class PetParkPlugin(Star):
             try:
                 for tkey in tasks:
                     reason = self._assistant_ready(tkey, player, p, group_id, str(player.get("qq", "")))
-                    lines.append(f"{'🟢' if reason is None else '⚪'} {tkey}：{reason or '可执行'}")
+                    if (reason is None and not unlimited
+                            and quota <= 0 and not self._assistant_free_task(tkey, p)):
+                        # 额度为 0 时，收费任务本轮会被跳过（免费任务照跑），
+                        # 不能在这里显示「可执行」误导玩家。
+                        reason = "次数不足"
+                    tag = "（定制免费）" if self._assistant_free_task(tkey, p) else ""
+                    lines.append(f"{'🟢' if reason is None else '⚪'} {tkey}：{reason or '可执行'}{tag}")
             finally:
                 player["pet"] = prev_ref
         log = a.get("log") or []
@@ -1555,6 +1604,8 @@ class PetParkPlugin(Star):
         未就绪的任务本轮直接跳过，不扣次数、不落盘。
         处于「限时免费使用自动助手」窗口内（后台可配）或玩家月卡生效期内时，
         本轮不扣次数、剩余次数为 0 也不停机；真实额度原样保持（绝不伪造成正数）。
+        定制宠物另有一条**永久**免费口径：`data.ASSISTANT_CUSTOM_FREE_TASKS` 里的
+        任务对它一律不扣次数、额度为 0 也不停机（见 `_assistant_free_task`）。
         """
         now = int(time.time())
         any_changed = False
@@ -1575,12 +1626,17 @@ class PetParkPlugin(Star):
                 a = p.get("assistant")
                 if not a or not a.get("enabled"):
                     continue
-                if quota <= 0 and not unlimited:
+                tasks = [t for t in (a.get("tasks") or []) if t in data.ASSISTANT_TASK_BY_KEY]
+                # 定制宠物的免费任务不吃额度：只要勾选里还有免费任务，额度为 0 也不停机
+                # （否则「永久免费」会被停机判定吃掉）。收费任务在下面逐个跳过即可。
+                # 停机判定必须排在 _busy_reason 之前：否则一只长期「忙碌」的宠物永远
+                # 走不到这里，会顶着 🟢 运行中 显示剩余 0 次。
+                has_free = any(self._assistant_free_task(t, p) for t in tasks)
+                if quota <= 0 and not unlimited and not has_free:
                     # 额度用完自动停机（保留勾选，充值后可直接重新开启）
                     a["enabled"] = False
                     any_changed = True
                     continue
-                tasks = [t for t in (a.get("tasks") or []) if t in data.ASSISTANT_TASK_BY_KEY]
                 if not tasks or self._busy_reason(p):
                     continue
                 # 冷却存在宠物身上（store.set_cooldown 写 player["pet"]），
@@ -1589,8 +1645,11 @@ class PetParkPlugin(Star):
                 player["pet"] = p
                 try:
                     for tkey in tasks[:data.ASSISTANT_MAX_TASKS]:
-                        if quota <= 0 and not unlimited:
-                            break
+                        free_task = self._assistant_free_task(tkey, p)
+                        if quota <= 0 and not unlimited and not free_task:
+                            # 额度不够付这一个：跳过它，但后面的免费任务照跑
+                            # （原来是 break，会让免费任务被排在它前面的收费任务连带饿死）
+                            continue
                         # 每个任务执行前重新钉一次引用：中途若有同步 _flush() 之类的
                         # 重建（冒险轴成功路径会调），后面的任务就会误落到出战宠身上。
                         player["pet"] = p
@@ -1601,7 +1660,7 @@ class PetParkPlugin(Star):
                         except Exception as exc:  # 单个任务失败不影响其它任务
                             logger.warning(f"[petpark] 自动助手执行『{tkey}』异常：{exc}")
                             continue
-                        if not unlimited:
+                        if not unlimited and not free_task:
                             quota -= 1
                         a["total_runs"] = int(a.get("total_runs", 0)) + 1
                         a["last_run_at"] = now
@@ -1609,7 +1668,7 @@ class PetParkPlugin(Star):
                         any_changed = True
                 finally:
                     player["pet"] = prev_ref
-                if quota <= 0 and not unlimited:
+                if quota <= 0 and not unlimited and not has_free:
                     # 本轮把这个宠物的额度跑干了，立刻停机——不能等下一轮（30 秒后）
                     # 才在循环开头发现，否则「助手状态」会顶着 🟢 运行中显示剩余 0 次，
                     # 且同一玩家名下多只宠物时，只有排在后面的那只会当场停机。
