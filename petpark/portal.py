@@ -1072,11 +1072,24 @@ class PlayerPortal:
         return web.json_response({"ok": True, **self._player_summary(group_id, qq, pet_index)})
 
     def _assistant_summary(self, player: dict, pet: dict | None) -> dict:
+        monthly = self.store.monthly_state(player)
+        if monthly:
+            # 前端直接渲染 hint：当前生效档位 + 顺延在后的低档段
+            nxt = monthly.get("next")
+            monthly = {
+                **monthly,
+                "hint": (
+                    f"{monthly['label']}生效中，执行活动不扣次数"
+                    f"（剩余约 {monthly['days']} 天"
+                    + (f"，之后 {nxt['label']} {nxt['days']} 天" if nxt else "")
+                    + "）"
+                ),
+            }
         return {
             **((pet.get("assistant") or {}) if pet else {}),
             "quota": self.store.assistant_quota(player),
             "free": self.store.assistant_free_active(),
-            "monthly": self.store.monthly_state(player),
+            "monthly": monthly,
             "max_tasks": data.ASSISTANT_MAX_TASKS,
             "options": [{"key": key, "description": description, "axis": axis}
                         for key, _label, description, axis in data.ASSISTANT_TASKS],
@@ -2051,7 +2064,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                 />
               </div>
               <el-button :disabled="autoCultivating || assistantEdit.saving" @click="openAssistantEditor">{{ data.assistant.tasks && data.assistant.tasks.length ? '修改活动' : '选择活动' }}</el-button>
-              <span class="muted" style="font-size:12.5px">{{ data.assistant.free ? '限时免费中，执行活动不扣次数' : (data.assistant.monthly ? (data.assistant.monthly.label + '生效中，执行活动不扣次数（剩余约 ' + data.assistant.monthly.days + ' 天）') : '每成功执行 1 个任务扣 1 次，次数用尽自动停机') }}</span>
+              <span class="muted" style="font-size:12.5px">{{ data.assistant.free ? '限时免费中，执行活动不扣次数' : (data.assistant.monthly ? data.assistant.monthly.hint : '每成功执行 1 个任务扣 1 次，次数用尽自动停机') }}</span>
             </div>
             <div v-if="assistantEdit.open" class="assistant-editor" aria-label="选择自动助手活动">
               <div class="assistant-selection"><strong>已选 {{ assistantEdit.tasks.length }} / {{ data.assistant.max_tasks }} 项</strong><el-button text :disabled="assistantEdit.saving || !assistantEdit.tasks.length" @click="assistantEdit.tasks=[]">清空重选</el-button></div>

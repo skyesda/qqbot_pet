@@ -1042,6 +1042,14 @@ class PetParkPlugin(Star):
             permission_user_ids=[owner] if owner else None,
         )
 
+    def _monthly_line(self, st: dict) -> str:
+        """月卡展示串：当前生效档位 + 剩余天数，顺延在后的低档段一并说明。"""
+        txt = f"{st['label']}生效中（剩余约 {st['days']} 天"
+        nxt = st.get("next")
+        if nxt:
+            txt += f"，之后 {nxt['label']} {nxt['days']} 天"
+        return txt + "）"
+
     def _assistant_panel_text(self, player: dict, pet: dict, picked: list[str]) -> str:
         a = self._assistant_state(pet)
         quota = self.store.assistant_quota(player)
@@ -1059,7 +1067,7 @@ class PetParkPlugin(Star):
             head += "🎁 **限时免费中**　执行任务不消耗次数，剩余 0 次也能运行\n"
         if monthly:
             head += (
-                f"🗓 **月卡**　{monthly['label']}生效中（剩余约 {monthly['days']} 天）"
+                f"🗓 **月卡**　{self._monthly_line(monthly)}"
                 "· 执行任务不扣次数\n"
             )
         return (
@@ -1158,7 +1166,7 @@ class PetParkPlugin(Star):
             monthly = self.store.monthly_state(player)
             if monthly:
                 lines.append(
-                    f"🗓 {monthly['label']}生效中（剩余约 {monthly['days']} 天）：执行任务不扣次数"
+                    f"🗓 {self._monthly_line(monthly)}：执行任务不扣次数"
                 )
         lines.append("")
         lines.append("点下方「修改」可重挑任务；发送『开启自动助手』开始挂机，『助手状态』查看运行明细。")
@@ -1197,7 +1205,7 @@ class PetParkPlugin(Star):
                 lines.append("> 🎁 当前处于限时免费期：执行任务不消耗次数，剩余 0 次也能正常运行。")
             elif monthly:
                 lines.append(
-                    f"> 🗓 {monthly['label']}生效中（剩余约 {monthly['days']} 天）："
+                    f"> 🗓 {self._monthly_line(monthly)}："
                     "执行任务不扣次数，余额 0 也能正常运行。"
                 )
             else:
@@ -1234,7 +1242,7 @@ class PetParkPlugin(Star):
         monthly = self.store.monthly_state(player)
         if monthly:
             lines.append(
-                f"🗓 {monthly['label']}生效中（剩余约 {monthly['days']} 天）：执行任务不扣次数。"
+                f"🗓 {self._monthly_line(monthly)}：执行任务不扣次数。"
             )
         lines.append(f"累计代跑：{a.get('total_runs', 0)} 次")
         last = int(a.get("last_run_at", 0) or 0)
@@ -7389,7 +7397,7 @@ class PetParkPlugin(Star):
         monthly = self.store.monthly_state(player)
         if monthly:
             lines.append(
-                f"🗓 **月卡**　{monthly['label']} · 剩余约 {monthly['days']} 天（助手执行不扣次数）"
+                f"🗓 **月卡**　{self._monthly_line(monthly)} · 助手执行不扣次数"
             )
         streak = player.get("active_streak", 0)
         if self._group_is_infinite(group_id):
@@ -7824,14 +7832,20 @@ class PetParkPlugin(Star):
             "",
             "- 🎁 生效期内自动助手执行任务**不扣次数**（次数余额原样保留）",
             "- ⏸ 与全服「限时免费」活动重叠的时间**不消耗月卡时长**",
+            "- 🧮 时长**分档累计**：只加本档时间，不会把其它档的剩余时长一起升档",
         ]
         if instant:
             lines.append(f"- 💎 立即到账 **天晶 +{instant}**（当前 {self.store.get_currency(player, '天晶')}）")
             lines.append(f"- 📅 生效期内每次签到额外 **天晶 +{data.MONTHLY_FLAGSHIP_SIGN_DIAMOND}**")
         if st:
+            tail = (
+                f"，之后 {st['next']['label']} {st['next']['days']} 天"
+                if st.get("next") else ""
+            )
             lines.append("")
             lines.append(
-                f"🎫 当前状态：**{st['label']}** · 剩余约 **{st['days']}** 天"
+                f"🎫 当前状态：**{st['label']}** · 剩余约 **{st['days']}** 天{tail}"
+                f"（合计约 **{st['total_days']}** 天）"
             )
         lines.append("发送『自动助手』查看助手面板，『我的信息』查看月卡状态。")
         return "\n".join(lines)

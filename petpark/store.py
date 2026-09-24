@@ -2354,8 +2354,11 @@ class PetStore:
     ) -> tuple[Optional[str], int, int, Optional[str]]:
         """兑换月卡：成功返回 (档位, 获得天数, 立即到账天晶, None)，失败返回 (None, 0, 0, 原因)。
 
-        叠加规则：先按当前时刻结算剩余时长，再加 30 天；档位只升不降
-        （旗舰玩家兑普通月卡只加时长、不降档）。旗舰卡每张各兑一次 6000 天晶。
+        分档计时：时长按档位分桶累计，本卡只往**自己那一档**加 30 天，绝不会把
+        已剩余的旧档时长一起升档。结算时高档优先消耗，于是——
+          普通剩 30 天 + 旗舰卡 = 先旗舰 30 天、再普通 30 天（共 60 天）；
+          旗舰剩 30 天 + 普通卡 = 旗舰 30 天、再普通 30 天（普通卡不延长旗舰权益）。
+        旗舰卡每张各兑一次 6000 天晶，与时长叠加无关。
         """
         code = str(code).strip().upper()
         cards = self.cards()
@@ -2369,16 +2372,12 @@ class PetStore:
             return None, 0, 0, "该卡密已被使用"
         now = int(time.time())
         m = self._monthly_settle(player, now) or {}
-        remaining = max(0, int(m.get("remaining", 0) or 0))
         days = int(card.get("monthly_days", data.MONTHLY_CARD_DAYS) or data.MONTHLY_CARD_DAYS)
-        cur_rank = (
-            data.MONTHLY_TIERS.index(m["tier"])
-            if m.get("tier") in data.MONTHLY_TIERS
-            else -1
-        )
-        if data.MONTHLY_TIERS.index(tier) > cur_rank:
-            m["tier"] = tier
-        m["remaining"] = remaining + days * 86400
+        buckets = dict(m.get("buckets") or {})
+        buckets[tier] = int(buckets.get(tier, 0) or 0) + days * 86400
+        m["buckets"] = {
+            t: int(buckets.get(t, 0) or 0) for t in data.MONTHLY_TIERS
+        }
         m["updated_at"] = now
         player["monthly"] = m
         card["used"] = True
@@ -2391,6 +2390,26 @@ class PetStore:
             self.add_currency(player, "天晶", instant)
         return tier, days, instant, None
 
+    def _monthly_norm(self, m: dict) -> dict:
+        """就地规范化 monthly 结构，兼容旧版单档 {tier, remaining} 存档。
+
+        旧结构把档位挂在整段时长上，升档会连带把剩余的低档时长一起升级
+        （v3.18.1 及更早「普通 + 旗舰卡 = 旗舰 60 天」的成因）。迁移时按
+        「原档位 + 原剩余」放进对应桶，不对历史时长做拆分。
+        """
+        buckets = m.get("buckets")
+        if not isinstance(buckets, dict):
+            buckets = {}
+            tier = str(m.get("tier", "") or "")
+            if tier in data.MONTHLY_TIERS:
+                buckets[tier] = max(0, int(m.get("remaining", 0) or 0))
+            m.pop("tier", None)
+            m.pop("remaining", None)
+        m["buckets"] = {
+            t: max(0, int(buckets.get(t, 0) or 0)) for t in data.MONTHLY_TIERS
+        }
+        return m
+
     def _monthly_settle(self, player: dict, now: int | None = None) -> Optional[dict]:
         """惰性结算月卡剩余时长，返回结算后的 monthly 字典（无卡/已到期返回 None 并清字段）。
 
@@ -2398,15 +2417,18 @@ class PetStore:
         即免费活动期间月卡时长暂停消耗。窗口口径取自 `_data["assistant_free"]`，
         结算粒度由调用频率决定（面板/签到/助手每轮 tick 都会触发），故
         窗口改配置造成的误差最多只有距上次结算的几秒。
+
+        消耗顺序高档优先：先扣旗舰桶，扣穿后溢出部分再扣普通桶。
         """
         if not isinstance(player, dict):
             return None
         m = player.get("monthly")
         if not isinstance(m, dict):
             return None
+        m = self._monthly_norm(m)
         now = now or int(time.time())
-        remaining = int(m.get("remaining", 0) or 0)
-        if remaining <= 0:
+        buckets = m["buckets"]
+        if sum(buckets.values()) <= 0:
             player.pop("monthly", None)
             return None
         updated = int(m.get("updated_at", 0) or 0)
@@ -2422,38 +2444,74 @@ class PetStore:
                 overlap = max(0, min(now, end) - max(updated, start))
         billable = max(0, elapsed - int(overlap))
         m["updated_at"] = now
-        if billable:
-            remaining -= billable
-        if remaining <= 0:
+        for tier in reversed(data.MONTHLY_TIERS):  # 高档优先消耗
+            if billable <= 0:
+                break
+            bal = int(buckets.get(tier, 0) or 0)
+            if bal <= 0:
+                continue
+            used = min(bal, billable)
+            buckets[tier] = bal - used
+            billable -= used
+        if sum(buckets.values()) <= 0:
             player.pop("monthly", None)
             return None
-        m["remaining"] = remaining
         return m
+
+    def monthly_tier(self, m: Optional[dict]) -> Optional[str]:
+        """结算后的 monthly 字典 → 当前生效档位（有余额的最高档），无则 None。"""
+        if not isinstance(m, dict):
+            return None
+        buckets = m.get("buckets") or {}
+        for tier in reversed(data.MONTHLY_TIERS):  # 高档优先
+            if int(buckets.get(tier, 0) or 0) > 0:
+                return tier
+        return None
 
     def monthly_active(self, player: dict, now: int | None = None) -> Optional[str]:
         """月卡生效中返回档位（normal/flagship），否则 None。调用即顺带结算时长。"""
-        m = self._monthly_settle(player, now)
-        if not m:
-            return None
-        tier = str(m.get("tier", "") or "")
-        return tier if tier in data.MONTHLY_TIERS else None
+        return self.monthly_tier(self._monthly_settle(player, now))
 
     def monthly_state(
         self, player: dict, now: int | None = None
     ) -> Optional[dict]:
-        """月卡展示态：{tier, label, remaining, days}；无生效月卡返回 None。"""
+        """月卡展示态；无生效月卡返回 None。
+
+        tier/label/remaining/days 是**当前生效档位**及其剩余；
+        total_remaining/total_days 为各档合计；next 是顺延在后的低档段
+        （{tier,label,remaining,days}，没有则 None）。
+        """
         m = self._monthly_settle(player, now)
         if not m:
             return None
-        tier = str(m.get("tier", "") or "")
-        if tier not in data.MONTHLY_TIERS:
+        tier = self.monthly_tier(m)
+        if not tier:
             return None
-        remaining = max(0, int(m.get("remaining", 0) or 0))
+        buckets = m["buckets"]
+        remaining = int(buckets.get(tier, 0) or 0)
+        total = sum(buckets.values())
+        rest = [
+            t for t in data.MONTHLY_TIERS
+            if t != tier and int(buckets.get(t, 0) or 0) > 0
+        ]
+        nxt = None
+        if rest:
+            nt = max(rest, key=data.MONTHLY_TIERS.index)
+            nrem = int(buckets[nt])
+            nxt = {
+                "tier": nt,
+                "label": data.MONTHLY_TIER_LABEL.get(nt, nt),
+                "remaining": nrem,
+                "days": nrem // 86400,
+            }
         return {
             "tier": tier,
             "label": data.MONTHLY_TIER_LABEL.get(tier, tier),
             "remaining": remaining,
             "days": remaining // 86400,
+            "total_remaining": total,
+            "total_days": total // 86400,
+            "next": nxt,
         }
 
     def unlock_pet_custom(self, player: dict) -> tuple[bool, str]:

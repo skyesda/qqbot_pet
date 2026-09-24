@@ -293,9 +293,11 @@ ASSISTANT_LOG_MAX = 20           # 每只宠物保留的最近执行记录条数
 # 普通月卡：生效期内自动助手执行任务不扣次数；与全服「限时免费」窗口重叠的
 #           时间不消耗月卡时长（惰性结算，见 store._monthly_settle）。
 # 旗舰月卡：普通月卡全部权益 + 兑换立即到账天晶 + 生效期内每次签到额外天晶。
+# 时长按档位分桶累计（player["monthly"]["buckets"]），兑换只往本卡自己那一档加时间；
+# 结算时高档优先消耗（先扣旗舰桶、扣穿再扣普通桶），故生效档位 = 当前有余额的最高档。
 # ----------------------------------------------------------------------------
 MONTHLY_CARD_DAYS = 30                  # 1 张月卡提供的天数
-MONTHLY_TIERS = ("normal", "flagship")  # 低 → 高（重复兑换可叠加时长并升级档位）
+MONTHLY_TIERS = ("normal", "flagship")  # 低 → 高（各档时长独立累计，高档优先消耗）
 MONTHLY_TIER_LABEL = {"normal": "普通月卡", "flagship": "旗舰月卡"}
 MONTHLY_FLAGSHIP_INSTANT_DIAMOND = 6000  # 旗舰月卡：兑换立即到账天晶（每张卡一次）
 MONTHLY_FLAGSHIP_SIGN_DIAMOND = 300      # 旗舰月卡：生效期内每次签到额外天晶

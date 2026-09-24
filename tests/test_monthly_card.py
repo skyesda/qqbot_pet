@@ -53,24 +53,64 @@ class MonthlyCardStoreTests(unittest.TestCase):
         _, _, _, err = self.store.redeem_monthly_card('NOSUCHCODE', self.player, 'u')
         self.assertEqual(err, '卡密不存在或输入有误')
 
-    def test_flagship_instant_diamond_and_tier_stack(self):
+    def test_cross_tier_does_not_upgrade_existing_time(self):
+        # 先兑普通 30 天，再兑旗舰卡 → 旗舰 30 天 + 普通 30 天，而不是旗舰 60 天
+        [nc] = self.store.create_monthly_cards('normal', count=1)
+        tier, days, instant, err = self.store.redeem_monthly_card(nc, self.player, 'u')
+        self.assertIsNone(err)
+        self.assertEqual((tier, days, instant), ('normal', 30, 0))
         [fc] = self.store.create_monthly_cards('flagship', count=1)
         tier, days, instant, err = self.store.redeem_monthly_card(fc, self.player, 'u')
         self.assertIsNone(err)
         self.assertEqual(instant, data.MONTHLY_FLAGSHIP_INSTANT_DIAMOND)
         self.assertEqual(self.player.get('diamond'), data.MONTHLY_FLAGSHIP_INSTANT_DIAMOND)
-        self.assertEqual(self.store.monthly_active(self.player), 'flagship')
-        # 再兑普通卡：时长叠加、档位不降
+        st = self.store.monthly_state(self.player)
+        self.assertEqual((st['tier'], st['days']), ('flagship', 30))
+        self.assertEqual((st['next']['tier'], st['next']['days']), ('normal', 30))
+        self.assertEqual(st['total_days'], 60)
+
+    def test_flagship_holder_normal_card_does_not_extend_flagship(self):
+        # 反向：旗舰玩家兑普通卡，旗舰权益仍只有 30 天，普通时长顺延在后
+        [fc] = self.store.create_monthly_cards('flagship', count=1)
+        self.store.redeem_monthly_card(fc, self.player, 'u')
         [nc] = self.store.create_monthly_cards('normal', count=1)
         self.store.redeem_monthly_card(nc, self.player, 'u')
         st = self.store.monthly_state(self.player)
-        self.assertEqual(st['tier'], 'flagship')
-        self.assertEqual(st['days'], 60)
-        # 旗舰再兑一张：时长继续叠、每张各兑一次 6000 天晶
-        [fc2] = self.store.create_monthly_cards('flagship', count=1)
-        self.store.redeem_monthly_card(fc2, self.player, 'u')
-        self.assertEqual(self.store.monthly_state(self.player)['days'], 90)
+        self.assertEqual((st['tier'], st['days']), ('flagship', 30))
+        self.assertEqual((st['next']['tier'], st['next']['days']), ('normal', 30))
+
+    def test_same_tier_stacks_and_each_flagship_card_pays_out(self):
+        for _ in range(2):
+            [c] = self.store.create_monthly_cards('flagship', count=1)
+            self.store.redeem_monthly_card(c, self.player, 'u')
+        st = self.store.monthly_state(self.player)
+        self.assertEqual((st['tier'], st['days']), ('flagship', 60))
+        self.assertIsNone(st['next'])
         self.assertEqual(self.player.get('diamond'), 2 * data.MONTHLY_FLAGSHIP_INSTANT_DIAMOND)
+
+    def test_flagship_bucket_drains_first(self):
+        # 普通 30 + 旗舰 30，过 40 天 → 旗舰桶扣穿，普通桶剩 20 天
+        [nc] = self.store.create_monthly_cards('normal', count=1)
+        self.store.redeem_monthly_card(nc, self.player, 'u')
+        [fc] = self.store.create_monthly_cards('flagship', count=1)
+        self.store.redeem_monthly_card(fc, self.player, 'u')
+        now = int(time.time())
+        self.player['monthly']['updated_at'] = now - 40 * 86400
+        st = self.store.monthly_state(self.player, now)
+        self.assertEqual((st['tier'], st['days']), ('normal', 20))
+        self.assertIsNone(st['next'])
+        self.assertEqual(st['total_days'], 20)
+
+    def test_legacy_single_tier_record_migrates_to_bucket(self):
+        now = int(time.time())
+        self.player['monthly'] = {
+            'tier': 'flagship', 'remaining': 25 * 86400, 'updated_at': now,
+        }
+        st = self.store.monthly_state(self.player, now)
+        self.assertEqual((st['tier'], st['days']), ('flagship', 25))
+        self.assertNotIn('tier', self.player['monthly'])
+        self.assertNotIn('remaining', self.player['monthly'])
+        self.assertEqual(self.player['monthly']['buckets']['flagship'], 25 * 86400)
 
     def test_free_window_pause_and_expiry(self):
         [code] = self.store.create_monthly_cards('normal', count=1)
