@@ -1046,6 +1046,7 @@ class PetParkPlugin(Star):
         a = self._assistant_state(pet)
         quota = self.store.assistant_quota(player)
         free = self.store.assistant_free_active()
+        monthly = self.store.monthly_state(player)
         picked_txt = "、".join(picked) if picked else "（未选）"
         head = (
             f"## 🧘 自动助手\n"
@@ -1056,6 +1057,11 @@ class PetParkPlugin(Star):
         )
         if free:
             head += "🎁 **限时免费中**　执行任务不消耗次数，剩余 0 次也能运行\n"
+        if monthly:
+            head += (
+                f"🗓 **月卡**　{monthly['label']}生效中（剩余约 {monthly['days']} 天）"
+                "· 执行任务不扣次数\n"
+            )
         return (
             head + "\n"
             f"**已选 {len(picked)}/{data.ASSISTANT_MAX_TASKS}：{picked_txt}**\n\n"
@@ -1066,8 +1072,13 @@ class PetParkPlugin(Star):
                 "> 🎁 限时免费期：每成功执行 1 个任务不扣次数（玩家级，本群所有宠物共用）。\n"
                 "> 发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
                 if free else
-                "> 每成功执行 1 个任务扣 1 次额度（玩家级，本群所有宠物共用）。\n"
-                "> 额度为 0 或发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
+                (
+                    "> 🗓 月卡生效期：执行任务不扣次数，次数余额原样保留。\n"
+                    "> 发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
+                    if monthly else
+                    "> 每成功执行 1 个任务扣 1 次额度（玩家级，本群所有宠物共用）。\n"
+                    "> 额度为 0 或发送『关闭自动助手』即停机。发送『助手状态』查看运行明细。"
+                )
             )
         )
 
@@ -1143,6 +1154,12 @@ class PetParkPlugin(Star):
         ]
         if self.store.assistant_free_active():
             lines.append("🎁 限时免费中：执行任务不消耗次数（剩余 0 次也能运行）")
+        else:
+            monthly = self.store.monthly_state(player)
+            if monthly:
+                lines.append(
+                    f"🗓 {monthly['label']}生效中（剩余约 {monthly['days']} 天）：执行任务不扣次数"
+                )
         lines.append("")
         lines.append("点下方「修改」可重挑任务；发送『开启自动助手』开始挂机，『助手状态』查看运行明细。")
         return "\n".join(lines)
@@ -1162,10 +1179,12 @@ class PetParkPlugin(Star):
                     "> 发送『自动助手』打开面板，点选最多 "
                     f"{data.ASSISTANT_MAX_TASKS} 个任务后点「确定」。"
                 )
-            if self.store.assistant_quota(player) <= 0 and not self.store.assistant_free_active():
+            free = self.store.assistant_free_active()
+            monthly = self.store.monthly_state(player)
+            if self.store.assistant_quota(player) <= 0 and not free and not monthly:
                 return (
                     "自动助手次数不足。\n\n"
-                    "> 请使用『自动助手卡』或发送『修炼卡 卡密』兑换后重试。"
+                    "> 请使用『自动助手卡』、月卡，或发送『修炼卡 卡密』兑换后重试。"
                 )
             a["enabled"] = True
             lines = [
@@ -1174,8 +1193,13 @@ class PetParkPlugin(Star):
                 f"剩余次数：{self.store.assistant_quota(player)}",
                 "",
             ]
-            if self.store.assistant_free_active():
+            if free:
                 lines.append("> 🎁 当前处于限时免费期：执行任务不消耗次数，剩余 0 次也能正常运行。")
+            elif monthly:
+                lines.append(
+                    f"> 🗓 {monthly['label']}生效中（剩余约 {monthly['days']} 天）："
+                    "执行任务不扣次数，余额 0 也能正常运行。"
+                )
             else:
                 lines.append(
                     f"> 后台每 {self.ASSISTANT_INTERVAL} 秒按顺序检查一次，冷却好且资源够的任务自动执行，"
@@ -1207,6 +1231,11 @@ class PetParkPlugin(Star):
         ]
         if self.store.assistant_free_active():
             lines.append("🎁 限时免费中：执行任务不消耗次数（剩余 0 次也可运行）。")
+        monthly = self.store.monthly_state(player)
+        if monthly:
+            lines.append(
+                f"🗓 {monthly['label']}生效中（剩余约 {monthly['days']} 天）：执行任务不扣次数。"
+            )
         lines.append(f"累计代跑：{a.get('total_runs', 0)} 次")
         last = int(a.get("last_run_at", 0) or 0)
         lines.append(f"最后执行：{time.strftime('%Y/%m/%d %H:%M:%S', time.localtime(last)) if last else '—'}")
@@ -1516,8 +1545,8 @@ class PetParkPlugin(Star):
         静默执行（不发群消息，避免每 30 秒刷屏）；成功结果写进 pet["assistant"]["log"]
         供『助手状态』查看；每成功执行 1 个任务扣 1 次玩家级额度，额度归零自动停机。
         未就绪的任务本轮直接跳过，不扣次数、不落盘。
-        处于「限时免费使用自动助手」窗口内时（后台可配），本轮不扣次数、剩余
-        次数为 0 也不停机；真实额度原样保持（绝不伪造成正数）。
+        处于「限时免费使用自动助手」窗口内（后台可配）或玩家月卡生效期内时，
+        本轮不扣次数、剩余次数为 0 也不停机；真实额度原样保持（绝不伪造成正数）。
         """
         now = int(time.time())
         any_changed = False
@@ -1529,6 +1558,8 @@ class PetParkPlugin(Star):
             if not pets:
                 continue
             quota = self.store.assistant_quota(player)
+            # 月卡是玩家级的：生效期内与免费窗口同样「执行不扣次数」
+            unlimited = in_free or bool(self.store.monthly_active(player, now))
             group_id, _, qq = str(key).partition("\x1f")
             for p in pets:
                 if not isinstance(p, dict):
@@ -1536,7 +1567,7 @@ class PetParkPlugin(Star):
                 a = p.get("assistant")
                 if not a or not a.get("enabled"):
                     continue
-                if quota <= 0 and not in_free:
+                if quota <= 0 and not unlimited:
                     # 额度用完自动停机（保留勾选，充值后可直接重新开启）
                     a["enabled"] = False
                     any_changed = True
@@ -1550,7 +1581,7 @@ class PetParkPlugin(Star):
                 player["pet"] = p
                 try:
                     for tkey in tasks[:data.ASSISTANT_MAX_TASKS]:
-                        if quota <= 0 and not in_free:
+                        if quota <= 0 and not unlimited:
                             break
                         # 每个任务执行前重新钉一次引用：中途若有同步 _flush() 之类的
                         # 重建（冒险轴成功路径会调），后面的任务就会误落到出战宠身上。
@@ -1562,7 +1593,7 @@ class PetParkPlugin(Star):
                         except Exception as exc:  # 单个任务失败不影响其它任务
                             logger.warning(f"[petpark] 自动助手执行『{tkey}』异常：{exc}")
                             continue
-                        if not in_free:
+                        if not unlimited:
                             quota -= 1
                         a["total_runs"] = int(a.get("total_runs", 0)) + 1
                         a["last_run_at"] = now
@@ -1570,7 +1601,7 @@ class PetParkPlugin(Star):
                         any_changed = True
                 finally:
                     player["pet"] = prev_ref
-                if quota <= 0 and not in_free:
+                if quota <= 0 and not unlimited:
                     # 本轮把这个宠物的额度跑干了，立刻停机——不能等下一轮（30 秒后）
                     # 才在循环开头发现，否则「助手状态」会顶着 🟢 运行中显示剩余 0 次，
                     # 且同一玩家名下多只宠物时，只有排在后面的那只会当场停机。
@@ -7355,6 +7386,11 @@ class PetParkPlugin(Star):
             f"💠 **天晶**　{self._short_num(player.get('diamond', 0))}",
             f"🌀 **深渊结晶**　{self._short_num(self.store.get_abyss_crystal(player))}",
         ]
+        monthly = self.store.monthly_state(player)
+        if monthly:
+            lines.append(
+                f"🗓 **月卡**　{monthly['label']} · 剩余约 {monthly['days']} 天（助手执行不扣次数）"
+            )
         streak = player.get("active_streak", 0)
         if self._group_is_infinite(group_id):
             tax_status = "🟢 转让免税 · 无限服（无限制）"
@@ -7695,6 +7731,11 @@ class PetParkPlugin(Star):
         extra = min(streak, 7) * self.sign_streak_bonus
         self.store.add_currency(player, "玄晶", jifen)
         self.store.add_currency(player, "灵石", coin + extra)
+        # 旗舰月卡：生效期内每次签到额外天晶
+        monthly_bonus = 0
+        if self.store.monthly_active(player) == "flagship":
+            monthly_bonus = data.MONTHLY_FLAGSHIP_SIGN_DIAMOND
+            self.store.add_currency(player, "天晶", monthly_bonus)
 
         title, need, nxt = data.sign_title(total)
         now = time.strftime("%Y/%m/%d %H:%M")
@@ -7707,6 +7748,11 @@ class PetParkPlugin(Star):
             f"- 📅 累计签到 **{total}** 天 · 连续 **{streak}** 天",
             f"- 🏅 当前称号：**{title}**",
         ]
+        if monthly_bonus:
+            lines.append(
+                f"- 💎 旗舰月卡签到加成 **天晶 +{monthly_bonus}**"
+                f"（当前 {self.store.get_currency(player, '天晶')}）"
+            )
         if need and nxt:
             lines.append(f"> 💡 再签到 {need} 天即可成为「{nxt}」哦！")
         else:
@@ -7718,8 +7764,10 @@ class PetParkPlugin(Star):
             return "⚠️ 用法：`兑换 卡密`（例如：兑换 ABCD23XY...）"
         code = tokens[1].strip()
         used_by = self.store.make_key(group_id, qq)
-        # 自动助手卡走专用兑换
+        # 月卡 / 自动助手卡走专用兑换
         card = self.store.cards().get(code.upper())
+        if card and card.get("monthly"):
+            return self._redeem_monthly_card(player, group_id, qq, tokens)
         if card and int(card.get("assistant_quota", 0) or 0) > 0:
             return self._redeem_assistant_card(player, group_id, qq, tokens)
         rewards, items, err = self.store.redeem_card(code, player, used_by)
@@ -7756,6 +7804,38 @@ class PetParkPlugin(Star):
             f"发送『自动助手』勾选代跑任务，『开启自动助手』开始挂机"
         )
 
+    def _redeem_monthly_card(
+        self, player: dict, group_id: str, qq: str, tokens: list[str]
+    ) -> str:
+        if len(tokens) < 2 or not tokens[1].strip():
+            return "⚠️ 用法：`兑换 卡密`（例如：兑换 ABCD23XY...）"
+        code = tokens[1].strip()
+        used_by = self.store.make_key(group_id, qq)
+        tier, days, instant, err = self.store.redeem_monthly_card(code, player, used_by)
+        if err:
+            return f"❌ 使用失败：{err}"
+        st = self.store.monthly_state(player)
+        label = data.MONTHLY_TIER_LABEL.get(tier, tier)
+        lines = [
+            "## 🗓️ 月卡使用成功",
+            "━━━━━━━━━━━━━━",
+            f"🎟 **卡密**　`{code.upper()}`",
+            f"✅ **{label}** 已生效 **{days}** 天",
+            "",
+            "- 🎁 生效期内自动助手执行任务**不扣次数**（次数余额原样保留）",
+            "- ⏸ 与全服「限时免费」活动重叠的时间**不消耗月卡时长**",
+        ]
+        if instant:
+            lines.append(f"- 💎 立即到账 **天晶 +{instant}**（当前 {self.store.get_currency(player, '天晶')}）")
+            lines.append(f"- 📅 生效期内每次签到额外 **天晶 +{data.MONTHLY_FLAGSHIP_SIGN_DIAMOND}**")
+        if st:
+            lines.append("")
+            lines.append(
+                f"🎫 当前状态：**{st['label']}** · 剩余约 **{st['days']}** 天"
+            )
+        lines.append("发送『自动助手』查看助手面板，『我的信息』查看月卡状态。")
+        return "\n".join(lines)
+
     def _pay_link(self) -> str:
         return (
             "## 💎 灵契仙途 · 充值中心\n"
@@ -7764,7 +7844,7 @@ class PetParkPlugin(Star):
             "📌 **购买后请复制卡密，然后在本群发送**：\n"
             "```\n兑换 你的卡密\n```\n"
             "例如：`兑换 ABCD1234EFGH`\n\n"
-            "卡密可兑换灵石、玄晶、天晶或系统道具，具体以商品说明为准。"
+            "卡密可兑换灵石、玄晶、天晶、月卡或系统道具，具体以商品说明为准。"
         )
 
     def _admin_adjust(

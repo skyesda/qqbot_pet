@@ -1320,6 +1320,8 @@ function packageHtml(v){
  return parts.length?parts.join(' ＋ '):'<span class="muted">—</span>';
 }
 function cardContentHtml(v){
+ if(v.monthly==='flagship')return `<span class="diamond"> 旗舰月卡 ${+(v.monthly_days||30)} 天（+6000天晶·签到+300）</span>`;
+ if(v.monthly==='normal')return `<span class="diamond"> 普通月卡 ${+(v.monthly_days||30)} 天（助手不扣次）</span>`;
  const acQuota=+(v.assistant_quota||0);
  if(acQuota>0)return `<span class="diamond"> 自动助手 ${acQuota} 次</span>`;
  if(v.mount_custom)return `<span class="diamond"> 坐骑外观定制卡</span>`;
@@ -1779,6 +1781,8 @@ async function genCards(){
   payload={card_type:'mount_custom',count:+g('cnt').value,prefix:g('pre').value};
  }else if(cardType==='assistant'){
   payload={card_type:'assistant',count:+g('cnt').value,prefix:g('pre').value};
+ }else if(cardType==='monthly_normal'||cardType==='monthly_flagship'){
+  payload={card_type:cardType,count:+g('cnt').value,prefix:g('pre').value};
  }else{
   const authdays=+g('amt_authdays').value||0;
   if(authdays>0){
@@ -1801,13 +1805,13 @@ async function genCards(){
 }
 function cardTypeChange(){
  const t=g('card_type').value;
- const hideRewards=(t==='custom_pet'||t==='mount_custom'||t==='assistant');
+ const hideRewards=(t==='custom_pet'||t==='mount_custom'||t==='assistant'||t==='monthly_normal'||t==='monthly_flagship');
  ['amt_coin','amt_jifen','amt_diamond','amt_item','amt_item_count','amt_authdays','amt_server_type'].forEach(id=>{const el=g(id);if(el)el.style.display=hideRewards?'none':'';});
 }
 async function exportUnused(){
  const r=await api('/api/list',{table:'cards',export:'unused'});
  const exported=r.data||{};
- const lines=[];for(const k of Object.keys(exported)){const v=exported[k];if(v.used)continue;let pkg;if(+(v.assistant_quota||0)>0){pkg='自动助手'+v.assistant_quota+'次';}else if(v.mount_custom){pkg='坐骑外观定制';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(dsp(c)+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\t${pkg}`);}
+ const lines=[];for(const k of Object.keys(exported)){const v=exported[k];if(v.used)continue;let pkg;if(v.monthly==='flagship'){pkg='旗舰月卡'+(v.monthly_days||30)+'天';}else if(v.monthly==='normal'){pkg='普通月卡'+(v.monthly_days||30)+'天';}else if(+(v.assistant_quota||0)>0){pkg='自动助手'+v.assistant_quota+'次';}else if(v.mount_custom){pkg='坐骑外观定制';}else if(+(v.auth_days||0)>0){pkg='群授权'+v.auth_days+'天·'+(v.server_type==='infinite'?'无限服':'官方服');}else{const r=cardRewards(v);const items=cardItems(v);const parts=[];for(const c of ['金币','积分','钻石'])if(r[c])parts.push(dsp(c)+'+'+r[c]);for(const [name,cnt] of Object.entries(items||{}))if(cnt>0)parts.push(name+'×'+cnt);pkg=parts.join('/')||'空卡';}lines.push(`${k}\t${pkg}`);}
  if(!lines.length){alert('没有未使用的卡密');return;}
  const blob=new Blob([lines.join('\n')],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='unused_cards.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }

@@ -1173,6 +1173,8 @@ class PetStore:
             return None, None, "卡密不存在或输入有误"
         if int(card.get("auth_days", 0) or 0) > 0:
             return None, None, "这是群授权卡，请用『授权 卡密』兑换"
+        if card.get("monthly"):
+            return None, None, "这是月卡，请用『兑换 卡密』兑换"
         if card.get("used"):
             return None, None, "该卡密已被使用"
         rewards = self.card_rewards(card)
@@ -2321,6 +2323,138 @@ class PetStore:
         card["used_by"] = used_by
         card["used_at"] = int(time.time())
         return quota, None
+
+    # ----------------------------- 月卡 -----------------------------
+    def create_monthly_cards(
+        self, tier: str = "normal", count: int = 1, prefix: str = ""
+    ) -> list[str]:
+        """批量生成月卡卡密。tier：normal（普通月卡）/ flagship（旗舰月卡）。"""
+        tier = str(tier).strip().lower()
+        if tier not in data.MONTHLY_TIERS:
+            raise ValueError("月卡类型必须是 普通月卡（normal）或 旗舰月卡（flagship）")
+        count = max(1, int(count))
+        cards = self.cards()
+        created: list[str] = []
+        now = int(time.time())
+        for _ in range(count):
+            code = self.gen_card_code(prefix)
+            cards[code] = {
+                "monthly": tier,
+                "monthly_days": data.MONTHLY_CARD_DAYS,
+                "used": False,
+                "used_by": None,
+                "used_at": None,
+                "created_at": now,
+            }
+            created.append(code)
+        return created
+
+    def redeem_monthly_card(
+        self, code: str, player: dict, used_by: str
+    ) -> tuple[Optional[str], int, int, Optional[str]]:
+        """兑换月卡：成功返回 (档位, 获得天数, 立即到账天晶, None)，失败返回 (None, 0, 0, 原因)。
+
+        叠加规则：先按当前时刻结算剩余时长，再加 30 天；档位只升不降
+        （旗舰玩家兑普通月卡只加时长、不降档）。旗舰卡每张各兑一次 6000 天晶。
+        """
+        code = str(code).strip().upper()
+        cards = self.cards()
+        card = cards.get(code)
+        if card is None:
+            return None, 0, 0, "卡密不存在或输入有误"
+        tier = str(card.get("monthly", "") or "").strip().lower()
+        if tier not in data.MONTHLY_TIERS:
+            return None, 0, 0, "这不是月卡"
+        if card.get("used"):
+            return None, 0, 0, "该卡密已被使用"
+        now = int(time.time())
+        m = self._monthly_settle(player, now) or {}
+        remaining = max(0, int(m.get("remaining", 0) or 0))
+        days = int(card.get("monthly_days", data.MONTHLY_CARD_DAYS) or data.MONTHLY_CARD_DAYS)
+        cur_rank = (
+            data.MONTHLY_TIERS.index(m["tier"])
+            if m.get("tier") in data.MONTHLY_TIERS
+            else -1
+        )
+        if data.MONTHLY_TIERS.index(tier) > cur_rank:
+            m["tier"] = tier
+        m["remaining"] = remaining + days * 86400
+        m["updated_at"] = now
+        player["monthly"] = m
+        card["used"] = True
+        card["used_by"] = used_by
+        card["used_at"] = now
+        instant = (
+            data.MONTHLY_FLAGSHIP_INSTANT_DIAMOND if tier == "flagship" else 0
+        )
+        if instant:
+            self.add_currency(player, "天晶", instant)
+        return tier, days, instant, None
+
+    def _monthly_settle(self, player: dict, now: int | None = None) -> Optional[dict]:
+        """惰性结算月卡剩余时长，返回结算后的 monthly 字典（无卡/已到期返回 None 并清字段）。
+
+        自上次结算以来，与「限时免费使用自动助手」窗口重叠的时间不计费——
+        即免费活动期间月卡时长暂停消耗。窗口口径取自 `_data["assistant_free"]`，
+        结算粒度由调用频率决定（面板/签到/助手每轮 tick 都会触发），故
+        窗口改配置造成的误差最多只有距上次结算的几秒。
+        """
+        if not isinstance(player, dict):
+            return None
+        m = player.get("monthly")
+        if not isinstance(m, dict):
+            return None
+        now = now or int(time.time())
+        remaining = int(m.get("remaining", 0) or 0)
+        if remaining <= 0:
+            player.pop("monthly", None)
+            return None
+        updated = int(m.get("updated_at", 0) or 0)
+        if now <= updated:
+            return m
+        elapsed = now - updated
+        overlap = 0
+        free = self._data.get("assistant_free") or {}
+        if free.get("enabled"):
+            start = int(free.get("start_at", 0) or 0)
+            end = int(free.get("end_at", 0) or 0)
+            if end > start:
+                overlap = max(0, min(now, end) - max(updated, start))
+        billable = max(0, elapsed - int(overlap))
+        m["updated_at"] = now
+        if billable:
+            remaining -= billable
+        if remaining <= 0:
+            player.pop("monthly", None)
+            return None
+        m["remaining"] = remaining
+        return m
+
+    def monthly_active(self, player: dict, now: int | None = None) -> Optional[str]:
+        """月卡生效中返回档位（normal/flagship），否则 None。调用即顺带结算时长。"""
+        m = self._monthly_settle(player, now)
+        if not m:
+            return None
+        tier = str(m.get("tier", "") or "")
+        return tier if tier in data.MONTHLY_TIERS else None
+
+    def monthly_state(
+        self, player: dict, now: int | None = None
+    ) -> Optional[dict]:
+        """月卡展示态：{tier, label, remaining, days}；无生效月卡返回 None。"""
+        m = self._monthly_settle(player, now)
+        if not m:
+            return None
+        tier = str(m.get("tier", "") or "")
+        if tier not in data.MONTHLY_TIERS:
+            return None
+        remaining = max(0, int(m.get("remaining", 0) or 0))
+        return {
+            "tier": tier,
+            "label": data.MONTHLY_TIER_LABEL.get(tier, tier),
+            "remaining": remaining,
+            "days": remaining // 86400,
+        }
 
     def unlock_pet_custom(self, player: dict) -> tuple[bool, str]:
         """直接为当前宠物解锁定制权限（内部/测试用）。"""

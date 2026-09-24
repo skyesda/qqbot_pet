@@ -460,6 +460,12 @@ class WebAdmin:
                     count=int(body.get("count", 1)),
                     prefix=body.get("prefix", ""),
                 )
+            elif card_type in ("monthly_normal", "monthly_flagship"):
+                codes = self.store.create_monthly_cards(
+                    tier="flagship" if card_type == "monthly_flagship" else "normal",
+                    count=int(body.get("count", 1)),
+                    prefix=body.get("prefix", ""),
+                )
             elif auth_days > 0:
                 st = str(body.get("server_type", "official")).strip()
                 codes = self.store.create_auth_cards(
@@ -1546,11 +1552,13 @@ DASHBOARD_HTML = r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-
 <div class="cards-stat" id="cardstats"></div>
 <div class="muted" style="margin-bottom:6px">套餐卡密：填了哪几项就加哪几项，可任意组合。空或 0 表示不含该项。<b>选择「宠物定制卡」将生成可解锁宠物定制权限的卡密。</b></div>
 <div class="bar">
-<select id="card_type" onchange="cardTypeChange()" style="width:130px">
+<select id="card_type" onchange="cardTypeChange()" style="width:175px">
  <option value="">货币/道具卡</option>
  <option value="custom_pet">宠物定制卡</option>
  <option value="mount_custom">坐骑定制卡</option>
  <option value="assistant">自动助手卡（500 次）</option>
+ <option value="monthly_normal">普通月卡（30天·不扣次）</option>
+ <option value="monthly_flagship">旗舰月卡（+6000天晶）</option>
 </select>
 <input id="amt_coin" type="number" placeholder="灵石面额" style="width:120px">
 <input id="amt_jifen" type="number" placeholder="玄晶面额" style="width:120px">

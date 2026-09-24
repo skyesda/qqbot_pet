@@ -1076,6 +1076,7 @@ class PlayerPortal:
             **((pet.get("assistant") or {}) if pet else {}),
             "quota": self.store.assistant_quota(player),
             "free": self.store.assistant_free_active(),
+            "monthly": self.store.monthly_state(player),
             "max_tasks": data.ASSISTANT_MAX_TASKS,
             "options": [{"key": key, "description": description, "axis": axis}
                         for key, _label, description, axis in data.ASSISTANT_TASKS],
@@ -1127,10 +1128,17 @@ class PlayerPortal:
                 "ok": False,
                 "msg": "请先点击「选择活动」保存要代跑的活动，再开启助手",
             })
-        # 修改活动和关闭助手不消耗次数；主动开启仍遵守额度及免费窗口。
-        available = self.store.assistant_active(player) or self.store.assistant_free_active()
+        # 修改活动和关闭助手不消耗次数；主动开启仍遵守额度、免费窗口及月卡。
+        available = (
+            self.store.assistant_active(player)
+            or self.store.assistant_free_active()
+            or bool(self.store.monthly_active(player))
+        )
         if body.get("enabled") is True and not available:
-            return web.json_response({"ok": False, "msg": "自动助手次数不足，请先兑换自动助手卡"})
+            return web.json_response({
+                "ok": False,
+                "msg": "自动助手次数不足，请先兑换自动助手卡或月卡",
+            })
         a["tasks"] = list(tasks)
         enabled = enabled and available
         a["enabled"] = bool(enabled and tasks)
@@ -2024,7 +2032,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
           <div class="custom-box">
             <div class="custom-badge"> 自动助手</div>
             <div class="custom-remaining">
-              剩余执行次数 <b>{{ data.assistant.quota || 0 }}</b> 次 · 该宠物累计代跑 {{ data.assistant.total_runs || 0 }} 次
+              剩余执行次数 <b>{{ data.assistant.quota || 0 }}</b> 次<span v-if="data.assistant.monthly">（{{ data.assistant.monthly.label }}生效中，不扣次数）</span> · 该宠物累计代跑 {{ data.assistant.total_runs || 0 }} 次
             </div>
             <div class="custom-remaining">
               代跑任务：{{ (data.assistant.tasks && data.assistant.tasks.length) ? data.assistant.tasks.join('、') : '尚未选择活动' }}
@@ -2043,7 +2051,7 @@ _PORTAL_HTML = r"""<!DOCTYPE html>
                 />
               </div>
               <el-button :disabled="autoCultivating || assistantEdit.saving" @click="openAssistantEditor">{{ data.assistant.tasks && data.assistant.tasks.length ? '修改活动' : '选择活动' }}</el-button>
-              <span class="muted" style="font-size:12.5px">{{ data.assistant.free ? '限时免费中，执行活动不扣次数' : '每成功执行 1 个任务扣 1 次，次数用尽自动停机' }}</span>
+              <span class="muted" style="font-size:12.5px">{{ data.assistant.free ? '限时免费中，执行活动不扣次数' : (data.assistant.monthly ? (data.assistant.monthly.label + '生效中，执行活动不扣次数（剩余约 ' + data.assistant.monthly.days + ' 天）') : '每成功执行 1 个任务扣 1 次，次数用尽自动停机') }}</span>
             </div>
             <div v-if="assistantEdit.open" class="assistant-editor" aria-label="选择自动助手活动">
               <div class="assistant-selection"><strong>已选 {{ assistantEdit.tasks.length }} / {{ data.assistant.max_tasks }} 项</strong><el-button text :disabled="assistantEdit.saving || !assistantEdit.tasks.length" @click="assistantEdit.tasks=[]">清空重选</el-button></div>
