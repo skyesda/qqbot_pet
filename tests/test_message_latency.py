@@ -35,7 +35,9 @@ class StoreLatencyTests(unittest.IsolatedAsyncioTestCase):
             await store.save()
             original = path.read_bytes()
             store.get_player('a', 'g')['coin'] = 987
-            with patch('qqbot_pet.petpark.store.json.loads', side_effect=OSError('read failed')):
+            # 写后校验已从「读回重新 json.loads」换成字节数比对（O(1)），校验点是
+            # _verify_written；失败必须发生在 tmp.replace 之前，旧档原样保留。
+            with patch.object(PetStore, '_verify_written', side_effect=OSError('verify failed')):
                 with self.assertRaises(OSError):
                     await store.save()
             self.assertEqual(path.read_bytes(), original)

@@ -94,17 +94,31 @@ class AdventureTests(unittest.TestCase):
         p=self.create();p['adventure']['level']=20
         for _ in range(9):self.call('历练 1')
         self.assertEqual(p['adventure']['rewards'],8)
+        self.store._flush()  # 冒险轴不再在事务内落盘，重载前显式存档（模拟外层 save）
         store=PetStore(self.path); service=AdventureService(store,lambda:self.now)
         self.assertIn('8次',service.handle('g','a',['历练','1']))
         self.now+=86400
         self.call('历练 1')
         self.assertEqual(self.store.get_player('a','g')['adventure']['rewards'],1)
 
-    def test_failed_save_rolls_back(self):
-        self.create();before=copy.deepcopy(self.store._data)
-        with patch.object(self.store,'_flush',side_effect=OSError('disk full')):
-            with self.assertRaises(OSError):self.call('锻造 灵剑')
-        self.assertEqual(before,self.store._data)
+    def test_handle_defers_disk_write_to_caller_save(self):
+        """落盘契约：handle 只改内存并回滚，写盘由外层（群消息/网页/助手）的
+        store.save() 统一负责——事务内同步 _flush 是保存风暴根因之一，已移除。"""
+        self.create()
+        self.store._flush()  # 先建磁盘基线
+        before_disk = self.path.read_bytes()
+        self.assertIn('锻造成功', self.call('锻造 灵剑'))
+        # 事务成功但外层尚未 save：磁盘必须仍是基线（证明 handle 不再写盘）
+        self.assertEqual(self.path.read_bytes(), before_disk)
+        # 内存里改动已生效
+        self.assertNotEqual(self.store.get_player('a', 'g')['adventure'],
+                            json.loads(before_disk)['players']
+                            [self.store.make_key('g', 'a')]['adventure'])
+        # 外层 save 后新状态落盘，重载可见
+        self.store._flush()
+        store = PetStore(self.path)
+        self.assertEqual(store.get_player('a', 'g')['adventure'],
+                         self.store.get_player('a', 'g')['adventure'])
 
     def test_group_isolation_and_preparation(self):
         for q in ['a','b','c']:
@@ -143,6 +157,7 @@ class AdventureTests(unittest.TestCase):
     def test_restart_prepared_team_and_deep(self):
         p=self.create();p['adventure']['level']=10
         self.call('组队秘境');self.call('准备出发')
+        self.store._flush()  # 事务内不再落盘，重载前显式存档
         store=PetStore(self.path)
         service=AdventureService(store,lambda:self.now)
         self.assertIn('通关',service.handle('g','a',['队伍出发']))
@@ -151,6 +166,7 @@ class AdventureTests(unittest.TestCase):
     def test_request_receipt_survives_restart(self):
         self.create()
         result=self.service.handle('g','a',['历练','1'],request_id='qq-message-1')
+        self.store._flush()  # 事务内不再落盘，重载前显式存档
         store=PetStore(self.path)
         service=AdventureService(store,lambda:self.now)
         self.assertEqual(result,service.handle('g','a',['历练','1'],request_id='qq-message-1'))
@@ -226,6 +242,7 @@ class AdventureTests(unittest.TestCase):
         self.assertIn('突破成功',self.call('洞天突破'))
         self.assertEqual(self.store.get_player('b','g')['adventure']['heaven'],0)
         self.assertIn('Lv11',self.call('修士突破'))
+        self.store._flush()  # 事务内不再落盘，重载前显式存档
         self.assertEqual(PetStore(self.path).get_player('a','g')['adventure']['heaven'],1)
         low=self.service.encounter(content.MAPS['1'],0)
         high=self.service.encounter(content.MAPS['1'],1)

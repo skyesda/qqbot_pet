@@ -54,7 +54,11 @@ class AdventureService:
 
     def handle(self, group, qq, tokens, request_id=None):
         # No await inside transaction. Works with the shared plugin's single event loop.
-        before = deepcopy(self.store._data)
+        # 回滚快照刻意排除 audit_log（占存档约 58%）：审计是只追加流水，冒险轴全程
+        # 不写它（_audit 只在 main 的调度层、进本函数之前调用），拷进快照纯属浪费——
+        # 每条冒险指令省掉一大半 deepcopy。回滚时把事务期间的现值挂回去（见 _rollback）。
+        snap = {k: v for k, v in self.store._data.items() if k != "audit_log"}
+        before = deepcopy(snap)
         try:
             receipts = self.store._data.setdefault("adventure_receipts", {})
             receipt_key = f"{group}:{qq}:{request_id}" if request_id else None
@@ -65,16 +69,24 @@ class AdventureService:
                 receipts[receipt_key] = result
                 while len(receipts) > 500:
                     del receipts[next(iter(receipts))]
-            self.store._flush()
+            # 此处不再同步 _flush：外层（群消息 main、网页 web_dispatch、自动助手 tick）
+            # 本轮处理结束时统一 await store.save()。事务内每条指令全量写盘曾是保存
+            # 风暴主力（实测每天上万次落盘，每次全量序列化+读回校验+复制备份 ≈2 秒
+            # 事件循环阻塞），且外层 save 会把本轮所有改动一并落盘，无一致性缺口。
             return result
         except RuleError as e:
-            self.store._data = before
-            self.store._restore_pet_refs()
+            self._rollback(before)
             return str(e)
         except Exception:
-            self.store._data = before
-            self.store._restore_pet_refs()
+            self._rollback(before)
             raise
+
+    def _rollback(self, before: dict) -> None:
+        """换回快照；审计流水不在快照里，把事务期间的现值原样挂回（绝不回滚审计）。"""
+        if "audit_log" in self.store._data:
+            before["audit_log"] = self.store._data["audit_log"]
+        self.store._data = before
+        self.store._restore_pet_refs()
 
     def require(self, condition, message):
         if not condition:

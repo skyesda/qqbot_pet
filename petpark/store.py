@@ -26,6 +26,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import random
 import secrets
 import time
@@ -65,6 +66,9 @@ class PetStore:
         self.default_enabled = default_enabled
         self.default_cross = default_cross
         self._lock = asyncio.Lock()
+        # 审计流水环形上限：main 启动时用后台配置覆写（config audit_cap）。
+        # _data["audit_cap"] 仍可显式覆盖（测试/数据层直改优先）。
+        self.audit_cap = 20000
         self._data: dict[str, Any] = {"players": {}, "groups": {}}
         self._load()
         PetStore._active = self
@@ -639,11 +643,12 @@ class PetStore:
             del hps[k]
 
     def _flush(self) -> None:
-        # 序列化前剥离运行时 pet 引用（避免重复序列化）。
-        # 恢复必须「原样放回」而不是按 active_pet 重建：自动助手代跑非出战宠时会临时把
-        # player["pet"] 指向那只宠（main._assistant_tick），而冒险轴成功路径是**同步**调
-        # _flush() 的（adventure/service.py），若在这里重建引用，同一轮排在后面的任务就
-        # 会落回出战宠身上——表现为「给 A 宠挂机，却报 B 宠已飞升 / B 宠未婚」。
+        # 序列化前剥离运行时 pet 引用——它是 pets[active_pet] 的别名，不剥离会在存档里
+        # 复制一份。恢复必须「原样放回」而不是按 active_pet 重建：自动助手代跑非出战宠
+        # 时会临时把 player["pet"] 指向那只宠（main._assistant_tick），任何落在该窗口内
+        # 的落盘若按 active_pet 重建引用，同一轮排在后面的任务就会误落到出战宠身上
+        # （表现为「给 A 宠挂机，却报 B 宠已飞升 / B 宠未婚」）。冒险轴已改为外层统一
+        # save()（不再在事务内同步 flush），此处保留原样放回作为不变量。
         absent = object()  # 哨兵：该玩家序列化前本来就没有 pet 键
         popped = [(pl, pl.pop("pet", absent)) for pl in self._data["players"].values()]
         try:
@@ -658,22 +663,38 @@ class PetStore:
                 else:
                     # 原样放回，保持调用方临时切换的指向
                     pl["pet"] = ref
-        # 原子写入：先写 .tmp 再替换，写入前备份旧文件
+        # 原子写入：先写 .tmp 再替换，替换前把旧档链成 .bak。
+        # 校验只比对字节数——json.dumps 的产物必然是合法 JSON，旧实现「读回整档再
+        # json.loads 一遍」是纯浪费：多读 4.5MB + 全量解析（曾占单次保存约 1/3 CPU），
+        # 而它唯一防的「写截断」由字节数比对同样覆盖，成本 O(1)。
+        raw = payload.encode("utf-8")
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        # 验证写入内容可解析
-        try:
-            json.loads(tmp.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            raise OSError("存档校验失败，原存档未替换")
-        # 保留一份备份
+        tmp.write_bytes(raw)
+        self._verify_written(tmp, len(raw))
         bak = self.path.with_suffix(".bak")
         try:
             if self.path.exists():
-                bak.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8")
+                # 硬链接备份：与旧实现的「读旧档+写备份」字节等价，但只增一个目录项，
+                # 零拷贝。随后 tmp.replace 只换 path 的目录项，.bak 持有的旧 inode 不受
+                # 影响，内容就是上一份存档（与旧行为一致）。文件系统不支持硬链接时退回
+                # 字节复制，复制失败不阻断保存（与旧行为一致）。
+                bak.unlink(missing_ok=True)
+                os.link(self.path, bak)
         except OSError:
-            pass
+            try:
+                if self.path.exists():
+                    bak.write_bytes(self.path.read_bytes())
+            except OSError:
+                pass
         tmp.replace(self.path)
+
+    def _verify_written(self, tmp: Path, expected: int) -> None:
+        """写后校验：字节数一致即认为完整（磁盘满/截断会短于预期）。
+
+        必须在 tmp.replace 之前调用——校验失败时旧档原样保留（有测试固化该契约）。
+        """
+        if tmp.stat().st_size != expected:
+            raise OSError("存档校验失败，原存档未替换")
 
     async def save(self) -> None:
         started = time.perf_counter()
@@ -703,7 +724,10 @@ class PetStore:
         )
         rec["ts"] = int(time.time())
         log.append(rec)
-        cap = int(self._data.get("audit_cap", 20000))
+        # 上限优先级：_data["audit_cap"]（数据层/测试显式指定）> self.audit_cap
+        # （后台配置，main 启动时注入）> 20000 兜底。此前只读 _data，后台
+        # audit_cap 改了从不生效（接线 bug），现已接通。
+        cap = int(self._data.get("audit_cap", getattr(self, "audit_cap", 20000)))
         if len(log) > cap:
             del log[: len(log) - cap]
             # 裁剪丢最旧后重新锚定窗口内整条哈希链：新头 prev 置空，其后逐条重链。

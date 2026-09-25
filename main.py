@@ -698,6 +698,9 @@ class PetParkPlugin(Star):
         # ===== 数据追溯 / 异常检测（审计）=====
         self.audit_enabled = bool(self.config.get("audit_enabled", True))
         self.audit_cap = max(100, int(self.config.get("audit_cap", 20000)))
+        # 接线到 store：_audit 的环形上限此后读这里（此前配置改了不生效的 bug）。
+        # 优先级仍是 store._data["audit_cap"] > 此处 > 20000 兜底。
+        self.store.audit_cap = self.audit_cap
         self.audit_rule_big_single = int(self.config.get("audit_rule_big_single", 1000000000))
         self.audit_rule_cmd_rate = max(1, int(self.config.get("audit_rule_cmd_rate", 60)))
         self.audit_rule_baseline_mult = float(self.config.get("audit_rule_baseline_mult", 10))
