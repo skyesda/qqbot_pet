@@ -1060,8 +1060,10 @@ class WiringTests(_EngineCase):
 
 # ---------------------------------------------------------------------------
 # 十、月华商店（上限次数卡）
-# 三条铁律：① 买卡永不动 yuehua_earned（累计只进不出）；② 价 ≥ 该卡「多玩一次
-# 最多能多拿多少月华」的硬下限（买卡刷不出月华）；③ 加成当天有效、跨天作废。
+# 三条铁律：① 买卡永不动 yuehua_earned（累计只进不出）；② 售价被夹在
+# 「多玩一次的期望产出 × shop_price_ratio」和「多玩一次的满档产出」之间 ——
+# 永远不比能拿到的月华更贵（贵了没人买），也压不到期望以下（低了人人买满）；
+# ③ 加成当天有效、跨天作废。
 # ---------------------------------------------------------------------------
 class ShopTests(_EngineCase):
     def setUp(self):
@@ -1080,42 +1082,79 @@ class ShopTests(_EngineCase):
         self.say("月华信息")
         return self.ap()
 
-    def test_price_never_drops_below_the_arbitrage_floor(self):
-        """后台把 9 张卡的价格区间全配成 0，引擎也必须逐张抬到硬下限。"""
+    def test_price_never_drops_below_the_expected_yield(self):
+        """后台把 9 张卡的价格区间全配成 0，引擎也必须逐张抬到「期望产出 × ratio」的硬底
+        —— 卖得比期望还便宜就是「人人买满」的印钞机。"""
         ap = self.give(100000)
         self.act.cfg["shop_cards"] = {
             c[0]: {"enabled": True, "price_min": 0, "price_max": 0} for c in _SHOP_CARDS}
         for card in _SHOP_CARDS:
             counter = card[3]
-            floor = self.act._card_floor(ap, self.gid, counter)
+            guard = self.act._price_guard(counter)
+            for nth in (1, 2, 3):
+                self.assertGreaterEqual(
+                    self.act._card_price(ap, self.gid, counter, nth), guard,
+                    f"{card[1]} 第 {nth} 张卖得比多玩一次的期望产出还便宜")
+
+    def test_price_never_exceeds_one_extra_play(self):
+        """封顶：卡的价**永远不超过**该玩法「多玩一次最多能拿到多少月华」——
+        贵过产出就没人买了，这是玩法的可买性底线。"""
+        ap = self.give(100000)
+        for card in _SHOP_CARDS:
+            counter = card[3]
+            top = self.act._card_max(counter)
+            for nth in (1, 2, 3):
+                self.assertLessEqual(
+                    self.act._card_price(ap, self.gid, counter, nth), top,
+                    f"{card[1]} 卖得比多玩一次能拿的月华还贵")
+        # 后台把价区间配上天（远超产出）也压不过封顶
+        self.act.cfg["shop_cards"] = {
+            c[0]: {"enabled": True, "price_min": 900, "price_max": 99999}
+            for c in _SHOP_CARDS}
+        for card in _SHOP_CARDS:
+            counter = card[3]
+            self.assertLessEqual(self.act._card_price(ap, self.gid, counter, 1),
+                                 self.act._card_max(counter))
+
+    def test_price_band_is_expected_to_max(self):
+        """价带 = [期望产出 × ratio, 满档产出]：默认区间就落在这个带子里，
+        且每张卡「期望 < 满档」（差多少就是打得好时能赚的空间）。"""
+        ap = self.give(100000)
+        for card in _SHOP_CARDS:
+            counter = card[3]
+            expect = self.act._card_expect(counter)
+            top = self.act._card_max(counter)
+            self.assertLessEqual(expect, top, f"{card[1]} 的期望不该超过满档")
+            if card[0] in ("brew", "like"):
+                continue        # 本身不发月华，期望 0、由后台区间定价（仍受封顶约束）
+            self.assertGreater(expect, 0, f"{card[1]} 的期望产出算成了 0")
             for nth in (1, 2, 3):
                 price = self.act._card_price(ap, self.gid, counter, nth)
-                self.assertGreaterEqual(
-                    price, floor, f"{card[1]} 第 {nth} 张卖得比它能换来的月华还便宜")
-            if floor > 0:
-                self.assertGreater(price, 0, f"{card[1]} 被算成了免费")
+                self.assertGreaterEqual(price, self.act._price_guard(counter))
+                self.assertLessEqual(price, top)
 
-    def test_floor_covers_group_milestone_and_one_time_pools(self):
-        """硬下限必须把「间接出口」也算进去，只算直接产出会留下套利口子。"""
+    def test_expect_tracks_the_backend_rewards(self):
+        """期望产出由现有配置键实时算出：后台调高奖励，价底自动跟着涨。"""
+        before = self.act._card_expect("lantern")
+        self.act.cfg["gongde_lantern_min"] = 40
+        self.act.cfg["gongde_lantern_max"] = 60
+        self.assertGreater(self.act._card_expect("lantern"), before)
+        self.assertGreater(self.act._price_guard("lantern"),
+                           int(before * 1.0))
+
+    def test_ratio_slides_between_cheap_and_strict(self):
+        """shop_price_ratio 就是「便宜好卖 ↔ 平均净亏」的滑杆，但无论如何翻不过封顶。"""
         ap = self.give(100000)
-        # 群里程碑还没达成 → 买卡把群顶过一档时买卡人自己也拿钱，下限必须含它
-        self.assertGreater(self.act._unclaimed_group_bonus(self.gid), 0)
-        self.assertGreaterEqual(
-            self.act._card_floor(ap, self.gid, "lantern"),
-            self.act._card_ceiling("lantern") + self.act._unclaimed_group_bonus(self.gid))
-        # 献礼阶梯只对会给献礼点数的三个玩法生效
-        self.assertGreater(self.act._unclaimed_ladder_bonus("quiz", self.gid), 0)
-        self.assertEqual(self.act._unclaimed_ladder_bonus("lantern", self.gid), 0)
-        # 一次性池：重制卡含未领的星级奖（先解锁一个口味，否则根本没法重制）、
-        # 桂花酿卡含未领的品质奖
-        self.say("做月饼 五仁")
-        self.assertGreater(self.act._unclaimed_own_bonus(self.ap(), "craft_try"), 0)
-        self.assertGreater(self.act._unclaimed_own_bonus(ap, "brew"), 0)
-        self.assertEqual(self.act._unclaimed_own_bonus(ap, "feed"), 0)
-        # 关掉 shop_cover_onetime 就退回「只算直接产出」的便宜口径
-        self.act.cfg["shop_cover_onetime"] = False
-        self.assertEqual(self.act._card_floor(ap, self.gid, "craft_try"),
-                         self.act._card_ceiling("craft_try"))
+        base = self.act._price_guard("lantern")
+        self.act.cfg["shop_price_ratio"] = 0.5
+        self.assertLess(self.act._price_guard("lantern"), base)
+        self.act.cfg["shop_price_ratio"] = 1.5
+        self.assertGreater(self.act._price_guard("lantern"), base)
+        self.act.cfg["shop_price_ratio"] = 99
+        for card in _SHOP_CARDS:
+            counter = card[3]
+            self.assertLessEqual(self.act._card_price(ap, self.gid, counter, 1),
+                                 self.act._card_max(counter))
 
     def test_price_is_reproducible_by_slot_and_day(self):
         """同一序号恒定：重发指令、重启进程都拿不到更低的价。"""
@@ -1258,8 +1297,9 @@ class ShopTests(_EngineCase):
         self.assertLess(self.act._score(self.ap()),
                         int(self.ap()["yuehua_earned"]))
 
-    def test_one_extra_play_cannot_out_earn_its_card(self):
-        """端到端：买 1 张灯谜卡，把那一题答对，产出也不该超过实付价。"""
+    def test_one_extra_play_earns_at_most_the_card_max(self):
+        """端到端：买 1 张灯谜卡，把那一题答对 —— 产出不超过「多玩一次的满档产出」，
+        净收益不超过「满档 − 实付」，也就是差价被卡的定价带封死了。"""
         self.give(100000)
         ap = self.settle_daily()
         ap["daily"]["lantern"] = 20                 # 普通灯谜已用满
@@ -1269,8 +1309,12 @@ class ShopTests(_EngineCase):
         before = self.earned()
         self.say("猜灯谜")
         self.say("猜灯谜 " + str((ap.get("quiz") or {}).get("a") or ""))
-        self.assertLessEqual(self.earned() - before, cost,
-                             "这一次额外灯谜的产出超过了卡价")
+        gain = self.earned() - before
+        top = self.act._card_max("lantern")
+        self.assertGreater(gain, 0, "答对了却一点月华都没拿到")
+        self.assertLessEqual(gain, top, "这一次额外灯谜的产出超过了满档产出")
+        self.assertLessEqual(gain - cost, top - self.act._price_guard("lantern"),
+                             "净收益超出了「满档 − 价格下限」的差价上限")
 
     def test_myinfo_never_rewrites_the_shop_ledger(self):
         """月华信息是只读指令：看一眼既不能改账，也不能把跨天的购卡档换新。"""

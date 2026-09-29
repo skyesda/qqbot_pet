@@ -661,8 +661,9 @@ class MoonfestActivity:
     # 一张卡 = 当日某玩法次数上限 +1，**当天有效、跨天作废**。三条设计约束：
     # ① 记账正交：卡只写 yuehua_spent，永不碰 yuehua_earned（铁律在累计口径保留）；
     # ② 定价可复现：同 (日期, 群, 玩家, 卡, 当日第几张) 恒定，重发指令刷不出低价；
-    # ③ 结构性防刷：价 ≥ 该卡「多玩一次最多能多拿多少月华」的硬下限（_card_floor），
-    #    所以「买卡 → 玩 → 赚」的净收益恒 ≤ 0。
+    # ③ 定价带：价 ∈ [多玩一次的期望产出 × shop_price_ratio, 多玩一次的满档产出]
+    #    —— 永远不比能拿到的月华更贵（贵了没人买），也压不到期望以下（低了人人买满），
+    #    所以打得比平时好才小赚，加上每卡每日限购封顶。
     # ------------------------------------------------------------------
     def _shop_daily(self, ap, create: bool = True) -> dict:
         """当日购卡记录 ``{"date": …, "caps": {计数器: 已购张数}}``。
@@ -724,12 +725,53 @@ class MoonfestActivity:
         rate = self._float_cfg("lantern_combo_rate", 0.1) or 0.1
         return max(1.0, 1.0 + rate * max(0, self._int_cfg("lantern_combo_cap", 3)))
 
-    def _card_ceiling(self, counter) -> int:
-        """该玩法「多加一次」理论上**直接**最多能产出多少月华。价格永不低于它。
+    def _card_expect(self, counter) -> int:
+        """该卡「多玩一次」的**期望**月华 = 配置随机区间的中值 + 一定拿得到的固定奖。
 
-        全部由现有配置键实时算出：后台把某个奖励调高了，下限自动跟着涨，不需要
-        手改商店配置。刻意取全局最高档（如重制按阶段 5 的 100，而不是该玩家当前
-        阶段的 45）—— 宁可高估产出把价顶高，也不能低估后留下套利口子。
+        刻意**不计**手法红利（连对倍率、主题契合、零失误奖）—— 那部分是「打得好才
+        拿得到」的，留作玩家买卡的理由；也不计群里程碑 / 一次性池这类间接出口。
+        价格下限 = 它 × ``shop_price_ratio``，所以平均水平买卡≈打平、打得好才小赚。
+
+        全部由现有配置键实时算出：后台奖励调高了，期望跟着涨，不用手改商店配置。
+        """
+        def mid(min_key, max_key, dmin, dmax):
+            lo = self._int_cfg(min_key, dmin)
+            hi = self._int_cfg(max_key, dmax)
+            return max(0, (lo + hi) // 2)
+
+        if counter == "lantern":
+            return mid("gongde_lantern_min", "gongde_lantern_max", 10, 30)
+        if counter == "lantern_hard":
+            mult = self._float_cfg("lantern_hard_mult", 1.5) or 1.5
+            return int(mid("gongde_lantern_min", "gongde_lantern_max", 10, 30) * mult)
+        if counter == "feed":
+            values = [self._as_int(v, 0) for v in (self.cfg.get("gongde_feed") or [])]
+            return (sum(values) // len(values)) if values else 0
+        if counter == "rabbit":
+            # 每站中值 × 站数；「零错通关 +25」算手法红利，不计入期望
+            steps = max(1, self._int_cfg("rabbit_run_steps", 5))
+            return mid("rabbit_run_reward_min", "rabbit_run_reward_max", 4, 8) * steps
+        if counter == "craft_try":
+            rewards = [self._as_int(v, 0)
+                       for v in (self.cfg.get("craft_remake_rewards") or [])]
+            return (sum(rewards) // len(rewards)) if rewards else 0
+        if counter == "quiz":
+            # 单题中值 + 通关奖按「一条线几站」摊销（多加一题也可能正好走完一条线）
+            stations = max(1, self._int_cfg("route_stations", 5))
+            bonus = (self._int_cfg("route_complete_bonus", 40)
+                     + self._int_cfg("route_perfect_bonus", 60))
+            return mid("gongde_quiz_min", "gongde_quiz_max", 5, 20) + bonus // stations
+        if counter == "firework":
+            return mid("gongde_firework_min", "gongde_firework_max", 5, 20)
+        # brew（起坛/取酒本身不发月华）、like（gongde_like 发给**被赞的作者**，不是
+        # 买卡人）：直接期望为 0，价纯由后台区间定（只受下面的封顶约束）。
+        return 0
+
+    def _card_max(self, counter) -> int:
+        """该卡「多玩一次」理论上**最多**能拿到多少月华 —— 价格永不超过它。
+
+        取全局最高档（如重制按阶段 5 的 100，而不是该玩家当前阶段的 45），宁可高估。
+        连对 / 零失误 / 主题契合这些手法红利都算进来，所以这是「打满」的上限。
         """
         rate = self._combo_rate_max()
         if counter == "lantern":
@@ -760,107 +802,44 @@ class MoonfestActivity:
         if counter == "firework":
             return (self._int_cfg("gongde_firework_max", 20)
                     + self._int_cfg("firework_theme_bonus", 10))
-        # brew（起坛/取酒本身不发月华）、like（gongde_like 发给**被赞的作者**，不是
-        # 买卡人）：直接产出为 0，价格纯由后台区间定。
-        return 0
-
-    def _unclaimed_group_bonus(self, group_id) -> int:
-        """本群**尚未达成**的群里程碑最高档。
-
-        买卡带来的额外产出同样进群累计，可能把群顶过一档 —— 于是买卡人自己也拿到
-        这笔（里程碑是发给群内所有参与者的）。防刷下限必须把它算进去，否则「买卡
-        → 群达标 → 我拿 40」就能出现正收益。"""
-        if not bool(self.cfg.get("shop_cover_onetime", True)):
-            return 0
-        gs = self._groups().get(str(group_id)) or {}
-        reached = set(self._as_int(i, -1) for i in (gs.get("milestone_reached") or []))
-        best = 0
-        for i, m in enumerate(self.cfg.get("milestones") or []):
-            if i in reached:
-                continue
-            best = max(best, self._as_int((m or {}).get("gongde"), 0))
-        return best
-
-    def _unclaimed_ladder_bonus(self, counter, group_id) -> int:
-        """本群**尚未达成**的献礼阶梯最高档。
-
-        只有会给献礼点数的玩法（巡礼/贺词/点赞）才可能因为多玩一次而推档，其余卡
-        记 0 —— 给不该算的卡也算上只会把价虚抬。"""
-        if not bool(self.cfg.get("shop_cover_onetime", True)):
-            return 0
-        if counter not in ("quiz", "firework", "like"):
-            return 0
-        gs = self._groups().get(str(group_id)) or {}
-        reached = set(self._as_int(i, -1) for i in (gs.get("offering_reached") or []))
-        best = 0
-        for i, step in enumerate(self.cfg.get("offering_ladder") or []):
-            if i in reached:
-                continue
-            best = max(best, self._as_int((step or {}).get("yuehua"), 0))
-        return best
-
-    def _unclaimed_own_bonus(self, ap, counter) -> int:
-        """本人**尚未领取**的一次性奖励池最高档：月饼星级（重制卡）/ 酿酒品质（桂花酿卡）。
-
-        这两笔是一次性、幂等的，但「多玩一次」恰好可以正好解锁下一档 —— 所以要算进
-        下限。其余卡没有这种一次性池。"""
-        if not bool(self.cfg.get("shop_cover_onetime", True)):
-            return 0
-        if counter == "craft_try":
-            rewards = self.cfg.get("craft_star_rewards")
-            if not isinstance(rewards, dict):
-                return 0
-            craft = ap.get("craft") or {}
-            granted = set(craft.get("stars_granted") or [])
-            star_max = max(1, self._int_cfg("craft_star_max", 5))
-            remake = craft.get("remake") or {}
-            # 只要还有「已解锁口味 + 还有没领过的星级」这一对，就按**全表最高档**
-            # 计入下限 —— 精确算「下一颗星值多少」会把 0 星口味的 1★（表里没有）
-            # 算成 0，反而给套利留口子。这里一律宁可高估。
-            top = self._max_of(list(rewards.values()), 0)
-            for flavor in (craft.get("mooncake") or {}):
-                stars = min(self._as_int(remake.get(flavor), 0) + 1, star_max)
-                if "{}:{}".format(flavor, stars) in granted:
-                    continue
-                return top
-            return 0
         if counter == "brew":
-            bonuses = self.cfg.get("brew_grade_bonus") or []
-            grades = set((ap.get("brew") or {}).get("grades") or [])
+            # 本身不发月华，但多酿一坛可能正好解锁一个新品质 → 一次性品质奖
+            return self._max_of(self.cfg.get("brew_grade_bonus"), 0)
+        if counter == "like":
+            # 本身不发月华，但多点赞一次可能把本群推过一档献礼阶梯
             best = 0
-            for i, grade in enumerate(_BREW_GRADES):
-                if grade in grades:
-                    continue
-                try:
-                    best = max(best, int(bonuses[i]))
-                except (IndexError, TypeError, ValueError):
-                    continue
+            for step in (self.cfg.get("offering_ladder") or []):
+                best = max(best, self._as_int((step or {}).get("yuehua"), 0))
             return best
         return 0
 
-    def _card_floor(self, ap, group_id, counter) -> int:
-        """硬下限：买一张该卡，最多能让买卡人**多拿**多少月华。价格永不低于它。
+    def _price_guard(self, counter) -> int:
+        """价格下限的引擎硬底 = 期望产出 × ``shop_price_ratio``。
 
-        = 直接产出上限 + 未达成的群里程碑档 + 未达成的献礼阶梯档 + 本人未领的一次性池。
-        全部算上才叫「无套利」；只算直接产出会漏掉「买卡把群顶过一档」这类间接出口。
-        想便宜卖就后台关掉 ``shop_cover_onetime``（单张卡可能一次性小赚，但有界）。"""
-        return (self._card_ceiling(counter)
-                + self._unclaimed_group_bonus(group_id)
-                + self._unclaimed_ladder_bonus(counter, group_id)
-                + self._unclaimed_own_bonus(ap, counter))
+        后台把区间配得再低也压不下去（否则「买卡 → 多玩一次」对所有人都是正收益）。
+        ratio 默认 1.0 = 按期望定价（平均打平）；调高 → 平均净亏；调低 → 便宜好卖。
+        """
+        ratio = self._float_cfg("shop_price_ratio", 1.0)
+        if ratio != ratio:          # NaN
+            ratio = 1.0
+        return max(0, int(self._card_expect(counter) * ratio))
 
     def _card_price(self, ap, group_id, counter, nth) -> int:
-        """今天第 ``nth`` 张的价：后台区间内随机，但同一序号恒定可复现。
+        """今天第 ``nth`` 张的价：落在 [期望产出 × ratio, 满档产出] 内，同一序号恒定可复现。
+
+        上界 ``_card_max`` 是硬封顶 —— 卡永远不比「多玩一次最多能拿的月华」更贵，
+        否则没人会买；下界 ``_price_guard`` 保证不会便宜到人人买满变成印钞机。
+        后台的 ``price_min / price_max`` 只能在这个带子里挑。
 
         用 md5 派生种子而不是直接 random.randint：否则玩家可以反复发指令重抽低价，
         「每次随机」就退化成「每次取最低」。也刻意**不用内置 hash()** —— 字符串
         hash 带进程级随机盐（PYTHONHASHSEED），重启一次价格就变，同样能刷。
         """
-        card_id = _CARD_BY_COUNTER[counter][0]
-        card = self._card_cfg(card_id)
-        lo = max(self._as_int(card.get("price_min"), 0),
-                 self._card_floor(ap, group_id, counter))
-        hi = max(self._as_int(card.get("price_max"), 0), lo)   # 后台把区间配反/配小 → 夹回 lo
+        card = self._card_cfg(_CARD_BY_COUNTER[counter][0])
+        top = max(0, self._card_max(counter))
+        lo = min(max(self._as_int(card.get("price_min"), 0),
+                    self._price_guard(counter)), top)
+        hi = min(max(self._as_int(card.get("price_max"), 0), lo), top)
         if hi <= lo:
             return lo
         seed = "{}|{}|{}|{}|{}".format(
@@ -924,6 +903,7 @@ class MoonfestActivity:
             parts.append(T.SHOP_ROW.format(
                 name=label, play=play, bought=bought, cap=cap,
                 price=self._card_price(ap, group_id, counter, bought + 1),
+                expect=self._card_expect(counter), top=self._card_max(counter),
                 base=base, after=base + 1))
         parts.append(T.SHOP_FOOTER)
         return "".join(parts)

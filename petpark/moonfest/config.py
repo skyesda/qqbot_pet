@@ -4,6 +4,7 @@
 - 唯一货币「月华」：既是排行榜积分，也是唯一奖励。**累计**只进不出（``yuehua_earned``
   永不减少），唯一花销出口是「月华商店」的上限次数卡 —— 它只加独立的累计花费，
   可用余额 = 累计获得 − 累计花费，所以花钱不影响累计名次（后台可切换口径）；
+  卡价被夹在「一次额外游玩的期望产出」和「满档产出」之间 → 打得比平时好才小赚；
 - 活动作为独立模块部署，代码集中在 ``petpark/moonfest/``，删除该目录即整体下架；
 - 中秋、国庆两阶段各自有可配置起止时间，活动结束后一次性结算排行奖励；
 - 所有数值尽量可配置，写死进代码的只剩无法参数化的核心闭环。
@@ -158,25 +159,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- 月华商店（上限次数卡：买一张，当日该玩法次数上限 +1，跨天作废）----
     # 记账：`yuehua_earned` 语义不变（累计产出，榜/里程碑/结算仍读它），商店从
     # 「可用余额 = earned − spent」里扣 —— 花钱不减累计，老玩家名次不受影响。
-    # 防刷：价格永不低于「该玩法多加一次理论上最多能产出多少月华」的硬下限
-    # （见 engine.py 的 _card_floor），所以买卡→玩→赚 的净收益恒 ≤ 0。
+    # 防刷/定价：售价被引擎夹在 [期望产出 × shop_price_ratio, 满档产出] 这个带子里
+    # （见 engine.py 的 _price_guard / _card_max）——**永远不比「多玩一次最多能拿的
+    # 月华」更贵**（贵了没人买），也**不会便宜到低于期望产出**（低了人人买满 = 印钞）。
+    # 于是：打得比平时好就小赚，手气差就亏，平均≈打平。
     "shop_enabled": True,           # 商店总开关
     "shop_daily_cap": 3,            # 每种卡每人每日限购张数
-    "shop_cover_onetime": True,     # 硬下限是否计入「一次性奖励池 + 群里程碑/献礼阶梯档位」
-                                    # True = 严格无套利（卡偏贵）；False = 便宜，但单张卡可能一次性小赚（有界）
+    "shop_price_ratio": 1.0,        # 价格下限 = 该卡「期望产出」× 本系数。
+                                    # 1.0 = 平均打平（默认）；调高 → 平均净亏更保守；
+                                    # 调低 → 便宜好卖，但平均也能小赚（有通胀）
     "rank_by_balance": False,       # True = 月华榜/名次/结算改按「可用余额」算（花了就掉名次）
-    # 每张卡：enabled（是否上架）+ price_min/price_max（随机价区间；低于硬下限会被引擎抬上去）。
+    # 每张卡：enabled（是否上架）+ price_min/price_max（随机价区间，引擎会夹进上面那个带子）。
     # 卡 ID 与「抬升哪个计数器」的映射写死在 engine._SHOP_CARDS 里，后台改不了 —— 避免配错计数器。
+    # 默认区间按「期望产出 ~ 期望产出 ×1.3」给，实测产出见括号（多玩一次能拿多少）。
     "shop_cards": {
-        "lantern":      {"enabled": True, "price_min": 80,  "price_max": 160},
-        "lantern_hard": {"enabled": True, "price_min": 100, "price_max": 200},
-        "feed":         {"enabled": True, "price_min": 70,  "price_max": 150},
-        "rabbit":       {"enabled": True, "price_min": 120, "price_max": 240},
-        "brew":         {"enabled": True, "price_min": 105, "price_max": 200},
-        "craft_remake": {"enabled": True, "price_min": 260, "price_max": 400},
-        "quiz":         {"enabled": True, "price_min": 190, "price_max": 320},
-        "firework":     {"enabled": True, "price_min": 130, "price_max": 220},
-        "like":         {"enabled": True, "price_min": 65,  "price_max": 130},
+        "lantern":      {"enabled": True, "price_min": 20,  "price_max": 26},   # 10~39
+        "lantern_hard": {"enabled": True, "price_min": 30,  "price_max": 39},   # 15~58
+        "feed":         {"enabled": True, "price_min": 16,  "price_max": 21},   # 5~30
+        "rabbit":       {"enabled": True, "price_min": 30,  "price_max": 39},   # 30~77
+        "brew":         {"enabled": True, "price_min": 30,  "price_max": 45},   # 0（靠品质奖 ≤80）
+        "craft_remake": {"enabled": True, "price_min": 53,  "price_max": 69},   # 20~100
+        "quiz":         {"enabled": True, "price_min": 32,  "price_max": 42},   # 5~126
+        "firework":     {"enabled": True, "price_min": 12,  "price_max": 17},   # 5~30
+        "like":         {"enabled": True, "price_min": 8,   "price_max": 14},   # 0（靠献礼阶梯 ≤25）
     },
     # ---- 群里程碑 / 活动结束排行奖励 ----
     "milestones": DEFAULT_MILESTONES,
