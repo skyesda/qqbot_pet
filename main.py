@@ -6264,6 +6264,27 @@ class PetParkPlugin(Star):
             logger.warning("[petpark] 提交广播任务时未找到运行中的事件循环")
             return None
 
+    def _broadcast_targets(self) -> list[tuple[str, str]]:
+        """可主动推送的群 ``[(gid, umo)]``：**已授权** + 群内已开启灵契仙途 + 有 UMO。
+
+        主动推送绝不打给未授权 / 未开启灵契仙途 / 已退群或已注销的群：store 的
+        groups 桶是历史累积的，里面躺着大量僵尸群（线上实测一次全群通报的 28 个
+        目标里，20 个「机器人非群成员」、8 个「群已注销」），照单全推只会刷一屏
+        API 报错。活动模块（中元 / 月耀华诞）的全群通报共用本方法，与后台其它
+        「全服广播」的目标集**完全一致**，单一来源。
+        """
+        groups = self.store._data.get("groups", {})
+        out: list[tuple[str, str]] = []
+        for gid, g in groups.items():
+            if not isinstance(g, dict):
+                continue
+            if not (self._is_group_authorized(gid) and g.get("enabled", True)):
+                continue
+            umo = g.get("umo")
+            if umo:
+                out.append((gid, umo))
+        return out
+
     async def _do_broadcast(self, text: str) -> dict:
         from astrbot.api.event import MessageChain
 
@@ -6274,7 +6295,7 @@ class PetParkPlugin(Star):
             if self._is_group_authorized(gid) and groups[gid].get("enabled", True)
         ]
         with_umo = [gid for gid in authorized if groups[gid].get("umo")]
-        targets = [(gid, groups[gid].get("umo")) for gid in with_umo]
+        targets = self._broadcast_targets()
 
         result = {
             "total_groups": len(all_gids),

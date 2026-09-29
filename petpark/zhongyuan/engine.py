@@ -1566,21 +1566,26 @@ class ZhongyuanActivity:
             logger.warning("[zhongyuan] 推送群 %s 失败", group_id, exc_info=True)
 
     async def _push_all_groups(self, text: str) -> int:
-        """向所有已注册群广播（全群通报）；单群失败不影响其余群。返回目标群数。"""
-        gids = []
+        """向**已授权且在用的**群广播，返回目标群数。
+
+        目标集**不再**是 store 里全部群：那是历史累积的桶，混着大量僵尸群（未授权、
+        未开启灵契仙途、机器人已退群、群已注销），照单全推开只会刷一屏 API 报错。
+        现在交给宿主的 ``_broadcast_targets()``（= 已授权 + 群内已启用 + 有 UMO），
+        与后台其它「全服广播」目标集完全一致；发送走宿主的
+        ``_broadcast_to_authorized_groups()``（Markdown 优先、纯文本降级、带成败统计）。
+        """
         try:
-            gids = list(self.bot.store._data.get("groups", {}).keys())
-        except Exception:  # noqa: BLE001 - store 不可用则退回模块自己的群桶
-            gids = []
-        if not gids:
-            gids = list(self._groups().keys())
-        if not gids:
-            logger.warning("[zhongyuan] 全群通报：没有可推送的群（store 与模块 groups 均为空）")
+            n = len(self.bot._broadcast_targets())
+        except Exception:  # noqa: BLE001 - 宿主未提供时按「无目标」处理
+            n = 0
+        if not n:
+            logger.warning(
+                "[zhongyuan] 全群通报：没有可推送的群（需已授权 + 群内已开启灵契仙途 + 有 UMO）"
+            )
             return 0
-        logger.info("[zhongyuan] 全群通报：目标 %d 个群", len(gids))
-        for gid in gids:
-            await self._push_group(gid, text)
-        return len(gids)
+        logger.info("[zhongyuan] 全群通报：%d 个已授权群", n)
+        self.bot._broadcast_to_authorized_groups(text)
+        return n
 
     # ------------------------------------------------------------------
     # 生命周期

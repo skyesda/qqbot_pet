@@ -907,25 +907,26 @@ class MoonfestActivity:
             logger.warning("[moonfest] 推送群 %s 失败", group_id, exc_info=True)
 
     def _push_all_groups(self, text: str) -> int:
-        """向所有已注册群广播，返回目标群数（里程碑 / 结算 / 后台测试按钮）。
+        """向**已授权且在用的**群广播，返回目标群数（里程碑 / 结算 / 后台测试按钮）。
 
-        群 ID 取宿主 store 的 groups 桶——其键就是 group_openid，与
-        ``bot.send_group`` 的入参、以及本模块 players 里记的 group 是同一空间。
+        目标集**不再**是 store 里全部群：那是历史累积的桶，混着大量僵尸群（未授权、
+        未开启灵契仙途、机器人已退群、群已注销），照单全推开只会刷一屏 API 报错。
+        现在交给宿主的 ``_broadcast_targets()``（= 已授权 + 群内已启用 + 有 UMO），
+        与后台其它「全服广播」目标集完全一致；发送走宿主的
+        ``_broadcast_to_authorized_groups()``（Markdown 优先、纯文本降级、带成败统计）。
         """
-        gids = []
         try:
-            gids = list(self.bot.store._data.get("groups", {}).keys())
-        except Exception:  # noqa: BLE001 - store 不可用则退回模块自己的群桶
-            gids = []
-        if not gids:
-            gids = list(self._groups().keys())
-        if not gids:
-            logger.warning("[moonfest] 全群通报：没有可推送的群（store 与模块 groups 均为空）")
+            n = len(self.bot._broadcast_targets())
+        except Exception:  # noqa: BLE001 - 宿主未提供时按「无目标」处理
+            n = 0
+        if not n:
+            logger.warning(
+                "[moonfest] 全群通报：没有可推送的群（需已授权 + 群内已开启灵契仙途 + 有 UMO）"
+            )
             return 0
-        logger.info("[moonfest] 全群通报：目标 %d 个群", len(gids))
-        for gid in gids:
-            self._spawn(self._push_group(gid, text))
-        return len(gids)
+        logger.info("[moonfest] 全群通报：%d 个已授权群", n)
+        self.bot._broadcast_to_authorized_groups(text)
+        return n
 
     def start(self) -> None:
         if self._loop_task_ref is None or self._loop_task_ref.done():
