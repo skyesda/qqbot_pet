@@ -10,9 +10,11 @@
 - **活动结束一次性结算**：两阶段 end_at 均过后 `_settle()` 发全服总榜前 20 名
   纯月华（写回 players 桶），`meta.settled` 幂等，不调 store.add_item。
 
-指令（COMMANDS）：
+指令（COMMANDS）：全部为玩家玩法指令，**无群内管理员指令** ——
   拜月 / 华诞签到 / 猜灯谜 / 喂玉兔 / 做月饼 / 贺词 / 点赞 / 巡礼 /
-  月华榜 / 里程碑 / 月华墙 / 活动帮助 / 月耀配置 / 月耀开始 / 月耀结束 / 月耀结算
+  月华榜 / 里程碑 / 月华墙 / 活动帮助
+  活动的开关、双阶段起止时间、全部数值与奖励只在后台「节日活动」页配置；
+  结算由后台循环在两阶段 end_at 均已过后自动执行一次，不经指令。
 """
 from __future__ import annotations
 
@@ -35,7 +37,6 @@ from .config import (
     ACTIVITY_NAME,
     ACTIVITY_TAG,
     DEFAULT_CONFIG,
-    editable_keys,
     merge_config,
     tier_yuehua_for_rank,
 )
@@ -54,8 +55,10 @@ BJ = ZoneInfo("Asia/Shanghai")
 COMMANDS = {
     "拜月", "华诞签到", "猜灯谜", "喂玉兔", "做月饼",
     "贺词", "点赞", "巡礼", "月华榜", "里程碑", "月华墙", "活动帮助",
-    "月耀配置", "月耀开始", "月耀结束", "月耀结算",
 }
+# 刻意**不提供**任何群内管理员指令：活动的开始/结束/时间/数值/奖励全部只在
+# 后台「节日活动」页配置（改 phase_*.start_at/end_at 即开始/结束），结算由
+# 后台循环在「两阶段 end_at 均已过」时自动执行一次。群内只留玩家玩法指令。
 
 # 做月饼可选口味（收集向，每种首次合成发一次 craft_bonus）
 CRAFT_FLAVORS = ["五仁", "豆沙", "蛋黄莲蓉", "冰皮", "流心"]
@@ -142,15 +145,6 @@ class MoonfestActivity:
 
     def _bj_date(self) -> str:
         return self._now_bj().strftime("%Y-%m-%d")
-
-    @staticmethod
-    def _fmt_time(ts) -> str:
-        if not ts:
-            return "未设置"
-        try:
-            return datetime.fromtimestamp(int(ts), BJ).strftime("%m-%d %H:%M")
-        except (OSError, ValueError):
-            return str(ts)
 
     # ------------------------------------------------------------------
     # 配置
@@ -261,14 +255,6 @@ class MoonfestActivity:
         if len(cur) == 2:
             return "both"
         return cur[0]
-
-    def _phase_text(self) -> str:
-        ph = self._phase()
-        if not ph:
-            return "未开启"
-        if ph == "both":
-            return T.PHASE_BOTH
-        return T.PHASE_NAME.get(ph, ph)
 
     def _enabled(self) -> bool:
         return bool(self.cfg.get("enabled", True)) and self._in_open_hours() and self._phase() is not None
@@ -421,20 +407,6 @@ class MoonfestActivity:
     # ------------------------------------------------------------------
     # 管理权限
     # ------------------------------------------------------------------
-    def _is_superadmin(self, qq) -> bool:
-        admins = getattr(self.bot, "admins", None) or []
-        return str(qq) in {str(a) for a in admins}
-
-    def _is_admin(self, event) -> bool:
-        try:
-            if getattr(self.bot, "_is_admin", None) is not None and self.bot._is_admin(event):
-                return True
-        except Exception:
-            pass
-        sender = getattr(event, "sender", None)
-        qq = getattr(sender, "user_id", None) if sender is not None else None
-        return self._is_superadmin(qq)
-
     # ------------------------------------------------------------------
     # 玩法：拜月 / 华诞签到
     # ------------------------------------------------------------------
@@ -833,73 +805,6 @@ class MoonfestActivity:
     # ------------------------------------------------------------------
     # 管理指令
     # ------------------------------------------------------------------
-    def _cmd_config(self, event, qq, group_id, rest: str) -> str:
-        if rest.strip():
-            parts = rest.split(None, 1)
-            key = parts[0]
-            value = parts[1].strip() if len(parts) > 1 else ""
-            if key not in editable_keys():
-                return "❌ 键「%s」不可热改。可改：%s" % (key, "、".join(sorted(editable_keys())))
-            new = self._coerce_config(self.cfg.get(key), value)
-            if new is None:
-                return "❌ 值「%s」无法转换为 %s。" % (value, type(self.cfg.get(key)).__name__)
-            self.cfg[key] = new
-            self._data.setdefault("config", {})[key] = new
-            return "✅ 已更新 月耀配置 %s = %s" % (key, new)
-        p_m = self.cfg.get("phase_midautumn") or {}
-        p_n = self.cfg.get("phase_national") or {}
-        lines = [
-            "🌙 月耀华诞 · 当前配置",
-            "· 总开关：%s" % ("开启" if self.cfg.get("enabled", True) else "关闭"),
-            "· 中秋：%s ~ %s" % (self._fmt_time(p_m.get("start_at")), self._fmt_time(p_m.get("end_at"))),
-            "· 国庆：%s ~ %s" % (self._fmt_time(p_n.get("start_at")), self._fmt_time(p_n.get("end_at"))),
-            "· Jev：%s" % ("开启" if (self.cfg.get("jev") or {}).get("enabled", True) else "关闭"),
-            "· 拜月 %s / 华诞签到 %s" % (self._int_cfg("sign_midautumn", 10), self._int_cfg("sign_national", 15)),
-            "· 灯谜 %s 题/日（%s~%s）" % (self._int_cfg("lantern_daily_limit", 20),
-                                        self._int_cfg("gongde_lantern_min", 10), self._int_cfg("gongde_lantern_max", 30)),
-            "· 喂养 %s 次/日（档 %s）" % (self._int_cfg("feed_daily_limit", 10), self.cfg.get("gongde_feed") or [5, 10, 20, 30]),
-            "· 月饼首合 %s / 巡礼 %s 题/日" % (self._int_cfg("craft_bonus", 20), self._int_cfg("quiz_daily_limit", 20)),
-            "· 贺词 %s 条/日（%s~%s）" % (self._int_cfg("firework_daily_limit", 3),
-                                        self._int_cfg("gongde_firework_min", 5), self._int_cfg("gongde_firework_max", 20)),
-            "· 修改示例：月耀配置 sign_midautumn 10",
-        ]
-        return "\n".join(lines)
-
-    def _cmd_start(self, event, qq, group_id) -> str:
-        now = self._now()
-        for key in ("phase_midautumn", "phase_national"):
-            p = self.cfg.setdefault(key, {})
-            if not int(p.get("start_at", 0) or 0):
-                p["start_at"] = now
-        cfg = self._data.setdefault("config", {})
-        cfg["enabled"] = True
-        cfg["phase_midautumn"] = dict(self.cfg["phase_midautumn"])
-        cfg["phase_national"] = dict(self.cfg["phase_national"])
-        self._push_all_groups(T.OPEN_TIP.format(phase=self._phase_text()))
-        return "✅ 月耀华诞活动已开启。"
-
-    def _cmd_end(self, event, qq, group_id) -> str:
-        now = self._now()
-        for key in ("phase_midautumn", "phase_national"):
-            p = self.cfg.setdefault(key, {})
-            end = int(p.get("end_at", 0) or 0)
-            if not end or now <= end:
-                p["end_at"] = now
-        cfg = self._data.setdefault("config", {})
-        cfg["phase_midautumn"] = dict(self.cfg["phase_midautumn"])
-        cfg["phase_national"] = dict(self.cfg["phase_national"])
-        self._settle()
-        return "✅ 月耀华诞活动已结束并完成结算。"
-
-    def _cmd_settle(self, event, qq, group_id) -> str:
-        if self._is_settled():
-            return T.SETTLE_DONE
-        self._settle()
-        return "✅ 已执行月耀华诞结算。"
-
-    # ------------------------------------------------------------------
-    # 指令路由 / 后台循环
-    # ------------------------------------------------------------------
     def commands(self) -> set[str]:
         return COMMANDS
 
@@ -915,18 +820,6 @@ class MoonfestActivity:
             return None
         cmd = tokens[0]
         rest = (text or "").strip()[len(cmd):].strip()
-
-        # 管理指令（权限独立于活动开关）
-        if cmd in ("月耀配置", "月耀开始", "月耀结束", "月耀结算"):
-            if not self._is_admin(event):
-                return "❌ 仅管理员可操作月耀华诞管理指令。"
-            if cmd == "月耀配置":
-                return self._cmd_config(event, qq, group_id, rest)
-            if cmd == "月耀开始":
-                return self._cmd_start(event, qq, group_id)
-            if cmd == "月耀结束":
-                return self._cmd_end(event, qq, group_id)
-            return self._cmd_settle(event, qq, group_id)
 
         if not self._enabled():
             return T.NOT_OPEN

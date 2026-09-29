@@ -51,7 +51,7 @@ DEFAULT_MILESTONES: list[dict[str, Any]] = [
 ]
 
 # ---------------------------------------------------------------------------
-# 默认配置（可被 moonfest.json 里的 config 覆盖，亦可通过管理指令「月耀配置」热改）
+# 默认配置（可被 moonfest.json 里的 config 覆盖；线上只在后台「节日活动」页改）
 # ---------------------------------------------------------------------------
 DEFAULT_CONFIG: dict[str, Any] = {
     # ---- 总控 ----
@@ -96,20 +96,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "end_rewards": DEFAULT_END_REWARDS,
 }
 
-# 允许通过「月耀配置 <key> <value>」热改的整型/浮点/字符串键（白名单，防误改结构字段）
-_EDITABLE_KEYS = {
-    "enabled",
-    "sign_midautumn", "sign_national",
-    "lantern_daily_limit", "lantern_cooldown_min", "lantern_timeout_sec",
-    "gongde_lantern_min", "gongde_lantern_max",
-    "feed_daily_limit", "feed_cooldown_min",
-    "craft_bonus",
-    "quiz_daily_limit", "quiz_timeout_sec",
-    "gongde_quiz_min", "gongde_quiz_max",
-    "firework_daily_limit", "firework_max_len",
-    "gongde_firework_min", "gongde_firework_max",
-    "like_daily_limit", "gongde_like",
-}
+# 刻意**不设**「可热改键白名单」：活动没有任何群内管理指令，全部数值只在后台
+# 「节日活动」页配置（后端 apply_config 负责类型强制与 JSON 解析）。
 
 # 默认双阶段时间（北京时间，已通过 _ts() 写入 DEFAULT_CONFIG）：
 # 中秋 2026-09-27 00:00 ~ 2026-10-01 23:59；国庆 2026-10-01 00:00 ~ 2026-10-07 23:59。
@@ -133,10 +121,6 @@ def merge_config(base: dict, override: dict | None) -> dict:
         else:
             cfg[k] = v
     return cfg
-
-
-def editable_keys() -> set[str]:
-    return _EDITABLE_KEYS
 
 
 def tier_yuehua_for_rank(rank: int, end_rewards: list[dict]) -> int:
