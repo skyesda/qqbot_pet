@@ -485,9 +485,10 @@ class MoonfestActivity:
             return T.LANTERN_TIMEOUT.format(answer=quiz.get("a"))
         user_ans = rest.strip()
         answer = str(quiz.get("a", ""))
-        # 字符串归一化兜底：字面命中无条件通过
-        norm = puzzles.normalize_answer(user_ans, {"answer": answer, "answer_type": quiz.get("answer_type")})
-        if norm is not None and norm == answer:
+        # 字符串归一化兜底：字面命中无条件通过（走 is_correct 而不是拿 normalize 的
+        # 返回值直接比对答案——多字谜底在归一化里会被换成同义组的代表写法，直接比
+        # 原始 answer 字符串会让「月球/月亮」这类正确答法反而判错）
+        if puzzles.is_correct(user_ans, {"answer": answer, "answer_type": quiz.get("answer_type")}):
             ap.pop("quiz", None)
             return self._lantern_right(ap, group_id, user_ans, answer, by_jev=False)
         # Jev noul 语义等价判定（谐音/别解/近义）

@@ -2257,9 +2257,11 @@ class PetParkPlugin(Star):
                 await self.moonfest.terminate()
             except Exception:
                 logger.exception("[petpark] 月耀华诞活动终止出错")
-        # 给被取消的任务处理 CancelledError 的机会，再落盘
+        # 给被取消的任务处理 CancelledError 的机会，再落盘。
+        # 这里必须用 flush_now()：store.save() 现在是「合并落盘」，返回时并不保证已写盘，
+        # 停机收尾用它等于把最后那点改动留在内存里随进程一起丢。
         await asyncio.sleep(0)
-        await self.store.save()
+        await self.store.flush_now()
         if self._web is not None:
             await self._web.stop()
         renderer = getattr(self, "_image_renderer", None)

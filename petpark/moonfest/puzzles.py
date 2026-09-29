@@ -1,20 +1,46 @@
 """「月耀华诞」题库：灯谜（猜灯谜）+ 文化常识（华诞巡礼）。
 
-- 灯谜（猜灯谜，中秋段）：中秋主题字谜/成语谜/物谜，answer_type 多为 "str"，
-  谜底为字/词/物名。判定优先走 Jev noul 语义等价（含谐音/别解/近义），
-  字符串归一化比对作兜底（答对字面答案无条件通过）。
+题库分两层，都并进本模块的 `_LANTERNS` / `_QUIZ`（供 local_lantern / local_quiz 抽题）：
+
+- 本文件里的手写精选题（中秋/国庆主题为主，题面质量最高，优先保留）；
+- `riddles.py`（灯谜 1000+ 条）与 `quizzes.py`（巡礼 1000+ 条）两个大题库，
+  它们用「结构化事实表 + 生成器」产出，答案由数据行直接给出、天然自洽。
+
+两层按题干去重合并（手写的优先），所以最终池子只会变大、不会出现同一道题抽两次。
+
+- 灯谜（猜灯谜，中秋段）：谜面 + 谜底，answer_type 多为 "str"，谜底为字/词/物名。
+  判定优先走 Jev noul 语义等价（含谐音/别解/近义），字符串归一化比对作兜底
+  （答对字面答案无条件通过）。
 - 巡礼（华诞巡礼，国庆段）：国庆/中秋文化常识题，带 options/answer，answer_type
   支持 str/int；带 difficulty 1/2/3 档供 Jev 自适应难度选题（简单/中等/困难）。
 
 判分约定（照 zhongyuan/puzzles.py:211-247）：
 - answer_type == "int"：从玩家输入里取第一个整数与 answer 比较；
-- answer_type == "str"：玩家输入去掉「答案是/答/第X」等前缀后与 answer 逐项匹配。
+- answer_type == "str"：玩家输入去掉「答案是/答/第X」等前缀后与 answer 逐项匹配；
+- 多字谜底额外做同义归一（见 _SYNONYM_GROUPS）：玩家答「月球」也算「月亮」，
+  因为线上没配 Jev Key 时语义判定走不了，纯字符串比对会把对答案判错。
 """
 from __future__ import annotations
 
 import random
 import re
 from typing import Any
+
+from . import quizzes, riddles
+
+
+def _merge_bank(
+    base: list[dict[str, Any]], extra: list[dict[str, Any]], key: str
+) -> list[dict[str, Any]]:
+    """把外部大题库并进手写题库，按题干去重——手写的条目优先，同题不会抽到两次。"""
+    seen = {p.get(key) for p in base}
+    out = list(base)
+    for p in extra:
+        if p.get(key) in seen:
+            continue
+        seen.add(p.get(key))
+        out.append(p)
+    return out
 
 # ---------------------------------------------------------------------------
 # 灯谜（中秋段「猜灯谜」）。谜底唯一、答案无歧义；题库可后台扩充。
@@ -33,7 +59,7 @@ _LANTERNS: list[dict[str, Any]] = [
      "hint": "月宫别称，嫦娥与玉兔就住在这里。"},
     # ---- 主题：桂 ----
     {"question": "中秋时节满园香（打一花名）", "answer": "桂花", "answer_type": "str",
-     "hint": "「八月桂花香」正是中秋的味道。"},
+     "hint": "八月十五前后，院里院外都是它的香气。"},
     {"question": "吴刚在月宫砍的那棵树（打一植物）", "answer": "桂树", "answer_type": "str",
      "hint": "传说月中有一棵永砍不倒的树。"},
     # ---- 主题：兔 ----
@@ -80,10 +106,17 @@ _LANTERNS: list[dict[str, Any]] = [
     {"question": "山上还有山（打一字）", "answer": "出", "answer_type": "str",
      "hint": "两座山叠在一起。"},
     {"question": "半边有毛半边光，半边好吃半边香，半边山上吃青草，半边水里把身藏（打一字）",
-     "answer": "鲜", "answer_type": "str", "hint": "鱼羊合一，味道才鲜。"},
+     "answer": "鲜", "answer_type": "str", "hint": "一半水里游，一半山上跑，合起来最是美味。"},
 ]
 
 _LANTERN_THEMES = ["月", "桂", "兔", "灯", "月饼", "中秋"]
+
+# 并入 riddles.py 的大题库（1000+ 条）。手写条目排在前面，去重时优先保留。
+_LANTERNS = _merge_bank(_LANTERNS, riddles.all_lanterns(), "question")
+# 手写条目不写 theme（抽题时 setdefault 兜底），合并后统一补齐，池子里格式一致
+for _p in _LANTERNS:
+    _p.setdefault("theme", "中秋")
+    _p.setdefault("source", "local")
 
 
 def local_lantern() -> dict[str, Any]:
@@ -158,6 +191,9 @@ _QUIZ: list[dict[str, Any]] = [
 
 _QUIZ_OPTION_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+# 并入 quizzes.py 的大题库（1000+ 条）。手写条目排在前面，去重时优先保留。
+_QUIZ = _merge_bank(_QUIZ, quizzes.all_quizzes(), "q")
+
 
 def local_quiz(difficulty: int = 2) -> dict[str, Any]:
     """抽一道巡礼题。difficulty 指定档位（1/2/3）；该档无题时退回到全部题库。"""
@@ -190,6 +226,42 @@ def option_index_to_text(p: dict, letter: str) -> str | None:
 # ---------------------------------------------------------------------------
 _INT_RE = re.compile(r"\d+")
 
+# 谜底同义答法。灯谜/物谜的谜底是日常词，同一样东西常有多种叫法：题库里「月亮」和
+# 「月球」、「兔子」和「玉兔」本身就是各自的谜底，玩家换一种写法答对同一个东西，纯
+# 字符串比对会判错。线上当前**没配 Jev Key**（语义判定走不了），这层本地容错就是唯一
+# 兜底，所以必须补上。
+#
+# 只对「多字谜底 + 无选项的开放题」生效：
+# - 字谜谜底是单个汉字（日/月/秋…），把「日」等同于「太阳」会让「打一字」的题被
+#   「太阳」蒙对；
+# - 巡礼选择题要求与某个选项逐字相等，而答案与干扰项常是「中秋节 / 中秋」这类近义对，
+#   归一化会把干扰项也判对。
+_SYNONYM_GROUPS: list[tuple[str, ...]] = [
+    ("月亮", "月球", "明月"),
+    ("兔子", "玉兔", "小白兔", "小兔子", "兔儿"),
+    ("中秋节", "中秋", "团圆节", "八月节"),
+    ("国庆节", "国庆", "十月一日"),
+    ("秋天", "秋季", "秋"),
+    ("五星红旗", "国旗", "红旗"),
+    ("义勇军进行曲", "国歌"),
+    ("桂花", "桂花树", "桂树", "桂"),
+    ("灯笼", "花灯", "灯"),
+    ("心愿灯", "孔明灯", "天灯", "许愿灯"),
+    ("月饼", "中秋月饼"),
+    ("天空", "天上"),
+    ("太阳", "日头"),
+]
+_SYNONYM: dict[str, str] = {
+    word: group[0] for group in _SYNONYM_GROUPS for word in group
+}
+
+
+def _canon_answer(text: str, puzzle: dict) -> str:
+    """把多字开放题的答案归一到一个代表写法；不符合条件时原样返回。"""
+    if puzzle.get("options") or len(str(puzzle.get("answer") or "")) < 2:
+        return text
+    return _SYNONYM.get(text, text)
+
 
 def normalize_answer(user_text: str, puzzle: dict) -> str | None:
     """把玩家输入归一化为可判分的形式；无法判定返回 None。"""
@@ -218,15 +290,15 @@ def normalize_answer(user_text: str, puzzle: dict) -> str | None:
     ans = str(puzzle.get("answer", ""))
     if ans and ans in t:
         return ans
-    return t2 or t
+    return _canon_answer(t2 or t, puzzle)
 
 
 def is_correct(user_text: str, puzzle: dict) -> bool:
-    """判断玩家答案是否正确。"""
+    """判断玩家答案是否正确（多字开放题按同义写法归一后比较）。"""
     ans = str(puzzle.get("answer", ""))
     if not ans:
         return False
     norm = normalize_answer(user_text, puzzle)
     if norm is None:
         return False
-    return norm == ans
+    return norm == _canon_answer(ans, puzzle)

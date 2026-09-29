@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import json
 import random
 import tempfile
@@ -17,12 +18,12 @@ class StoreLatencyTests(unittest.IsolatedAsyncioTestCase):
             path = Path(directory) / 'data.json'
             store = PetStore(path)
             store.get_player('a', 'g')['coin'] = 123
-            await store.save()
+            await store.flush_now()  # 「返回即已落盘」的路径是 flush_now（save 改为合并落盘）
             first = path.read_text(encoding='utf-8')
             self.assertNotIn('\n', first)
             self.assertEqual(PetStore(path).get_player('a', 'g')['coin'], 123)
             store.get_player('a', 'g')['coin'] = 456
-            await store.save()
+            await store.flush_now()
             self.assertEqual(json.loads(path.with_suffix('.bak').read_text(encoding='utf-8')),
                              json.loads(first))
             self.assertEqual(PetStore(path).get_player('a', 'g')['coin'], 456)
@@ -32,15 +33,58 @@ class StoreLatencyTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'data.json'
             store = PetStore(path)
-            await store.save()
+            await store.flush_now()
             original = path.read_bytes()
             store.get_player('a', 'g')['coin'] = 987
             # 写后校验已从「读回重新 json.loads」换成字节数比对（O(1)），校验点是
             # _verify_written；失败必须发生在 tmp.replace 之前，旧档原样保留。
             with patch.object(PetStore, '_verify_written', side_effect=OSError('verify failed')):
                 with self.assertRaises(OSError):
-                    await store.save()
+                    await store.flush_now()
             self.assertEqual(path.read_bytes(), original)
+
+
+class SaveCoalesceTests(unittest.IsolatedAsyncioTestCase):
+    """存档合并：一个窗口内的多次 save() 只落一次盘，且 save() 不阻塞调用方。"""
+
+    def setUp(self):
+        # 把合并窗口压到 50ms，测试不必等真实的 250ms
+        self.addCleanup(setattr, PetStore, 'SAVE_COALESCE_SEC', PetStore.SAVE_COALESCE_SEC)
+        PetStore.SAVE_COALESCE_SEC = 0.05
+
+    async def test_burst_saves_write_disk_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'data.json'
+            store = PetStore(path)
+            store.get_player('a', 'g')['coin'] = 1
+            await store.flush_now()  # 先建磁盘基线，下面数的是新增的写盘次数
+            flushes = []
+            original = PetStore._flush
+
+            def counting(self):
+                flushes.append(1)
+                return original(self)
+
+            with patch.object(PetStore, '_flush', counting):
+                for coin in range(2, 7):
+                    store.get_player('a', 'g')['coin'] = coin
+                    await store.save()
+                # save() 返回时不该已经写盘（这就是它不再阻塞回复路径的原因）
+                self.assertEqual(flushes, [])
+                await asyncio.sleep(0.2)  # 等合并窗口到期 + 落盘
+            # 5 次 save() 合并成 1 次写盘（合并前是 5 次全量存档）
+            self.assertEqual(len(flushes), 1)
+            self.assertEqual(PetStore(path).get_player('a', 'g')['coin'], 6)
+
+    async def test_flush_now_bypasses_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'data.json'
+            store = PetStore(path)
+            store.get_player('a', 'g')['coin'] = 7
+            await store.save()
+            await store.flush_now()  # 不等窗口：停机/清档路径靠它保证已落盘
+            self.assertEqual(PetStore(path).get_player('a', 'g')['coin'], 7)
+            self.assertFalse(path.with_suffix('.tmp').exists())
 
 
 class ApiTimingTests(unittest.IsolatedAsyncioTestCase):

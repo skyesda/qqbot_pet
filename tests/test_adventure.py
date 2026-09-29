@@ -198,6 +198,9 @@ class AdventureTests(unittest.TestCase):
         from qqbot_pet.main import PetParkPlugin, KNOWN_COMMANDS
         plugin=PetParkPlugin.__new__(PetParkPlugin)
         plugin.store=self.store;plugin.zhongyuan=None
+        # 手工 __new__ 出来的实例没有 __init__ 里设的活动模块属性，dispatch 会用到；
+        # 照 zhongyuan 的写法一并置空（月耀华诞模块与中元同构）。
+        plugin.moonfest=None;plugin._mf_commands=set()
         plugin._active_event_commands=lambda:set()
         plugin._is_group_authorized=lambda g:True
         plugin._is_admin=lambda e:True

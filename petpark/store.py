@@ -66,6 +66,11 @@ class PetStore:
         self.default_enabled = default_enabled
         self.default_cross = default_cross
         self._lock = asyncio.Lock()
+        # 保存合并状态：_dirty=内存里有未落盘的改动；_save_task=在跑的合并落盘任务；
+        # _pending_saves=本轮合并进来的 save() 次数（只用于日志观测合并效果）。
+        self._dirty = False
+        self._save_task: "asyncio.Task[None] | None" = None
+        self._pending_saves = 0
         # 审计流水环形上限：main 启动时用后台配置覆写（config audit_cap）。
         # _data["audit_cap"] 仍可显式覆盖（测试/数据层直改优先）。
         self.audit_cap = 20000
@@ -696,12 +701,85 @@ class PetStore:
         if tmp.stat().st_size != expected:
             raise OSError("存档校验失败，原存档未替换")
 
+    # 保存合并窗口（秒）。窗口内到达的多次 save() 合成一次落盘——实测线上连击间隔
+    # 0.8/1.1/0.9s，而单次落盘 p50 就要 0.9s，即后一次调用几乎总落在前一次的写盘
+    # 窗口内，不合并等于白写两遍 7.4MB 全量存档。
+    SAVE_COALESCE_SEC = 0.25
+
     async def save(self) -> None:
+        """标记「有改动待落盘」并安排合并落盘；**返回时并不保证已写盘**。
+
+        为什么改成合并：petpark.json 实测 7.4MB，一次保存 = 全量序列化 + 三次磁盘
+        IO，线上 p50 895ms / p99 2100ms。而群里一条消息常常连着触发 2~3 次 save()
+        （坐骑入场一次、主流程回复前一次、后台循环再一次），每一次都在回复路径上被
+        await，于是玩家看到的「拜月延迟」主要是写盘而不是业务逻辑。合并后同一窗口
+        只写一次，且调用方不再被写盘阻塞。
+
+        代价（必须知情）：进程被强杀（kill -9 / 崩溃）时，最多丢掉最近
+        SAVE_COALESCE_SEC 内尚未落盘的改动。需要「返回即已可靠落盘」的路径——停机
+        收尾、后台清档/删除、数据迁移——请显式用 flush_now()。
+        """
+        self._dirty = True
+        self._pending_saves += 1
+        self._schedule_flush()
+
+    def _schedule_flush(self) -> None:
+        """安排一次合并落盘；已有在跑的就不重复排（它会带上期间的新改动）。"""
+        task = self._save_task
+        if task is not None and not task.done():
+            return
+        try:
+            self._save_task = asyncio.ensure_future(self._flush_loop())
+        except RuntimeError:
+            # 事件循环已关闭（停机收尾阶段）：退化成当场落盘，别把改动留在内存里。
+            self._dirty = False
+            self._flush()
+
+    async def flush_now(self) -> None:
+        """立即全量落盘，返回时**已**写盘（不参与合并）。
+
+        用于「这一刻磁盘必须已是真相」的路径：停机收尾、后台清档/删除玩家数据、
+        迁移。其余业务路径一律走 save()（合并、不阻塞）。
+        """
+        task = self._save_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            # 取消排队中的合并落盘：下面这次写盘已经覆盖了它的全部改动
+            task.cancel()
+        self._save_task = None
+        self._dirty = False
+        await self._write_locked()
+        if self._dirty:
+            # 本次写盘期间又有改动进来：补排一次，否则它会一直躺在内存里等下次 save()
+            self._schedule_flush()
+
+    async def _flush_loop(self) -> None:
+        """合并落盘循环：睡过合并窗口后写一次；写盘期间新到的改动留到下一轮。"""
+        while True:
+            await asyncio.sleep(self.SAVE_COALESCE_SEC)
+            if not self._dirty:
+                return
+            self._dirty = False
+            try:
+                await self._write_locked()
+            except Exception:  # noqa: BLE001
+                # 合并落盘的异常没有调用方能接（save() 早就返回了），必须自己喊出来，
+                # 并把待落盘标记放回去等下一次 save() 重试——静默丢数据是最坏的结果。
+                self._dirty = True
+                logging.getLogger(__name__).exception(
+                    "[petpark] 合并落盘失败，改动仍在内存中，等下次保存重试")
+                return
+            if not self._dirty:
+                return
+
+    async def _write_locked(self) -> None:
+        """真正写盘（加锁 + 全量序列化），并记录本次合并了多少次 save()。"""
         started = time.perf_counter()
+        merged, self._pending_saves = self._pending_saves, 0
         async with self._lock:
             self._flush()
         logging.getLogger(__name__).info(
-            "[petpark] store_save elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
+            "[petpark] store_save elapsed_ms=%.1f merged=%d",
+            (time.perf_counter() - started) * 1000, merged)
 
     # ----------------------------- 审计流水 / 异常检测 -----------------------------
     def _audit(self, rec: dict) -> None:

@@ -422,7 +422,7 @@ class WebAdmin:
         table = self._table(body.get("table", ""))
         key = str(body.get("key", ""))
         removed = self.store._data.get(table, {}).pop(key, None)
-        await self.store.save()
+        await self.store.flush_now()  # 删数据必须当场落盘，不能等合并窗口
         if removed is not None:
             logger.info(f"[petpark][webadmin] delete {table}/{key} by {request.remote}")
         return self._json({"ok": True})
@@ -448,7 +448,7 @@ class WebAdmin:
             return self._json({"ok": False, "msg": "没有可删除的卡密"})
         for k in keys:
             cards.pop(k, None)
-        await self.store.save()
+        await self.store.flush_now()  # 删卡密必须当场落盘，不能等合并窗口
         logger.info(
             f"[petpark][webadmin] batch_delete cards ×{len(keys)} "
             f"(mode={mode or 'keys'}) by {request.remote}"
@@ -600,7 +600,7 @@ class WebAdmin:
         fid = str(body.get("id", "")).strip()
         ok = self.store.delete_feedback(fid)
         if ok:
-            await self.store.save()
+            await self.store.flush_now()  # 删反馈必须当场落盘，不能等合并窗口
         return self._json({"ok": ok, "msg": "已删除" if ok else "反馈记录不存在"})
 
     async def _api_app_release_info(self, request):
@@ -1042,7 +1042,7 @@ class WebAdmin:
         if len(new) == len(jobs):
             return self._json({"ok": False, "msg": "任务不存在"})
         state["jobs"] = new
-        await self.store.save()
+        await self.store.flush_now()  # 删推送任务必须当场落盘，不能等合并窗口
         return self._json({"ok": True, "msg": "已删除任务"})
 
     # --------------------------- 生辰盛典（每日定时开奖箱 + 奖池瓜分） ---------------------------
@@ -1274,7 +1274,7 @@ class WebAdmin:
         remain = cel.setdefault("pool_remain", {})
         for name, c in cur.items():
             remain[name] = int(c.get("total") or 0)
-        await self.store.save()
+        await self.store.flush_now()  # 奖池重置必须当场落盘，不能等合并窗口
         return self._json({"ok": True, "msg": "奖池剩余已重置回配置总额"})
 
     async def _api_celebrate_reset_stock(self, request):
@@ -1284,7 +1284,7 @@ class WebAdmin:
         stock = gacha.get("stock") or {}
         gacha["stock_remain"] = {nm: max(0, int(c)) for nm, c in stock.items()}
         gacha["grand_used"] = False   # 同时恢复可再发定制卡压轴大奖
-        await self.store.save()
+        await self.store.flush_now()  # 库存重置必须当场落盘，不能等合并窗口
         return self._json({"ok": True, "msg": "抽奖库存剩余已重置回配置总量"})
 
     async def _api_celebrate_broadcast(self, request):
@@ -1670,7 +1670,7 @@ class WebAdmin:
         accounts = self.store.accounts()
         if aid in accounts:
             del accounts[aid]
-            await self.store.save()
+            await self.store.flush_now()  # 删账号必须当场落盘，不能等合并窗口
         return self._json({"ok": True})
 
     async def _api_portal_unbind(self, request):
