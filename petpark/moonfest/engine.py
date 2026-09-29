@@ -359,6 +359,66 @@ class MoonfestActivity:
                 return False
         return True
 
+    # ------------------------------------------------------------------
+    # 活动时间呈现（后台 phase_*.start_at/end_at 是唯一真源）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _fmt_ts(ts) -> str:
+        """时间戳 → 北京时间「YYYY-MM-DD HH:MM」；0/空 = 不限。"""
+        ts = int(ts or 0)
+        if not ts:
+            return T.WINDOW_ANY
+        return datetime.fromtimestamp(ts, BJ).strftime("%Y-%m-%d %H:%M")
+
+    def _phase_window_text(self, key) -> str:
+        """一个阶段的开放时段文案，含当前状态（后台改时间 → 帮助文案跟着变）。"""
+        p = self.cfg.get(key) or {}
+        if not p.get("enabled", True):
+            return T.PHASE_STATUS_OFF
+        now = self._now()
+        start = int(p.get("start_at", 0) or 0)
+        end = int(p.get("end_at", 0) or 0)
+        if start and now < start:
+            status = T.PHASE_STATUS_UPCOMING
+        elif end and now > end:
+            status = T.PHASE_STATUS_ENDED
+        else:
+            status = T.PHASE_STATUS_RUNNING
+        return T.WINDOW_FMT.format(
+            start=self._fmt_ts(start), end=self._fmt_ts(end), status=status)
+
+    def _double_day_text(self) -> str:
+        """双庆日 = 两阶段开放窗口的交集。没有交集就如实说双庆不开放，
+        不写死 10-01 —— 后台把两阶段时间改成不重叠时，写死的日期就是骗人。"""
+        spans = []
+        for key in ("phase_midautumn", "phase_national"):
+            p = self.cfg.get(key) or {}
+            if not p.get("enabled", True):
+                return T.DOUBLE_NONE
+            spans.append((int(p.get("start_at", 0) or 0), int(p.get("end_at", 0) or 0)))
+        lo = max(spans[0][0], spans[1][0])
+        hi = min(spans[0][1], spans[1][1])
+        if not spans[0][1] or not spans[1][1] or lo > hi:
+            return T.DOUBLE_NONE
+        first = datetime.fromtimestamp(lo, BJ).strftime("%Y-%m-%d")
+        last = datetime.fromtimestamp(hi, BJ).strftime("%Y-%m-%d")
+        return first if first == last else "{} ~ {}".format(first, last)
+
+    def _help_text(self) -> str:
+        d = self.cfg.get("daily") or {}
+        open_h = int(d.get("open_hour", 0))
+        close_h = int(d.get("close_hour", 24))
+        # 全天 = open >= close（跨天/全开，照 _in_open_hours 的口径）或 0~24。全天就
+        # 不写这一行，免得每条说明都拖一句没信息量的「00:00 ~ 24:00」。
+        full_day = open_h >= close_h or (open_h <= 0 and close_h >= 24)
+        daily_line = "" if full_day else T.HELP_DAILY_LINE.format(open=open_h, close=close_h)
+        return T.HELP_TEXT.format(
+            window_mid=self._phase_window_text("phase_midautumn"),
+            window_nat=self._phase_window_text("phase_national"),
+            window_double=self._double_day_text(),
+            daily_line=daily_line,
+        )
+
     def _meta(self) -> dict:
         return self._data.setdefault("meta", {})
 
@@ -1271,10 +1331,17 @@ class MoonfestActivity:
             reward=self._int_cfg("double_festival_reward", 150),
         )
 
+    def _double_not_today(self) -> str:
+        """双庆未开放的提示。日期同样取自后台配置的两阶段交集，不写死 10-01。"""
+        day = self._double_day_text()
+        if day == T.DOUBLE_NONE:
+            return T.DOUBLE_CLOSED_NONE
+        return T.DOUBLE_NOT_TODAY.format(day=day)
+
     def _cmd_double(self, event, qq, group_id, rest: str) -> str:
-        """双庆：仅双节同庆日（10-01，_phase()=="both"）开放，每日一次、答错即止。"""
+        """双庆：仅双节同庆日（两阶段重叠日，_phase()=="both"）开放，每日一次、答错即止。"""
         if self._phase() != "both":
-            return T.DOUBLE_NOT_TODAY
+            return self._double_not_today()
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         dbl = ap.setdefault("double", {})
@@ -1969,13 +2036,18 @@ class MoonfestActivity:
         cmd = tokens[0]
         rest = (text or "").strip()[len(cmd):].strip()
 
+        # 活动帮助：只读，且**不受开放时段/阶段门控**（放在 _enabled() 之前）。
+        # 它带着后台配的活动时间，玩家在活动开始前就得能看到「什么时候开」——
+        # 关在 _enabled() 后面的话，最需要看时间的时段恰恰看不到。总开关关掉
+        # （后台把活动停了）时不提示，避免变相宣传一个已下架的活动。
+        if cmd == "活动帮助" and bool(self.cfg.get("enabled", True)):
+            return self._help_text()
+
         if not self._enabled():
             return T.NOT_OPEN
 
         phase = self._phase()
         # 只读指令：活动开放期间随时可用
-        if cmd == "活动帮助":
-            return T.HELP_TEXT
         if cmd == "月华榜":
             return self._cmd_rank(event, qq, group_id, rest)
         if cmd == "里程碑":
@@ -2018,10 +2090,10 @@ class MoonfestActivity:
         if cmd == "献礼":
             return self._cmd_offering(event, qq, group_id, rest)
         if cmd == "双庆":
-            # 刻意不入 _PHASE_GATES：它要求**两阶段同时生效**（10-01 双节同庆日），
-            # 而门控表只支持「属于某一段」，表达不了「必须同时在两段」。
+            # 刻意不入 _PHASE_GATES：它要求**两阶段同时生效**（两阶段重叠的双节
+            # 同庆日），而门控表只支持「属于某一段」，表达不了「必须同时在两段」。
             if phase != "both":
-                return T.DOUBLE_NOT_TODAY
+                return self._double_not_today()
             return self._cmd_double(event, qq, group_id, rest)
         return None
 

@@ -880,7 +880,120 @@ class MyInfoTests(_EngineCase):
 
 
 # ---------------------------------------------------------------------------
-# 八、接线与铁律
+# 八、活动时间呈现（后台 phase_*.start_at/end_at 是唯一真源）
+# ---------------------------------------------------------------------------
+class HelpTimeTests(_EngineCase):
+    """活动说明必须把**后台配的时间**呈现出来，且不许写死日期。
+
+    这组测试的共同手法是「改配置 → 文案必须跟着变」：只要文案里还留着硬编码的
+    2026-09-27 / 10-01，改配置的那条断言立刻红。
+    """
+
+    def set_window(self, key, start, end, enabled=True):
+        self.act.cfg[key] = {"enabled": enabled, "start_at": start, "end_at": end}
+
+    def test_help_prints_the_configured_windows(self):
+        self.set_window("phase_midautumn", bj_ts(2026, 9, 27), bj_ts(2026, 10, 1, 23, 59))
+        self.set_window("phase_national", bj_ts(2026, 10, 1), bj_ts(2026, 10, 7, 23, 59))
+        out = self.say("活动帮助")
+        for frag in ("2026-09-27 00:00", "2026-10-01 23:59", "2026-10-07 23:59",
+                     "2026-10-01 00:00", "【活动时间】"):
+            self.assertIn(frag, out, f"活动说明里没呈现配置的时间：{frag}")
+
+    def test_help_follows_reconfigured_times(self):
+        """后台把时间改掉，说明文案必须跟着变（写死日期就过不了这条）。"""
+        self.set_window("phase_midautumn", bj_ts(2026, 9, 27), bj_ts(2026, 10, 1, 23, 59))
+        self.set_window("phase_national", bj_ts(2026, 10, 1), bj_ts(2026, 10, 7, 23, 59))
+        self.assertIn("2026-09-27 00:00", self.say("活动帮助"))
+
+        self.set_window("phase_midautumn", bj_ts(2027, 1, 3, 6, 30), bj_ts(2027, 1, 9, 21, 45))
+        out = self.say("活动帮助")
+        self.assertIn("2027-01-03 06:30", out)
+        self.assertIn("2027-01-09 21:45", out)
+        self.assertNotIn("2026-09-27", out, "改了配置说明文案还留着旧日期")
+
+    def test_window_status_reflects_the_clock(self):
+        now = self.act._now()
+        self.set_window("phase_midautumn", now - 3600, now + 3600)          # 进行中
+        self.set_window("phase_national", now + 86400, now + 172800)        # 未开始
+        out = self.say("活动帮助")
+        self.assertIn("进行中", out)
+        self.assertIn("未开始", out)
+
+        self.set_window("phase_national", now - 172800, now - 86400)        # 已结束
+        self.assertIn("已结束", self.say("活动帮助"))
+
+    def test_disabled_phase_is_shown_as_off(self):
+        self.set_window("phase_midautumn", bj_ts(2026, 9, 27), bj_ts(2026, 10, 1, 23, 59),
+                        enabled=False)
+        self.set_window("phase_national", bj_ts(2026, 10, 1), bj_ts(2026, 10, 7, 23, 59))
+        out = self.say("活动帮助")
+        self.assertIn(T.PHASE_STATUS_OFF, out)
+        self.assertNotIn("2026-09-27", out, "关掉的阶段不该还把开放时间报出来")
+
+    def test_unlimited_bound_reads_as_unlimited(self):
+        self.set_window("phase_midautumn", 0, 0)
+        self.set_window("phase_national", bj_ts(2026, 10, 1), bj_ts(2026, 10, 7, 23, 59))
+        self.assertIn(T.WINDOW_ANY, self.say("活动帮助"))
+
+    def test_double_day_is_the_overlap_not_a_hardcoded_date(self):
+        # 重叠日挪到 10-05：文案必须跟着挪，不能还写 10-01
+        self.set_window("phase_midautumn", bj_ts(2026, 10, 5), bj_ts(2026, 10, 5, 23, 59))
+        self.set_window("phase_national", bj_ts(2026, 10, 5), bj_ts(2026, 10, 8, 23, 59))
+        out = self.say("活动帮助")
+        self.assertIn("2026-10-05", out)
+        self.assertNotIn("2026-10-01", out, "双庆日写死了，没按配置的两阶段交集算")
+
+        # 多日重叠 → 报区间
+        self.set_window("phase_midautumn", bj_ts(2026, 9, 30), bj_ts(2026, 10, 3, 23, 59))
+        self.set_window("phase_national", bj_ts(2026, 10, 1), bj_ts(2026, 10, 7, 23, 59))
+        self.assertIn("2026-10-01 ~ 2026-10-03", self.say("活动帮助"))
+
+    def test_no_overlap_says_so_instead_of_naming_a_day(self):
+        self.set_window("phase_midautumn", bj_ts(2026, 9, 27), bj_ts(2026, 9, 30, 23, 59))
+        self.set_window("phase_national", bj_ts(2026, 10, 2), bj_ts(2026, 10, 7, 23, 59))
+        out = self.say("活动帮助")
+        self.assertIn(T.DOUBLE_NONE, out)
+        # 双庆被拒的提示用同一口径，不许换个地方又写死 10-01
+        self.phase = "midautumn"
+        refused = self.say("双庆")
+        self.assertIn("没有重叠日", refused)
+        self.assertNotIn("10-01", refused)
+
+    def test_double_refusal_carries_the_configured_day(self):
+        self.set_window("phase_midautumn", bj_ts(2026, 10, 5), bj_ts(2026, 10, 5, 23, 59))
+        self.set_window("phase_national", bj_ts(2026, 10, 5), bj_ts(2026, 10, 8, 23, 59))
+        self.phase = "midautumn"
+        refused = self.say("双庆")
+        self.assertIn("2026-10-05", refused)
+        self.assertNotIn("10-01", refused, "双庆提示里还有写死的 10-01")
+
+    def test_help_is_readable_before_the_window_opens(self):
+        """活动没开时也要能看到「什么时候开」——最需要时间的时刻恰恰是没开的时候。"""
+        self.act._phase = lambda: None
+        self.set_window("phase_midautumn", bj_ts(2027, 1, 3), bj_ts(2027, 1, 9, 23, 59))
+        self.set_window("phase_national", bj_ts(2027, 10, 1), bj_ts(2027, 10, 7, 23, 59))
+        out = self.say("活动帮助")
+        self.assertIn("2027-01-03 00:00", out)
+        self.assertNotIn(T.NOT_OPEN, out)
+        # 但真正玩不了：别的指令仍然是「未开启」
+        self.assertEqual(self.say("拜月"), T.NOT_OPEN)
+
+    def test_help_is_silent_when_the_master_switch_is_off(self):
+        """总开关关掉 = 活动下架，帮助也不再宣传它。"""
+        self.act.cfg["enabled"] = False
+        self.assertEqual(self.say("活动帮助"), T.NOT_OPEN)
+
+    def test_daily_hours_only_shown_when_restricted(self):
+        self.act.cfg["daily"] = {"open_hour": 0, "close_hour": 24}
+        self.assertNotIn("每日开放时段", self.say("活动帮助"))
+
+        self.act.cfg["daily"] = {"open_hour": 9, "close_hour": 23}
+        self.assertIn("每日开放时段：09:00 ~ 23:00", self.say("活动帮助"))
+
+
+# ---------------------------------------------------------------------------
+# 九、接线与铁律
 # ---------------------------------------------------------------------------
 class WiringTests(_EngineCase):
     NEW_COMMANDS = ("重制", "酿桂花", "取酒", "玉兔同行", "献礼", "双庆", "月华信息")
