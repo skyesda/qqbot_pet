@@ -25,6 +25,12 @@ from .portal import PlayerPortal
 from .admin_paging import paginate
 from .zhongyuan.config import ACTIVITY_NAME
 
+# 月耀华诞活动名（模块缺失时降级为字面量，不影响后台其余功能）
+try:
+    from .moonfest.config import ACTIVITY_NAME as MOONFEST_NAME
+except Exception:  # pragma: no cover
+    MOONFEST_NAME = "月耀华诞 · 中秋 × 国庆"
+
 COOKIE = "pp_session"
 TABLES = ("players", "groups", "cards", "events")
 
@@ -40,6 +46,7 @@ class WebAdmin:
         broadcast_callback=None,
         command_gateway=None,
         zhongyuan=None,
+        moonfest=None,
         silk_dir=None,
     ):
         self.store = store
@@ -50,6 +57,7 @@ class WebAdmin:
         self._broadcast_callback = broadcast_callback
         self._command_gateway = command_gateway
         self.zhongyuan = zhongyuan  # 中元活动引擎（可为 None = 模块未加载）
+        self.moonfest = moonfest  # 月耀华诞活动引擎（可为 None = 模块未加载）
         self._tokens: set[str] = set()
         self._runner = None
         # 点歌 silk 临时目录：供 QQ 外部拉取语音文件；文件名走白名单，仅临时存在。
@@ -100,6 +108,14 @@ class WebAdmin:
         app.router.add_post("/api/zhongyuan/test_end", self._api_zhongyuan_test_end)
         app.router.add_post("/api/zhongyuan/data", self._api_zhongyuan_data)
         app.router.add_post("/api/zhongyuan/clear_data", self._api_zhongyuan_clear_data)
+        app.router.add_post("/api/moonfest/config", self._api_moonfest_config)
+        app.router.add_post("/api/moonfest/config/save", self._api_moonfest_config_save)
+        app.router.add_post("/api/moonfest/test_jev", self._api_moonfest_test_jev)
+        app.router.add_post("/api/moonfest/test_broadcast", self._api_moonfest_test_broadcast)
+        app.router.add_post("/api/moonfest/test_start", self._api_moonfest_test_start)
+        app.router.add_post("/api/moonfest/test_end", self._api_moonfest_test_end)
+        app.router.add_post("/api/moonfest/data", self._api_moonfest_data)
+        app.router.add_post("/api/moonfest/clear_data", self._api_moonfest_clear_data)
         app.router.add_post("/api/push/state", self._api_push_state)
         app.router.add_post("/api/push/manual", self._api_push_manual)
         app.router.add_post("/api/push/save", self._api_push_save)
@@ -1443,6 +1459,172 @@ class WebAdmin:
         logger.info(f"[petpark][webadmin] 中元活动数据已清空 by {request.remote}")
         return self._json({"ok": True, "msg": "已清空中元所有玩家数据（配置与代码保留，活动 ID 从 1 重新分配）"})
 
+    # --------------------------- 月耀华诞活动 ---------------------------
+    @staticmethod
+    def _mask_jev_key(cfg: dict) -> dict:
+        """把 Jev API Key 脱敏后再返回给前端，绝不回显明文。"""
+        key = str(cfg.get("api_key") or "")
+        if key:
+            cfg["api_key"] = (key[:3] + "••••" + key[-4:]) if len(key) > 8 else "••••"
+        return cfg
+
+    async def _api_moonfest_config(self, request):
+        """月耀华诞：读取完整配置（供后台「月耀华诞」页渲染）。Jev Key 脱敏返回。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        cfg = copy.deepcopy(mf.cfg)
+        jev = cfg.get("jev")
+        if isinstance(jev, dict):
+            cfg["jev"] = self._mask_jev_key(jev)
+        return self._json({"ok": True, "data": cfg})
+
+    async def _api_moonfest_config_save(self, request):
+        """月耀华诞：保存配置（类型由引擎按当前值强制转换，list/dict 字段解析 JSON）。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json({"ok": False, "msg": "请求体必须是 JSON"})
+        updates = body.get("config")
+        if not isinstance(updates, dict):
+            return self._json({"ok": False, "msg": "配置必须是对象"})
+        # 前端回填的是脱敏串：原样送回表示「未修改」，不能把 •••• 写进配置
+        jev = updates.get("jev")
+        if isinstance(jev, dict) and "••••" in str(jev.get("api_key") or ""):
+            jev.pop("api_key", None)
+            if not jev:
+                updates.pop("jev", None)
+        ok, bad = mf.apply_config(updates)
+        await mf.save()
+        logger.info(f"[petpark][webadmin] 月耀华诞配置保存 by {request.remote}（成功 {ok}，跳过 {len(bad)}）")
+        return self._json({"ok": True, "changed": ok, "bad": bad})
+
+    async def _api_moonfest_test_jev(self, request):
+        """月耀华诞：测试 Jev（TypeSafe System One）连接是否正常。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        try:
+            res = mf.jev.ping()
+        except Exception as e:
+            logger.exception("[petpark] Jev 连接测试异常")
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        ok = bool(res.get("ok")) if isinstance(res, dict) else False
+        note = (res or {}).get("msg") or "Jev 连接正常"
+        msg = ("✅ " if ok else "❌ ") + str(note)
+        logger.info(f"[petpark][webadmin] Jev 连接测试 by {request.remote}：{msg}")
+        return self._json({"ok": ok, "msg": msg})
+
+    async def _api_moonfest_test_broadcast(self, request):
+        """月耀华诞：向所有已注册群推送一条全群通报测试消息。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        text = (
+            "## 🌙 月耀华诞全群通报测试\n"
+            "本消息由月耀华诞活动引擎向所有已注册群主动推送。若你看到此消息，说明全群通报链路正常。\n\n"
+            "> 此为测试通报，可忽略。"
+        )
+        try:
+            mf._push_all_groups(text)
+        except Exception as e:
+            logger.exception("[petpark] 月耀华诞全群通报测试异常")
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        return self._json({"ok": True, "msg": "已向所有已注册群发起月耀华诞全群通报"})
+
+    async def _api_moonfest_test_start(self, request):
+        """月耀华诞：测试「活动开始」全群通报（仅推送，不更改活动状态）。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        text = (
+            "## 🌙 月耀华诞 · 活动开启\n"
+            f"{MOONFEST_NAME}\n"
+            "—— 一轮明月照中秋，万里河山贺华诞 ——\n\n"
+            "🌕 **中秋 · 月耀**（团圆祈愿）\n"
+            "拜月祈愿、猜灯谜、喂玉兔、做月饼，把中秋的月色一点点收进自己的月华里。\n\n"
+            "🎆 **国庆 · 华诞**（举国同庆）\n"
+            "华诞签到、烟火贺词上墙、华诞巡礼，与全服修士一同为祖国送上祝福。\n\n"
+            "💰 **全场唯一奖励「月华」**：只进不出，既是排行榜积分，也是唯一奖品。\n"
+            "> 无商店、无兑换，月华只用来证明你在这场月耀里走了多远。\n\n"
+            "━━━━━━━━━━\n"
+            "📜 **参与方式**\n"
+            "发送「**活动帮助**」查看完整玩法，发送「**月华榜**」查看全服排名。\n"
+            "> 活动结束时，全服月华总榜前 20 名将统一发放排行榜奖励。"
+        )
+        try:
+            mf._push_all_groups(text)
+        except Exception as e:
+            logger.exception("[petpark] 月耀华诞「活动开始」通报测试异常")
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        return self._json({"ok": True, "msg": "已向所有已注册群发起「活动开始」全群通报（测试，未更改活动状态）"})
+
+    async def _api_moonfest_test_end(self, request):
+        """月耀华诞：测试「活动结束」全群通报（仅推送，不结算、不更改活动状态）。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        text = (
+            "## 🌙 月耀华诞 · 活动落幕\n"
+            f"{MOONFEST_NAME}\n"
+            "已圆满落幕。\n"
+            "月轮西沉，华灯渐熄，这一段月色与山河，就此收进你的月华册。\n\n"
+            "🏮 全服月华总榜已结算完毕，前 20 名的排行奖励已发放到账。\n"
+            "> 月华为凭，共耀华诞。下一轮月圆，我们再见。\n\n"
+            "━━━━━━━━━━\n"
+            "📜 **说明**\n"
+            "月华只进不出、无商店兑换，活动结束后月华榜即定格。\n"
+            "发送「**月华榜**」查看最终排名。"
+        )
+        try:
+            mf._push_all_groups(text)
+        except Exception as e:
+            logger.exception("[petpark] 月耀华诞「活动结束」通报测试异常")
+            return self._json({"ok": False, "msg": f"异常: {e}"})
+        return self._json({"ok": True, "msg": "已向所有已注册群发起「活动结束」全群通报（测试，未结算、未更改活动状态）"})
+
+    async def _api_moonfest_data(self, request):
+        """月耀华诞：查看全部数据（config / meta / players / groups / wall）。Jev Key 脱敏。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        data = copy.deepcopy(mf._data)
+        cfg = data.get("config") or {}
+        jev = cfg.get("jev")
+        if isinstance(jev, dict):
+            cfg["jev"] = self._mask_jev_key(jev)
+            data["config"] = cfg
+        players = data.get("players") or {}
+        stats = {
+            "players": len(players),
+            "groups": len(data.get("groups", {})),
+            "wall": len(data.get("wall", [])),
+            "yuehua_total": sum(int(p.get("yuehua_earned", 0)) for p in players.values()),
+            "settled": bool((data.get("meta") or {}).get("settled")),
+        }
+        return self._json({"ok": True, "data": data, "stats": stats})
+
+    async def _api_moonfest_clear_data(self, request):
+        """月耀华诞：清空全部活动数据（players / groups / wall + 结算标志）。保留 config。"""
+        self._require(request)
+        mf = self.moonfest
+        if mf is None:
+            return self._json({"ok": False, "msg": "月耀华诞模块未加载"})
+        mf.reset_data()
+        await mf.save()
+        logger.info(f"[petpark][webadmin] 月耀华诞数据已清空 by {request.remote}")
+        return self._json({"ok": True, "msg": "已清空月耀华诞全部玩家数据（配置保留，结算标志已重置）"})
+
     # --------------------------- 网页账号管理 ---------------------------
     async def _api_portal_accounts(self, request):
         self._require(request)
@@ -1540,7 +1722,7 @@ DASHBOARD_HTML = r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-
 <a class="skip-link" href="#workspace">跳到管理内容</a>
 <aside class="sidebar" id="sidebar">
  <a class="admin-brand" href="/"><span class="seal" aria-hidden="true">契</span><span>灵契仙途<small>运营管理</small></span></a>
- <nav class="tabs" aria-label="管理导航"><div class="nav-group"><p>日常管理</p><button data-t="players" onclick="tab('players')" class="active" aria-current="page">玩家档案</button><button data-t="groups" onclick="tab('groups')">群设置</button><button data-t="cards" onclick="tab('cards')">卡密管理</button><button data-t="portal_accounts" onclick="tab('portal_accounts')">网页账号</button></div><div class="nav-group"><p>玩家服务</p><button data-t="custom_reviews" onclick="tab('custom_reviews')">定制审核</button><button data-t="custom_pets" onclick="tab('custom_pets')">定制管理</button><button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button></div><div class="nav-group"><p>活动运营</p><button data-t="events" onclick="tab('events')">活动配置</button><button data-t="lottery" onclick="tab('lottery')">口令抽奖</button><button data-t="push" onclick="tab('push')">群推送</button><button data-t="celebrate" onclick="tab('celebrate')">生辰盛典</button><button data-t="zhongyuan" onclick="tab('zhongyuan')">中元活动</button><button data-t="assistant_free" onclick="tab('assistant_free')">免费助手</button></div><div class="nav-group"><p>系统维护</p><button data-t="audit" onclick="tab('audit')">数据追溯</button><button data-t="app_release" onclick="tab('app_release')">App 发布</button></div></nav>
+ <nav class="tabs" aria-label="管理导航"><div class="nav-group"><p>日常管理</p><button data-t="players" onclick="tab('players')" class="active" aria-current="page">玩家档案</button><button data-t="groups" onclick="tab('groups')">群设置</button><button data-t="cards" onclick="tab('cards')">卡密管理</button><button data-t="portal_accounts" onclick="tab('portal_accounts')">网页账号</button></div><div class="nav-group"><p>玩家服务</p><button data-t="custom_reviews" onclick="tab('custom_reviews')">定制审核</button><button data-t="custom_pets" onclick="tab('custom_pets')">定制管理</button><button data-t="feedbacks" onclick="tab('feedbacks')">玩家反馈</button></div><div class="nav-group"><p>活动运营</p><button data-t="events" onclick="tab('events')">活动配置</button><button data-t="lottery" onclick="tab('lottery')">口令抽奖</button><button data-t="push" onclick="tab('push')">群推送</button><button data-t="celebrate" onclick="tab('celebrate')">生辰盛典</button><button data-t="zhongyuan" onclick="tab('zhongyuan')">节日活动</button><button data-t="assistant_free" onclick="tab('assistant_free')">免费助手</button></div><div class="nav-group"><p>系统维护</p><button data-t="audit" onclick="tab('audit')">数据追溯</button><button data-t="app_release" onclick="tab('app_release')">App 发布</button></div></nav>
  <div class="sidebar-footer"><a href="/" target="_blank" rel="noopener">查看官网</a><a href="/logout">退出登录</a></div>
 </aside>
 <div class="workspace" id="workspace">

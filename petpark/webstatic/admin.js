@@ -6,10 +6,10 @@ const reads=new Map();
 const SECTION_INFO={
  players:['玩家档案','查看玩家与灵宠资料，管理游戏资产。'],groups:['群设置','管理群聊开关、跨群权限与签到信息。'],cards:['卡密管理','生成、导出与管理卡密；勾选仅作用于当前页。'],
  portal_accounts:['网页账号','查看账号绑定的角色与最近登录记录。'],custom_reviews:['定制审核','核对玩家提交的形象与资料，处理定制申请。'],custom_pets:['定制管理','维护已解锁的灵宠与坐骑外观。'],feedbacks:['玩家反馈','查看问题详情，回复玩家的建议与反馈。'],
- events:['活动配置','管理活动时间、玩法、奖励与商店。'],lottery:['口令抽奖','设置参与口令、奖品与开奖时间。'],push:['群推送','编辑群消息，查看和管理发送计划。'],celebrate:['生辰盛典','配置开奖场次、奖品库存与瓜分规则。'],zhongyuan:['中元活动','管理活动时段、解密与奖励配置。'],assistant_free:['免费助手','设置全服自动助手的免费使用时段。'],audit:['数据追溯','按玩家、群聊或时间查询记录，处理异常标记。'],app_release:['App 发布','维护安卓客户端版本与安装包。']
+ events:['活动配置','管理活动时间、玩法、奖励与商店。'],lottery:['口令抽奖','设置参与口令、奖品与开奖时间。'],push:['群推送','编辑群消息，查看和管理发送计划。'],celebrate:['生辰盛典','配置开奖场次、奖品库存与瓜分规则。'],zhongyuan:['节日活动','统一管理节日活动（中元 / 月耀华诞）的时段、玩法与奖励配置。'],assistant_free:['免费助手','设置全服自动助手的免费使用时段。'],audit:['数据追溯','按玩家、群聊或时间查询记录，处理异常标记。'],app_release:['App 发布','维护安卓客户端版本与安装包。']
 };
 const LIST_TABS=new Set(['players','groups','cards','events','portal_accounts','custom_reviews','custom_pets','feedbacks']);
-const READ_PATHS=new Set(['/api/list','/api/portal_accounts','/api/custom_reviews','/api/custom_pets','/api/custom_mounts','/api/feedbacks','/api/app_release/info','/api/lottery/state','/api/zhongyuan/config','/api/zhongyuan/data','/api/push/state','/api/celebrate/state','/api/assistant_free/state','/api/audit/query','/api/audit/flags']);
+const READ_PATHS=new Set(['/api/list','/api/portal_accounts','/api/custom_reviews','/api/custom_pets','/api/custom_mounts','/api/feedbacks','/api/app_release/info','/api/lottery/state','/api/zhongyuan/config','/api/zhongyuan/data','/api/moonfest/config','/api/moonfest/data','/api/push/state','/api/celebrate/state','/api/assistant_free/state','/api/audit/query','/api/audit/flags']);
 function pageState(key){return pages[key]||(pages[key]={page:1,total:0,pages:1});}
 function resetPage(key){pageState(key).page=1;}
 function updateHeading(key){
@@ -465,7 +465,7 @@ function render(){
  else if(cur==='custom_reviews')renderCustomReviews();
  else if(cur==='custom_pets')renderCustomPets();
  else if(cur==='feedbacks')renderFeedbacks();
- else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘 */ }
+ else if(cur==='zhongyuan'){ /* 由 renderZhongyuan 自绘（含月耀华诞区块） */ }
  else if(cur==='push'){ /* 由 renderPush 自绘 */ }
  else if(cur==='celebrate'){ /* 由 renderCelebrate 自绘 */ }
  else if(cur==='assistant_free'){ /* 由 renderAssistantFree 自绘 */ }
@@ -600,9 +600,11 @@ const ZY_FIELDS=[
  {k:'deepseek_timeout',label:'超时(秒)',t:'num'},
 ];
 let ZY_CFG=null;
+// 「节日活动」是统一管理页：一次拉取两个活动模块的配置，同页渲染两张卡片。
 async function loadZhongyuan(){
- const r=await api('/api/zhongyuan/config',{});
- ZY_CFG=(r&&r.ok)?r.data:null;
+ const [rz,rm]=await Promise.all([api('/api/zhongyuan/config',{}),api('/api/moonfest/config',{})]);
+ ZY_CFG=(rz&&rz.ok)?rz.data:null;
+ MF_CFG=(rm&&rm.ok)?rm.data:null;
  renderZhongyuan();
 }
 function renderZhongyuan(){
@@ -647,6 +649,7 @@ function renderZhongyuan(){
    <div class="muted" id="zy_data_msg" style="margin-top:6px"></div>
    <textarea id="zy_data_box" rows="16" style="display:none;width:100%;margin-top:8px;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;font-family:monospace;font-size:12px;white-space:pre" readonly></textarea>
   </div>
+  ${moonfestCardHtml()}
  </div>`;
 }
 async function saveZhongyuan(){
@@ -667,6 +670,157 @@ async function saveZhongyuan(){
  msg.textContent=r.ok?(' 已保存'+(r.bad&&r.bad.length?'（跳过：'+r.bad.join(', ')+'）':'')):(' 保存失败：'+(r.msg||'未知错误'));
  if(r.ok) loadZhongyuan();
 }
+// ---- 月耀华诞（独立模块配置，保存即时生效）----
+// 双阶段时间/每日时段/Jev 是嵌套对象，按 f.k 的点分路径组装；其余为顶层标量。
+const MF_FIELDS=[
+ {k:'enabled',label:'活动总开关',t:'bool'},
+ {k:'phase_midautumn.enabled',label:'中秋·月耀 开启',t:'bool'},
+ {k:'phase_midautumn.start_at',label:'中秋 开始时间(0=不限)',t:'ts'},
+ {k:'phase_midautumn.end_at',label:'中秋 结束时间(0=不限)',t:'ts'},
+ {k:'phase_national.enabled',label:'国庆·华诞 开启',t:'bool'},
+ {k:'phase_national.start_at',label:'国庆 开始时间(0=不限)',t:'ts'},
+ {k:'phase_national.end_at',label:'国庆 结束时间(0=不限)',t:'ts'},
+ {k:'daily.open_hour',label:'每日开放小时(含)',t:'num'},
+ {k:'daily.close_hour',label:'每日关闭小时(不含)',t:'num'},
+ {k:'jev.enabled',label:'启用 Jev 判定',t:'bool'},
+ {k:'sign_midautumn',label:'拜月签到月华',t:'num'},
+ {k:'sign_national',label:'华诞签到月华',t:'num'},
+ {k:'lantern_daily_limit',label:'猜灯谜每日题数',t:'num'},
+ {k:'lantern_cooldown_min',label:'猜灯谜冷却(分)',t:'num'},
+ {k:'lantern_timeout_sec',label:'猜灯谜超时(秒)',t:'num'},
+ {k:'gongde_lantern_min',label:'猜灯谜月华下限',t:'num'},
+ {k:'gongde_lantern_max',label:'猜灯谜月华上限',t:'num'},
+ {k:'feed_daily_limit',label:'喂玉兔每日次数',t:'num'},
+ {k:'feed_cooldown_min',label:'喂玉兔冷却(分)',t:'num'},
+ {k:'craft_bonus',label:'月饼首合月华',t:'num'},
+ {k:'quiz_daily_limit',label:'巡礼每日题数',t:'num'},
+ {k:'quiz_timeout_sec',label:'巡礼超时(秒)',t:'num'},
+ {k:'gongde_quiz_min',label:'巡礼月华下限',t:'num'},
+ {k:'gongde_quiz_max',label:'巡礼月华上限',t:'num'},
+ {k:'firework_daily_limit',label:'贺词每日条数',t:'num'},
+ {k:'firework_max_len',label:'贺词最大字数',t:'num'},
+ {k:'gongde_firework_min',label:'贺词月华下限',t:'num'},
+ {k:'gongde_firework_max',label:'贺词月华上限',t:'num'},
+ {k:'like_daily_limit',label:'点赞每日次数',t:'num'},
+ {k:'gongde_like',label:'被赞者月华',t:'num'},
+];
+let MF_CFG=null;
+function mfGet(obj,path){return path.split('.').reduce((o,k)=>(o&&o[k]!==undefined)?o[k]:undefined,obj);}
+async function loadMoonfest(){
+ const r=await api('/api/moonfest/config',{});
+ MF_CFG=(r&&r.ok)?r.data:null;
+ renderZhongyuan();
+}
+// 月耀华诞卡片：作为「节日活动」统一管理页的第二块，由 renderZhongyuan 内联拼接。
+function moonfestCardHtml(){
+ const c=MF_CFG||{};
+ let rows='';
+ for(const f of MF_FIELDS){
+  const id='mf_'+f.k.replace(/\./g,'_');
+  const v=mfGet(c,f.k);
+  let inp;
+  if(f.t==='bool') inp=`<input id="${id}" type="checkbox" ${v?'checked':''}>`;
+  else if(f.t==='ts') inp=`<input id="${id}" type="datetime-local" value="${eventTsToLocal(v||0)}">`;
+  else if(f.t==='num') inp=`<input id="${id}" type="number" step="${f.step||'1'}" value="${(v===undefined||v===null)?'':v}">`;
+  else inp=`<input id="${id}" value="${esc(v==null?'':v)}">`;
+  rows+=`<label class="fld">${f.label} ${inp}</label>`;
+ }
+ const miles=JSON.stringify(c.milestones||[],null,2);
+ const ends=JSON.stringify(c.end_rewards||[],null,2);
+ const feeds=JSON.stringify(c.gongde_feed||[],null,2);
+ return `
+  <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px;margin-top:20px">
+   <h3 style="margin:0 0 16px"> 月耀华诞 · 中秋 × 国庆 <span class="muted" style="font-weight:400">（独立模块配置，保存即时生效）</span></h3>
+   ${MF_CFG?'':'<div class="muted" style="margin-bottom:12px;color:#c0392b">月耀华诞模块未加载（petpark/moonfest 导入失败），以下配置不生效，请查框架日志。</div>'}
+   <div class="muted" style="margin-bottom:12px">月华是全场唯一奖励与排行积分，只进不出、无商店兑换。排行榜奖励在<b>整个活动结束</b>（两阶段结束时间均已过）后统一结算一次。</div>
+   <div class="sec">总控 / 双阶段时间 / 每日时段 / Jev</div>
+   <div class="row">${rows}</div>
+   <div class="sec">群里程碑（群累计月华达标 → 全群参与者各得月华，JSON：threshold / gongde）</div>
+   <textarea id="mf_milestones" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(miles)}</textarea>
+   <div class="sec">活动结束排行榜奖励（全服总榜前 20 名，JSON：min / max / yuehua）</div>
+   <textarea id="mf_end_rewards" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(ends)}</textarea>
+   <div class="sec">喂玉兔月华档位（Jev score 4 档：厌恶 / 无感 / 喜欢 / 非常喜欢，JSON 数组）</div>
+   <textarea id="mf_gongde_feed" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(feeds)}</textarea>
+   <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+    <button class="act" onclick="saveMoonfest()">保存配置</button>
+    <button class="act ghost" onclick="loadMoonfest()">刷新</button>
+    <button class="act ghost" onclick="testMoonfestJev()">测试 Jev 连接</button>
+    <button class="act ghost" onclick="testMoonfestBroadcast()">全群通报测试</button>
+    <button class="act ghost" onclick="testMoonfestStart()">测试活动开始全群播放</button>
+    <button class="act ghost" onclick="testMoonfestEnd()">测试活动结束全群播放</button>
+    <button class="act ghost" onclick="viewMoonfestData()">查看月耀所有数据</button>
+    <button class="act del" onclick="clearMoonfestData()">清空月耀玩家数据</button>
+   </div>
+   <div class="muted" id="mf_msg" style="margin-top:10px"></div>
+   <div class="muted" id="mf_test_msg" style="margin-top:6px"></div>
+   <div class="muted" id="mf_data_msg" style="margin-top:6px"></div>
+   <textarea id="mf_data_box" rows="16" style="display:none;width:100%;margin-top:8px;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;font-family:monospace;font-size:12px;white-space:pre" readonly></textarea>
+  </div>`;
+}
+async function saveMoonfest(){
+ const cfg={};
+ for(const f of MF_FIELDS){
+  const el=g('mf_'+f.k.replace(/\./g,'_'));
+  if(!el) continue;
+  let val;
+  if(f.t==='bool') val=el.checked;
+  else if(f.t==='ts') val=eventLocalToTs(el.value)||0;
+  else if(f.t==='num'){const raw=el.value;const old=mfGet(MF_CFG||{},f.k);val=(raw===''?(old===undefined?0:old):parseFloat(raw));}
+  else val=el.value.trim();
+  const parts=f.k.split('.');
+  if(parts.length===1) cfg[parts[0]]=val;
+  else { cfg[parts[0]]=cfg[parts[0]]||{}; cfg[parts[0]][parts[1]]=val; }
+ }
+ try{cfg.milestones=JSON.parse(g('mf_milestones').value);}catch(e){alert('群里程碑 JSON 解析失败：'+e.message);return;}
+ try{cfg.end_rewards=JSON.parse(g('mf_end_rewards').value);}catch(e){alert('排行榜奖励 JSON 解析失败：'+e.message);return;}
+ try{cfg.gongde_feed=JSON.parse(g('mf_gongde_feed').value);}catch(e){alert('喂养档位 JSON 解析失败：'+e.message);return;}
+ const r=await api('/api/moonfest/config/save',{config:cfg});
+ const msg=g('mf_msg');
+ if(!r){msg.textContent=' 保存失败：无响应';return;}
+ msg.textContent=r.ok?(' 已保存'+(r.bad&&r.bad.length?'（跳过：'+r.bad.join(', ')+'）':'')):(' 保存失败：'+(r.msg||'未知错误'));
+ if(r.ok) loadMoonfest();
+}
+async function testMoonfestJev(){
+ const msg=g('mf_test_msg'); if(msg) msg.textContent='⏳ 正在测试 Jev 连接…';
+ const r=await api('/api/moonfest/test_jev',{});
+ if(msg) msg.textContent=r?(r.ok?' '+r.msg:' '+r.msg):' 测试失败：无响应';
+}
+async function testMoonfestBroadcast(){
+ if(!confirm('将向所有已注册群真实推送一条测试消息，确认继续？')) return;
+ const msg=g('mf_test_msg'); if(msg) msg.textContent='⏳ 正在广播…';
+ const r=await api('/api/moonfest/test_broadcast',{});
+ if(msg) msg.textContent=r?(r.ok?' '+r.msg:' '+r.msg):' 广播失败：无响应';
+}
+async function testMoonfestStart(){
+ if(!confirm('将向所有已注册群真实推送「活动开始」通报（不更改活动状态），确认继续？')) return;
+ const msg=g('mf_test_msg'); if(msg) msg.textContent='⏳ 正在推送「活动开始」通报…';
+ const r=await api('/api/moonfest/test_start',{});
+ if(msg) msg.textContent=r?(r.ok?' '+r.msg:' '+r.msg):' 推送失败：无响应';
+}
+async function testMoonfestEnd(){
+ if(!confirm('将向所有已注册群真实推送「活动结束」通报（不结算、不更改状态），确认继续？')) return;
+ const msg=g('mf_test_msg'); if(msg) msg.textContent='⏳ 正在推送「活动结束」通报…';
+ const r=await api('/api/moonfest/test_end',{});
+ if(msg) msg.textContent=r?(r.ok?' '+r.msg:' '+r.msg):' 推送失败：无响应';
+}
+async function viewMoonfestData(){
+ const msg=g('mf_data_msg'); const box=g('mf_data_box');
+ if(msg) msg.textContent='⏳ 正在读取月耀数据…';
+ const r=await api('/api/moonfest/data',{});
+ if(!r){ if(msg) msg.textContent=' 读取失败：无响应'; return; }
+ if(!r.ok){ if(msg) msg.textContent=' '+(r.msg||'读取失败'); return; }
+ if(msg) msg.textContent=' 已读取：玩家 '+r.stats.players+' · 群 '+r.stats.groups+' · 月华墙 '+r.stats.wall+' · 累计月华 '+r.stats.yuehua_total+' · 已结算 '+(r.stats.settled?'是':'否');
+ if(box){ box.value=JSON.stringify(r.data,null,2); box.style.display='block'; }
+}
+async function clearMoonfestData(){
+ if(!confirm(' 将清空月耀华诞全部玩家数据（玩家 / 群 / 月华墙 + 结算标志重置），配置保留。此操作不可撤销，确认继续？')) return;
+ if(!confirm('再次确认：真的要删除当前月耀华诞全部玩家数据吗？')) return;
+ const msg=g('mf_test_msg'); if(msg) msg.textContent='⏳ 正在清空…';
+ const r=await api('/api/moonfest/clear_data',{});
+ if(msg) msg.textContent=r?(r.ok?' '+r.msg:' '+r.msg):' 清空失败：无响应';
+ if(r&&r.ok) viewMoonfestData();
+}
+
 // ---- 自定义文本群推送（手动 / 定时一次性 / 定时循环）----
 let PUSH_DATA=null;
 async function loadPush(){

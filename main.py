@@ -66,6 +66,15 @@ except Exception as _zy_err:  # pragma: no cover
     ZhongyuanActivity = None
     logger.warning("[petpark] 中元活动模块加载失败，已自动关闭：%s", _zy_err)
 
+# 月耀华诞活动（独立模块：独立数据 moonfest.json、双阶段时间、月华单一货币）。
+# 缺失/损坏时降级为关闭，不影响灵契仙途主程序。
+try:
+    from .petpark.moonfest import COMMANDS as _MF_COMMANDS, MoonfestActivity
+except Exception as _mf_err:  # pragma: no cover
+    _MF_COMMANDS: set[str] = set()
+    MoonfestActivity = None
+    logger.warning("[petpark] 月耀华诞活动模块加载失败，已自动关闭：%s", _mf_err)
+
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except Exception:  # pragma: no cover - 兼容旧版本
@@ -506,6 +515,9 @@ KNOWN_COMMANDS = {
 # 合并中元活动指令（由独立模块动态提供，避免在 KNOWN_COMMANDS 手写两份清单）
 KNOWN_COMMANDS |= _ZY_COMMANDS
 
+# 合并月耀华诞活动指令（同上，由独立模块提供）
+KNOWN_COMMANDS |= _MF_COMMANDS
+
 # 生辰盛典（独立庆典活动）：生日抽奖 / 生日快乐 / 活动菜单
 KNOWN_COMMANDS |= {"生辰活动", "生日抽奖", "生日快乐"}
 
@@ -579,6 +591,9 @@ WEB_BLOCKED_COMMANDS = {
 
 # 中元活动为群聊玩法，网页端一并屏蔽
 WEB_BLOCKED_COMMANDS |= _ZY_COMMANDS
+
+# 月耀华诞同为群聊玩法（群里程碑/全群公告依赖群上下文），网页端一并屏蔽
+WEB_BLOCKED_COMMANDS |= _MF_COMMANDS
 
 # 被封号用户发指令时的统一回执。只对「真指令」回，普通聊天仍静默放行，
 # 否则对方在群里随便说句话都会被顶一条封号提示，等于刷屏。
@@ -792,6 +807,16 @@ class PetParkPlugin(Star):
             except Exception:
                 logger.exception("[petpark] 中元活动初始化失败")
                 self.zhongyuan = None
+        # 月耀华诞活动（独立模块：独立数据 moonfest.json、双阶段、独立后台循环）
+        self.moonfest = None
+        self._mf_commands: set[str] = set()
+        if MoonfestActivity is not None:
+            try:
+                self.moonfest = MoonfestActivity(self, data_dir)
+                self._mf_commands = self.moonfest.commands()
+            except Exception:
+                logger.exception("[petpark] 月耀华诞活动初始化失败")
+                self.moonfest = None
         if bool(self.config.get("web_enabled", True)):
             self._start_web_admin()
         self._patch_qqofficial_message_extensions()
@@ -815,6 +840,8 @@ class PetParkPlugin(Star):
         self._badword_task_ref = asyncio.create_task(self._badword_loop())
         if self.zhongyuan is not None:
             self.zhongyuan.start()
+        if self.moonfest is not None:
+            self.moonfest.start()
 
     # =====================================================================
     # 银行周利息后台循环
@@ -903,6 +930,7 @@ class PetParkPlugin(Star):
             broadcast_callback=self._broadcast_to_authorized_groups,
             command_gateway=self,
             zhongyuan=getattr(self, "zhongyuan", None),
+            moonfest=getattr(self, "moonfest", None),
             silk_dir=self.song_silk_dir,
         )
 
@@ -2223,6 +2251,12 @@ class PetParkPlugin(Star):
                 await self.zhongyuan.terminate()
             except Exception:
                 logger.exception("[petpark] 中元活动终止出错")
+        # 月耀华诞独立模块：取消其后台循环并落盘
+        if self.moonfest is not None:
+            try:
+                await self.moonfest.terminate()
+            except Exception:
+                logger.exception("[petpark] 月耀华诞活动终止出错")
         # 给被取消的任务处理 CancelledError 的机会，再落盘
         await asyncio.sleep(0)
         await self.store.save()
@@ -4562,6 +4596,10 @@ class PetParkPlugin(Star):
         # ---- 中元活动（独立模块）：已授权且灵契仙途开启的群路由给活动引擎 ----
         if self.zhongyuan is not None and cmd in self._zy_commands:
             return self.zhongyuan.dispatch(event, qq, group_id, text)
+
+        # ---- 月耀华诞活动（独立模块）：同上，路由给活动引擎 ----
+        if self.moonfest is not None and cmd in self._mf_commands:
+            return self.moonfest.dispatch(event, qq, group_id, text)
 
         # ---- 「阴气缠身」锁定：中元副本失败后禁止一切宠物指令，仅可参与中元活动 ----
         if self.zhongyuan is not None:
