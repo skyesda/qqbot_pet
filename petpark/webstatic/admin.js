@@ -672,38 +672,90 @@ async function saveZhongyuan(){
 }
 // ---- 月耀华诞（独立模块配置，保存即时生效）----
 // 双阶段时间/每日时段/Jev 是嵌套对象，按 f.k 的点分路径组装；其余为顶层标量。
+// sec 决定分节标题：字段按 sec 归组渲染，避免新玩法字段堆成一片。
 const MF_FIELDS=[
- {k:'enabled',label:'活动总开关',t:'bool'},
- {k:'phase_midautumn.enabled',label:'中秋·月耀 开启',t:'bool'},
- {k:'phase_midautumn.start_at',label:'中秋 开始时间(0=不限)',t:'ts'},
- {k:'phase_midautumn.end_at',label:'中秋 结束时间(0=不限)',t:'ts'},
- {k:'phase_national.enabled',label:'国庆·华诞 开启',t:'bool'},
- {k:'phase_national.start_at',label:'国庆 开始时间(0=不限)',t:'ts'},
- {k:'phase_national.end_at',label:'国庆 结束时间(0=不限)',t:'ts'},
- {k:'daily.open_hour',label:'每日开放小时(含)',t:'num'},
- {k:'daily.close_hour',label:'每日关闭小时(不含)',t:'num'},
- {k:'jev.enabled',label:'启用 Jev 判定',t:'bool'},
- {k:'jev.api_key',label:'Jev API Key',t:'pwd'},
- {k:'sign_midautumn',label:'拜月签到月华',t:'num'},
- {k:'sign_national',label:'华诞签到月华',t:'num'},
- {k:'lantern_daily_limit',label:'猜灯谜每日题数',t:'num'},
- {k:'lantern_cooldown_min',label:'猜灯谜冷却(分)',t:'num'},
- {k:'lantern_timeout_sec',label:'猜灯谜超时(秒)',t:'num'},
- {k:'gongde_lantern_min',label:'猜灯谜月华下限',t:'num'},
- {k:'gongde_lantern_max',label:'猜灯谜月华上限',t:'num'},
- {k:'feed_daily_limit',label:'喂玉兔每日次数',t:'num'},
- {k:'feed_cooldown_min',label:'喂玉兔冷却(分)',t:'num'},
- {k:'craft_bonus',label:'月饼首合月华',t:'num'},
- {k:'quiz_daily_limit',label:'巡礼每日题数',t:'num'},
- {k:'quiz_timeout_sec',label:'巡礼超时(秒)',t:'num'},
- {k:'gongde_quiz_min',label:'巡礼月华下限',t:'num'},
- {k:'gongde_quiz_max',label:'巡礼月华上限',t:'num'},
- {k:'firework_daily_limit',label:'贺词每日条数',t:'num'},
- {k:'firework_max_len',label:'贺词最大字数',t:'num'},
- {k:'gongde_firework_min',label:'贺词月华下限',t:'num'},
- {k:'gongde_firework_max',label:'贺词月华上限',t:'num'},
- {k:'like_daily_limit',label:'点赞每日次数',t:'num'},
- {k:'gongde_like',label:'被赞者月华',t:'num'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'enabled',label:'活动总开关',t:'bool'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'phase_midautumn.enabled',label:'中秋·月耀 开启',t:'bool'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'phase_midautumn.start_at',label:'中秋 开始时间(0=不限)',t:'ts'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'phase_midautumn.end_at',label:'中秋 结束时间(0=不限)',t:'ts'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'phase_national.enabled',label:'国庆·华诞 开启',t:'bool'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'phase_national.start_at',label:'国庆 开始时间(0=不限)',t:'ts'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'phase_national.end_at',label:'国庆 结束时间(0=不限)',t:'ts'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'daily.open_hour',label:'每日开放小时(含)',t:'num'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'daily.close_hour',label:'每日关闭小时(不含)',t:'num'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'jev.enabled',label:'启用 Jev 判定',t:'bool'},
+ {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'jev.api_key',label:'Jev API Key',t:'pwd'},
+ // ---- 中秋·月耀 ----
+ {sec:'中秋·月耀',k:'sign_midautumn',label:'拜月签到月华',t:'num'},
+ {sec:'中秋·月耀',k:'lantern_daily_limit',label:'猜灯谜每日题数',t:'num'},
+ {sec:'中秋·月耀',k:'lantern_hard_daily_limit',label:'猜灯谜·难题每日题数',t:'num'},
+ {sec:'中秋·月耀',k:'lantern_cooldown_min',label:'猜灯谜冷却(分)',t:'num'},
+ {sec:'中秋·月耀',k:'lantern_timeout_sec',label:'猜灯谜超时(秒)',t:'num'},
+ {sec:'中秋·月耀',k:'lantern_hard_mult',label:'难题月华倍率',t:'num',step:'0.1'},
+ {sec:'中秋·月耀',k:'lantern_combo_rate',label:'连对每 5 题加成',t:'num',step:'0.05'},
+ {sec:'中秋·月耀',k:'lantern_combo_cap',label:'连对加成上限(份)',t:'num'},
+ {sec:'中秋·月耀',k:'gongde_lantern_min',label:'猜灯谜月华下限',t:'num'},
+ {sec:'中秋·月耀',k:'gongde_lantern_max',label:'猜灯谜月华上限',t:'num'},
+ {sec:'中秋·月耀',k:'feed_daily_limit',label:'喂玉兔每日次数',t:'num'},
+ {sec:'中秋·月耀',k:'feed_cooldown_min',label:'喂玉兔冷却(分)',t:'num'},
+ {sec:'中秋·月耀',k:'full_moon_window_days',label:'近满窗口(天，≥3 才不会空转)',t:'num'},
+ {sec:'中秋·月耀',k:'brew_daily_limit',label:'桂花酿每日坛数',t:'num'},
+ {sec:'中秋·月耀',k:'brew_minutes',label:'桂花酿耗时(分)',t:'num'},
+ {sec:'中秋·月耀',k:'brew_guihua_per_batch',label:'每坛耗桂花',t:'num'},
+ {sec:'中秋·月耀',k:'brew_drop_pct',label:'灯谜掉桂花概率(%)',t:'num'},
+ {sec:'中秋·月耀',k:'brew_full_moon_mult',label:'近满酿王概率倍率',t:'num',step:'0.1'},
+ {sec:'中秋·月耀',k:'rabbit_run_daily_limit',label:'玉兔同行每日局数',t:'num'},
+ {sec:'中秋·月耀',k:'rabbit_run_steps',label:'玉兔同行每局站数',t:'num'},
+ {sec:'中秋·月耀',k:'rabbit_run_fail_max',label:'玉兔同行容错次数',t:'num'},
+ {sec:'中秋·月耀',k:'rabbit_run_reward_min',label:'每站月华下限',t:'num'},
+ {sec:'中秋·月耀',k:'rabbit_run_reward_max',label:'每站月华上限',t:'num'},
+ {sec:'中秋·月耀',k:'rabbit_run_perfect_bonus',label:'完美通关奖励',t:'num'},
+ {sec:'中秋·月耀',k:'rabbit_intimacy_step',label:'亲密度升级需喂食次数',t:'num'},
+ // ---- 月饼匠心（重制挑战链）----
+ {sec:'月饼匠心（重制挑战链）',k:'craft_bonus',label:'首次合成月华',t:'num'},
+ {sec:'月饼匠心（重制挑战链）',k:'craft_remake_daily_limit',label:'每日重制次数',t:'num'},
+ {sec:'月饼匠心（重制挑战链）',k:'craft_remake_cooldown_min',label:'基础冷却(分)',t:'num'},
+ {sec:'月饼匠心（重制挑战链）',k:'craft_remake_cooldown_step_min',label:'每阶段冷却递增(分)',t:'num'},
+ {sec:'月饼匠心（重制挑战链）',k:'craft_remake_cooldown_cap_min',label:'冷却上限(分)',t:'num'},
+ {sec:'月饼匠心（重制挑战链）',k:'craft_star_max',label:'口味星级上限',t:'num'},
+ // ---- 国庆·华诞 ----
+ {sec:'国庆·华诞',k:'sign_national',label:'华诞签到月华',t:'num'},
+ {sec:'国庆·华诞',k:'firework_daily_limit',label:'贺词每日条数',t:'num'},
+ {sec:'国庆·华诞',k:'firework_max_len',label:'贺词最大字数',t:'num'},
+ {sec:'国庆·华诞',k:'firework_theme_bonus',label:'契合今日主题加成',t:'num'},
+ {sec:'国庆·华诞',k:'gongde_firework_min',label:'贺词月华下限',t:'num'},
+ {sec:'国庆·华诞',k:'gongde_firework_max',label:'贺词月华上限',t:'num'},
+ {sec:'国庆·华诞',k:'like_daily_limit',label:'点赞每日次数',t:'num'},
+ {sec:'国庆·华诞',k:'gongde_like',label:'被赞者月华',t:'num'},
+ {sec:'国庆·华诞',k:'quiz_daily_limit',label:'巡礼每日题数',t:'num'},
+ {sec:'国庆·华诞',k:'quiz_timeout_sec',label:'巡礼超时(秒)',t:'num'},
+ {sec:'国庆·华诞',k:'gongde_quiz_min',label:'巡礼月华下限',t:'num'},
+ {sec:'国庆·华诞',k:'gongde_quiz_max',label:'巡礼月华上限',t:'num'},
+ {sec:'国庆·华诞',k:'route_stations',label:'巡礼每线站数',t:'num'},
+ {sec:'国庆·华诞',k:'route_fail_max',label:'巡礼容错次数',t:'num'},
+ {sec:'国庆·华诞',k:'route_complete_bonus',label:'走完全线奖励',t:'num'},
+ {sec:'国庆·华诞',k:'route_perfect_bonus',label:'全线零失误奖励',t:'num'},
+ {sec:'国庆·华诞',k:'offering_quiz_point',label:'巡礼答对献礼点',t:'num'},
+ {sec:'国庆·华诞',k:'offering_firework_point',label:'贺词上墙献礼点',t:'num'},
+ {sec:'国庆·华诞',k:'offering_like_point',label:'点赞献礼点',t:'num'},
+ {sec:'国庆·华诞',k:'double_festival_questions',label:'双庆题数',t:'num'},
+ {sec:'国庆·华诞',k:'double_festival_timeout_sec',label:'双庆每题超时(秒)',t:'num'},
+ {sec:'国庆·华诞',k:'double_festival_reward',label:'双庆全中奖励',t:'num'},
+];
+// 阶梯 / 曲线 / 主题表这类结构走 JSON 文本框；label 里带上所属分节，便于定位。
+const MF_JSON=[
+ {k:'gongde_feed',rows:2,label:'中秋·月耀 · 喂玉兔月华档位（Jev score 4 档：厌恶 / 无感 / 喜欢 / 非常喜欢，JSON 数组）'},
+ {k:'brew_grade_bonus',rows:2,label:'中秋·月耀 · 首次酿出各品质的额外奖励（顺序：清酿 / 醇酿 / 酿王，JSON 数组）'},
+ {k:'rabbit_run_intimacy_mult',rows:2,label:'中秋·月耀 · 玉兔亲密度各档每站月华倍率（JSON 数组）'},
+ {k:'craft_remake_steps',rows:2,label:'月饼匠心 · 各阶段触发门槛（该玩家累计重制成功次数 ≥，JSON 数组）'},
+ {k:'craft_remake_counts',rows:2,label:'月饼匠心 · 各阶段题数（JSON 数组，必须与门槛等长）'},
+ {k:'craft_remake_times',rows:2,label:'月饼匠心 · 各阶段每题时限(秒)（JSON 数组，必须与门槛等长）'},
+ {k:'craft_remake_rewards',rows:2,label:'月饼匠心 · 各阶段通关月华（JSON 数组，必须与门槛等长）'},
+ {k:'craft_star_rewards',rows:2,label:'月饼匠心 · 口味星级一次性奖励（JSON 对象：{"星级": 月华}，每个星级只发一次）'},
+ {k:'firework_themes',rows:3,label:'国庆·华诞 · 每日贺词主题（JSON 数组，按日期轮换；改这里要同步 Jev 不可用时的本地关键词表）'},
+ {k:'offering_ladder',rows:4,label:'国庆·华诞 · 群献礼阶梯（JSON：[{"threshold": 点数, "yuehua": 每人月华}]，每档只发一次）'},
+ {k:'milestones',rows:5,label:'通用 · 群里程碑（群累计月华达标 → 全群参与者各得月华，JSON：threshold / gongde）'},
+ {k:'end_rewards',rows:5,label:'通用 · 活动结束排行榜奖励（全服总榜前 20 名，JSON：min / max / yuehua）'},
 ];
 let MF_CFG=null;
 function mfGet(obj,path){return path.split('.').reduce((o,k)=>(o&&o[k]!==undefined)?o[k]:undefined,obj);}
@@ -712,37 +764,44 @@ async function loadMoonfest(){
  MF_CFG=(r&&r.ok)?r.data:null;
  renderZhongyuan();
 }
-// 月耀华诞卡片：作为「节日活动」统一管理页的第二块，由 renderZhongyuan 内联拼接。
-function moonfestCardHtml(){
- const c=MF_CFG||{};
- let rows='';
+// 字段按 sec 分节渲染（同一标题只出现一次）
+function mfFieldsHtml(){
+ let out='',cur=null;
  for(const f of MF_FIELDS){
+  const sec=f.sec||'通用';
+  if(sec!==cur){ if(cur!==null) out+='</div>'; out+=`<div class="sec">${sec}</div><div class="row">`; cur=sec; }
   const id='mf_'+f.k.replace(/\./g,'_');
-  const v=mfGet(c,f.k);
+  const v=mfGet(MF_CFG||{},f.k);
   let inp;
   if(f.t==='bool') inp=`<input id="${id}" type="checkbox" ${v?'checked':''}>`;
   else if(f.t==='ts') inp=`<input id="${id}" type="datetime-local" value="${eventTsToLocal(v||0)}">`;
   else if(f.t==='pwd') inp=`<input id="${id}" type="password" autocomplete="off" placeholder="${v?'已设置（留空不修改）':'未设置'}" value="">`;
   else if(f.t==='num') inp=`<input id="${id}" type="number" step="${f.step||'1'}" value="${(v===undefined||v===null)?'':v}">`;
   else inp=`<input id="${id}" value="${esc(v==null?'':v)}">`;
-  rows+=`<label class="fld">${f.label} ${inp}</label>`;
+  out+=`<label class="fld">${f.label} ${inp}</label>`;
  }
- const miles=JSON.stringify(c.milestones||[],null,2);
- const ends=JSON.stringify(c.end_rewards||[],null,2);
- const feeds=JSON.stringify(c.gongde_feed||[],null,2);
+ if(cur!==null) out+='</div>';
+ return out;
+}
+// JSON 结构块（阶梯/曲线/主题表）
+function mfJsonHtml(){
+ let out='';
+ for(const j of MF_JSON){
+  const v=(MF_CFG||{})[j.k];
+  out+=`<div class="sec">${j.label}</div>
+   <textarea id="mf_${j.k}" rows="${j.rows||4}" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(JSON.stringify(v===undefined?[]:v,null,2))}</textarea>`;
+ }
+ return out;
+}
+// 月耀华诞卡片：作为「节日活动」统一管理页的第二块，由 renderZhongyuan 内联拼接。
+function moonfestCardHtml(){
  return `
   <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px;margin-top:20px">
    <h3 style="margin:0 0 16px"> 月耀华诞 · 中秋 × 国庆 <span class="muted" style="font-weight:400">（独立模块配置，保存即时生效）</span></h3>
    ${MF_CFG?'':'<div class="muted" style="margin-bottom:12px;color:#c0392b">月耀华诞模块未加载（petpark/moonfest 导入失败），以下配置不生效，请查框架日志。</div>'}
-   <div class="muted" style="margin-bottom:12px">月华是全场唯一奖励与排行积分，只进不出、无商店兑换。排行榜奖励在<b>整个活动结束</b>（两阶段结束时间均已过）后统一结算一次。</div>
-   <div class="sec">总控 / 双阶段时间 / 每日时段 / Jev</div>
-   <div class="row">${rows}</div>
-   <div class="sec">群里程碑（群累计月华达标 → 全群参与者各得月华，JSON：threshold / gongde）</div>
-   <textarea id="mf_milestones" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(miles)}</textarea>
-   <div class="sec">活动结束排行榜奖励（全服总榜前 20 名，JSON：min / max / yuehua）</div>
-   <textarea id="mf_end_rewards" rows="5" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(ends)}</textarea>
-   <div class="sec">喂玉兔月华档位（Jev score 4 档：厌恶 / 无感 / 喜欢 / 非常喜欢，JSON 数组）</div>
-   <textarea id="mf_gongde_feed" rows="2" style="width:100%;padding:10px 12px;border:1px solid #d8d7c9;border-radius:3px;resize:vertical;font-family:monospace">${esc(feeds)}</textarea>
+   <div class="muted" style="margin-bottom:12px">月华是全场唯一奖励与排行积分，只进不出、无商店兑换。排行榜奖励在<b>整个活动结束</b>（两阶段结束时间均已过）后统一结算一次。JSON 结构（阶段曲线 / 阶梯 / 主题表）改动时请保持数组长度一致，保存失败会提示具体哪一项。</div>
+   ${mfFieldsHtml()}
+   ${mfJsonHtml()}
    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
     <button class="act" onclick="saveMoonfest()">保存配置</button>
     <button class="act ghost" onclick="loadMoonfest()">刷新</button>
@@ -774,9 +833,12 @@ async function saveMoonfest(){
   if(parts.length===1) cfg[parts[0]]=val;
   else { cfg[parts[0]]=cfg[parts[0]]||{}; cfg[parts[0]][parts[1]]=val; }
  }
- try{cfg.milestones=JSON.parse(g('mf_milestones').value);}catch(e){alert('群里程碑 JSON 解析失败：'+e.message);return;}
- try{cfg.end_rewards=JSON.parse(g('mf_end_rewards').value);}catch(e){alert('排行榜奖励 JSON 解析失败：'+e.message);return;}
- try{cfg.gongde_feed=JSON.parse(g('mf_gongde_feed').value);}catch(e){alert('喂养档位 JSON 解析失败：'+e.message);return;}
+ for(const j of MF_JSON){
+  const el=g('mf_'+j.k);
+  if(!el) continue;
+  try{cfg[j.k]=JSON.parse(el.value);}
+  catch(e){alert(j.label.split('（')[0]+' JSON 解析失败：'+e.message);return;}
+ }
  const r=await api('/api/moonfest/config/save',{config:cfg});
  const msg=g('mf_msg');
  if(!r){msg.textContent=' 保存失败：无响应';return;}

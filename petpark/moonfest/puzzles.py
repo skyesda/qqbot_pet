@@ -119,9 +119,29 @@ for _p in _LANTERNS:
     _p.setdefault("source", "local")
 
 
-def local_lantern() -> dict[str, Any]:
-    """随机抽一道灯谜。"""
-    p = random.choice(_LANTERNS)
+def _is_hard_lantern(p: dict[str, Any]) -> bool:
+    """难题档：谜底 ≥3 字（成语/物名/地名），或题面本身就是「打一成语/打一物」。
+
+    字谜（谜底多为单个汉字）**不算难题** —— 它们靠拆字，长题面也不代表更难，塞进
+    难题档只会让「难题」变成「题面长的普通题」。当前池子 232 道（约占全校题库 1/5），
+    够每日 5 道难题抽而不重样。
+    """
+    if len(str(p.get("answer", ""))) >= 3:
+        return True
+    q = str(p.get("question", ""))
+    return "打一成语" in q or "打一物" in q
+
+
+def hard_lantern_pool() -> list[dict[str, Any]]:
+    return [p for p in _LANTERNS if _is_hard_lantern(p)]
+
+
+def local_lantern(hard: bool = False) -> dict[str, Any]:
+    """随机抽一道灯谜。``hard=True`` 时只从难题池抽（池空则退回全量）。"""
+    pool = hard_lantern_pool() if hard else _LANTERNS
+    if not pool:
+        pool = _LANTERNS
+    p = random.choice(pool)
     p.setdefault("theme", "中秋")
     p.setdefault("source", "local")
     return p
@@ -250,6 +270,14 @@ _SYNONYM_GROUPS: list[tuple[str, ...]] = [
     ("月饼", "中秋月饼"),
     ("天空", "天上"),
     ("太阳", "日头"),
+    # 月相名（月饼重制挑战的「月相推演」题用；玩家写「望」「上弦」也算对）
+    ("满月", "望月", "望", "圆月", "十五的月亮"),
+    ("新月", "朔月", "朔"),
+    ("上弦月", "上弦"),
+    ("下弦月", "下弦"),
+    ("蛾眉月", "娥眉月", "眉月"),
+    ("盈凸月", "盈凸", "凸月"),
+    ("亏凸月", "亏凸"),
 ]
 _SYNONYM: dict[str, str] = {
     word: group[0] for group in _SYNONYM_GROUPS for word in group
@@ -286,10 +314,14 @@ def normalize_answer(user_text: str, puzzle: dict) -> str | None:
     letter = option_index_to_text(puzzle, t2)
     if letter is not None:
         return letter
-    # 兜底：答案关键词包含在输入里
+    # 兜底：答案关键词包含在输入里。
+    # 必须同样过一遍 _canon_answer —— is_correct 右边拿的是 _canon_answer(ans)，
+    # 这里若直接返回原始 ans，凡是「题库答案本身不是同义组代表写法」的题（如题库
+    # 里存「孔明灯」，而它在 _SYNONYM 里归到代表写法「心愿灯」），玩家**照着答案
+    # 一字不差地打**也会被判错。这条曾在线上真实发生（猜灯谜 孔明灯 被拒）。
     ans = str(puzzle.get("answer", ""))
     if ans and ans in t:
-        return ans
+        return _canon_answer(ans, puzzle)
     return _canon_answer(t2 or t, puzzle)
 
 

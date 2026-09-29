@@ -30,6 +30,8 @@ from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 
+from . import challenges
+from . import moonphase as MP
 from . import puzzles
 from . import templates as T
 from .config import (
@@ -56,6 +58,14 @@ BJ = ZoneInfo("Asia/Shanghai")
 COMMANDS = {
     "拜月", "华诞签到", "猜灯谜", "喂玉兔", "做月饼",
     "贺词", "点赞", "巡礼", "月华榜", "里程碑", "月华墙", "活动帮助",
+    # 月饼重制挑战链（首次合成解锁后再次合成走挑战）
+    "重制",
+    # 中秋段新增玩法
+    "酿桂花", "取酒", "玉兔同行",
+    # 国庆段新增玩法
+    "献礼", "双庆",
+    # 个人信息（一条指令看全自己在活动里的全部状态；三个名字等价）
+    "月华信息", "我的月华", "月华档案",
 }
 # 刻意**不提供**任何群内管理员指令：活动的开始/结束/时间/数值/奖励全部只在
 # 后台「节日活动」页配置（改 phase_*.start_at/end_at 即开始/结束），结算由
@@ -63,6 +73,69 @@ COMMANDS = {
 
 # 做月饼可选口味（收集向，每种首次合成发一次 craft_bonus）
 CRAFT_FLAVORS = ["五仁", "豆沙", "蛋黄莲蓉", "冰皮", "流心"]
+
+# ---------------------------------------------------------------------------
+# 每日计数键清单：**一处定义，多处共用**（建档 / 补旧档 / 每日重置 / 测试断言）。
+# 新增每日计数器只改这一行 —— 以前要在 _get_player 的建档 dict、补旧档 setdefault、
+# _daily_reset 的固定键列表三处手抄同一份清单，漏掉任何一处就会出现「计数器永不
+# 归零」或「旧档读不到键」的隐蔽 bug。
+# ---------------------------------------------------------------------------
+_DAILY_KEYS = (
+    "lantern",      # 猜灯谜（含难题）
+    "lantern_hard", # 猜灯谜「难题」档次数
+    "feed",         # 喂玉兔
+    "bake",         # 做月饼（历史键，保留兼容）
+    "firework",     # 贺词
+    "quiz",         # 巡礼
+    "like",         # 点赞
+    "brew",         # 酿桂花（起坛次数）
+    "rabbit",       # 玉兔同行（开局次数）
+    "offering",     # 个人当日献礼点
+    "craft_try",    # 月饼重制挑战次数
+    "double",       # 双庆挑战次数
+)
+
+# 桂花酿的品质三档（下标即 brew_grade_bonus 的下标）
+_BREW_GRADES = ("清酿", "醇酿", "酿王")
+
+
+# 贺词「切入当日主题」的本地关键词兜底表：(主题侧关键词, 贺词侧关键词)。
+# 只在 Jev 拿不到结论时启用（线上当前没配 Jev Key，这条路就是主路），所以刻意写得
+# **宽进**：同义、近义、口语化写法都收，只要沾边就给那 10 点契合加成；匹配不上就
+# 老老实实不给 —— 比「Jev 挂了就无条件加」诚实，也比「一律不给」更有主题日的意义。
+_THEME_KEYWORDS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+    (("祖国", "国家", "中华", "华夏", "中国"),
+     ("祖国", "国家", "中华", "华夏", "中国", "山河", "锦绣", "繁荣", "富强",
+      "万岁", "华诞", "国旗", "红旗", "神州", "盛世")),
+    (("家人", "父母", "双亲", "亲人"),
+     ("家人", "父母", "爸妈", "妈妈", "爸爸", "亲人", "阖家", "全家", "团圆饭",
+      "家里", "平安", "安康")),
+    (("思念", "想念", "牵挂"),
+     ("思念", "想念", "牵挂", "惦记", "远方", "故乡", "家乡", "盼归", "等你",
+      "月亮代表我的心")),
+    (("中秋", "团圆", "月"),
+     ("中秋", "团圆", "月", "月饼", "嫦娥", "桂", "玉兔", "婵娟", "赏月",
+      "瓜果", "花好", "千里共")),
+    (("家国", "同庆", "双节"),
+     ("家国", "祖国", "国家", "团圆", "中秋", "国庆", "华诞", "同庆", "双节",
+      "盛世", "山河")),
+]
+
+
+def _theme_keyword_hit(text: str, theme: str) -> bool:
+    """按主题侧关键词找到对应的词族，再看贺词里有没有任一贺词侧关键词。"""
+    for theme_keys, text_keys in _THEME_KEYWORDS:
+        if any(k in theme for k in theme_keys):
+            return any(k in text for k in text_keys)
+    return False
+
+
+def _new_daily() -> dict:
+    """一份全新的每日计数器（date 留空，首次调用即触发重置）。"""
+    d: dict[str, Any] = {"date": ""}
+    d.update({k: 0 for k in _DAILY_KEYS})
+    return d
+
 
 # 贺词本地敏感词兜底表（Jev 不可用/不确定时用；保守——只有命中明确词才拒，
 # 其余放行）。词条刻意避开「天安门」等正常祝福里可能出现的中性词。
@@ -73,16 +146,22 @@ _SENSITIVE_WORDS = [
     "赌博", "博彩", "色情", "约炮", "贷款",
 ]
 
-# 各玩法所属阶段（用于阶段门控）
+# 各玩法所属阶段（用于阶段门控）。「双庆」刻意不在此表：它要求**两阶段同时生效**
+# （双节同庆重叠日），在 _dispatch 里按 _phase() == "both" 单独判定。
 _PHASE_GATES = {
     "拜月": "midautumn",
     "猜灯谜": "midautumn",
     "喂玉兔": "midautumn",
     "做月饼": "midautumn",
+    "重制": "midautumn",
+    "酿桂花": "midautumn",
+    "取酒": "midautumn",
+    "玉兔同行": "midautumn",
     "华诞签到": "national",
     "贺词": "national",
     "点赞": "national",
     "巡礼": "national",
+    "献礼": "national",
 }
 
 
@@ -309,6 +388,10 @@ class MoonfestActivity:
         gs = self._groups().setdefault(gid, {"yuehua_total": 0, "milestone_reached": []})
         gs.setdefault("yuehua_total", 0)
         gs.setdefault("milestone_reached", [])
+        # 献礼（国庆段群协作进度轴）。刻意与 yuehua_total 分开记：那是「产出」轴，
+        # 这是「参与行为」轴，两条进度各自独立达标、互不触发。
+        gs.setdefault("offering_total", 0)
+        gs.setdefault("offering_reached", [])
         return gs
 
     def _players_in_group(self, group_id) -> list[dict]:
@@ -328,14 +411,25 @@ class MoonfestActivity:
                 "name": "",
                 "yuehua_earned": 0,
                 "sign": {"mid": "", "nat": "", "count": 0},
-                "daily": {"date": "", "lantern": 0, "feed": 0, "bake": 0, "firework": 0, "quiz": 0, "like": 0},
+                "daily": _new_daily(),
                 "quiz": {},
                 "quiz_streak": 0,
                 "last_lantern_ts": 0,
                 "last_feed_ts": 0,
                 "last_bake_ts": 0,
+                "last_brew_ts": 0,
                 "fireworks": [],
                 "craft": {"mooncake": {}},
+                # 桂花酿：材料 / 在酿的一坛 / 已酿出的品质（首次各发一次奖励）
+                "materials": {"桂花": 0},
+                "brew": {"ready_ts": 0, "grades": [], "brewed": 0},
+                # 玉兔同行：本局进度
+                "rabbit": {"date": "", "step": 0, "wrong": 0, "earned": 0,
+                           "q": None, "perfect_days": 0},
+                "feed_total": 0,
+                # 巡礼路线化：当前路线进度（跨天保留）
+                "route": {"name": "", "station": 0, "wrong": 0},
+                "double": {"date": "", "step": 0, "q": None},
                 "bound_at": self._now(),
             }
             players[key] = ap
@@ -345,17 +439,37 @@ class MoonfestActivity:
             ap.setdefault("name", "")
             ap.setdefault("yuehua_earned", 0)
             ap.setdefault("sign", {"mid": "", "nat": "", "count": 0})
-            ap.setdefault("daily", {"date": "", "lantern": 0, "feed": 0, "bake": 0, "firework": 0, "quiz": 0, "like": 0})
+            ap.setdefault("daily", _new_daily())
             ap.setdefault("quiz", {})
             ap.setdefault("quiz_streak", 0)
             ap.setdefault("craft", {"mooncake": {}})
             ap.setdefault("fireworks", [])
+            ap.setdefault("materials", {"桂花": 0})
+            ap.setdefault("brew", {"ready_ts": 0, "grades": [], "brewed": 0})
+            ap.setdefault("rabbit", {"date": "", "step": 0, "wrong": 0, "earned": 0,
+                                     "q": None, "perfect_days": 0})
+            ap.setdefault("feed_total", 0)
+            ap.setdefault("route", {"name": "", "station": 0, "wrong": 0})
+            ap.setdefault("double", {"date": "", "step": 0, "q": None})
+        # 旧档补齐：每日计数器后来新增过几批，老玩家档里可能缺键；读的时候虽都走
+        # .get(k, 0)，但补齐后 _daily_reset 的「一键清单」才是唯一真源。
+        ap.setdefault("daily", _new_daily())
+        ap["daily"].setdefault("date", "")
+        for _k in _DAILY_KEYS:
+            ap["daily"].setdefault(_k, 0)
         # 有 event 时顺手刷新昵称
         if event is not None:
             name = self._user_name(event, qq)
             if name and ap.get("name") != name:
                 ap["name"] = name
         return ap
+
+    def _materials(self, ap) -> dict:
+        """酿造材料袋（当前只有「桂花」）。刻意放独立字段、不进主背包：
+        月耀华诞是自包含活动，材料不流通、不折算月华、不影响主经济。"""
+        mats = ap.setdefault("materials", {})
+        mats.setdefault("桂花", 0)
+        return mats
 
     def _user_name(self, event, qq) -> str:
         try:
@@ -411,10 +525,13 @@ class MoonfestActivity:
         return [int(m.get("threshold", 0)) for m in newly]
 
     def _daily_reset(self, ap) -> None:
+        """跨天则把所有每日计数器清零。键清单来自模块级 _DAILY_KEYS（唯一真源）。"""
         d = ap.setdefault("daily", {})
         today = self._bj_date()
         if d.get("date") != today:
-            d.update({"date": today, "lantern": 0, "feed": 0, "bake": 0, "firework": 0, "quiz": 0, "like": 0})
+            d["date"] = today
+            for k in _DAILY_KEYS:
+                d[k] = 0
 
     # ------------------------------------------------------------------
     # 管理权限
@@ -447,8 +564,18 @@ class MoonfestActivity:
         return T.rand(T.HUADAN_LINES).format(amount=amt)
 
     # ------------------------------------------------------------------
-    # 玩法：猜灯谜（Jev noul 语义判定 + 字符串兜底）
+    # 玩法：猜灯谜（Jev noul 语义判定 + 字符串兜底；连对倍率 + 难题档）
     # ------------------------------------------------------------------
+    @staticmethod
+    def _lantern_ask_text(quiz, timeout: int) -> str:
+        if quiz.get("hard"):
+            return T.LANTERN_HARD_ASK.format(
+                question=quiz.get("q"), hint=quiz.get("hint", ""),
+                timeout=timeout, mult=quiz.get("mult", 1.5),
+            )
+        return T.LANTERN_ASK.format(
+            question=quiz.get("q"), hint=quiz.get("hint", ""), timeout=timeout)
+
     def _cmd_lantern(self, event, qq, group_id, rest: str) -> str:
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
@@ -456,12 +583,20 @@ class MoonfestActivity:
         limit = self._int_cfg("lantern_daily_limit", 20)
         timeout = self._int_cfg("lantern_timeout_sec", 60)
         quiz = ap.get("quiz") or {}
-        if not rest:
+        want = rest.strip()
+        hard = want == "难题"
+        if hard:
+            want = ""
+        if not want:
             if int(d.get("lantern", 0)) >= limit:
                 return T.LANTERN_DAILY_LIMIT.format(limit=limit)
             # 已有进行中的题（同一天）→ 复用，不重复出题
             if quiz.get("kind") == "lantern" and quiz.get("date") == self._bj_date():
-                return T.LANTERN_ASK.format(question=quiz.get("q"), hint=quiz.get("hint", ""), timeout=timeout)
+                return self._lantern_ask_text(quiz, timeout)
+            if hard:
+                hlimit = self._int_cfg("lantern_hard_daily_limit", 5)
+                if int(d.get("lantern_hard", 0) or 0) >= hlimit:
+                    return T.LANTERN_HARD_LIMIT.format(limit=hlimit)
             # 答对后的冷却（lantern_cooldown_min，默认 0=无冷却）
             cooldown = self._int_cfg("lantern_cooldown_min", 0) * 60
             last = int(ap.get("last_lantern_ts", 0) or 0)
@@ -469,19 +604,23 @@ class MoonfestActivity:
             if cooldown and last and now - last < cooldown:
                 mins = max(1, int((cooldown - (now - last)) // 60))
                 return T.LANTERN_COOLDOWN.format(mins=mins)
-            p = puzzles.local_lantern()
+            p = puzzles.local_lantern(hard=hard)
+            mult = float(self._cfg("lantern_hard_mult", 1.5) or 1.5) if hard else 1.0
             ap["quiz"] = {
                 "kind": "lantern", "q": p.get("question"), "a": str(p.get("answer", "")),
                 "answer_type": p.get("answer_type"), "hint": p.get("hint", ""),
-                "date": self._bj_date(), "ts": now,
+                "date": self._bj_date(), "ts": now, "hard": hard, "mult": mult,
             }
             d["lantern"] = int(d.get("lantern", 0)) + 1
-            return T.LANTERN_ASK.format(question=p.get("question"), hint=p.get("hint", ""), timeout=timeout)
+            if hard:
+                d["lantern_hard"] = int(d.get("lantern_hard", 0) or 0) + 1
+            return self._lantern_ask_text(ap["quiz"], timeout)
         # 作答
         if quiz.get("kind") != "lantern" or quiz.get("date") != self._bj_date():
             return T.LANTERN_ANSWER_FORMAT
         if self._now() - int(quiz.get("ts", 0)) > timeout:
             ap.pop("quiz", None)
+            ap["lantern_streak"] = 0
             return T.LANTERN_TIMEOUT.format(answer=quiz.get("a"))
         user_ans = rest.strip()
         answer = str(quiz.get("a", ""))
@@ -490,7 +629,7 @@ class MoonfestActivity:
         # 原始 answer 字符串会让「月球/月亮」这类正确答法反而判错）
         if puzzles.is_correct(user_ans, {"answer": answer, "answer_type": quiz.get("answer_type")}):
             ap.pop("quiz", None)
-            return self._lantern_right(ap, group_id, user_ans, answer, by_jev=False)
+            return self._lantern_right(ap, group_id, user_ans, answer, by_jev=False, quiz=quiz)
         # Jev noul 语义等价判定（谐音/别解/近义）
         verdict = JEV.noul_bool(
             {"谜面": quiz.get("q"), "标准答案": answer, "玩家回答": user_ans},
@@ -499,16 +638,41 @@ class MoonfestActivity:
         )
         ap.pop("quiz", None)
         if verdict is True:
-            return self._lantern_right(ap, group_id, user_ans, answer, by_jev=True)
+            return self._lantern_right(ap, group_id, user_ans, answer, by_jev=True, quiz=quiz)
+        ap["lantern_streak"] = 0
         return T.LANTERN_WRONG.format(answer=answer)
 
-    def _lantern_right(self, ap, group_id, user_ans, answer, by_jev=False) -> str:
-        amt = self._rand_int("gongde_lantern_min", "gongde_lantern_max", 10, 30)
+    def _lantern_right(self, ap, group_id, user_ans, answer, by_jev=False, quiz=None) -> str:
+        quiz = quiz or {}
+        base = self._rand_int("gongde_lantern_min", "gongde_lantern_max", 10, 30)
+        streak = int(ap.get("lantern_streak", 0) or 0) + 1
+        ap["lantern_streak"] = streak
+        rate_cfg = float(self._cfg("lantern_combo_rate", 0.1) or 0.1)
+        cap = int(self._cfg("lantern_combo_cap", 3) or 0)
+        rate = 1 + rate_cfg * min(streak // 5, cap)   # 每连对 5 题 +10%，上限 +30%
+        hard_mult = float(quiz.get("mult", 1.0) or 1.0) if quiz.get("hard") else 1.0
+        amt = max(1, int(base * rate * hard_mult))
         self._grant_yuehua(ap, group_id, amt)
         ap["last_lantern_ts"] = self._now()
         if by_jev:
-            return T.LANTERN_RIGHT_JEV.format(user=user_ans, answer=answer, amount=amt)
-        return T.LANTERN_RIGHT.format(answer=answer, amount=amt)
+            text = T.LANTERN_RIGHT_JEV.format(user=user_ans, answer=answer, amount=amt)
+        else:
+            text = T.LANTERN_RIGHT.format(answer=answer, amount=amt)
+        if rate > 1:
+            text += "\n\n" + T.LANTERN_COMBO.format(n=streak, rate=round(rate, 2))
+        if quiz.get("hard"):
+            text += "\n\n" + f"🏮 难题加成 ×{hard_mult} 已计入。"
+        text += self._maybe_drop_guihua(ap)
+        return text
+
+    def _maybe_drop_guihua(self, ap) -> str:
+        """猜灯谜答对按概率掉落桂花（桂花酿的**主来源**；拜月是普通签到，不赠物）。"""
+        pct = self._int_cfg("brew_drop_pct", 35)
+        if pct <= 0 or random.randint(1, 100) > pct:
+            return ""
+        mats = self._materials(ap)
+        mats["桂花"] = int(mats.get("桂花", 0) or 0) + 1
+        return f"\n\n🍂 顺手采得【桂花 ×1】（现有 {mats['桂花']} 份），可用于「酿桂花」。"
 
     # ------------------------------------------------------------------
     # 玩法：喂玉兔（Jev score 4 档）
@@ -529,6 +693,18 @@ class MoonfestActivity:
         if cooldown and last and now - last < cooldown:
             mins = max(1, int((cooldown - (now - last)) // 60))
             return T.FEED_COOLDOWN.format(mins=mins)
+        # 「喂玉兔 桂花酿」：从酒窖取走存着的最高品质一盏，把 Jev 打分**抬到该品质的
+        # 保底档**（清酿≥无感 / 醇酿≥喜欢 / 酿王=非常喜欢）。酒只换档位、不过户月华，
+        # 所以酿酒不构成任何新的月华出口 —— 每日喂养次数仍是唯一封顶。
+        wine_note = ""
+        wine_floor = 0
+        if thing == "桂花酿":
+            grade = self._take_best_wine(ap)
+            if grade is None:
+                return T.BREW_FEED_NONE
+            wine_floor = _BREW_GRADES.index(grade) + 1
+            wine_note = T.BREW_FEED_WINE.format(
+                grade=grade, tier=T.BREW_GRADE_TIER.get(grade, "无感"))
         tier = JEV.score_tier(
             {"投喂物品": thing, "今日已喂次数": int(d.get("feed", 0))},
             "玉兔对这份食物的喜爱程度？",
@@ -537,32 +713,622 @@ class MoonfestActivity:
         if tier is None:
             tier = 1  # 兜底：无感档
         tier = max(0, min(int(tier), 3))
+        tier = max(tier, wine_floor)
         gongde = self.cfg.get("gongde_feed") or [5, 10, 20, 30]
         amt = int(gongde[tier]) if 0 <= tier < len(gongde) else 10
         self._grant_yuehua(ap, group_id, amt)
         d["feed"] = int(d.get("feed", 0)) + 1
         ap["last_feed_ts"] = now
-        return T.FEED_RESPONSES[tier].format(thing=thing[:12], amount=amt)
+        # 累计喂食次数 → 玉兔同行每步月华的亲密度倍率（把喂养接进主玩法的那根线）
+        ap["feed_total"] = int(ap.get("feed_total", 0) or 0) + 1
+        return T.FEED_RESPONSES[tier].format(thing=thing[:12], amount=amt) + wine_note
 
     # ------------------------------------------------------------------
-    # 玩法：做月饼（收集向，首次解锁发一次）
+    # 玩法：做月饼 / 月饼匠心（首次合成解锁 → 重制挑战链）
     # ------------------------------------------------------------------
+    def _list_cfg(self, key, default: list) -> list:
+        v = self.cfg.get(key)
+        if not isinstance(v, list) or not v:
+            return list(default)
+        return v
+
+    def _stage_val(self, key, stage: int, default: list):
+        """取「五阶段列表」里第 stage 阶段（1 起）的值；越界退回最后一个。"""
+        vals = self._list_cfg(key, default)
+        i = max(0, min(int(stage) - 1, len(vals) - 1))
+        return vals[i]
+
+    def _craft_state(self, ap) -> dict:
+        craft = ap.setdefault("craft", {})
+        craft.setdefault("mooncake", {})
+        craft.setdefault("remake", {})
+        craft.setdefault("remake_count", 0)
+        craft.setdefault("stars_granted", [])
+        return craft
+
+    def _craft_stage(self, ap) -> int:
+        """按**该玩家自己的**重制成功次数决定阶段（1~5）。
+
+        刻意不看全服进度、也不按口味分别算：后来者不会被前面的玩家拖累，5 个口味
+        共用同一条个人进度，重制次数越多越难。
+        """
+        craft = self._craft_state(ap)
+        count = int(craft.get("remake_count", 0))
+        steps = self._list_cfg("craft_remake_steps", [0, 2, 5, 9, 14])
+        stage = 1
+        for i, s in enumerate(steps):
+            try:
+                if count >= int(s):
+                    stage = i + 1
+            except (TypeError, ValueError):
+                continue
+        return max(1, min(stage, len(steps)))
+
+    def _craft_cooldown_secs(self, stage: int) -> int:
+        """挑战结束后的冷却：基础值 + 每上一阶段递增，封顶。"""
+        base = self._int_cfg("craft_remake_cooldown_min", 10)
+        step = self._int_cfg("craft_remake_cooldown_step_min", 5)
+        cap = self._int_cfg("craft_remake_cooldown_cap_min", 60)
+        mins = base + step * (max(1, int(stage)) - 1)
+        return max(0, min(mins, cap)) * 60
+
+    def _craft_penalty(self, ap, stage: int) -> str:
+        """失败/放弃的代价：**只**写入冷却（次数在开局时已扣）。
+
+        这里没有任何扣月华的路径 —— 月华只进不出是活动铁律。
+        """
+        craft = self._craft_state(ap)
+        craft["last_ts"] = self._now()
+        cd = self._craft_cooldown_secs(stage)
+        if cd <= 0:
+            return T.CRAFT_REMAKE_PENALTY_NOW
+        return T.CRAFT_REMAKE_PENALTY.format(mins=max(1, cd // 60))
+
+    def _craft_stage_name(self, stage: int) -> str:
+        names = T.CRAFT_REMAKE_STAGE_NAME
+        return names[max(0, min(int(stage) - 1, len(names) - 1))]
+
+    def _craft_dex(self, ap) -> str:
+        """`做月饼` 不带参数：图鉴 + 重制进度 + 今日次数/冷却。"""
+        craft = self._craft_state(ap)
+        mc = craft["mooncake"]
+        star_max = max(1, self._int_cfg("craft_star_max", 5))
+        stage = self._craft_stage(ap)
+        lines = [T.CRAFT_DEX_HEADER, T.CRAFT_DEX_TABLE_HEAD, T.CRAFT_DEX_TABLE_SEP]
+        for f in CRAFT_FLAVORS:
+            n = int(mc.get(f, 0) or 0)
+            clears = max(0, n - 1)          # 减掉首次合成那一次
+            if n <= 0:
+                stars = T.CRAFT_DEX_LOCKED
+            else:
+                s = max(0, min(int(craft["remake"].get(f, 0) or 0), star_max))
+                stars = "★" * s + "☆" * (star_max - s)
+            lines.append(T.CRAFT_DEX_ROW.format(flavor=f, stars=stars, clears=clears))
+        limit = self._int_cfg("craft_remake_daily_limit", 3)
+        used = int((ap.get("daily") or {}).get("craft_try", 0) or 0)
+        cooldown = ""
+        cd = self._craft_cooldown_secs(stage)
+        last = int(craft.get("last_ts", 0) or 0)
+        left_cd = cd - (self._now() - last) if (cd and last) else 0
+        if left_cd > 0:
+            cooldown = "（冷却中，{} 分钟后可再开炉）".format(max(1, left_cd // 60))
+        lines.append(T.CRAFT_DEX_FOOTER.format(
+            count=int(craft.get("remake_count", 0)),
+            stage=self._craft_stage_name(stage),
+            n=int(self._stage_val("craft_remake_counts", stage, [1, 2, 3, 3, 4])),
+            t=int(self._stage_val("craft_remake_times", stage, [30, 26, 22, 18, 14])),
+            left=max(0, limit - used), limit=limit, cooldown=cooldown,
+        ))
+        return "\n".join(lines)
+
     def _cmd_craft(self, event, qq, group_id, rest: str) -> str:
+        """做月饼：不带参数看图鉴；未解锁的口味=首次合成；已解锁=开一炉重制挑战。"""
         flavor = rest.strip()
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
         if not flavor:
-            return T.CRAFT_UNKNOWN.format(name="？", names="、".join(CRAFT_FLAVORS))
+            return self._craft_dex(ap)
         if flavor not in CRAFT_FLAVORS:
             return T.CRAFT_UNKNOWN.format(name=flavor, names="、".join(CRAFT_FLAVORS))
-        ap = self._get_player(group_id, qq, event=event)
-        mc = ap.setdefault("craft", {}).setdefault("mooncake", {})
-        n = int(mc.get(flavor, 0))
-        mc[flavor] = n + 1
+        craft = self._craft_state(ap)
+        mc = craft["mooncake"]
+        n = int(mc.get(flavor, 0) or 0)
         if n == 0:
+            # 首次合成：入门线，保持原样（一次性，不走挑战）
+            mc[flavor] = 1
             amt = self._int_cfg("craft_bonus", 20)
             self._grant_yuehua(ap, group_id, amt)
             return T.CRAFT_ORIGINAL.format(name=flavor, amount=amt)
-        got = len([k for k, v in mc.items() if int(v) > 0])
-        return T.CRAFT_DUPLICATE.format(name=flavor, n=got, total=len(CRAFT_FLAVORS))
+        # ---- 以下是「再次合成」：走挑战链 ----
+        if craft.get("active"):
+            return T.CRAFT_REMAKE_ACTIVE
+        limit = self._int_cfg("craft_remake_daily_limit", 3)
+        d = ap["daily"]
+        if int(d.get("craft_try", 0) or 0) >= limit:
+            return T.CRAFT_REMAKE_LIMIT.format(limit=limit)
+        stage = self._craft_stage(ap)
+        cd = self._craft_cooldown_secs(stage)
+        last = int(craft.get("last_ts", 0) or 0)
+        now = self._now()
+        if cd and last and now - last < cd:
+            return T.CRAFT_REMAKE_COOLDOWN.format(mins=max(1, (cd - (now - last)) // 60))
+        count = int(self._stage_val("craft_remake_counts", stage, [1, 2, 3, 3, 4]))
+        limit_sec = int(self._stage_val("craft_remake_times", stage, [30, 26, 22, 18, 14]))
+        # Jev 不可用（线上当前就没配 Key）→ 不出语义题，用同阶段确定性题补足步数
+        steps = challenges.build_steps(now, stage, count, jev_available=self.jev.available())
+        d["craft_try"] = int(d.get("craft_try", 0) or 0) + 1
+        craft["active"] = {
+            "flavor": flavor, "stage": stage, "steps": steps, "i": 0,
+            "limit": limit_sec, "deadline": now + limit_sec, "started": now,
+        }
+        return T.CRAFT_REMAKE_START.format(
+            name=flavor, stage=self._craft_stage_name(stage),
+            n=len(steps), t=limit_sec, i=1,
+            q=steps[0]["q"], hint=steps[0]["hint"],
+        )
+
+    def _cmd_remake(self, event, qq, group_id, rest: str) -> str:
+        """重制 <答案>：提交当前步骤答案；`重制 放弃` 主动放弃。"""
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
+        craft = self._craft_state(ap)
+        act = craft.get("active")
+        if not act:
+            return T.CRAFT_REMAKE_ANSWER_FORMAT
+        steps = act.get("steps") or []
+        i = int(act.get("i", 0) or 0)
+        if not steps or i >= len(steps):
+            craft.pop("active", None)
+            return T.CRAFT_REMAKE_ANSWER_FORMAT
+        stage = int(act.get("stage", 1) or 1)
+        if rest.strip() == "放弃":
+            craft.pop("active", None)
+            return T.CRAFT_REMAKE_ABANDON.format(penalty=self._craft_penalty(ap, stage))
+        step = steps[i]
+        now = self._now()
+        if now > int(act.get("deadline", 0) or 0):
+            craft.pop("active", None)
+            return T.CRAFT_REMAKE_TIMEOUT.format(
+                i=i + 1, answer=step.get("a"), penalty=self._craft_penalty(ap, stage))
+        ok, _by_jev = challenges.grade(step, rest.strip(), jev=self.jev)
+        if not ok:
+            craft.pop("active", None)
+            return T.CRAFT_REMAKE_WRONG.format(
+                i=i + 1, answer=step.get("a"), penalty=self._craft_penalty(ap, stage))
+        # 答对：还有下一题 → 续接；否则整炉成功
+        if i + 1 < len(steps):
+            act["i"] = i + 1
+            act["deadline"] = now + int(act.get("limit", 30) or 30)
+            nxt = steps[i + 1]
+            return T.CRAFT_REMAKE_STEP.format(
+                done=i + 1, i=i + 2, n=len(steps), q=nxt["q"], hint=nxt["hint"])
+        return self._craft_success(ap, group_id, craft, act, stage, now)
+
+    def _craft_success(self, ap, group_id, craft, act, stage: int, now: int) -> str:
+        flavor = act.get("flavor")
+        craft.pop("active", None)
+        craft["last_ts"] = now
+        craft["remake_count"] = int(craft.get("remake_count", 0)) + 1
+        mc = craft["mooncake"]
+        mc[flavor] = int(mc.get(flavor, 0) or 0) + 1
+        star_max = max(1, self._int_cfg("craft_star_max", 5))
+        stars = min(int(craft["remake"].get(flavor, 0) or 0) + 1, star_max)
+        craft["remake"][flavor] = stars
+        amt = int(self._stage_val("craft_remake_rewards", stage, [20, 30, 45, 70, 100]))
+        self._grant_yuehua(ap, group_id, amt)
+        text = T.CRAFT_REMAKE_DONE.format(
+            name=flavor, n=len(act.get("steps") or []), amount=amt,
+            stars="★" * stars + "☆" * (star_max - stars), star_n=stars, star_max=star_max,
+            count=int(craft.get("remake_count", 0)),
+            stage=self._craft_stage_name(self._craft_stage(ap)),
+        )
+        # 口味星级一次性奖励：用 stars_granted 记录已发过的 (口味, 星级)。
+        # 不用「星级 == N 就发」判断 —— 星级封顶后重复通关会反复触发同一档。
+        rewards = self.cfg.get("craft_star_rewards")
+        if isinstance(rewards, dict):
+            key = f"{flavor}:{stars}"
+            try:
+                bonus = int(rewards.get(str(stars), 0) or 0)
+            except (TypeError, ValueError):
+                bonus = 0
+            granted = craft.setdefault("stars_granted", [])
+            if bonus > 0 and key not in granted:
+                granted.append(key)
+                # 一次性奖励走 _add_yuehua（不计群累计）：避免在发奖过程中递归触发
+                # 群里程碑，也符合「里程碑看的是玩法产出」的口径。
+                self._add_yuehua(ap, bonus)
+                text += T.CRAFT_REMAKE_STAR_BONUS.format(star=stars, amount=bonus)
+        return text
+
+    # ------------------------------------------------------------------
+    # 玩法：桂花酿（中秋段新增）—— 材料 → 起坛 → 取酒 → 喂玉兔换档位
+    # ------------------------------------------------------------------
+    def _brew_state(self, ap) -> dict:
+        brew = ap.setdefault("brew", {})
+        brew.setdefault("ready_ts", 0)
+        brew.setdefault("grades", [])
+        brew.setdefault("brewed", 0)
+        brew.setdefault("box", {})   # 酒窖：品质 → 存量（新增键，老档 setdefault 补齐）
+        return brew
+
+    def _brew_box_text(self, brew) -> str:
+        box = brew.get("box") or {}
+        parts = [
+            "{} ×{}".format(g, int(box.get(g, 0) or 0))
+            for g in _BREW_GRADES if int(box.get(g, 0) or 0) > 0
+        ]
+        return T.BREW_BOX.format(items="、".join(parts) if parts else T.BREW_BOX_EMPTY)
+
+    def _brew_grade(self, now: int) -> str:
+        """掷品质：基础权重 清酿 60 / 醇酿 30 / 酿王 10。
+
+        近满月窗口（``full_moon_window_days``，默认 3）内「酿王」权重 ×
+        ``brew_full_moon_mult``（默认 2.0）—— 这是本玩法唯一的「择时」深度：
+        同样三枝桂花，挑月色将满时下料更容易出酿王。
+        """
+        weights = [60.0, 30.0, 10.0]
+        window = self._int_cfg("full_moon_window_days", 3)
+        try:
+            mult = float(self._cfg("brew_full_moon_mult", 2.0) or 2.0)
+        except (TypeError, ValueError):
+            mult = 2.0
+        if MP.is_near_full(now, window):
+            weights[2] *= max(1.0, mult)
+        r = random.random() * sum(weights)
+        acc = 0.0
+        for i, w in enumerate(weights):
+            acc += w
+            if r < acc:
+                return _BREW_GRADES[i]
+        return _BREW_GRADES[-1]
+
+    def _take_best_wine(self, ap) -> str | None:
+        """从酒窖取走存着的**最高品质**一盏（喂玉兔用）；没有则返回 None 且不改状态。"""
+        brew = self._brew_state(ap)
+        box = brew.get("box") or {}
+        for g in reversed(_BREW_GRADES):
+            if int(box.get(g, 0) or 0) > 0:
+                box[g] = int(box[g]) - 1
+                return g
+        return None
+
+    def _cmd_brew(self, event, qq, group_id, rest: str) -> str:
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
+        d = ap["daily"]
+        brew = self._brew_state(ap)
+        now = self._now()
+        ready = int(brew.get("ready_ts", 0) or 0)
+        if ready > now:
+            return T.BREW_BUSY.format(mins=max(1, (ready - now + 59) // 60))
+        limit = self._int_cfg("brew_daily_limit", 1)
+        if int(d.get("brew", 0) or 0) >= limit:
+            return T.BREW_DAILY_LIMIT.format(limit=limit)
+        need = max(1, self._int_cfg("brew_guihua_per_batch", 3))
+        mats = self._materials(ap)
+        have = int(mats.get("桂花", 0) or 0)
+        if have < need:
+            return T.BREW_NO_GUIHUA.format(need=need, have=have)
+        mats["桂花"] = have - need
+        mins = max(1, self._int_cfg("brew_minutes", 30))
+        brew["ready_ts"] = now + mins * 60
+        d["brew"] = int(d.get("brew", 0) or 0) + 1
+        ap["last_brew_ts"] = now
+        text = T.BREW_START.format(need=need, mins=mins)
+        if MP.is_near_full(now, self._int_cfg("full_moon_window_days", 3)):
+            text += T.BREW_FULL_MOON_TIP
+        return text
+
+    def _cmd_take_wine(self, event, qq, group_id, rest: str) -> str:
+        ap = self._get_player(group_id, qq, event=event)
+        brew = self._brew_state(ap)
+        ready = int(brew.get("ready_ts", 0) or 0)
+        if not ready:
+            return T.BREW_NOTHING
+        now = self._now()
+        if ready > now:
+            return T.BREW_NOT_READY.format(mins=max(1, (ready - now + 59) // 60))
+        grade = self._brew_grade(now)
+        brew["ready_ts"] = 0
+        brew["brewed"] = int(brew.get("brewed", 0) or 0) + 1
+        box = brew.setdefault("box", {})
+        box[grade] = int(box.get(grade, 0) or 0) + 1
+        text = T.BREW_TAKE.format(grade=grade, n=int(box[grade]))
+        # 首次酿出某品质的一次性奖励：用 grades 清单记幂等（照 craft.stars_granted 的写法，
+        # 不用「品质排名」判断 —— 那样重复酿出同一档会反复触发）。
+        grades = brew.setdefault("grades", [])
+        if grade not in grades:
+            grades.append(grade)
+            bonuses = self.cfg.get("brew_grade_bonus") or []
+            try:
+                bonus = int(bonuses[_BREW_GRADES.index(grade)])
+            except (IndexError, TypeError, ValueError):
+                bonus = 0
+            if bonus > 0:
+                # 一次性收集奖励走 _add_yuehua（不计群累计）：避免发奖过程中递归触发里程碑
+                self._add_yuehua(ap, bonus)
+                text += T.BREW_TAKE_FIRST.format(grade=grade, amount=bonus)
+        return text + "\n\n" + self._brew_box_text(brew)
+
+    # ------------------------------------------------------------------
+    # 玩法：玉兔同行（中秋段新增）—— 每日一局五站，逐站加难
+    # ------------------------------------------------------------------
+    def _rabbit_state(self, ap) -> dict:
+        rab = ap.setdefault("rabbit", {})
+        rab.setdefault("date", "")
+        rab.setdefault("step", 0)
+        rab.setdefault("wrong", 0)
+        rab.setdefault("earned", 0)
+        rab.setdefault("q", None)
+        rab.setdefault("perfect_days", 0)
+        return rab
+
+    def _rabbit_intimacy_mult(self, ap) -> tuple[float, int]:
+        """亲密度 3 级（由**累计喂食次数** feed_total 决定）→ 每站月华倍率。
+
+        这是把原本孤立的「喂玉兔」接进主玩法的那根线：天天喂，同行时收益更高。
+        返回 (倍率, 等级)。
+        """
+        step = max(1, self._int_cfg("rabbit_intimacy_step", 10))
+        lv = min(int(ap.get("feed_total", 0) or 0) // step, 2)
+        mults = self.cfg.get("rabbit_run_intimacy_mult") or [1.0, 1.15, 1.3]
+        try:
+            mult = float(mults[min(lv, len(mults) - 1)])
+        except (IndexError, TypeError, ValueError):
+            mult = 1.0
+        return mult, lv
+
+    def _rabbit_ask(self, ap, timeout: int) -> str:
+        """出下一站的题。第 1~2 站普通灯谜且给提示；第 3 站起换难题池且撤掉提示 ——
+        这是本玩法唯一的难度递增手段（题池变难 + 提示消失）。"""
+        rab = self._rabbit_state(ap)
+        n = max(1, self._int_cfg("rabbit_run_steps", 5))
+        i = int(rab.get("step", 0) or 0) + 1
+        hard = i >= 3
+        p = puzzles.local_lantern(hard=hard)
+        rab["q"] = {
+            "q": p.get("question"), "a": str(p.get("answer", "")),
+            "answer_type": p.get("answer_type"), "hint": p.get("hint", ""),
+            "hard": hard, "ts": self._now(),
+        }
+        tpl = T.RABBIT_ASK_NO_HINT if hard else T.RABBIT_ASK
+        return tpl.format(
+            i=i, n=n, thing=random.choice(T.FEED_THINGS),
+            q=p.get("question"), hint=p.get("hint", ""), timeout=timeout,
+        )
+
+    def _rabbit_finish(self, ap, group_id, rab, prefix: str = "") -> str:
+        rab["q"] = None
+        mult, lv = self._rabbit_intimacy_mult(ap)
+        text = prefix + T.RABBIT_END.format(amount=int(rab.get("earned", 0) or 0))
+        text += "\n\n" + T.RABBIT_INTIMACY.format(lv=lv + 1, mult=round(mult, 2))
+        if int(rab.get("wrong", 0) or 0) == 0:
+            bonus = self._int_cfg("rabbit_run_perfect_bonus", 25)
+            if bonus > 0:
+                self._grant_yuehua(ap, group_id, bonus)
+                rab["perfect_days"] = int(rab.get("perfect_days", 0) or 0) + 1
+                text += "\n\n" + T.RABBIT_PERFECT.format(perfect=bonus)
+        return text
+
+    def _cmd_rabbit_run(self, event, qq, group_id, rest: str) -> str:
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
+        d = ap["daily"]
+        rab = self._rabbit_state(ap)
+        today = self._bj_date()
+        timeout = self._int_cfg("quiz_timeout_sec", 60)
+        n = max(1, self._int_cfg("rabbit_run_steps", 5))
+        # 本局作答：`玉兔同行 <答案>`（题在 rab["q"] 里）
+        if rab.get("date") == today and rab.get("q"):
+            return self._rabbit_answer(ap, group_id, rest, timeout, n)
+        if rest.strip():
+            return T.RABBIT_ANSWER_FORMAT
+        limit = self._int_cfg("rabbit_run_daily_limit", 1)
+        if int(d.get("rabbit", 0) or 0) >= limit:
+            return T.RABBIT_DAILY_LIMIT.format(limit=limit)
+        rab.update({"date": today, "step": 0, "wrong": 0, "earned": 0, "q": None})
+        d["rabbit"] = int(d.get("rabbit", 0) or 0) + 1
+        return self._rabbit_ask(ap, timeout)
+
+    def _rabbit_answer(self, ap, group_id, rest: str, timeout: int, n: int) -> str:
+        rab = self._rabbit_state(ap)
+        q = rab.get("q") or {}
+        if not q:
+            return T.RABBIT_ANSWER_FORMAT
+        i = int(rab.get("step", 0) or 0) + 1
+        ans = rest.strip()
+        if not ans:
+            return T.RABBIT_ANSWER_FORMAT
+        timed_out = self._now() - int(q.get("ts", 0) or 0) > timeout
+        ok = False
+        if not timed_out:
+            ok = puzzles.is_correct(ans, {
+                "answer": q.get("a"), "answer_type": q.get("answer_type"),
+            })
+            if not ok:
+                verdict = JEV.noul_bool(
+                    {"谜面": q.get("q"), "标准答案": q.get("a"), "玩家回答": ans},
+                    "玩家的回答是否语义等价于这道灯谜的谜底？",
+                    {"true": "语义等价，包含谐音、别解、近义、口语化表达",
+                     "false": "与谜底完全无关或明显错误"},
+                )
+                ok = verdict is True
+        rab["q"] = None
+        if not ok:
+            # 超时按「答错一次」处理（而不是直接结束）—— 本局的失败预算由
+            # rabbit_run_fail_max 统一管，玩家不会因为一次卡壳丢掉整趟。
+            rab["wrong"] = int(rab.get("wrong", 0) or 0) + 1
+            fail_max = max(1, self._int_cfg("rabbit_run_fail_max", 2))
+            prefix = T.RABBIT_STEP_WRONG.format(
+                i=i, answer=q.get("a"), wrong=rab["wrong"], max=fail_max)
+            if rab["wrong"] >= fail_max:
+                return self._rabbit_finish(ap, group_id, rab, prefix=prefix)
+            return prefix + self._rabbit_ask(ap, timeout)
+        mult, _lv = self._rabbit_intimacy_mult(ap)
+        base = self._rand_int("rabbit_run_reward_min", "rabbit_run_reward_max", 4, 8)
+        amt = max(1, int(base * mult))
+        self._grant_yuehua(ap, group_id, amt)
+        rab["earned"] = int(rab.get("earned", 0) or 0) + amt
+        rab["step"] = i
+        prefix = T.RABBIT_STEP_RIGHT.format(i=i, amount=amt)
+        if i >= n:
+            return self._rabbit_finish(ap, group_id, rab, prefix=prefix)
+        return prefix + self._rabbit_ask(ap, timeout)
+
+    # ------------------------------------------------------------------
+    # 玩法：献礼（国庆段新增）—— 群协作进度轴，与「群累计月华」里程碑正交
+    # ------------------------------------------------------------------
+    def _check_offering(self, ap, group_id, points: int) -> None:
+        """加献礼点并按阶梯发全群奖励。
+
+        献礼点**只进 offering_total**，绝不写 yuehua_total —— 那是「产出」轴，献礼是
+        「参与行为」轴，两条进度各自独立达标；若混进 yuehua_total，巡礼答题就会顺带
+        推进月华里程碑，两个体系的平衡一起崩。
+        """
+        amt = max(0, int(points))
+        if not amt:
+            return
+        d = ap.setdefault("daily", {})
+        d["offering"] = int(d.get("offering", 0) or 0) + amt
+        gs = self._group_state(group_id)
+        total = int(gs.get("offering_total", 0)) + amt
+        gs["offering_total"] = total
+        ladder = self.cfg.get("offering_ladder") or []
+        reached = set(int(i) for i in (gs.get("offering_reached") or []))
+        newly = []
+        for i, step in enumerate(ladder):
+            if i in reached:
+                continue
+            try:
+                hit = total >= int(step.get("threshold", 0))
+            except (TypeError, ValueError):
+                continue
+            if hit:
+                reached.add(i)
+                newly.append(step)
+        if not newly:
+            return
+        gs["offering_reached"] = sorted(reached)
+        for step in newly:
+            try:
+                gift = int(step.get("yuehua", 0))
+            except (TypeError, ValueError):
+                gift = 0
+            for p in self._players_in_group(group_id):
+                # 一次性阶梯奖励走 _add_yuehua（不计群累计）：献礼点本就不该搅进月华
+                # 里程碑，否则「巡礼答对」会顺带推进另一条进度轴并递归触发公告。
+                self._add_yuehua(p, gift)
+            self._spawn(self._push_group(
+                group_id,
+                T.OFFERING_REACHED.format(threshold=step.get("threshold"), amount=gift),
+            ))
+
+    def _cmd_offering(self, event, qq, group_id, rest: str) -> str:
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
+        gs = self._group_state(group_id)
+        total = int(gs.get("offering_total", 0))
+        ladder = self.cfg.get("offering_ladder") or []
+        reached = set(int(i) for i in (gs.get("offering_reached") or []))
+        mine = int((ap.get("daily") or {}).get("offering", 0) or 0)
+        for i, step in enumerate(ladder):
+            if i not in reached:
+                return T.OFFERING_QUERY.format(
+                    total=total, next=step.get("threshold"),
+                    amount=step.get("yuehua"), mine=mine)
+        return T.OFFERING_ALL_DONE.format(total=total, mine=mine)
+
+    # ------------------------------------------------------------------
+    # 玩法：双庆（两阶段重叠日限定，一年一次）
+    # ------------------------------------------------------------------
+    def _double_question(self, i: int) -> dict:
+        """双庆题：奇数站中秋灯谜、偶数站国庆巡礼 —— 两个节日各占一半，
+        巡礼题难度随站号递增（第 2 站中等、第 4 站困难）。"""
+        if i % 2 == 1:
+            p = puzzles.local_lantern()
+            return {
+                "q": p.get("question"), "a": str(p.get("answer", "")),
+                "answer_type": p.get("answer_type"), "options": [],
+                "extra": "💡 提示：" + str(p.get("hint", "")),
+            }
+        p = puzzles.local_quiz(max(1, min(3, 1 + i // 2)))
+        opts = p.get("options") or []
+        return {
+            "q": p.get("q"), "a": str(p.get("answer", "")),
+            "answer_type": p.get("answer_type"), "options": opts,
+            "extra": "选项：" + puzzles.quiz_options_text({"options": opts}),
+        }
+
+    def _double_ask(self, ap, dbl, n: int, timeout: int, done: int = 0) -> str:
+        i = int(dbl.get("step", 0) or 0) + 1
+        q = self._double_question(i)
+        q["ts"] = self._now()
+        dbl["q"] = q
+        if done:
+            return T.DOUBLE_STEP.format(done=done, i=i, n=n, q=q["q"], extra=q["extra"])
+        return T.DOUBLE_ASK.format(
+            i=i, n=n, q=q["q"], extra=q["extra"], timeout=timeout,
+            reward=self._int_cfg("double_festival_reward", 150),
+        )
+
+    def _cmd_double(self, event, qq, group_id, rest: str) -> str:
+        """双庆：仅双节同庆日（10-01，_phase()=="both"）开放，每日一次、答错即止。"""
+        if self._phase() != "both":
+            return T.DOUBLE_NOT_TODAY
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
+        dbl = ap.setdefault("double", {})
+        dbl.setdefault("date", "")
+        dbl.setdefault("step", 0)
+        dbl.setdefault("q", None)
+        today = self._bj_date()
+        n = max(1, self._int_cfg("double_festival_questions", 5))
+        timeout = max(1, self._int_cfg("double_festival_timeout_sec", 20))
+        if dbl.get("date") == today and dbl.get("done"):
+            return T.DOUBLE_DONE
+        if dbl.get("q"):
+            if not rest.strip():
+                return T.DOUBLE_ANSWER_FORMAT
+            return self._double_answer(ap, group_id, dbl, rest, n, timeout)
+        if rest.strip():
+            return T.DOUBLE_ANSWER_FORMAT
+        dbl.update({"date": today, "step": 0, "done": False, "q": None})
+        return self._double_ask(ap, dbl, n, timeout)
+
+    def _double_answer(self, ap, group_id, dbl, rest: str, n: int, timeout: int) -> str:
+        q = dbl.get("q") or {}
+        dbl["q"] = None
+        if not q:
+            return T.DOUBLE_ANSWER_FORMAT
+        i = int(dbl.get("step", 0) or 0) + 1
+        if self._now() - int(q.get("ts", 0) or 0) > timeout:
+            dbl["done"] = True
+            return T.DOUBLE_TIMEOUT.format(i=i, answer=q.get("a"))
+        ans = rest.strip()
+        ok = puzzles.is_correct(ans, {
+            "answer": q.get("a"), "answer_type": q.get("answer_type"),
+            "options": q.get("options") or [],
+        })
+        if not ok:
+            verdict = JEV.noul_bool(
+                {"题目": q.get("q"), "标准答案": q.get("a"), "玩家回答": ans},
+                "玩家的回答是否与标准答案等价？",
+                {"true": "语义等价，包含谐音、别解、近义、口语化表达",
+                 "false": "与标准答案完全无关或明显错误"},
+            )
+            ok = verdict is True
+        dbl["step"] = i
+        if not ok:
+            # 答错即刻结束且**当日不可重来**（done 标记持久化）—— 一年只有一天、
+            # 一次性大额奖励，不能靠反复重试刷。
+            dbl["done"] = True
+            return T.DOUBLE_WRONG.format(i=i, answer=q.get("a"))
+        if i >= n:
+            dbl["done"] = True
+            reward = self._int_cfg("double_festival_reward", 150)
+            self._grant_yuehua(ap, group_id, reward)
+            return T.DOUBLE_WIN.format(amount=reward)
+        return self._double_ask(ap, dbl, n, timeout, done=i)
 
     # ------------------------------------------------------------------
     # 玩法：贺词（Jev 双闸审核 + 本地敏感词兜底）
@@ -606,16 +1372,48 @@ class MoonfestActivity:
             return True, ""
         return False, T.FIREWORK_REASON_IRRELEVANT
 
+    def _today_theme(self) -> str:
+        """当日贺词主题：按日期取模轮换，同一天全服同一个主题。"""
+        themes = self.cfg.get("firework_themes") or []
+        if not themes:
+            return ""
+        try:
+            seed = int(self._bj_date().replace("-", ""))
+        except (TypeError, ValueError):
+            seed = 0
+        return str(themes[seed % len(themes)])
+
+    def _theme_fit(self, text: str, theme: str) -> bool:
+        """贺词是否紧扣当日主题。
+
+        Jev noul 优先；**拿不到结论时退本地关键词表，且退不出来就不给加成** ——
+        刻意不写「Jev 挂了就放行」：线上当前没配 Jev Key，那样等于每天白送加成，
+        主题日就变成没有主题的摆设。
+        """
+        if not theme:
+            return False
+        verdict = JEV.noul_bool(
+            {"贺词内容": text, "今日主题": theme},
+            "这条贺词是否紧扣「今日主题」？",
+            {"true": "紧扣该主题（含同义、近义、口语化表达）",
+             "false": "与该主题无关或明显跑题"},
+        )
+        if verdict is not None:
+            return verdict
+        return _theme_keyword_hit(text, theme)
+
     def _cmd_firework(self, event, qq, group_id, rest: str) -> str:
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         d = ap["daily"]
+        theme = self._today_theme()
         limit = self._int_cfg("firework_daily_limit", 3)
         if int(d.get("firework", 0)) >= limit:
             return T.FIREWORK_DAILY_LIMIT.format(limit=limit)
         text = rest.strip()
         if not text:
-            return T.FIREWORK_REJECT.format(reason="内容为空，请写一句祝福")
+            return (T.FIREWORK_REJECT.format(reason="内容为空，请写一句祝福")
+                    + (T.FIREWORK_THEME_TAG.format(theme=theme) if theme else ""))
         max_len = self._int_cfg("firework_max_len", 30)
         if len(text) > max_len:
             return T.FIREWORK_TOO_LONG.format(limit=max_len)
@@ -630,18 +1428,49 @@ class MoonfestActivity:
             "text": text, "name": ap.get("name") or str(qq), "qq": str(qq),
             "group": str(group_id), "likes": 0, "ts": self._now(),
         })
-        return T.FIREWORK_ON_WALL.format(text=text, amount=amt)
+        out = T.FIREWORK_ON_WALL.format(text=text, amount=amt)
+        if theme:
+            out += T.FIREWORK_THEME_TAG.format(theme=theme)
+        if theme and self._theme_fit(text, theme):
+            bonus = self._int_cfg("firework_theme_bonus", 10)
+            if bonus > 0:
+                # 主题契合加成走 _add_yuehua（不计群累计）：一次性、不推里程碑
+                self._add_yuehua(ap, bonus)
+                out += T.FIREWORK_THEME_BONUS.format(amount=bonus)
+        self._check_offering(ap, group_id, self._int_cfg("offering_firework_point", 3))
+        return out
 
     # ------------------------------------------------------------------
     # 玩法：月华墙 / 点赞
     # ------------------------------------------------------------------
     def _cmd_wall(self, event, qq, group_id, rest: str) -> str:
+        """月华墙：两段式（最受欢迎 + 最新上墙）。
+
+        编号口径**全服唯一**：墙上倒序第 n 条（n=1 是最新那条），与 `点赞 n` 取
+        `wall[-n]` 完全对齐 —— 两段里的编号都能直接拿去点赞。
+        """
         wall = self._data.get("wall") or []
         if not wall:
             return T.FIREWORK_WALL_EMPTY
+        # (编号, 条目)：编号 1 = 最新。enumerate 里 k=0 是最旧的，编号 = len(wall)-k。
+        entries = [(len(wall) - k, w) for k, w in enumerate(wall)]
         lines = [T.FIREWORK_WALL_HEADER]
-        for i, w in enumerate(reversed(wall), 1):
-            lines.append(T.FIREWORK_WALL_ITEM.format(idx=i, text=w.get("text", ""), name=w.get("name", "")))
+        hot = [e for e in entries if int(e[1].get("likes", 0) or 0) > 0]
+        hot.sort(key=lambda e: (-int(e[1].get("likes", 0) or 0), -int(e[1].get("ts", 0) or 0)))
+        if hot:
+            lines.append(T.FIREWORK_WALL_HOT_TITLE)
+            for idx, w in hot[:5]:
+                lines.append(T.FIREWORK_WALL_HOT_ITEM.format(
+                    idx=idx, text=str(w.get("text", "")).replace("|", "丨"),
+                    name=w.get("name", ""), likes=int(w.get("likes", 0) or 0)))
+            lines.append("")
+        lines.append(T.FIREWORK_WALL_LATEST_TITLE)
+        # entries 的**末尾**才是最新（entries[0] 编号最大=最旧），所以取最后 10 条再
+        # 倒序 —— 直接用 entries[:10] 会拿到最早那 10 条，与「最新上墙」正好相反。
+        for idx, w in reversed(entries[-10:]):
+            lines.append(T.FIREWORK_WALL_ITEM.format(
+                idx=idx, text=str(w.get("text", "")).replace("|", "丨"),
+                name=w.get("name", "")))
         return "\n".join(lines)
 
     def _cmd_like(self, event, qq, group_id, rest: str) -> str:
@@ -666,10 +1495,11 @@ class MoonfestActivity:
         amt = self._int_cfg("gongde_like", 2)
         author = self._get_player(str(w.get("group")), str(w.get("qq")))
         self._grant_yuehua(author, w.get("group"), amt)
+        self._check_offering(ap, group_id, self._int_cfg("offering_like_point", 1))
         return T.LIKE_OK.format(amount=amt)
 
     # ------------------------------------------------------------------
-    # 玩法：华诞巡礼（Jev score 自适应难度 + 连对倍率）
+    # 玩法：华诞巡礼（路线闯关：五站一条线，难度逐站递增 + 连对倍率）
     # ------------------------------------------------------------------
     def _quiz_difficulty(self, ap) -> int:
         tier = JEV.score_tier(
@@ -683,15 +1513,78 @@ class MoonfestActivity:
             return 2  # 兜底：中等
         return max(1, min(int(tier) + 1, 3))
 
+    def _route_state(self, ap) -> dict:
+        """巡礼路线进度。**跨天保留** —— 走到一半可以明天接着走，不用从头再来。"""
+        route = ap.setdefault("route", {})
+        route.setdefault("station", 0)
+        route.setdefault("wrong", 0)
+        if not route.get("name"):
+            routes = T.QUIZ_ROUTE_ROUTES
+            if routes:
+                try:
+                    seed = int(self._bj_date().replace("-", ""))
+                except (TypeError, ValueError):
+                    seed = 0
+                route["name"] = routes[seed % len(routes)]
+        return route
+
+    def _reroll_route(self, current: str) -> str:
+        """换一条不同的路线；可选路线只有一条时原样返回。"""
+        routes = [r for r in T.QUIZ_ROUTE_ROUTES if r != current]
+        if not routes:
+            return current
+        return random.choice(routes)
+
+    def _route_difficulty(self, ap, station: int, n: int) -> int:
+        """第 station 站的难度：接住既有 Jev 自适应档位，再按站序往上推。
+
+        起点仍由 ``_quiz_difficulty``（Jev score_tier）给 —— 「高活跃玩家更难」这条
+        既有口径没丢；站序负责「一条线越走越难」，末站必到 3。
+        n=5 且起点中等时 → 1/1/2/2/3。
+        """
+        span = max(1, int(n) - 1)
+        station = max(1, int(station))
+        base = self._quiz_difficulty(ap)
+        diff = base - 1 + int((station - 1) * 2 / span)
+        # 末站必定「困难」。上面那条式子对低活跃玩家（base=1）只能推到 2，路线会
+        # 全程停在「中等」——而路线化的卖点正是「越走越难、终点有重赏」，终点不
+        # 够难就等于这条线没有终点。base 只负责整体起步档位，收尾由站序钉死。
+        if station >= int(n):
+            diff = 3
+        return max(1, min(3, diff))
+
     @staticmethod
     def _quiz_ask_text(quiz, timeout: int) -> str:
         diff = int(quiz.get("difficulty", 2))
+        options = puzzles.quiz_options_text({"options": quiz.get("options") or []})
+        station = int(quiz.get("station", 0) or 0)
+        if station:
+            return T.QUIZ_ROUTE_ASK.format(
+                route=quiz.get("route") or "华诞巡礼", i=station,
+                n=int(quiz.get("n", 0) or 0), diff=T.QUIZ_DIFF_TAG.get(diff, "中等"),
+                question=quiz.get("q"), options=options, timeout=timeout,
+            )
         text = T.QUIZ_ASK.format(
-            question=quiz.get("q"),
-            options=puzzles.quiz_options_text({"options": quiz.get("options") or []}),
-            timeout=timeout,
-        )
+            question=quiz.get("q"), options=options, timeout=timeout)
         return text + f"\n\n难度：{T.QUIZ_DIFF_TAG.get(diff, '中等')}"
+
+    def _quiz_next(self, ap, route, timeout: int) -> str:
+        """出下一站的题并消耗一次当日题数。"""
+        d = ap["daily"]
+        n = max(1, self._int_cfg("route_stations", 5))
+        station = int(route.get("station", 0) or 0) + 1
+        if station > n:
+            station, route["station"] = 1, 0
+        diff = self._route_difficulty(ap, station, n)
+        p = puzzles.local_quiz(diff)
+        ap["quiz"] = {
+            "kind": "xunli", "q": p.get("q"), "a": str(p.get("answer", "")),
+            "options": p.get("options") or [], "answer_type": p.get("answer_type"),
+            "date": self._bj_date(), "ts": self._now(), "difficulty": diff,
+            "station": station, "n": n, "route": route.get("name") or "",
+        }
+        d["quiz"] = int(d.get("quiz", 0) or 0) + 1
+        return self._quiz_ask_text(ap["quiz"], timeout)
 
     def _cmd_quiz(self, event, qq, group_id, rest: str) -> str:
         ap = self._get_player(group_id, qq, event=event)
@@ -700,27 +1593,28 @@ class MoonfestActivity:
         limit = self._int_cfg("quiz_daily_limit", 20)
         timeout = self._int_cfg("quiz_timeout_sec", 60)
         quiz = ap.get("quiz") or {}
-        if not rest:
+        route = self._route_state(ap)
+        want = rest.strip()
+        if want == "换线":
+            route["name"] = self._reroll_route(route.get("name"))
+            route["station"] = 0
+            route["wrong"] = 0
+            ap.pop("quiz", None)
+            ap["quiz_streak"] = 0
+            return T.QUIZ_ROUTE_REROUTE.format(route=route["name"])
+        if not want:
             if int(d.get("quiz", 0)) >= limit:
                 return T.QUIZ_DAILY_LIMIT.format(limit=limit)
             if quiz.get("kind") == "xunli" and quiz.get("date") == self._bj_date():
                 return self._quiz_ask_text(quiz, timeout)
-            difficulty = self._quiz_difficulty(ap)
-            p = puzzles.local_quiz(difficulty)
-            ap["quiz"] = {
-                "kind": "xunli", "q": p.get("q"), "a": str(p.get("answer", "")),
-                "options": p.get("options") or [], "answer_type": p.get("answer_type"),
-                "date": self._bj_date(), "ts": self._now(), "difficulty": difficulty,
-            }
-            d["quiz"] = int(d.get("quiz", 0)) + 1
-            return self._quiz_ask_text(ap["quiz"], timeout)
+            return self._quiz_next(ap, route, timeout)
         # 作答
         if quiz.get("kind") != "xunli" or quiz.get("date") != self._bj_date():
-            return T.QUIZ_WRONG.format(answer="（当前没有进行中的巡礼题，请先发「巡礼」）")
+            return T.QUIZ_NO_ACTIVE
         if self._now() - int(quiz.get("ts", 0)) > timeout:
             ap.pop("quiz", None)
             ap["quiz_streak"] = 0
-            return T.QUIZ_TIMEOUT.format(answer=quiz.get("a"))
+            return self._quiz_wrong(route, quiz, timed_out=True)
         user_ans = rest.strip()
         correct = puzzles.is_correct(user_ans, {
             "answer": quiz.get("a"), "answer_type": quiz.get("answer_type"),
@@ -728,11 +1622,27 @@ class MoonfestActivity:
         })
         ap.pop("quiz", None)
         if correct:
-            return self._quiz_right(ap, group_id, quiz)
+            return self._quiz_right(ap, group_id, quiz, route)
         ap["quiz_streak"] = 0
-        return T.QUIZ_WRONG.format(answer=quiz.get("a"))
+        return self._quiz_wrong(route, quiz)
 
-    def _quiz_right(self, ap, group_id, quiz) -> str:
+    def _quiz_wrong(self, route, quiz, timed_out: bool = False) -> str:
+        answer = quiz.get("a")
+        text = (T.QUIZ_TIMEOUT if timed_out else T.QUIZ_WRONG).format(answer=answer)
+        if not quiz.get("station"):
+            return text
+        n = max(1, self._int_cfg("route_stations", 5))
+        fail_max = max(1, self._int_cfg("route_fail_max", 2))
+        route["wrong"] = int(route.get("wrong", 0) or 0) + 1
+        if route["wrong"] >= fail_max:
+            # 失误超限 → 路线重置回第 1 站（连对已在调用方清零）
+            route["station"] = 0
+            route["wrong"] = 0
+            return text + T.QUIZ_ROUTE_RESET.format(max=fail_max)
+        return text + T.QUIZ_ROUTE_PROGRESS.format(
+            i=int(route.get("station", 0) or 0), n=n, wrong=route["wrong"], max=fail_max)
+
+    def _quiz_right(self, ap, group_id, quiz, route=None) -> str:
         diff = int(quiz.get("difficulty", 2))
         lo, hi = self._int_cfg("gongde_quiz_min", 5), self._int_cfg("gongde_quiz_max", 20)
         if lo > hi:
@@ -745,12 +1655,40 @@ class MoonfestActivity:
             base = random.randint(lo, hi)
         streak = int(ap.get("quiz_streak", 0)) + 1
         ap["quiz_streak"] = streak
-        rate = 1 + 0.1 * min(streak // 5, 3)  # 每连对 5 题 +10%，上限 +30%
+        rate_cfg = float(self._cfg("lantern_combo_rate", 0.1) or 0.1)
+        cap = int(self._cfg("lantern_combo_cap", 3) or 0)
+        rate = 1 + rate_cfg * min(streak // 5, cap)   # 每连对 5 题 +10%，上限 +30%
         amt = int(base * rate)
         self._grant_yuehua(ap, group_id, amt)
         lines = [T.QUIZ_RIGHT.format(answer=quiz.get("a"), amount=amt)]
         if rate > 1:
-            lines.append(T.QUIZ_COMBO.format(n=streak, rate=rate))
+            lines.append(T.QUIZ_COMBO.format(n=streak, rate=round(rate, 2)))
+        # 献礼点：巡礼答对 +offering_quiz_point（只进献礼轴，不进群累计月华）
+        self._check_offering(ap, group_id, self._int_cfg("offering_quiz_point", 1))
+        if route is None or not quiz.get("station"):
+            return "\n".join(lines)
+        n = max(1, self._int_cfg("route_stations", 5))
+        fail_max = max(1, self._int_cfg("route_fail_max", 2))
+        route["station"] = int(quiz.get("station", 0) or 0)
+        if route["station"] >= n:
+            # 走完全程：通关奖励 + 零失误额外奖励，然后路线归零可重走
+            perfect = int(route.get("wrong", 0) or 0) == 0
+            bonus = self._int_cfg("route_complete_bonus", 40)
+            if bonus > 0:
+                self._grant_yuehua(ap, group_id, bonus)
+                lines.append(T.QUIZ_ROUTE_COMPLETE.format(
+                    route=quiz.get("route") or "", n=n, amount=bonus))
+            if perfect:
+                pb = self._int_cfg("route_perfect_bonus", 60)
+                if pb > 0:
+                    self._grant_yuehua(ap, group_id, pb)
+                    lines.append(T.QUIZ_ROUTE_PERFECT.format(amount=pb))
+            route["station"] = 0
+            route["wrong"] = 0
+        else:
+            lines.append(T.QUIZ_ROUTE_PROGRESS.format(
+                i=route["station"], n=n,
+                wrong=int(route.get("wrong", 0) or 0), max=fail_max))
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -781,6 +1719,203 @@ class MoonfestActivity:
             if i not in reached:
                 return T.MILESTONE_QUERY.format(total=total, next=m.get("threshold"), amount=m.get("gongde"))
         return T.MILESTONE_QUERY.format(total=total, next="已全部达成", amount=0)
+
+    # ------------------------------------------------------------------
+    # 月华信息（一条指令看全自己的活动状态）
+    # ------------------------------------------------------------------
+    def _my_rank(self, ap) -> str:
+        """全服名次，口径与月华榜完全一致（累计月华降序、同分按绑定时间）。
+
+        直接按对象身份 ``is`` 找自己 —— ``_get_player`` 返回的就是 players 桶里那个
+        dict 本身，不用再去拼 qq/群号比对字符串。
+        """
+        players = [p for p in self._players().values()
+                   if int(p.get("yuehua_earned", 0)) > 0]
+        players.sort(key=lambda p: (-int(p.get("yuehua_earned", 0)),
+                                    int(p.get("bound_at", 0))))
+        for i, p in enumerate(players, 1):
+            if p is ap:
+                return T.MYINFO_RANK_FMT.format(rank=i)
+        return T.MYINFO_RANK_NONE
+
+    def _my_posts(self, qq) -> int:
+        """我上过墙的贺词条数。
+
+        贺词存在全服的 ``wall`` 里，不在玩家档里；而玩家档本身按 QQ 全服唯一
+        （``_key`` 就是 qq），所以这里也只按 QQ 数，跟「累计月华」同口径。
+        """
+        who = str(qq)
+        return sum(1 for w in (self._data.get("wall") or [])
+                   if str(w.get("qq", "")) == who)
+
+    def _myinfo_mid(self, ap, d, now) -> list[str]:
+        """中秋段：签到 / 各玩法今日次数 / 玉兔亲密度 / 桂花酿 / 月饼匠心。"""
+        out = [T.MYINFO_SEC_MID]
+        sign = ap.get("sign") or {}
+        out.append((T.MYINFO_SIGN_DONE if sign.get("mid") == self._bj_date()
+                    else T.MYINFO_SIGN_TODO).format(label="拜月"))
+        rows = [
+            ("猜灯谜", "lantern", self._int_cfg("lantern_daily_limit", 20)),
+            ("灯谜·难题", "lantern_hard", self._int_cfg("lantern_hard_daily_limit", 5)),
+            ("喂玉兔", "feed", self._int_cfg("feed_daily_limit", 10)),
+            ("酿桂花", "brew", self._int_cfg("brew_daily_limit", 1)),
+            ("玉兔同行", "rabbit", self._int_cfg("rabbit_run_daily_limit", 1)),
+        ]
+        table = [T.MYINFO_DAILY_HEAD, T.MYINFO_DAILY_SEP]
+        for label, key, limit in rows:
+            table.append(T.MYINFO_DAILY_ROW.format(
+                label=label, used=int(d.get(key, 0) or 0), limit=max(0, int(limit))))
+        out.append("\n".join(table))
+        # 灯谜连对
+        streak = int(ap.get("lantern_streak", 0) or 0)
+        try:
+            rate = float(self._cfg("lantern_combo_rate", 0.1) or 0.1)
+        except (TypeError, ValueError):
+            rate = 0.1
+        cap = min(streak // 5, self._int_cfg("lantern_combo_cap", 3))
+        out.append(T.MYINFO_LINE.format(
+            label="灯谜连对", value="{} 题（当前加成 ×{}）".format(streak, round(1 + rate * cap, 2))))
+        # 玉兔亲密度（把「喂养」与「同行」串起来的那根线，明写出来玩家才知道要天天喂）
+        mult, lv = self._rabbit_intimacy_mult(ap)
+        out.append(T.MYINFO_LINE.format(
+            label="玉兔亲密度",
+            value="Lv.{}（同行月华 ×{}） · 累计喂食 {} 次".format(
+                lv + 1, round(mult, 2), int(ap.get("feed_total", 0) or 0))))
+        # 桂花酿
+        brew = self._brew_state(ap)
+        ready = int(brew.get("ready_ts", 0) or 0)
+        if ready > now:
+            state = T.MYINFO_BREW_BUSY.format(mins=max(1, (ready - now + 59) // 60))
+        elif ready:
+            state = T.MYINFO_BREW_READY
+        else:
+            state = T.MYINFO_BREW_IDLE
+        out.append(T.MYINFO_BREW_LINE.format(
+            gui=int(self._materials(ap).get("桂花", 0) or 0), state=state))
+        out.append(self._brew_box_text(brew))
+        # 玉兔同行
+        rab = self._rabbit_state(ap)
+        done = rab.get("date") == self._bj_date()
+        out.append(T.MYINFO_LINE.format(
+            label="玉兔同行",
+            value="{} · 零失误通关 {} 次".format(
+                T.MYINFO_RABBIT_DONE if done else T.MYINFO_RABBIT_TODO,
+                int(rab.get("perfect_days", 0) or 0))))
+        out.extend(self._myinfo_craft(ap, d, now))
+        return out
+
+    def _myinfo_craft(self, ap, d, now) -> list[str]:
+        """月饼匠心：阶段 / 剩余次数 / 冷却 / 五口味星级。"""
+        craft = self._craft_state(ap)
+        stage = self._craft_stage(ap)
+        star_max = max(1, self._int_cfg("craft_star_max", 5))
+        limit = self._int_cfg("craft_remake_daily_limit", 3)
+        used = int(d.get("craft_try", 0) or 0)
+        cd = self._craft_cooldown_secs(stage)
+        last = int(craft.get("last_ts", 0) or 0)
+        left_cd = cd - (now - last) if (cd and last) else 0
+        cooldown = ("（冷却中，{} 分钟后可再开炉）".format(max(1, left_cd // 60))
+                    if left_cd > 0 else "")
+        out = [T.MYINFO_CRAFT_TITLE, T.MYINFO_CRAFT_INFO.format(
+            stage=self._craft_stage_name(stage),
+            count=int(craft.get("remake_count", 0) or 0),
+            left=max(0, limit - used), limit=limit, cooldown=cooldown,
+            n=int(self._stage_val("craft_remake_counts", stage, [1, 2, 3, 3, 4])),
+            t=int(self._stage_val("craft_remake_times", stage, [30, 26, 22, 18, 14])),
+        )]
+        table = [T.CRAFT_DEX_TABLE_HEAD, T.CRAFT_DEX_TABLE_SEP]
+        locked = 0
+        for f in CRAFT_FLAVORS:
+            n = int(craft["mooncake"].get(f, 0) or 0)
+            if n <= 0:
+                stars, locked = T.CRAFT_DEX_LOCKED, locked + 1
+            else:
+                s = max(0, min(int(craft["remake"].get(f, 0) or 0), star_max))
+                stars = "★" * s + "☆" * (star_max - s)
+            table.append(T.CRAFT_DEX_ROW.format(
+                flavor=f, stars=stars, clears=max(0, n - 1)))
+        out.append("\n".join(table))
+        if locked:
+            out.append(T.MYINFO_CRAFT_LOCKED_NOTE.format(locked=locked))
+        return out
+
+    def _myinfo_nat(self, ap, d, group_id, now) -> list[str]:
+        """国庆段：签到 / 今日次数 / 当日主题 / 巡礼路线 / 献礼 / 双庆。"""
+        out = [T.MYINFO_SEC_NAT]
+        sign = ap.get("sign") or {}
+        out.append((T.MYINFO_SIGN_DONE if sign.get("nat") == self._bj_date()
+                    else T.MYINFO_SIGN_TODO).format(label="华诞签到"))
+        rows = [
+            ("贺词", "firework", self._int_cfg("firework_daily_limit", 3)),
+            ("点赞", "like", self._int_cfg("like_daily_limit", 5)),
+            ("巡礼", "quiz", self._int_cfg("quiz_daily_limit", 20)),
+        ]
+        table = [T.MYINFO_DAILY_HEAD, T.MYINFO_DAILY_SEP]
+        for label, key, limit in rows:
+            table.append(T.MYINFO_DAILY_ROW.format(
+                label=label, used=int(d.get(key, 0) or 0), limit=max(0, int(limit))))
+        out.append("\n".join(table))
+        theme = self._today_theme()
+        if theme:
+            out.append(T.MYINFO_LINE.format(
+                label="今日主题",
+                value="{}（贺词契合可多拿 {} 月华）".format(
+                    theme, self._int_cfg("firework_theme_bonus", 10))))
+        # 巡礼路线（进度跨天保留，所以这里显示的是「接着走」而不是「今天走了几站」）
+        route = self._route_state(ap)
+        n = max(1, self._int_cfg("route_stations", 5))
+        station = int(route.get("station", 0) or 0)
+        out.append(T.MYINFO_LINE.format(
+            label="巡礼路线",
+            value=T.MYINFO_ROUTE_NONE if station <= 0 else
+            "「{}」已走 {}/{} 站 · 失误 {}/{}".format(
+                route.get("name") or "华诞巡礼", station, n,
+                int(route.get("wrong", 0) or 0), self._int_cfg("route_fail_max", 2))))
+        # 献礼（群协作轴，与月华里程碑是两条独立进度）
+        gs = self._group_state(group_id)
+        ladder = self.cfg.get("offering_ladder") or []
+        reached = set(int(i) for i in (gs.get("offering_reached") or []))
+        nxt = "已全部达成"
+        for i, step in enumerate(ladder):
+            if i not in reached:
+                nxt = "{} 点（各 +{} 月华）".format(step.get("threshold"), step.get("yuehua"))
+                break
+        out.append(T.MYINFO_LINE.format(
+            label="献礼",
+            value="本群 {} 点 · 今日你贡献 {} 点 · 下一档 {}".format(
+                int(gs.get("offering_total", 0) or 0),
+                int(d.get("offering", 0) or 0), nxt)))
+        # 双庆只在两阶段重叠日开放，别的日子不显示这一行（免得玩家白试）
+        if self._phase() == "both":
+            out.append(T.MYINFO_LINE.format(
+                label="双庆挑战",
+                value="今日已完成" if ap.get("double", {}).get("date") == self._bj_date()
+                else "今日可挑战（发「双庆」）"))
+        return out
+
+    def _cmd_my_info(self, event, qq, group_id) -> str:
+        """月华信息：把该玩家在活动里的全部状态汇总成一条档案。
+
+        只读指令，不做任何结算，也不受阶段门控（活动开着就能随时自查）。
+        """
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
+        d = ap.get("daily") or {}
+        now = self._now()
+        phase = self._phase()
+        blocks = [
+            T.MYINFO_HEADER.format(name=ap.get("name") or str(qq)),
+            T.MYINFO_OVERVIEW.format(
+                score=int(ap.get("yuehua_earned", 0) or 0), rank=self._my_rank(ap),
+                days=int((ap.get("sign") or {}).get("count", 0) or 0),
+                posts=self._my_posts(qq)),
+        ]
+        if phase in ("midautumn", "both"):
+            blocks.extend(self._myinfo_mid(ap, d, now))
+        if phase in ("national", "both"):
+            blocks.extend(self._myinfo_nat(ap, d, group_id, now))
+        blocks.append(T.MYINFO_FOOTER)
+        return "\n\n".join(b for b in blocks if b)
 
     def reset_data(self) -> None:
         """清空活动数据（玩家 / 群 / 月华墙 + 结算标志），保留配置与代码。
@@ -847,6 +1982,9 @@ class MoonfestActivity:
             return self._cmd_milestone(event, qq, group_id, rest)
         if cmd == "月华墙":
             return self._cmd_wall(event, qq, group_id, rest)
+        # 月华信息（三个名字等价）：只读，看自己全部状态，不受阶段门控
+        if cmd in ("月华信息", "我的月华", "月华档案"):
+            return self._cmd_my_info(event, qq, group_id)
 
         # 阶段门控
         need = _PHASE_GATES.get(cmd)
@@ -863,12 +2001,28 @@ class MoonfestActivity:
             return self._cmd_feed(event, qq, group_id, rest)
         if cmd == "做月饼":
             return self._cmd_craft(event, qq, group_id, rest)
+        if cmd == "重制":
+            return self._cmd_remake(event, qq, group_id, rest)
+        if cmd == "酿桂花":
+            return self._cmd_brew(event, qq, group_id, rest)
+        if cmd == "取酒":
+            return self._cmd_take_wine(event, qq, group_id, rest)
+        if cmd == "玉兔同行":
+            return self._cmd_rabbit_run(event, qq, group_id, rest)
         if cmd == "贺词":
             return self._cmd_firework(event, qq, group_id, rest)
         if cmd == "点赞":
             return self._cmd_like(event, qq, group_id, rest)
         if cmd == "巡礼":
             return self._cmd_quiz(event, qq, group_id, rest)
+        if cmd == "献礼":
+            return self._cmd_offering(event, qq, group_id, rest)
+        if cmd == "双庆":
+            # 刻意不入 _PHASE_GATES：它要求**两阶段同时生效**（10-01 双节同庆日），
+            # 而门控表只支持「属于某一段」，表达不了「必须同时在两段」。
+            if phase != "both":
+                return T.DOUBLE_NOT_TODAY
+            return self._cmd_double(event, qq, group_id, rest)
         return None
 
     async def loop(self) -> None:

@@ -138,6 +138,25 @@ class _Jev:
     # ------------------------------------------------------------------
     # 公开判定方法
     # ------------------------------------------------------------------
+    def available(self) -> bool:
+        """Jev 现在**真的能发请求**吗（已启用 + 客户端导入成功 + 拿得到 Key）。
+
+        与「调用返回 None」的区别很重要：调用返回 None 是「结果未知」，而这里
+        回答的是「能不能指望 Jev」。月饼重制挑战用它决定**要不要出语义题** ——
+        线上当前没配 Jev Key，必须据此换成确定性题，而不是出个语义题再自动放行。
+
+        ``load_api_key()`` 在缺 Key 时会 ``raise SystemExit``（jev_client 的约定），
+        所以必须连 SystemExit 一起吞。
+        """
+        if not self.enabled or not _CLIENT_OK:
+            return False
+        try:
+            return bool(load_api_key())
+        except SystemExit:
+            return False
+        except Exception:  # noqa: BLE001
+            return False
+
     def ping(self) -> dict | None:
         """webadmin 测试用：问一个最简是非题，返回响应原文（含 key 是否可用）。
 

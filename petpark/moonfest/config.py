@@ -32,10 +32,10 @@ ACTIVITY_TAG = "🌙 月耀华诞活动"
 # 名次区间 + 月华，后台可改。
 # ---------------------------------------------------------------------------
 DEFAULT_END_REWARDS: list[dict[str, Any]] = [
-    {"min": 1, "max": 1, "yuehua": 3000},
-    {"min": 2, "max": 3, "yuehua": 2000},
-    {"min": 4, "max": 10, "yuehua": 1000},
-    {"min": 11, "max": 20, "yuehua": 500},
+    {"min": 1, "max": 1, "yuehua": 5000},
+    {"min": 2, "max": 3, "yuehua": 3000},
+    {"min": 4, "max": 10, "yuehua": 1600},
+    {"min": 11, "max": 20, "yuehua": 800},
 ]
 
 # ---------------------------------------------------------------------------
@@ -43,11 +43,11 @@ DEFAULT_END_REWARDS: list[dict[str, Any]] = [
 # 分 5 档，最高档「群累计 1 万月华」为满；可后台配置。
 # ---------------------------------------------------------------------------
 DEFAULT_MILESTONES: list[dict[str, Any]] = [
-    {"threshold": 1000, "gongde": 5},
-    {"threshold": 2000, "gongde": 10},
-    {"threshold": 4000, "gongde": 15},
-    {"threshold": 7000, "gongde": 25},
-    {"threshold": 10000, "gongde": 40},
+    {"threshold": 1600, "gongde": 5},
+    {"threshold": 3200, "gongde": 10},
+    {"threshold": 6400, "gongde": 15},
+    {"threshold": 11000, "gongde": 25},
+    {"threshold": 16000, "gongde": 40},
 ]
 
 # ---------------------------------------------------------------------------
@@ -78,6 +78,68 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gongde_feed": [5, 10, 20, 30],  # 玉兔 score 4 档对应月华（厌恶/无感/喜欢/非常喜欢）
     # ---- 月饼合成（收集向，每种口味首次合成发一次）----
     "craft_bonus": 20,              # 月饼口味首次合成奖励月华（仅一次）
+    # ---- 月饼重制（首次合成解锁后，再次合成要走一条挑战链）----
+    # 难度**按该玩家自己的重制成功次数**递增（不是全局、也不是按口味），后来者不被
+    # 前面的玩家拖累。下面 5 个 list 一一对应 5 个阶段（下标 0 = 阶段 1）。
+    "craft_remake_daily_limit": 3,       # 每日重制挑战次数上限
+    "craft_remake_cooldown_min": 10,     # 挑战结束后的基础冷却（分钟）
+    "craft_remake_cooldown_step_min": 5, # 每上一阶段冷却再加 N 分钟
+    "craft_remake_cooldown_cap_min": 60, # 冷却上限（分钟）
+    "craft_remake_steps": [0, 2, 5, 9, 14],          # 进入该阶段所需的累计成功次数
+    "craft_remake_counts": [1, 2, 3, 3, 4],          # 该阶段每局题数
+    "craft_remake_times": [30, 26, 22, 18, 14],      # 该阶段每题限时（秒）
+    "craft_remake_rewards": [20, 30, 45, 70, 100],   # 该阶段通关月华
+    "craft_star_max": 5,                 # 单个口味的星级上限
+    "craft_star_rewards": {"3": 60, "5": 120},       # 口味星级一次性奖励（JSON）
+    # ---- 拜月 / 华诞签到（每日 1 次固定月华；拜月就是普通签到，不分档、不额外赠物）----
+    # 月相只用在两处玩法上：月饼重制的「月相推演」题、桂花酿的近满加成（见下）。
+    "full_moon_window_days": 3,          # 「近满」窗口（距望 ≤N 天），供桂花酿加成判定
+    "brew_full_moon_mult": 2.0,          # 近满窗口内酿出「酿王」的概率倍数
+    # ---- 桂花酿（中秋段新增：材料 → 起坛 → 取酒 → 喂玉兔）----
+    "brew_daily_limit": 1,               # 每日起坛上限
+    "brew_minutes": 30,                  # 酿造时长（分钟）
+    "brew_guihua_per_batch": 3,          # 每坛消耗桂花
+    "brew_drop_pct": 35,                 # 猜灯谜答对掉落桂花的概率（%，桂花的主来源）
+    "brew_grade_bonus": [20, 40, 80],    # 清酿/醇酿/酿王 首次酿出各发一次
+    # ---- 玉兔同行（中秋段新增：每日一局多步闯关）----
+    "rabbit_run_daily_limit": 1,
+    "rabbit_run_steps": 5,
+    "rabbit_run_fail_max": 2,            # 本局答错多少次即结束
+    "rabbit_run_reward_min": 4,
+    "rabbit_run_reward_max": 8,
+    "rabbit_run_perfect_bonus": 25,      # 零错通关额外月华
+    "rabbit_intimacy_step": 10,          # 累计喂食多少次升 1 级亲密度
+    "rabbit_run_intimacy_mult": [1.0, 1.15, 1.3],  # 亲密度 3 级对应倍率
+    # ---- 猜灯谜做深：连对倍率 + 难题档 ----
+    "lantern_combo_rate": 0.1,           # 每连对 5 题 +10%
+    "lantern_combo_cap": 3,              # 倍率上限（+30%）
+    "lantern_hard_daily_limit": 5,       # 「猜灯谜 难题」每日次数上限
+    "lantern_hard_mult": 1.5,            # 难题基础月华倍率
+    # ---- 巡礼做深：单题问答 → 多站路线闯关 ----
+    "route_stations": 5,                 # 一条路线几站
+    "route_fail_max": 2,                 # 答错几次本路线重置
+    "route_complete_bonus": 40,          # 走完全程额外月华
+    "route_perfect_bonus": 60,           # 零错走完额外月华
+    # ---- 献礼（国庆段新增：群协作进度轴，与「群累计月华」里程碑正交）----
+    "offering_ladder": [
+        {"threshold": 40, "yuehua": 5},
+        {"threshold": 120, "yuehua": 10},
+        {"threshold": 260, "yuehua": 15},
+        {"threshold": 500, "yuehua": 25},
+    ],
+    "offering_quiz_point": 1,            # 巡礼答对 +N 献礼点
+    "offering_firework_point": 3,        # 贺词上墙 +N 献礼点
+    "offering_like_point": 1,            # 点赞 +N 献礼点
+    # ---- 双庆（两阶段重叠日限定挑战，一年一次）----
+    "double_festival_questions": 5,
+    "double_festival_timeout_sec": 20,
+    "double_festival_reward": 150,
+    # ---- 贺词做深：每日主题 + 契合度加成 ----
+    "firework_themes": [
+        "写给祖国的一句话", "写给家人的一句话", "写给你思念的人",
+        "写一句中秋团圆祝福", "写一句家国同庆的祝福",
+    ],
+    "firework_theme_bonus": 10,          # 投稿契合当日主题的额外月华
     # ---- 华诞巡礼（国庆段，Jev score 自适应难度）----
     "quiz_daily_limit": 20,         # 巡礼每日题数上限
     "quiz_timeout_sec": 60,         # 巡礼作答超时（秒）
