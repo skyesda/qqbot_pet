@@ -31,7 +31,12 @@ if _COMPAT.is_dir() and str(_COMPAT) not in sys.path:
 from qqbot_pet.petpark.moonfest import challenges, moonphase as MP, puzzles
 from qqbot_pet.petpark.moonfest import templates as T
 from qqbot_pet.petpark.moonfest.config import DEFAULT_CONFIG
-from qqbot_pet.petpark.moonfest.engine import COMMANDS, MoonfestActivity, _DAILY_KEYS
+from qqbot_pet.petpark.moonfest.engine import (
+    COMMANDS,
+    MoonfestActivity,
+    _DAILY_KEYS,
+    _SHOP_CARDS,
+)
 
 _ENGINE_SRC = (Path(__file__).resolve().parents[1]
                / "petpark" / "moonfest" / "engine.py").read_text(encoding="utf-8")
@@ -996,7 +1001,8 @@ class HelpTimeTests(_EngineCase):
 # 九、接线与铁律
 # ---------------------------------------------------------------------------
 class WiringTests(_EngineCase):
-    NEW_COMMANDS = ("重制", "酿桂花", "取酒", "玉兔同行", "献礼", "双庆", "月华信息")
+    NEW_COMMANDS = ("重制", "酿桂花", "取酒", "玉兔同行", "献礼", "双庆", "月华信息",
+                    "月华商店", "买卡")
     #: 同一功能的别名，活动帮助只列主名
     ALIASES = ("我的月华", "月华档案")
 
@@ -1036,6 +1042,9 @@ class WiringTests(_EngineCase):
             "献礼", "双庆", "双庆 错误答案", "贺词 祝祖国繁荣昌盛", "点赞 1",
             "点赞 99", "月华墙", "月华榜", "里程碑", "月华信息", "活动帮助",
             "不存在的指令", "做月饼 不存在的口味",
+            # 商店：买卡只动 yuehua_spent，累计获得在任何路径下都不许下降
+            "月华商店", "买卡", "买卡 灯谜", "买卡 不存在的卡",
+            "月华商店 购买 巡礼卡", "月华商店 购买", "月华商店 点赞卡 3",
         ]
         for text in worst:
             before = self.earned()
@@ -1047,6 +1056,254 @@ class WiringTests(_EngineCase):
         for cmd in self.NEW_COMMANDS:
             for rest in ("", "x", "1", "放弃", "换线", "难题"):
                 self.say(f"{cmd} {rest}".strip())
+
+
+# ---------------------------------------------------------------------------
+# 十、月华商店（上限次数卡）
+# 三条铁律：① 买卡永不动 yuehua_earned（累计只进不出）；② 价 ≥ 该卡「多玩一次
+# 最多能多拿多少月华」的硬下限（买卡刷不出月华）；③ 加成当天有效、跨天作废。
+# ---------------------------------------------------------------------------
+class ShopTests(_EngineCase):
+    def setUp(self):
+        super().setUp()
+        self.phase = "both"
+
+    def give(self, n):
+        """给本玩家一笔累计月华（直接改累计值，不经过玩法，便于算账）。"""
+        ap = self.ap()
+        ap["yuehua_earned"] = int(ap.get("yuehua_earned", 0) or 0) + int(n)
+        return ap
+
+    def settle_daily(self):
+        """先发一条指令让 daily.date 落到今天 —— 否则紧接着的指令会触发跨天重置，
+        把测试刚设好的「今日已用次数」清零。"""
+        self.say("月华信息")
+        return self.ap()
+
+    def test_price_never_drops_below_the_arbitrage_floor(self):
+        """后台把 9 张卡的价格区间全配成 0，引擎也必须逐张抬到硬下限。"""
+        ap = self.give(100000)
+        self.act.cfg["shop_cards"] = {
+            c[0]: {"enabled": True, "price_min": 0, "price_max": 0} for c in _SHOP_CARDS}
+        for card in _SHOP_CARDS:
+            counter = card[3]
+            floor = self.act._card_floor(ap, self.gid, counter)
+            for nth in (1, 2, 3):
+                price = self.act._card_price(ap, self.gid, counter, nth)
+                self.assertGreaterEqual(
+                    price, floor, f"{card[1]} 第 {nth} 张卖得比它能换来的月华还便宜")
+            if floor > 0:
+                self.assertGreater(price, 0, f"{card[1]} 被算成了免费")
+
+    def test_floor_covers_group_milestone_and_one_time_pools(self):
+        """硬下限必须把「间接出口」也算进去，只算直接产出会留下套利口子。"""
+        ap = self.give(100000)
+        # 群里程碑还没达成 → 买卡把群顶过一档时买卡人自己也拿钱，下限必须含它
+        self.assertGreater(self.act._unclaimed_group_bonus(self.gid), 0)
+        self.assertGreaterEqual(
+            self.act._card_floor(ap, self.gid, "lantern"),
+            self.act._card_ceiling("lantern") + self.act._unclaimed_group_bonus(self.gid))
+        # 献礼阶梯只对会给献礼点数的三个玩法生效
+        self.assertGreater(self.act._unclaimed_ladder_bonus("quiz", self.gid), 0)
+        self.assertEqual(self.act._unclaimed_ladder_bonus("lantern", self.gid), 0)
+        # 一次性池：重制卡含未领的星级奖（先解锁一个口味，否则根本没法重制）、
+        # 桂花酿卡含未领的品质奖
+        self.say("做月饼 五仁")
+        self.assertGreater(self.act._unclaimed_own_bonus(self.ap(), "craft_try"), 0)
+        self.assertGreater(self.act._unclaimed_own_bonus(ap, "brew"), 0)
+        self.assertEqual(self.act._unclaimed_own_bonus(ap, "feed"), 0)
+        # 关掉 shop_cover_onetime 就退回「只算直接产出」的便宜口径
+        self.act.cfg["shop_cover_onetime"] = False
+        self.assertEqual(self.act._card_floor(ap, self.gid, "craft_try"),
+                         self.act._card_ceiling("craft_try"))
+
+    def test_price_is_reproducible_by_slot_and_day(self):
+        """同一序号恒定：重发指令、重启进程都拿不到更低的价。"""
+        ap = self.give(100000)
+        for counter in [c[3] for c in _SHOP_CARDS]:
+            for nth in (1, 2, 3):
+                self.assertEqual(self.act._card_price(ap, self.gid, counter, nth),
+                                 self.act._card_price(ap, self.gid, counter, nth))
+        self.assertEqual(self.say("月华商店"), self.say("月华商店"))
+        # 种子必须走 md5：内置 hash() 带进程级随机盐（PYTHONHASHSEED），重启一次
+        # 价格就变，玩家就能靠重启重抽低价。
+        self.assertIn("hashlib.md5", _ENGINE_SRC)
+        self.assertNotIn("random.Random(hash(", _ENGINE_SRC)
+        # 换一天 → 换一批价（用 _bj_date 打桩模拟跨天）
+        today = self.act._bj_date()
+        self.act._bj_date = lambda: "2030-01-01"
+        other = self.act._card_price(ap, self.gid, "lantern", 1)
+        self.act._bj_date = lambda: today
+        self.assertGreater(other, 0)
+
+    def test_buying_two_charges_the_sum_of_their_slots(self):
+        ap = self.give(100000)
+        self.settle_daily()
+        p1 = self.act._card_price(ap, self.gid, "lantern", 1)
+        p2 = self.act._card_price(ap, self.gid, "lantern", 2)
+        before = self.act._balance(ap)
+        out = self.say("买卡 灯谜 2")
+        self.assertIn("购卡成功", out)
+        self.assertEqual(int(ap["yuehua_spent"]), p1 + p2)
+        self.assertEqual(self.act._balance(ap), before - p1 - p2)
+
+    def test_buying_leaves_earned_alone(self):
+        ap = self.give(1000)
+        earned = int(ap["yuehua_earned"])
+        self.say("买卡 灯谜")
+        self.assertEqual(int(ap["yuehua_earned"]), earned, "买卡动了累计月华")
+        self.assertGreater(int(ap["yuehua_spent"]), 0)
+        self.assertEqual(self.act._balance(ap), earned - int(ap["yuehua_spent"]))
+
+    def test_card_raises_the_limit_and_shows_up_in_the_archive(self):
+        self.give(100000)
+        self.assertEqual(self.act._limit_of(self.ap(), "brew", "brew_daily_limit", 1), 1)
+        self.say("买卡 桂花酿")
+        self.assertEqual(self.act._limit_of(self.ap(), "brew", "brew_daily_limit", 1), 2)
+        out = self.say("月华信息")
+        self.assertIn("| 酿桂花 | 0/2 |", out)      # 显示与判定同源
+        self.assertIn("今日购卡", out)
+        self.assertIn("可用月华", out)
+
+    def test_extra_play_is_really_allowed(self):
+        """买卡后那第 2 局真的能开，而不是只在档案里显示成 2。"""
+        self.give(100000)
+        ap = self.settle_daily()
+        ap["daily"]["rabbit"] = 1                   # 玉兔同行基础上限 = 1 局，已用满
+        self.assertIn("走过一趟", self.say("玉兔同行"))
+        self.say("买卡 玉兔同行")
+        self.assertNotIn("走过一趟", self.say("玉兔同行"))
+
+    def test_bonus_expires_when_the_day_changes(self):
+        self.give(100000)
+        self.say("买卡 灯谜")
+        self.assertEqual(self.act._card_bonus(self.ap(), "lantern"), 1)
+        self.ap()["shop_daily"]["date"] = "2000-01-01"     # 假装是昨天买的
+        self.assertEqual(self.act._card_bonus(self.ap(), "lantern"), 0)
+        self.assertEqual(
+            self.act._limit_of(self.ap(), "lantern", "lantern_daily_limit", 20), 20)
+
+    def test_daily_cap_clamps_and_then_refuses(self):
+        self.give(1000000)
+        out = self.say("买卡 灯谜 5")                # 要 5 张，只能给 3 张
+        self.assertIn("购卡成功", out)
+        self.assertEqual(self.act._card_bonus(self.ap(), "lantern"), 3)
+        self.assertIn("已买满", self.say("买卡 灯谜"))
+        self.assertEqual(self.act._card_bonus(self.ap(), "lantern"), 3)
+
+    def test_every_rejection_path_costs_nothing(self):
+        ap = self.give(0)                           # 一分钱都没有
+        self.act.cfg["shop_cards"] = dict(self.act.cfg["shop_cards"])
+        self.act.cfg["shop_cards"]["feed"] = {"enabled": False,
+                                              "price_min": 1, "price_max": 1}
+        cases = ["买卡 灯谜", "月华商店 购买 不存在的卡", "月华商店 购买", "买卡",
+                 "买卡 喂玉兔", "月华商店 购买 巡礼卡", "月华商店"]
+        for text in cases:
+            before = (int(ap.get("yuehua_spent", 0) or 0),
+                      copy.deepcopy(ap.get("shop_daily")))
+            self.say(text)
+            after = (int(ap.get("yuehua_spent", 0) or 0),
+                     copy.deepcopy(ap.get("shop_daily")))
+            self.assertEqual(before, after, f"「{text}」这条拒绝路径动了账")
+
+    def test_rejection_messages_say_why(self):
+        self.give(0)
+        self.assertIn("可用月华不足", self.say("买卡 灯谜"))
+        self.assertIn("没有", self.say("买卡 不存在的卡"))
+        self.phase = "midautumn"
+        self.assertIn("当前阶段不售", self.say("买卡 巡礼卡"))
+        self.phase = "both"
+        self.give(1000000)
+        cap = self.act._int_cfg("shop_daily_cap", 3)
+        for _ in range(cap):
+            self.say("买卡 灯谜")
+        self.assertIn("已买满", self.say("买卡 灯谜"))
+
+    def test_shelf_marks_the_other_festivals_cards_off(self):
+        self.give(100000)
+        self.phase = "midautumn"
+        out = self.say("月华商店")
+        self.assertIn("灯谜卡", out)
+        self.assertIn("下一张", out)
+        self.assertIn("本阶段不售", out)
+        self.assertIn("国庆·华诞", out)
+        self.phase = "both"
+        out = self.say("月华商店")
+        self.assertNotIn("本阶段不售", out)
+        self.assertIn("巡礼卡", out)
+
+    def test_shop_switch_and_card_switch_both_work(self):
+        self.give(100000)
+        self.act.cfg["shop_enabled"] = False
+        self.assertIn("未开放", self.say("月华商店"))
+        self.assertIn("未开放", self.say("买卡 灯谜"))
+        self.act.cfg["shop_enabled"] = True
+        self.act.cfg["shop_cards"] = dict(self.act.cfg["shop_cards"])
+        self.act.cfg["shop_cards"]["lantern"] = {"enabled": False,
+                                                 "price_min": 1, "price_max": 1}
+        self.assertIn("已下架", self.say("买卡 灯谜"))
+        self.assertNotIn("· 灯谜卡 ——", self.say("月华商店"))
+
+    def test_rank_by_balance_is_opt_in(self):
+        self.give(100000)
+        before = self.say("月华榜")
+        self.say("买卡 灯谜")
+        after = self.say("月华榜")
+        self.assertEqual(before, after, "默认口径下花钱不该影响月华榜")
+        self.assertIn("累计月华", after)
+        self.act.cfg["rank_by_balance"] = True
+        switched = self.say("月华榜")
+        self.assertIn("可用月华", switched)
+        self.assertEqual(self.act._score(self.ap()), self.act._balance(self.ap()))
+        self.assertLess(self.act._score(self.ap()),
+                        int(self.ap()["yuehua_earned"]))
+
+    def test_one_extra_play_cannot_out_earn_its_card(self):
+        """端到端：买 1 张灯谜卡，把那一题答对，产出也不该超过实付价。"""
+        self.give(100000)
+        ap = self.settle_daily()
+        ap["daily"]["lantern"] = 20                 # 普通灯谜已用满
+        self.assertIn("次数已用完", self.say("猜灯谜"))
+        cost = self.act._card_price(ap, self.gid, "lantern", 1)
+        self.assertIn("购卡成功", self.say("买卡 灯谜"))
+        before = self.earned()
+        self.say("猜灯谜")
+        self.say("猜灯谜 " + str((ap.get("quiz") or {}).get("a") or ""))
+        self.assertLessEqual(self.earned() - before, cost,
+                             "这一次额外灯谜的产出超过了卡价")
+
+    def test_myinfo_never_rewrites_the_shop_ledger(self):
+        """月华信息是只读指令：看一眼既不能改账，也不能把跨天的购卡档换新。"""
+        self.give(100000)
+        self.say("买卡 灯谜")
+        ap = self.ap()
+        ap["shop_daily"]["date"] = "2000-01-01"
+        spent, earned = int(ap["yuehua_spent"]), int(ap["yuehua_earned"])
+        self.say("月华信息")
+        self.assertEqual(self.ap()["shop_daily"]["date"], "2000-01-01")
+        self.assertEqual(int(self.ap()["yuehua_spent"]), spent)
+        self.assertEqual(self.earned(), earned)
+
+    def test_old_saves_without_the_shop_fields_keep_working(self):
+        ap = self.ap()
+        ap.pop("yuehua_spent", None)
+        ap.pop("shop_daily", None)
+        fresh = self.act._get_player(self.gid, self.qq)
+        self.assertEqual(int(fresh.get("yuehua_spent", 0)), 0)
+        self.assertEqual(self.act._card_bonus(fresh, "lantern"), 0)
+        self.assertEqual(self.act._balance(fresh), int(fresh["yuehua_earned"]))
+        self.assertIn("月华商店", self.say("月华商店"))
+
+    def test_shop_ledger_is_not_a_daily_counter(self):
+        """加成走独立自愈字段：跨天重置只清 daily 里的计数器，不该动 caps。"""
+        self.give(100000)
+        self.say("买卡 灯谜")
+        ap = self.ap()
+        ap["daily"]["date"] = "2000-01-01"
+        self.act._daily_reset(ap)
+        for k in _DAILY_KEYS:
+            self.assertEqual(ap["daily"][k], 0)
+        self.assertEqual(ap["shop_daily"]["caps"]["lantern"], 1)   # 由 _shop_daily 自己换新
 
 
 if __name__ == "__main__":

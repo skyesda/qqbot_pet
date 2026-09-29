@@ -5,8 +5,10 @@
 - **不接 DeepSeek**：所有判定走本地 Jev 封装（.jev.JEV），失败即确定性本地兜底；
 - **双阶段时间**：phase_midautumn / phase_national 各自 enabled/start_at/end_at，
   重叠日（默认 10-01）两阶段同时开放，`_phase()` 返回 midautumn/national/both/None；
-- **月华只进不出**：`_add_yuehua` 只增不减，唯一排行键 `yuehua_earned`；
-  全活动无兑换商店、无花销出口；
+- **累计月华只进不出**：`_add_yuehua` 只增不减，唯一排行键 `yuehua_earned`；
+  商店（`月华商店`/`买卡`）是**唯一**花销出口，但它只写独立的 `yuehua_spent`
+  （可用余额 = earned − spent），**永不减** `yuehua_earned` —— 所以榜/里程碑/
+  结算的累计口径与老玩家名次不受影响；后台 `rank_by_balance` 可改成按余额算；
 - **活动结束一次性结算**：两阶段 end_at 均过后 `_settle()` 发全服总榜前 20 名
   纯月华（写回 players 桶），`meta.settled` 幂等，不调 store.add_item。
 
@@ -19,6 +21,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import random
 import re
@@ -66,6 +69,8 @@ COMMANDS = {
     "献礼", "双庆",
     # 个人信息（一条指令看全自己在活动里的全部状态；三个名字等价）
     "月华信息", "我的月华", "月华档案",
+    # 月华商店（用可用月华买「上限次数卡」，当日有效）
+    "月华商店", "买卡",
 }
 # 刻意**不提供**任何群内管理员指令：活动的开始/结束/时间/数值/奖励全部只在
 # 后台「节日活动」页配置（改 phase_*.start_at/end_at 即开始/结束），结算由
@@ -165,6 +170,33 @@ _PHASE_GATES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 月华商店（上限次数卡）：卡 ID → 抬升哪个每日计数器 / 哪个基础上限配置键 / 属哪个阶段。
+#
+# **这张映射表写死在代码里，后台改不了**：后台只能开关卡与调价，改不了「这张卡加
+# 的是哪个计数器」—— 让运营把灯谜卡错配成加巡礼次数，会凭空造出一个真的刷子。
+#
+# 记账键一律用**每日计数器名**（与 _DAILY_KEYS 同名），所以「月饼重制」卡的 ID
+# （craft_remake，与配置键同族、给后台看）和它的计数器（craft_try）不同名。
+# ---------------------------------------------------------------------------
+_SHOP_CARDS = (
+    # (卡 ID, 卡名, 玩法名, 每日计数器, 基础上限配置键, 所属阶段)
+    ("lantern",      "灯谜卡",     "猜灯谜",    "lantern",      "lantern_daily_limit",      "midautumn"),
+    ("lantern_hard", "难题灯谜卡", "灯谜·难题", "lantern_hard", "lantern_hard_daily_limit", "midautumn"),
+    ("feed",         "喂玉兔卡",   "喂玉兔",    "feed",         "feed_daily_limit",         "midautumn"),
+    ("rabbit",       "玉兔同行卡", "玉兔同行",  "rabbit",       "rabbit_run_daily_limit",   "midautumn"),
+    ("brew",         "桂花酿卡",   "酿桂花",    "brew",         "brew_daily_limit",         "midautumn"),
+    ("craft_remake", "月饼重制卡", "月饼重制",  "craft_try",    "craft_remake_daily_limit", "midautumn"),
+    ("quiz",         "巡礼卡",     "华诞巡礼",  "quiz",         "quiz_daily_limit",         "national"),
+    ("firework",     "贺词卡",     "烟火贺词",  "firework",     "firework_daily_limit",     "national"),
+    ("like",         "点赞卡",     "点赞",      "like",         "like_daily_limit",         "national"),
+)
+_CARD_BY_COUNTER = {_c[3]: _c for _c in _SHOP_CARDS}
+
+# 一次买入的张数上限（纯防御：防止有人发「买卡 灯谜 999999」把价格和文案算爆）
+_SHOP_BUY_MAX = 10
+
+
 class MoonfestActivity:
     """月耀华诞活动。生命周期：main.py 构造 → start() 起后台循环 → terminate() 收尾。"""
 
@@ -246,6 +278,12 @@ class MoonfestActivity:
     def _int_cfg(self, key, default=0) -> int:
         try:
             return int(self.cfg.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _float_cfg(self, key, default=0.0) -> float:
+        try:
+            return float(self.cfg.get(key, default))
         except (TypeError, ValueError):
             return default
 
@@ -470,6 +508,11 @@ class MoonfestActivity:
                 "group": str(group_id),
                 "name": "",
                 "yuehua_earned": 0,
+                # 商店记账：只记「累计花费」，可用余额 = earned − spent（见 _balance）。
+                # shop_daily 走「读时自愈」（见 _shop_daily），所以初始给个空档即可，
+                # 不进 _DAILY_KEYS —— 那套的键必须都是可置 0 的标量。
+                "yuehua_spent": 0,
+                "shop_daily": {"date": "", "caps": {}},
                 "sign": {"mid": "", "nat": "", "count": 0},
                 "daily": _new_daily(),
                 "quiz": {},
@@ -498,6 +541,9 @@ class MoonfestActivity:
                 ap["group"] = str(group_id)
             ap.setdefault("name", "")
             ap.setdefault("yuehua_earned", 0)
+            # yuehua_spent 要显式补齐（_balance 走 .get 也能读，但补上后档案里字段完整）；
+            # shop_daily 不用补：_shop_daily 是读时自愈的，缺键/跨天都会自动换新档。
+            ap.setdefault("yuehua_spent", 0)
             ap.setdefault("sign", {"mid": "", "nat": "", "count": 0})
             ap.setdefault("daily", _new_daily())
             ap.setdefault("quiz", {})
@@ -560,6 +606,22 @@ class MoonfestActivity:
         self._add_yuehua(ap, amount)
         self._group_add_yuehua(group_id, amount)
 
+    def _balance(self, ap) -> int:
+        """可用月华 = 累计获得 − 累计花费。
+
+        商店只写 ``yuehua_spent``、**永不减** ``yuehua_earned``，所以「月华只进不出」
+        这条铁律在累计口径上完整保留（月华榜 / 群里程碑 / 结算默认仍读 earned）。
+        """
+        return max(0, int(ap.get("yuehua_earned", 0) or 0)
+                   - int(ap.get("yuehua_spent", 0) or 0))
+
+    def _score(self, ap) -> int:
+        """排名/结算的积分口径：默认 = 累计获得（老玩家名次不因花钱而掉）；
+        后台把 ``rank_by_balance`` 打开则改按可用余额（花了就掉名次）。"""
+        if bool(self.cfg.get("rank_by_balance", False)):
+            return self._balance(ap)
+        return max(0, int(ap.get("yuehua_earned", 0) or 0))
+
     def _check_milestones(self, group_id) -> list[int]:
         ms = self.cfg.get("milestones") or []
         gs = self._group_state(group_id)
@@ -592,6 +654,314 @@ class MoonfestActivity:
             d["date"] = today
             for k in _DAILY_KEYS:
                 d[k] = 0
+
+    # ------------------------------------------------------------------
+    # 月华商店（上限次数卡）
+    #
+    # 一张卡 = 当日某玩法次数上限 +1，**当天有效、跨天作废**。三条设计约束：
+    # ① 记账正交：卡只写 yuehua_spent，永不碰 yuehua_earned（铁律在累计口径保留）；
+    # ② 定价可复现：同 (日期, 群, 玩家, 卡, 当日第几张) 恒定，重发指令刷不出低价；
+    # ③ 结构性防刷：价 ≥ 该卡「多玩一次最多能多拿多少月华」的硬下限（_card_floor），
+    #    所以「买卡 → 玩 → 赚」的净收益恒 ≤ 0。
+    # ------------------------------------------------------------------
+    def _shop_daily(self, ap, create: bool = True) -> dict:
+        """当日购卡记录 ``{"date": …, "caps": {计数器: 已购张数}}``。
+
+        照 ``player["_tx_daily"]``（main.py）的「读时自愈」写法：日期不符就整包换新。
+        刻意**不进 _DAILY_KEYS** —— 那套的建档/补档/_daily_reset 三处都对每个键硬写
+        int 0（标量假设），塞 dict 进去要连带改重置语义与守卫测试。走独立字段后：
+        不需要任何跨天清理钩子，加成天然「当天有效、跨天作废」。
+
+        ``create=False`` 留给只读路径（如「月华信息」）：看一眼不能把玩家档改脏，
+        跨天时返回一个临时空档即可。
+        """
+        today = self._bj_date()
+        sd = ap.get("shop_daily")
+        if not isinstance(sd, dict) or sd.get("date") != today:
+            sd = {"date": today, "caps": {}}
+            if create:
+                ap["shop_daily"] = sd
+            return sd
+        if not isinstance(sd.get("caps"), dict):
+            if not create:
+                return {"date": today, "caps": {}}
+            sd["caps"] = {}
+        return sd
+
+    def _card_bonus(self, ap, counter) -> int:
+        """该计数器今日购卡带来的加成（每张 +1）。只读路径也走这里，不改玩家档。"""
+        caps = self._shop_daily(ap, create=False).get("caps") or {}
+        try:
+            return max(0, int(caps.get(counter, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _limit_of(self, ap, counter, cfg_key, default) -> int:
+        """当日次数上限 = 后台基础值 + 今日购卡加成。9 个判定点统一走这里：
+        判定与「月华信息」的显示必须同源，否则会出现「显示 20、实际能玩 23」。"""
+        return max(0, self._int_cfg(cfg_key, default)) + self._card_bonus(ap, counter)
+
+    @staticmethod
+    def _as_int(value, default=0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _max_of(values, default=0) -> int:
+        """一堆配置值里的最大整数（跳过转不了 int 的脏值）。"""
+        best = default
+        for v in (values or []):
+            try:
+                best = max(best, int(v))
+            except (TypeError, ValueError):
+                continue
+        return best
+
+    def _combo_rate_max(self) -> float:
+        """连对倍率上限 = 1 + 每档 × 档数上限。灯谜与巡礼共用这一对配置键。"""
+        rate = self._float_cfg("lantern_combo_rate", 0.1) or 0.1
+        return max(1.0, 1.0 + rate * max(0, self._int_cfg("lantern_combo_cap", 3)))
+
+    def _card_ceiling(self, counter) -> int:
+        """该玩法「多加一次」理论上**直接**最多能产出多少月华。价格永不低于它。
+
+        全部由现有配置键实时算出：后台把某个奖励调高了，下限自动跟着涨，不需要
+        手改商店配置。刻意取全局最高档（如重制按阶段 5 的 100，而不是该玩家当前
+        阶段的 45）—— 宁可高估产出把价顶高，也不能低估后留下套利口子。
+        """
+        rate = self._combo_rate_max()
+        if counter == "lantern":
+            return int(self._int_cfg("gongde_lantern_max", 30) * rate)
+        if counter == "lantern_hard":
+            mult = self._float_cfg("lantern_hard_mult", 1.5) or 1.5
+            return int(self._int_cfg("gongde_lantern_max", 30) * rate * mult)
+        if counter == "feed":
+            return self._max_of(self.cfg.get("gongde_feed"), 30)
+        if counter == "rabbit":
+            steps = max(1, self._int_cfg("rabbit_run_steps", 5))
+            mults = self.cfg.get("rabbit_run_intimacy_mult") or [1.0]
+            best = 1.0
+            for m in mults:
+                try:
+                    best = max(best, float(m))
+                except (TypeError, ValueError):
+                    continue
+            return int(self._int_cfg("rabbit_run_reward_max", 8) * best * steps
+                       + self._int_cfg("rabbit_run_perfect_bonus", 25))
+        if counter == "craft_try":
+            return self._max_of(self.cfg.get("craft_remake_rewards"), 100)
+        if counter == "quiz":
+            # 多加的一题可能正好是「走完全程」的那一站 → 单题月华 + 全程奖 + 零失误奖
+            return (int(self._int_cfg("gongde_quiz_max", 20) * rate)
+                    + self._int_cfg("route_complete_bonus", 40)
+                    + self._int_cfg("route_perfect_bonus", 60))
+        if counter == "firework":
+            return (self._int_cfg("gongde_firework_max", 20)
+                    + self._int_cfg("firework_theme_bonus", 10))
+        # brew（起坛/取酒本身不发月华）、like（gongde_like 发给**被赞的作者**，不是
+        # 买卡人）：直接产出为 0，价格纯由后台区间定。
+        return 0
+
+    def _unclaimed_group_bonus(self, group_id) -> int:
+        """本群**尚未达成**的群里程碑最高档。
+
+        买卡带来的额外产出同样进群累计，可能把群顶过一档 —— 于是买卡人自己也拿到
+        这笔（里程碑是发给群内所有参与者的）。防刷下限必须把它算进去，否则「买卡
+        → 群达标 → 我拿 40」就能出现正收益。"""
+        if not bool(self.cfg.get("shop_cover_onetime", True)):
+            return 0
+        gs = self._groups().get(str(group_id)) or {}
+        reached = set(self._as_int(i, -1) for i in (gs.get("milestone_reached") or []))
+        best = 0
+        for i, m in enumerate(self.cfg.get("milestones") or []):
+            if i in reached:
+                continue
+            best = max(best, self._as_int((m or {}).get("gongde"), 0))
+        return best
+
+    def _unclaimed_ladder_bonus(self, counter, group_id) -> int:
+        """本群**尚未达成**的献礼阶梯最高档。
+
+        只有会给献礼点数的玩法（巡礼/贺词/点赞）才可能因为多玩一次而推档，其余卡
+        记 0 —— 给不该算的卡也算上只会把价虚抬。"""
+        if not bool(self.cfg.get("shop_cover_onetime", True)):
+            return 0
+        if counter not in ("quiz", "firework", "like"):
+            return 0
+        gs = self._groups().get(str(group_id)) or {}
+        reached = set(self._as_int(i, -1) for i in (gs.get("offering_reached") or []))
+        best = 0
+        for i, step in enumerate(self.cfg.get("offering_ladder") or []):
+            if i in reached:
+                continue
+            best = max(best, self._as_int((step or {}).get("yuehua"), 0))
+        return best
+
+    def _unclaimed_own_bonus(self, ap, counter) -> int:
+        """本人**尚未领取**的一次性奖励池最高档：月饼星级（重制卡）/ 酿酒品质（桂花酿卡）。
+
+        这两笔是一次性、幂等的，但「多玩一次」恰好可以正好解锁下一档 —— 所以要算进
+        下限。其余卡没有这种一次性池。"""
+        if not bool(self.cfg.get("shop_cover_onetime", True)):
+            return 0
+        if counter == "craft_try":
+            rewards = self.cfg.get("craft_star_rewards")
+            if not isinstance(rewards, dict):
+                return 0
+            craft = ap.get("craft") or {}
+            granted = set(craft.get("stars_granted") or [])
+            star_max = max(1, self._int_cfg("craft_star_max", 5))
+            remake = craft.get("remake") or {}
+            # 只要还有「已解锁口味 + 还有没领过的星级」这一对，就按**全表最高档**
+            # 计入下限 —— 精确算「下一颗星值多少」会把 0 星口味的 1★（表里没有）
+            # 算成 0，反而给套利留口子。这里一律宁可高估。
+            top = self._max_of(list(rewards.values()), 0)
+            for flavor in (craft.get("mooncake") or {}):
+                stars = min(self._as_int(remake.get(flavor), 0) + 1, star_max)
+                if "{}:{}".format(flavor, stars) in granted:
+                    continue
+                return top
+            return 0
+        if counter == "brew":
+            bonuses = self.cfg.get("brew_grade_bonus") or []
+            grades = set((ap.get("brew") or {}).get("grades") or [])
+            best = 0
+            for i, grade in enumerate(_BREW_GRADES):
+                if grade in grades:
+                    continue
+                try:
+                    best = max(best, int(bonuses[i]))
+                except (IndexError, TypeError, ValueError):
+                    continue
+            return best
+        return 0
+
+    def _card_floor(self, ap, group_id, counter) -> int:
+        """硬下限：买一张该卡，最多能让买卡人**多拿**多少月华。价格永不低于它。
+
+        = 直接产出上限 + 未达成的群里程碑档 + 未达成的献礼阶梯档 + 本人未领的一次性池。
+        全部算上才叫「无套利」；只算直接产出会漏掉「买卡把群顶过一档」这类间接出口。
+        想便宜卖就后台关掉 ``shop_cover_onetime``（单张卡可能一次性小赚，但有界）。"""
+        return (self._card_ceiling(counter)
+                + self._unclaimed_group_bonus(group_id)
+                + self._unclaimed_ladder_bonus(counter, group_id)
+                + self._unclaimed_own_bonus(ap, counter))
+
+    def _card_price(self, ap, group_id, counter, nth) -> int:
+        """今天第 ``nth`` 张的价：后台区间内随机，但同一序号恒定可复现。
+
+        用 md5 派生种子而不是直接 random.randint：否则玩家可以反复发指令重抽低价，
+        「每次随机」就退化成「每次取最低」。也刻意**不用内置 hash()** —— 字符串
+        hash 带进程级随机盐（PYTHONHASHSEED），重启一次价格就变，同样能刷。
+        """
+        card_id = _CARD_BY_COUNTER[counter][0]
+        card = self._card_cfg(card_id)
+        lo = max(self._as_int(card.get("price_min"), 0),
+                 self._card_floor(ap, group_id, counter))
+        hi = max(self._as_int(card.get("price_max"), 0), lo)   # 后台把区间配反/配小 → 夹回 lo
+        if hi <= lo:
+            return lo
+        seed = "{}|{}|{}|{}|{}".format(
+            self._bj_date(), group_id, ap.get("qq"), counter, nth)
+        digest = hashlib.md5(seed.encode("utf-8")).hexdigest()
+        return random.Random(digest).randint(lo, hi)
+
+    def _card_cfg(self, card_id) -> dict:
+        cards = self.cfg.get("shop_cards")
+        card = (cards or {}).get(card_id) if isinstance(cards, dict) else None
+        return card if isinstance(card, dict) else {}
+
+    def _card_match(self, name):
+        """卡名匹配：卡 ID / 全名（灯谜卡）/ 短名（灯谜）/ 玩法名（猜灯谜）都认。"""
+        want = str(name or "").strip()
+        if not want:
+            return None
+        for card in _SHOP_CARDS:
+            names = {card[0], card[1], card[2],
+                     card[1].replace("次数卡", "").replace("卡", "")}
+            if want in names or want.lower() == card[0].lower():
+                return card
+        return None
+
+    def _card_phase_ok(self, card) -> bool:
+        """这张卡现在卖不卖：所属阶段正在开放（重叠日 both 两段都算开放）。"""
+        return self._phase() in ("both", card[5])
+
+    def _cmd_shop(self, event, qq, group_id, rest: str) -> str:
+        if not bool(self.cfg.get("shop_enabled", True)):
+            return T.SHOP_DISABLED
+        ap = self._get_player(group_id, qq, event=event)
+        self._daily_reset(ap)
+        tokens = (rest or "").split()
+        if tokens and tokens[0] in ("购买", "买", "换"):
+            tokens = tokens[1:]
+        if not tokens:
+            return self._shop_list(ap, group_id) if not (rest or "").strip() else T.SHOP_USAGE
+        return self._shop_buy(ap, group_id, tokens[0],
+                              tokens[1] if len(tokens) > 1 else "")
+
+    def _cmd_buy_card(self, event, qq, group_id, rest: str) -> str:
+        """短写法「买卡 <卡名> [张数]」，与「月华商店 购买 …」完全等价。"""
+        return self._cmd_shop(event, qq, group_id, "购买 " + (rest or ""))
+
+    def _shop_list(self, ap, group_id) -> str:
+        cap = max(0, self._int_cfg("shop_daily_cap", 3))
+        parts = [T.SHOP_HEADER.format(
+            balance=self._balance(ap),
+            earned=max(0, int(ap.get("yuehua_earned", 0) or 0)))]
+        for card in _SHOP_CARDS:
+            card_id, label, play, counter, cfg_key, need = card
+            if not bool(self._card_cfg(card_id).get("enabled", True)):
+                continue
+            if not self._card_phase_ok(card):
+                parts.append(T.SHOP_ROW_OFF.format(
+                    name=label, phase=T.PHASE_NAME.get(need, need)))
+                continue
+            bought = self._card_bonus(ap, counter)
+            base = self._limit_of(ap, counter, cfg_key, 0)
+            parts.append(T.SHOP_ROW.format(
+                name=label, play=play, bought=bought, cap=cap,
+                price=self._card_price(ap, group_id, counter, bought + 1),
+                base=base, after=base + 1))
+        parts.append(T.SHOP_FOOTER)
+        return "".join(parts)
+
+    def _shop_buy(self, ap, group_id, name: str, count_raw: str) -> str:
+        card = self._card_match(name)
+        if card is None:
+            return T.SHOP_NO_CARD.format(name=str(name or "").strip())
+        card_id, label, play, counter, cfg_key, need = card
+        if not bool(self._card_cfg(card_id).get("enabled", True)):
+            return T.SHOP_CARD_OFF.format(name=label)
+        if not self._card_phase_ok(card):
+            return T.SHOP_PHASE_OFF.format(
+                name=label, phase=T.PHASE_NAME.get(need, need))
+        cap = max(0, self._int_cfg("shop_daily_cap", 3))
+        if cap <= 0:                      # 后台把限购配成 0 = 这张卡不卖
+            return T.SHOP_CARD_OFF.format(name=label)
+        count = max(1, min(self._as_int(str(count_raw).strip() or 1, 1), _SHOP_BUY_MAX))
+        bought = self._card_bonus(ap, counter)
+        left = cap - bought
+        if left <= 0:
+            return T.SHOP_DAILY_CAP.format(name=label, cap=cap)
+        count = min(count, left)
+        # 逐张按各自序号定价（第 n 张有第 n 张的价），合计才是本次应付
+        cost = sum(self._card_price(ap, group_id, counter, bought + i + 1)
+                   for i in range(count))
+        balance = self._balance(ap)
+        if cost > balance:
+            return T.SHOP_NOT_ENOUGH.format(
+                name=label, count=count, cost=cost, balance=balance)
+        # 落账：只加 yuehua_spent（**永不减** yuehua_earned）；加成与限购共用一个计数
+        ap["yuehua_spent"] = int(ap.get("yuehua_spent", 0) or 0) + cost
+        caps = self._shop_daily(ap).setdefault("caps", {})
+        caps[counter] = bought + count
+        base = self._limit_of(ap, counter, cfg_key, 0) - bought   # 后台基础值
+        return T.SHOP_BUY_OK.format(
+            name=label, count=count, cost=cost, balance=self._balance(ap), play=play,
+            base=base + bought, after=base + bought + count)
 
     # ------------------------------------------------------------------
     # 管理权限
@@ -640,7 +1010,7 @@ class MoonfestActivity:
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         d = ap["daily"]
-        limit = self._int_cfg("lantern_daily_limit", 20)
+        limit = self._limit_of(ap, "lantern", "lantern_daily_limit", 20)
         timeout = self._int_cfg("lantern_timeout_sec", 60)
         quiz = ap.get("quiz") or {}
         want = rest.strip()
@@ -654,7 +1024,7 @@ class MoonfestActivity:
             if quiz.get("kind") == "lantern" and quiz.get("date") == self._bj_date():
                 return self._lantern_ask_text(quiz, timeout)
             if hard:
-                hlimit = self._int_cfg("lantern_hard_daily_limit", 5)
+                hlimit = self._limit_of(ap, "lantern_hard", "lantern_hard_daily_limit", 5)
                 if int(d.get("lantern_hard", 0) or 0) >= hlimit:
                     return T.LANTERN_HARD_LIMIT.format(limit=hlimit)
             # 答对后的冷却（lantern_cooldown_min，默认 0=无冷却）
@@ -741,7 +1111,7 @@ class MoonfestActivity:
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         d = ap["daily"]
-        limit = self._int_cfg("feed_daily_limit", 10)
+        limit = self._limit_of(ap, "feed", "feed_daily_limit", 10)
         if int(d.get("feed", 0)) >= limit:
             return T.FEED_DONE.format(limit=limit)
         thing = rest.strip()
@@ -864,7 +1234,7 @@ class MoonfestActivity:
                 s = max(0, min(int(craft["remake"].get(f, 0) or 0), star_max))
                 stars = "★" * s + "☆" * (star_max - s)
             lines.append(T.CRAFT_DEX_ROW.format(flavor=f, stars=stars, clears=clears))
-        limit = self._int_cfg("craft_remake_daily_limit", 3)
+        limit = self._limit_of(ap, "craft_try", "craft_remake_daily_limit", 3)
         used = int((ap.get("daily") or {}).get("craft_try", 0) or 0)
         cooldown = ""
         cd = self._craft_cooldown_secs(stage)
@@ -902,7 +1272,7 @@ class MoonfestActivity:
         # ---- 以下是「再次合成」：走挑战链 ----
         if craft.get("active"):
             return T.CRAFT_REMAKE_ACTIVE
-        limit = self._int_cfg("craft_remake_daily_limit", 3)
+        limit = self._limit_of(ap, "craft_try", "craft_remake_daily_limit", 3)
         d = ap["daily"]
         if int(d.get("craft_try", 0) or 0) >= limit:
             return T.CRAFT_REMAKE_LIMIT.format(limit=limit)
@@ -1061,7 +1431,7 @@ class MoonfestActivity:
         ready = int(brew.get("ready_ts", 0) or 0)
         if ready > now:
             return T.BREW_BUSY.format(mins=max(1, (ready - now + 59) // 60))
-        limit = self._int_cfg("brew_daily_limit", 1)
+        limit = self._limit_of(ap, "brew", "brew_daily_limit", 1)
         if int(d.get("brew", 0) or 0) >= limit:
             return T.BREW_DAILY_LIMIT.format(limit=limit)
         need = max(1, self._int_cfg("brew_guihua_per_batch", 3))
@@ -1183,7 +1553,7 @@ class MoonfestActivity:
             return self._rabbit_answer(ap, group_id, rest, timeout, n)
         if rest.strip():
             return T.RABBIT_ANSWER_FORMAT
-        limit = self._int_cfg("rabbit_run_daily_limit", 1)
+        limit = self._limit_of(ap, "rabbit", "rabbit_run_daily_limit", 1)
         if int(d.get("rabbit", 0) or 0) >= limit:
             return T.RABBIT_DAILY_LIMIT.format(limit=limit)
         rab.update({"date": today, "step": 0, "wrong": 0, "earned": 0, "q": None})
@@ -1474,7 +1844,7 @@ class MoonfestActivity:
         self._daily_reset(ap)
         d = ap["daily"]
         theme = self._today_theme()
-        limit = self._int_cfg("firework_daily_limit", 3)
+        limit = self._limit_of(ap, "firework", "firework_daily_limit", 3)
         if int(d.get("firework", 0)) >= limit:
             return T.FIREWORK_DAILY_LIMIT.format(limit=limit)
         text = rest.strip()
@@ -1544,7 +1914,7 @@ class MoonfestActivity:
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         d = ap["daily"]
-        limit = self._int_cfg("like_daily_limit", 5)
+        limit = self._limit_of(ap, "like", "like_daily_limit", 5)
         if int(d.get("like", 0)) >= limit:
             return T.LIKE_DONE.format(limit=limit)
         m = re.search(r"\d+", rest)
@@ -1657,7 +2027,7 @@ class MoonfestActivity:
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         d = ap["daily"]
-        limit = self._int_cfg("quiz_daily_limit", 20)
+        limit = self._limit_of(ap, "quiz", "quiz_daily_limit", 20)
         timeout = self._int_cfg("quiz_timeout_sec", 60)
         quiz = ap.get("quiz") or {}
         route = self._route_state(ap)
@@ -1762,18 +2132,22 @@ class MoonfestActivity:
     # 月华榜 / 里程碑 / 结算
     # ------------------------------------------------------------------
     def _cmd_rank(self, event, qq, group_id, rest: str) -> str:
-        players = [p for p in self._players().values() if int(p.get("yuehua_earned", 0)) > 0]
+        players = [p for p in self._players().values() if self._score(p) > 0]
         if not players:
             return T.RANK_EMPTY
-        players.sort(key=lambda p: (-int(p.get("yuehua_earned", 0)), int(p.get("bound_at", 0))))
-        lines = [T.RANK_HEADER, T.RANK_TABLE_HEAD, T.RANK_TABLE_SEP]
+        players.sort(key=lambda p: (-self._score(p), int(p.get("bound_at", 0))))
+        # 表头跟着口径走：按余额排名时写「可用月华」，否则写「累计月华」
+        by_balance = bool(self.cfg.get("rank_by_balance", False))
+        lines = [T.RANK_HEADER,
+                 T.RANK_TABLE_HEAD_BALANCE if by_balance else T.RANK_TABLE_HEAD,
+                 T.RANK_TABLE_SEP]
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         for i, p in enumerate(players[:20], 1):
             # 名字里的 ASCII 竖线必须换掉，否则会把表格列切歪（照中元榜）
             name = str(p.get("name") or p.get("qq", "?")).replace("|", "丨")
             lines.append(T.RANK_ROW.format(
                 medal=medals.get(i, str(i)), name=name,
-                score=p.get("yuehua_earned", 0), days=int((p.get("sign") or {}).get("count", 0)),
+                score=self._score(p), days=int((p.get("sign") or {}).get("count", 0)),
             ))
         return "\n".join(lines)
 
@@ -1791,15 +2165,13 @@ class MoonfestActivity:
     # 月华信息（一条指令看全自己的活动状态）
     # ------------------------------------------------------------------
     def _my_rank(self, ap) -> str:
-        """全服名次，口径与月华榜完全一致（累计月华降序、同分按绑定时间）。
+        """全服名次，口径与月华榜完全一致（积分降序、同分按绑定时间）。
 
         直接按对象身份 ``is`` 找自己 —— ``_get_player`` 返回的就是 players 桶里那个
         dict 本身，不用再去拼 qq/群号比对字符串。
         """
-        players = [p for p in self._players().values()
-                   if int(p.get("yuehua_earned", 0)) > 0]
-        players.sort(key=lambda p: (-int(p.get("yuehua_earned", 0)),
-                                    int(p.get("bound_at", 0))))
+        players = [p for p in self._players().values() if self._score(p) > 0]
+        players.sort(key=lambda p: (-self._score(p), int(p.get("bound_at", 0))))
         for i, p in enumerate(players, 1):
             if p is ap:
                 return T.MYINFO_RANK_FMT.format(rank=i)
@@ -1815,6 +2187,20 @@ class MoonfestActivity:
         return sum(1 for w in (self._data.get("wall") or [])
                    if str(w.get("qq", "")) == who)
 
+    def _myinfo_shop_line(self, ap) -> str:
+        """今日购卡带来的上限加成明细；没买卡返回空串（不显示这一行）。
+
+        只读路径：``_card_bonus`` 走 ``create=False``，看一眼不会把玩家档改脏。
+        """
+        items = []
+        for card in _SHOP_CARDS:
+            n = self._card_bonus(ap, card[3])
+            if n > 0:
+                items.append("{} +{}".format(card[2], n))
+        if not items:
+            return ""
+        return T.MYINFO_SHOP_LINE.format(items=" · ".join(items))
+
     def _myinfo_mid(self, ap, d, now) -> list[str]:
         """中秋段：签到 / 各玩法今日次数 / 玉兔亲密度 / 桂花酿 / 月饼匠心。"""
         out = [T.MYINFO_SEC_MID]
@@ -1822,11 +2208,12 @@ class MoonfestActivity:
         out.append((T.MYINFO_SIGN_DONE if sign.get("mid") == self._bj_date()
                     else T.MYINFO_SIGN_TODO).format(label="拜月"))
         rows = [
-            ("猜灯谜", "lantern", self._int_cfg("lantern_daily_limit", 20)),
-            ("灯谜·难题", "lantern_hard", self._int_cfg("lantern_hard_daily_limit", 5)),
-            ("喂玉兔", "feed", self._int_cfg("feed_daily_limit", 10)),
-            ("酿桂花", "brew", self._int_cfg("brew_daily_limit", 1)),
-            ("玉兔同行", "rabbit", self._int_cfg("rabbit_run_daily_limit", 1)),
+            ("猜灯谜", "lantern", self._limit_of(ap, "lantern", "lantern_daily_limit", 20)),
+            ("灯谜·难题", "lantern_hard",
+             self._limit_of(ap, "lantern_hard", "lantern_hard_daily_limit", 5)),
+            ("喂玉兔", "feed", self._limit_of(ap, "feed", "feed_daily_limit", 10)),
+            ("酿桂花", "brew", self._limit_of(ap, "brew", "brew_daily_limit", 1)),
+            ("玉兔同行", "rabbit", self._limit_of(ap, "rabbit", "rabbit_run_daily_limit", 1)),
         ]
         table = [T.MYINFO_DAILY_HEAD, T.MYINFO_DAILY_SEP]
         for label, key, limit in rows:
@@ -1876,7 +2263,7 @@ class MoonfestActivity:
         craft = self._craft_state(ap)
         stage = self._craft_stage(ap)
         star_max = max(1, self._int_cfg("craft_star_max", 5))
-        limit = self._int_cfg("craft_remake_daily_limit", 3)
+        limit = self._limit_of(ap, "craft_try", "craft_remake_daily_limit", 3)
         used = int(d.get("craft_try", 0) or 0)
         cd = self._craft_cooldown_secs(stage)
         last = int(craft.get("last_ts", 0) or 0)
@@ -1913,9 +2300,9 @@ class MoonfestActivity:
         out.append((T.MYINFO_SIGN_DONE if sign.get("nat") == self._bj_date()
                     else T.MYINFO_SIGN_TODO).format(label="华诞签到"))
         rows = [
-            ("贺词", "firework", self._int_cfg("firework_daily_limit", 3)),
-            ("点赞", "like", self._int_cfg("like_daily_limit", 5)),
-            ("巡礼", "quiz", self._int_cfg("quiz_daily_limit", 20)),
+            ("贺词", "firework", self._limit_of(ap, "firework", "firework_daily_limit", 3)),
+            ("点赞", "like", self._limit_of(ap, "like", "like_daily_limit", 5)),
+            ("巡礼", "quiz", self._limit_of(ap, "quiz", "quiz_daily_limit", 20)),
         ]
         table = [T.MYINFO_DAILY_HEAD, T.MYINFO_DAILY_SEP]
         for label, key, limit in rows:
@@ -1974,9 +2361,15 @@ class MoonfestActivity:
             T.MYINFO_HEADER.format(name=ap.get("name") or str(qq)),
             T.MYINFO_OVERVIEW.format(
                 score=int(ap.get("yuehua_earned", 0) or 0), rank=self._my_rank(ap),
+                balance=self._balance(ap),
+                spent=int(ap.get("yuehua_spent", 0) or 0),
                 days=int((ap.get("sign") or {}).get("count", 0) or 0),
                 posts=self._my_posts(qq)),
         ]
+        # 今日买卡加成（只读：没买卡时一行都不显示；_card_bonus 走 create=False，不改档）
+        shop_line = self._myinfo_shop_line(ap)
+        if shop_line:
+            blocks.append(shop_line)
         if phase in ("midautumn", "both"):
             blocks.extend(self._myinfo_mid(ap, d, now))
         if phase in ("national", "both"):
@@ -2001,12 +2394,12 @@ class MoonfestActivity:
         """整个活动结束后唯一一次结算：全服总榜前 20 名，纯月华写回 players 桶。"""
         if self._is_settled():
             return
-        players = [p for p in self._players().values() if int(p.get("yuehua_earned", 0)) > 0]
-        players.sort(key=lambda p: (-int(p.get("yuehua_earned", 0)), int(p.get("bound_at", 0))))
+        players = [p for p in self._players().values() if self._score(p) > 0]
+        players.sort(key=lambda p: (-self._score(p), int(p.get("bound_at", 0))))
         end_rewards = self.cfg.get("end_rewards") or []
         lines = [T.SETTLE_HEADER, T.SETTLE_TABLE_HEAD, T.SETTLE_TABLE_SEP]
         for i, p in enumerate(players[:20], 1):
-            score = int(p.get("yuehua_earned", 0))
+            score = self._score(p)
             reward = tier_yuehua_for_rank(i, end_rewards)
             if reward > 0:
                 self._add_yuehua(p, reward)
@@ -2057,6 +2450,12 @@ class MoonfestActivity:
         # 月华信息（三个名字等价）：只读，看自己全部状态，不受阶段门控
         if cmd in ("月华信息", "我的月华", "月华档案"):
             return self._cmd_my_info(event, qq, group_id)
+        # 月华商店：也放在阶段门控**之前** —— 卡片自己按所属阶段开关（重叠加开日
+        # 两段都在售），不能用单一阶段把整个商店门掉。
+        if cmd == "月华商店":
+            return self._cmd_shop(event, qq, group_id, rest)
+        if cmd == "买卡":
+            return self._cmd_buy_card(event, qq, group_id, rest)
 
         # 阶段门控
         need = _PHASE_GATES.get(cmd)
