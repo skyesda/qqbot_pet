@@ -120,14 +120,22 @@ QUIZ_COMBO = "🔥 连续答对 {n} 题，本回合额外奖励翻倍中（×{ra
 # 月华榜 / 里程碑 / 结算公告
 # ---------------------------------------------------------------------------
 RANK_HEADER = "🌙 月华榜（全服前 20）\n—— 月华为凭，共耀华诞 ——\n"
-RANK_ROW = "{medal} {rank}. {name}｜月华 {score}｜签到 {days} 天"
+# 榜单/结算一律用 markdown 表格（照中元榜）。两条硬约束：
+# ① 列必须窄 —— QQ 渲染对超宽表格会退化成纯文本并拆行，所以不放 32 位群号之类；
+# ② 表头前必须留空行 —— 紧贴标题的表格会被 QQ 官方 Markdown 当成普通区块吞成
+#    一团（v3.6.3 同款处理）；RANK_HEADER 末尾已带 \n，join 时正好生成这个空行。
+RANK_TABLE_HEAD = "| 排名 | 玩家 | 累计月华 | 签到 |"
+RANK_TABLE_SEP = "|:--:|:--:|--:|--:|"
+RANK_ROW = "| {medal} | {name} | {score} | {days} |"
 RANK_EMPTY = "🌙 月华榜还空着，快用你的月华点亮榜首吧！"
 
 MILESTONE_REACHED = "🏮 群里程碑达成！本群累计月华达到 {threshold}，全体参与者各获得【月华 ×{amount}】！"
 MILESTONE_QUERY = "🏮 本群累计月华 {total}，下一里程碑：{next}（每人 +{amount}）。"
 
 SETTLE_HEADER = "🎊 月耀华诞活动圆满结束！\n—— 全服月华总榜结算 ——\n"
-SETTLE_ROW = "{rank}. {name}｜月华 {score}｜奖励 +{reward}"
+SETTLE_TABLE_HEAD = "| 排名 | 玩家 | 累计月华 | 结算奖励 |"
+SETTLE_TABLE_SEP = "|:--:|:--:|--:|--:|"
+SETTLE_ROW = "| {rank} | {name} | {score} | +{reward} |"
 
 # ---------------------------------------------------------------------------
 # 活动状态 / 阶段

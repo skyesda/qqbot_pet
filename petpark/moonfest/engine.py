@@ -760,12 +760,13 @@ class MoonfestActivity:
         if not players:
             return T.RANK_EMPTY
         players.sort(key=lambda p: (-int(p.get("yuehua_earned", 0)), int(p.get("bound_at", 0))))
-        lines = [T.RANK_HEADER]
+        lines = [T.RANK_HEADER, T.RANK_TABLE_HEAD, T.RANK_TABLE_SEP]
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         for i, p in enumerate(players[:20], 1):
-            medal = medals.get(i, f"{i}.")
+            # 名字里的 ASCII 竖线必须换掉，否则会把表格列切歪（照中元榜）
+            name = str(p.get("name") or p.get("qq", "?")).replace("|", "丨")
             lines.append(T.RANK_ROW.format(
-                medal=medal, rank=i, name=p.get("name") or p.get("qq", "?"),
+                medal=medals.get(i, str(i)), name=name,
                 score=p.get("yuehua_earned", 0), days=int((p.get("sign") or {}).get("count", 0)),
             ))
         return "\n".join(lines)
@@ -800,15 +801,14 @@ class MoonfestActivity:
         players = [p for p in self._players().values() if int(p.get("yuehua_earned", 0)) > 0]
         players.sort(key=lambda p: (-int(p.get("yuehua_earned", 0)), int(p.get("bound_at", 0))))
         end_rewards = self.cfg.get("end_rewards") or []
-        lines = [T.SETTLE_HEADER]
+        lines = [T.SETTLE_HEADER, T.SETTLE_TABLE_HEAD, T.SETTLE_TABLE_SEP]
         for i, p in enumerate(players[:20], 1):
             score = int(p.get("yuehua_earned", 0))
             reward = tier_yuehua_for_rank(i, end_rewards)
             if reward > 0:
                 self._add_yuehua(p, reward)
-            lines.append(T.SETTLE_ROW.format(
-                rank=i, name=p.get("name") or p.get("qq", "?"), score=score, reward=reward,
-            ))
+            name = str(p.get("name") or p.get("qq", "?")).replace("|", "丨")
+            lines.append(T.SETTLE_ROW.format(rank=i, name=name, score=score, reward=reward))
         self._mark_settled()
         text = "\n".join(lines)
         self._push_all_groups(text)
