@@ -13,26 +13,56 @@ Jev 不是聊天模型：它不生成文本，只返回带校准概率的结构�
 """
 from __future__ import annotations
 
+import importlib.util
 import os
+import sys
 import urllib.request
+from pathlib import Path
 from typing import Any, Callable
 
-# Jev 客户端。导入失败（如路径不在 sys.path）时整模块降级为「不可用」，
-# 不影响活动纯本地运行。
-try:  # pragma: no cover - 导入路径依赖部署环境
-    from tools.jev_client import (
-        ask,
-        decide_choice,
-        decide_noul,
-        decide_score,
-        load_api_key,
-        q_choice,
-        q_noul,
-        q_score,
-    )
+# Jev 客户端 tools/jev_client.py 在**插件根**下，而插件被框架以包名
+# ``astrbot_plugin_petpark`` 加载时，sys.path 上是 ``plugins/``（插件根的**父**
+# 目录），插件根自己并不在 sys.path 上 —— 所以 ``from tools.jev_client import …``
+# 在线上必然 ModuleNotFoundError（本地手工探针因 cwd=插件根 才碰巧成功）。
+# 现改为按**文件路径**加载，与 sys.path 无关；仍以 ``tools/jev_client.py`` 为
+# 唯一真源（阈值校准脚本共用同一份，不复制副本）。
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+_CLIENT_PATH = _PLUGIN_ROOT / "tools" / "jev_client.py"
+
+_LOAD_ERR = ""
+
+
+def _load_client():
+    """按路径加载 tools/jev_client.py 并注册进 sys.modules。
+
+    注册是必需的：importlib 手工加载的模块不会自动入 sys.modules，而
+    ``urllib.request`` 之类的惰性导入会依赖它。
+    """
+    if not _CLIENT_PATH.is_file():
+        raise FileNotFoundError(f"未找到 {_CLIENT_PATH}")
+    spec = importlib.util.spec_from_file_location("_moonfest_jev_client", _CLIENT_PATH)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法为 {_CLIENT_PATH} 构建加载器")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+try:
+    _client = _load_client()
+    ask = _client.ask
+    decide_choice = _client.decide_choice
+    decide_noul = _client.decide_noul
+    decide_score = _client.decide_score
+    load_api_key = _client.load_api_key
+    q_choice = _client.q_choice
+    q_noul = _client.q_noul
+    q_score = _client.q_score
     _CLIENT_OK = True
-except Exception:  # noqa: BLE001 - 任何导入失败都降级
+except Exception as _e:  # noqa: BLE001 - 任何导入失败都降级为纯本地模式
     _CLIENT_OK = False
+    _LOAD_ERR = f"{type(_e).__name__}: {_e}"
 
     def ask(*args: Any, **kwargs: Any):  # type: ignore[misc]
         raise RuntimeError("jev_client 不可用")
@@ -49,6 +79,27 @@ except Exception:  # noqa: BLE001 - 任何导入失败都降级
     load_api_key = lambda: ""  # noqa: E731
 
     q_noul = q_choice = q_score = lambda **kwargs: {}  # type: ignore[assignment]
+
+# ---------------------------------------------------------------------------
+# API Key：后台配置 "jev.api_key" 的落点
+# ---------------------------------------------------------------------------
+# tools.jev_client.load_api_key() 的优先级是「环境变量 TYPESAFE_API_KEY →
+# 同目录 .jev_key」，所以后台填的 key 写进环境变量即可生效，无需改动那个工具
+# 的签名。``_OWN_ENV_KEY`` 用来区分「key 是本模块写进去的」还是「框架环境本来
+# 就有的」——只回收自己写的那份，绝不误删框架设的 TYPESAFE_API_KEY。
+_OWN_ENV_KEY = False
+
+
+def set_api_key(key: str | None) -> None:
+    """用后台配置的 Jev API Key 覆盖环境变量；留空则退回环境变量 / .jev_key。"""
+    global _OWN_ENV_KEY
+    k = (key or "").strip()
+    if k:
+        os.environ["TYPESAFE_API_KEY"] = k
+        _OWN_ENV_KEY = True
+    elif _OWN_ENV_KEY:
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        _OWN_ENV_KEY = False
 
 # 判定阈值（照 jev_client.py 的默认值；业务上灯谜 noul 用 NOUL_YES=0.7）
 NOUL_YES = 0.7
@@ -88,15 +139,22 @@ class _Jev:
     # 公开判定方法
     # ------------------------------------------------------------------
     def ping(self) -> dict | None:
-        """webadmin 测试用：问一个最简是非题，返回响应原文（含 key 是否可用）。"""
+        """webadmin 测试用：问一个最简是非题，返回响应原文（含 key 是否可用）。
+
+        失败时**必须带上真实原因**（导入报错原文 / 找 key 的位置），否则线上只
+        看到一句「不可用」，无从排查。
+        """
         if not _CLIENT_OK:
-            return {"ok": False, "msg": "jev_client 不可导入，Jev 不可用"}
+            return {"ok": False,
+                    "msg": f"jev_client 不可导入，Jev 不可用（{_CLIENT_PATH} → {_LOAD_ERR}）"}
         try:
             key = load_api_key()
         except SystemExit:
-            return {"ok": False, "msg": "缺少 TYPESAFE_API_KEY / .jev_key"}
+            return {"ok": False,
+                    "msg": "缺少 Jev API Key：请在后台本卡片「Jev API Key」填写，"
+                           f"或设环境变量 TYPESAFE_API_KEY / 建文件 {_CLIENT_PATH.with_name('.jev_key')}"}
         if not key:
-            return {"ok": False, "msg": "TYPESAFE_API_KEY 为空"}
+            return {"ok": False, "msg": "Jev API Key 为空"}
         ans = self._ask(
             {"text": "今天天气很好"},
             {"q": q_noul("这句话说的是好天气吗？")},

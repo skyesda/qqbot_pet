@@ -48,6 +48,7 @@ from .jev import (
     decide_noul,
     q_choice,
     q_noul,
+    set_api_key,
 )
 
 BJ = ZoneInfo("Asia/Shanghai")
@@ -100,9 +101,20 @@ class MoonfestActivity:
         if config:
             self.cfg = merge_config(self.cfg, config)
         self._loop_task_ref = None
-        # Jev 单例（.jev.JEV）；开关跟随配置
+        # Jev 单例（.jev.JEV）；开关与 API Key 均跟随配置
         self.jev = JEV
-        self.jev.enabled = bool((self.cfg.get("jev") or {}).get("enabled", True))
+        self._sync_jev()
+
+    def _sync_jev(self) -> None:
+        """把配置里的 Jev 开关与 API Key 同步到 Jev 单例。
+
+        ``jev.api_key`` 是后台卡片上那个 Key 输入框的唯一落点：此前只读了
+        ``enabled``、Key 从没被用过，后台填了也不生效（线上只能靠环境变量或
+        插件根 tools/.jev_key，而后者是 gitignore 的、服务器上根本没有）。
+        """
+        jev = self.cfg.get("jev") or {}
+        self.jev.enabled = bool(jev.get("enabled", True))
+        set_api_key(jev.get("api_key"))
 
     # ------------------------------------------------------------------
     # 持久化
@@ -214,9 +226,9 @@ class MoonfestActivity:
             self.cfg[key] = new
             self._data.setdefault("config", {})[key] = new
             ok.append(key)
-        # jev 开关变更后同步到 Jev 单例
+        # jev 开关 / API Key 变更后同步到 Jev 单例
         if "jev" in self.cfg:
-            self.jev.enabled = bool((self.cfg.get("jev") or {}).get("enabled", True))
+            self._sync_jev()
         return ok, bad
 
     # ------------------------------------------------------------------

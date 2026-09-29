@@ -683,6 +683,7 @@ const MF_FIELDS=[
  {k:'daily.open_hour',label:'每日开放小时(含)',t:'num'},
  {k:'daily.close_hour',label:'每日关闭小时(不含)',t:'num'},
  {k:'jev.enabled',label:'启用 Jev 判定',t:'bool'},
+ {k:'jev.api_key',label:'Jev API Key',t:'pwd'},
  {k:'sign_midautumn',label:'拜月签到月华',t:'num'},
  {k:'sign_national',label:'华诞签到月华',t:'num'},
  {k:'lantern_daily_limit',label:'猜灯谜每日题数',t:'num'},
@@ -721,6 +722,7 @@ function moonfestCardHtml(){
   let inp;
   if(f.t==='bool') inp=`<input id="${id}" type="checkbox" ${v?'checked':''}>`;
   else if(f.t==='ts') inp=`<input id="${id}" type="datetime-local" value="${eventTsToLocal(v||0)}">`;
+  else if(f.t==='pwd') inp=`<input id="${id}" type="password" autocomplete="off" placeholder="${v?'已设置（留空不修改）':'未设置'}" value="">`;
   else if(f.t==='num') inp=`<input id="${id}" type="number" step="${f.step||'1'}" value="${(v===undefined||v===null)?'':v}">`;
   else inp=`<input id="${id}" value="${esc(v==null?'':v)}">`;
   rows+=`<label class="fld">${f.label} ${inp}</label>`;
@@ -765,6 +767,7 @@ async function saveMoonfest(){
   let val;
   if(f.t==='bool') val=el.checked;
   else if(f.t==='ts') val=eventLocalToTs(el.value)||0;
+  else if(f.t==='pwd'){ val=el.value.trim(); if(val==='') continue; } // 留空 = 不修改
   else if(f.t==='num'){const raw=el.value;const old=mfGet(MF_CFG||{},f.k);val=(raw===''?(old===undefined?0:old):parseFloat(raw));}
   else val=el.value.trim();
   const parts=f.k.split('.');
