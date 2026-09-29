@@ -70,7 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sign_midautumn": 10,           # 中秋·拜月签到月华
     "sign_national": 15,            # 国庆·华诞签到月华
     # ---- 猜灯谜（中秋段，Jev noul 判定 + 字符串兜底）----
-    "lantern_daily_limit": 20,      # 猜灯谜每日题数上限
+    "lantern_daily_limit": 20,      # 猜灯谜（**普通档**）每日题数上限；难题档另算，见下
     "lantern_cooldown_min": 0,      # 答对后冷却（分钟，默认无）
     "lantern_timeout_sec": 60,      # 作答超时（秒，超时揭晓谜底并计次数）
     "gongde_lantern_min": 10,       # 猜灯谜答对月华随机下限
@@ -116,7 +116,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ---- 猜灯谜做深：连对倍率 + 难题档 ----
     "lantern_combo_rate": 0.1,           # 每连对 5 题 +10%
     "lantern_combo_cap": 3,              # 倍率上限（+30%）
-    "lantern_hard_daily_limit": 5,       # 「猜灯谜 难题」每日次数上限
+    "lantern_hard_daily_limit": 5,       # 「猜灯谜 难题」每日次数上限。**与普通档互不占用**：
+                                         # 两档各有一份计数，普通题猜满了照样能开难题（反之亦然）
     "lantern_hard_mult": 1.5,            # 难题基础月华倍率
     # ---- 巡礼做深：单题问答 → 多站路线闯关 ----
     "route_stations": 5,                 # 一条路线几站

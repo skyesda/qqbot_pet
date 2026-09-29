@@ -51,7 +51,10 @@ LANTERN_RIGHT = "🎉 答对啦！「{answer}」正是谜底，你获得【月�
 LANTERN_RIGHT_JEV = "🎉 答对啦！你的「{user}」正是谜底「{answer}」的另一种说法，获得【月华 ×{amount}】。"
 LANTERN_WRONG = "❌ 未中谜底，正确答案是「{answer}」。再接再厉！"
 LANTERN_TIMEOUT = "⏰ 作答超时，谜底是「{answer}」。灯谜揭晓，下次手要快些！"
-LANTERN_DAILY_LIMIT = "🏮 今日猜灯谜次数已用完（{limit} 题），明日再来挑战吧。"
+LANTERN_DAILY_LIMIT = "🏮 今日猜灯谜次数已用完（{limit} 题），明日再来挑战吧。{hint}"
+# 两档是**各占各的次数**（普通吃 lantern_daily_limit，难题吃 lantern_hard_daily_limit），
+# 所以一档用完时，另一档还有剩就顺手告诉玩家 —— 别让人以为整块灯谜都不能玩了。
+LANTERN_DAILY_LIMIT_HARD_HINT = "\n\n难题档是单独的次数，还可以继续猜「猜灯谜 难题」（今日还剩 {left} 题）。"
 LANTERN_COOLDOWN = "🏮 你刚猜中一盏灯谜，歇口气，{mins} 分钟后再来猜下一题吧。"
 
 # ---------------------------------------------------------------------------
@@ -174,7 +177,8 @@ LANTERN_HARD_ASK = (
     "回复「猜灯谜 你的答案」作答，{timeout} 秒内答对可得月华（×{mult}）哦～"
 )
 LANTERN_COMBO = "🔥 连续答对 {n} 题，灯谜月华加成中（×{rate}）！"
-LANTERN_HARD_LIMIT = "🏮 今日难题次数已用完（{limit} 题），普通灯谜还可以继续猜。"
+LANTERN_HARD_LIMIT = "🏮 今日难题次数已用完（{limit} 题）。{hint}"
+LANTERN_HARD_LIMIT_NORMAL_HINT = "\n\n普通灯谜还可以继续猜（今日还剩 {left} 题）。"
 
 # ---------------------------------------------------------------------------
 # 华诞巡礼做深：单题问答 → 多站路线闯关

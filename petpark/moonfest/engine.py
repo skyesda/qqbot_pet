@@ -990,7 +990,6 @@ class MoonfestActivity:
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         d = ap["daily"]
-        limit = self._limit_of(ap, "lantern", "lantern_daily_limit", 20)
         timeout = self._int_cfg("lantern_timeout_sec", 60)
         quiz = ap.get("quiz") or {}
         want = rest.strip()
@@ -998,15 +997,29 @@ class MoonfestActivity:
         if hard:
             want = ""
         if not want:
-            if int(d.get("lantern", 0)) >= limit:
-                return T.LANTERN_DAILY_LIMIT.format(limit=limit)
-            # 已有进行中的题（同一天）→ 复用，不重复出题
-            if quiz.get("kind") == "lantern" and quiz.get("date") == self._bj_date():
+            # 难题档与普通档**各占各的次数**：难题只吃 lantern_hard（上限
+            # lantern_hard_daily_limit + 难题灯谜卡），普通只吃 lantern（上限
+            # lantern_daily_limit + 灯谜卡）—— 普通题猜满了照样能开难题，反之亦然。
+            counter, cfg_key, cfg_default = (
+                ("lantern_hard", "lantern_hard_daily_limit", 5) if hard
+                else ("lantern", "lantern_daily_limit", 20))
+            limit = self._limit_of(ap, counter, cfg_key, cfg_default)
+            if int(d.get(counter, 0) or 0) >= limit:
+                if hard:
+                    tpl, hint_tpl = T.LANTERN_HARD_LIMIT, T.LANTERN_HARD_LIMIT_NORMAL_HINT
+                    okey, ocfg, odef = "lantern", "lantern_daily_limit", 20
+                else:
+                    tpl, hint_tpl = T.LANTERN_DAILY_LIMIT, T.LANTERN_DAILY_LIMIT_HARD_HINT
+                    okey, ocfg, odef = "lantern_hard", "lantern_hard_daily_limit", 5
+                # 另一档还有剩就顺手报出来：两档各占各的次数，别让人以为整块都不能玩了
+                left = self._limit_of(ap, okey, ocfg, odef) - int(d.get(okey, 0) or 0)
+                hint = hint_tpl.format(left=left) if left > 0 else ""
+                return tpl.format(limit=limit, hint=hint)
+            # 已有进行中的题（同一天）→ 复用，不重复出题；但档位不同就别复用，
+            # 否则刚开一道普通题再发「猜灯谜 难题」会看到同一道普通题。
+            if (quiz.get("kind") == "lantern" and quiz.get("date") == self._bj_date()
+                    and bool(quiz.get("hard")) == hard):
                 return self._lantern_ask_text(quiz, timeout)
-            if hard:
-                hlimit = self._limit_of(ap, "lantern_hard", "lantern_hard_daily_limit", 5)
-                if int(d.get("lantern_hard", 0) or 0) >= hlimit:
-                    return T.LANTERN_HARD_LIMIT.format(limit=hlimit)
             # 答对后的冷却（lantern_cooldown_min，默认 0=无冷却）
             cooldown = self._int_cfg("lantern_cooldown_min", 0) * 60
             last = int(ap.get("last_lantern_ts", 0) or 0)
@@ -1021,9 +1034,7 @@ class MoonfestActivity:
                 "answer_type": p.get("answer_type"), "hint": p.get("hint", ""),
                 "date": self._bj_date(), "ts": now, "hard": hard, "mult": mult,
             }
-            d["lantern"] = int(d.get("lantern", 0)) + 1
-            if hard:
-                d["lantern_hard"] = int(d.get("lantern_hard", 0) or 0) + 1
+            d[counter] = int(d.get(counter, 0) or 0) + 1
             return self._lantern_ask_text(ap["quiz"], timeout)
         # 作答
         if quiz.get("kind") != "lantern" or quiz.get("date") != self._bj_date():

@@ -530,6 +530,54 @@ class LanternDeepeningTests(_EngineCase):
         self.ap()["quiz"] = {}
         self.assertNotIn("难题次数已用完", self.say("猜灯谜"))
 
+    def test_the_two_tiers_do_not_share_the_daily_counter(self):
+        """两档各占各的次数：普通题猜满 20 题之后，「猜灯谜 难题」照样能开
+        （旧实现里难题档先被普通档的上限拦下，玩家会看到「今日猜灯谜次数已用完」）。"""
+        llimit = self.act._int_cfg("lantern_daily_limit", 20)
+        hlimit = self.act._int_cfg("lantern_hard_daily_limit", 5)
+        ap = self.ap()
+        self.act._daily_reset(ap)       # 先把当日档坐实，免得 dispatch 里跨天重置把手改的计数清零
+        ap["daily"]["lantern"] = llimit
+        refused = self.say("猜灯谜")
+        self.assertIn("次数已用完", refused)
+        self.assertIn("难题档是单独的次数", refused)      # 顺手报出另一档还能玩
+        out = self.say("猜灯谜 难题")
+        self.assertNotIn("次数已用完", out)
+        self.assertTrue(self.ap()["quiz"]["hard"], "要难题却开了普通题")
+        self.assertEqual(int(self.ap()["daily"]["lantern_hard"]), 1)
+        self.assertEqual(int(self.ap()["daily"]["lantern"]), llimit,
+                         "难题档不该再吃普通档的计数")
+        # 反向：难题用满不影响普通档，且会报出普通档还剩多少
+        self.ap()["daily"]["lantern_hard"] = hlimit
+        self.ap()["daily"]["lantern"] = 0
+        self.ap()["quiz"] = {}
+        refused = self.say("猜灯谜 难题")
+        self.assertIn("难题次数已用完", refused)
+        self.assertIn("普通灯谜还可以继续猜", refused)
+        out = self.say("猜灯谜")
+        self.assertNotIn("次数已用完", out)
+        self.assertFalse(self.ap()["quiz"]["hard"])
+        self.assertEqual(int(self.ap()["daily"]["lantern"]), 1)
+        self.assertEqual(int(self.ap()["daily"]["lantern_hard"]), hlimit,
+                         "普通档不该再吃难题档的计数")
+
+    def test_switching_tiers_replaces_a_pending_question(self):
+        """「已有进行中的题就复用」只对**同档位**成立：刚开一道普通题再发
+        「猜灯谜 难题」，不该把同一道普通题再念一遍。"""
+        self.say("猜灯谜")
+        self.assertFalse(self.ap()["quiz"]["hard"])
+        out = self.say("猜灯谜 难题")
+        self.assertTrue(self.ap()["quiz"]["hard"])
+        self.assertIn("难题灯谜", out)
+        self.assertEqual(int(self.ap()["daily"]["lantern_hard"]), 1)
+        # 已开出的普通题那份次数不退回（与「超时揭晓」同口径：出题即计次）
+        self.assertEqual(int(self.ap()["daily"]["lantern"]), 1)
+        # 同档位依旧复用：不重新出题、不重复吃次数
+        q = self.ap()["quiz"]["q"]
+        self.say("猜灯谜 难题")
+        self.assertEqual(self.ap()["quiz"]["q"], q)
+        self.assertEqual(int(self.ap()["daily"]["lantern_hard"]), 1)
+
     def test_hard_tier_pays_more_and_says_so(self):
         self.act._rand_int = lambda *a, **k: 10
         self.say("猜灯谜 难题")
