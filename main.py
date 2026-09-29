@@ -3969,11 +3969,17 @@ class PetParkPlugin(Star):
         return self.store.get_bound_qq(pid) or str(pid)
 
     async def _send_group_text(self, group_id: str, text: str) -> None:
-        """主动向群推送纯文本（Markdown 优先，失败回退纯文本）。"""
+        """主动向群推送纯文本（Markdown 优先，失败回退纯文本）。
+
+        两条失败路径都必须留下原因：取不到 bot 客户端时静默 return，和两次发送
+        都失败时只打一句「主动推送失败」，都曾让上游（活动模块的推送）看起来
+        「点了按钮没反应」却查不出所以然。
+        """
         if not group_id or not text:
             return
         bot = self._get_bot()
         if bot is None:
+            logger.warning(f"[petpark] 群 {group_id} 主动推送失败：未取到 bot 客户端")
             return
         try:
             await bot.send_group(str(group_id), text, markdown=True)
@@ -3981,7 +3987,8 @@ class PetParkPlugin(Star):
             try:
                 await bot.send_group(str(group_id), text, markdown=False)
             except Exception:
-                logger.warning(f"[petpark] 群 {group_id} 主动推送失败")
+                logger.warning(f"[petpark] 群 {group_id} 主动推送失败（Markdown 与纯文本均失败）",
+                               exc_info=True)
 
     async def _cmd_mute(self, event, qq: str, group_id: str, text: str) -> str | None:
         """「禁言 @成员 [时长]」「解除禁言 @成员」「全体禁言」。

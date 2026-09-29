@@ -1368,11 +1368,13 @@ class WebAdmin:
             "> 此为测试通报，可忽略。"
         )
         try:
-            await zy._push_all_groups(text)
+            n = await zy._push_all_groups(text)
         except Exception as e:
             logger.exception("[petpark] 中元全群通报测试异常")
             return self._json({"ok": False, "msg": f"异常: {e}"})
-        return self._json({"ok": True, "msg": "已向所有已注册群发起中元全群通报"})
+        if not n:
+            return self._json({"ok": False, "msg": "没有可推送的群：store 与模块 groups 桶均为空。"})
+        return self._json({"ok": True, "msg": f"已向 {n} 个群发起中元全群通报（发送结果见框架日志）"})
 
     async def _api_zhongyuan_test_start(self, request):
         """中元活动：测试「活动开始」全群通报（仅推送，不更改活动状态）。"""
@@ -1533,11 +1535,13 @@ class WebAdmin:
             "> 此为测试通报，可忽略。"
         )
         try:
-            mf._push_all_groups(text)
+            n = mf._push_all_groups(text)
         except Exception as e:
             logger.exception("[petpark] 月耀华诞全群通报测试异常")
             return self._json({"ok": False, "msg": f"异常: {e}"})
-        return self._json({"ok": True, "msg": "已向所有已注册群发起月耀华诞全群通报"})
+        if not n:
+            return self._json({"ok": False, "msg": "没有可推送的群：store 与模块 groups 桶均为空。"})
+        return self._json({"ok": True, "msg": f"已向 {n} 个群发起月耀华诞全群通报（发送结果见框架日志）"})
 
     async def _api_moonfest_test_start(self, request):
         """月耀华诞：测试「活动开始」全群通报（仅推送，不更改活动状态）。"""

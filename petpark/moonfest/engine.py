@@ -894,19 +894,38 @@ class MoonfestActivity:
             pass
 
     async def _push_group(self, group_id, text: str) -> None:
-        try:
-            await self.bot._send_to_group(str(group_id), text)
-        except Exception:
-            logger.warning("[moonfest] 推送群 %s 失败", group_id)
+        """向单个群主动推送（走插件主类的 ``_send_group_text``）。
 
-    def _push_all_groups(self, text: str) -> None:
+        此前这里调的是 ``self.bot._send_to_group(...)`` —— 该方法在整个仓库里
+        **根本不存在**，每次推送都抛 AttributeError 并被下面的 except 吞掉，只留
+        一行「推送群 X 失败」（连异常原文都没打）。于是全群通报、里程碑公告、结算
+        公告全部静默失效，后台点「全群通报测试」毫无反应。
+        """
+        try:
+            await self.bot._send_group_text(str(group_id), text)
+        except Exception:  # noqa: BLE001 - 单群失败不影响其余群，但必须留原文
+            logger.warning("[moonfest] 推送群 %s 失败", group_id, exc_info=True)
+
+    def _push_all_groups(self, text: str) -> int:
+        """向所有已注册群广播，返回目标群数（里程碑 / 结算 / 后台测试按钮）。
+
+        群 ID 取宿主 store 的 groups 桶——其键就是 group_openid，与
+        ``bot.send_group`` 的入参、以及本模块 players 里记的 group 是同一空间。
+        """
         gids = []
         try:
             gids = list(self.bot.store._data.get("groups", {}).keys())
-        except Exception:
+        except Exception:  # noqa: BLE001 - store 不可用则退回模块自己的群桶
+            gids = []
+        if not gids:
             gids = list(self._groups().keys())
+        if not gids:
+            logger.warning("[moonfest] 全群通报：没有可推送的群（store 与模块 groups 均为空）")
+            return 0
+        logger.info("[moonfest] 全群通报：目标 %d 个群", len(gids))
         for gid in gids:
             self._spawn(self._push_group(gid, text))
+        return len(gids)
 
     def start(self) -> None:
         if self._loop_task_ref is None or self._loop_task_ref.done():

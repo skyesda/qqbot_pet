@@ -1554,19 +1554,33 @@ class ZhongyuanActivity:
     # 推送
     # ------------------------------------------------------------------
     async def _push_group(self, group_id: str, text: str) -> None:
-        try:
-            await self.bot._send_to_group(str(group_id), text)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[zhongyuan] 推送群 %s 失败：%s", group_id, e)
+        """向单个群主动推送（走插件主类的 ``_send_group_text``）。
 
-    async def _push_all_groups(self, text: str) -> None:
-        """向所有已注册群广播（全群通报）；单群失败不影响其余群。"""
+        此前这里调的 ``self.bot._send_to_group(...)`` 在仓库里并不存在（方法名
+        早就改成了 ``_send_group_text``），每次推送抛 AttributeError 被 except
+        吞掉 —— 中元里程碑、河灯回音、全群通报**从来没推送成功过**。
+        """
+        try:
+            await self.bot._send_group_text(str(group_id), text)
+        except Exception:  # noqa: BLE001 - 单群失败不影响其余群，但必须留原文
+            logger.warning("[zhongyuan] 推送群 %s 失败", group_id, exc_info=True)
+
+    async def _push_all_groups(self, text: str) -> int:
+        """向所有已注册群广播（全群通报）；单群失败不影响其余群。返回目标群数。"""
+        gids = []
         try:
             gids = list(self.bot.store._data.get("groups", {}).keys())
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - store 不可用则退回模块自己的群桶
+            gids = []
+        if not gids:
             gids = list(self._groups().keys())
+        if not gids:
+            logger.warning("[zhongyuan] 全群通报：没有可推送的群（store 与模块 groups 均为空）")
+            return 0
+        logger.info("[zhongyuan] 全群通报：目标 %d 个群", len(gids))
         for gid in gids:
             await self._push_group(gid, text)
+        return len(gids)
 
     # ------------------------------------------------------------------
     # 生命周期
