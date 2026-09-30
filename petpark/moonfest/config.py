@@ -59,6 +59,7 @@ DEFAULT_MILESTONES: list[dict[str, Any]] = [
 DEFAULT_CONFIG: dict[str, Any] = {
     # ---- 总控 ----
     "enabled": True,                # 活动总开关
+    "national_pool_enabled": True,  # 2026-10-01 十万月华答题 + 18~21点祝福分配
     # ---- 双阶段时间（每阶段独立 enabled/start_at/end_at；10-01 两阶段重叠日同时开放）----
     "phase_midautumn": {"enabled": True, "start_at": _ts(2026, 9, 27), "end_at": _ts(2026, 10, 1, 23, 59)},  # 中秋·月耀
     "phase_national": {"enabled": True, "start_at": _ts(2026, 10, 1), "end_at": _ts(2026, 10, 7, 23, 59)},   # 国庆·华诞

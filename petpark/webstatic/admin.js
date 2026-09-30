@@ -685,6 +685,7 @@ const MF_FIELDS=[
  {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'daily.close_hour',label:'每日关闭小时(不含)',t:'num'},
  {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'jev.enabled',label:'启用 Jev 判定',t:'bool'},
  {sec:'总控 / 双阶段时间 / 每日时段 / Jev',k:'jev.api_key',label:'Jev API Key',t:'pwd'},
+ {sec:'国庆十万月华奖池',k:'national_pool_enabled',label:'启用10月1日奖池（8~18点答题，18~21点祝福）',t:'bool'},
  // ---- 中秋·月耀 ----
  {sec:'中秋·月耀',k:'sign_midautumn',label:'拜月签到月华',t:'num'},
  {sec:'中秋·月耀',k:'lantern_daily_limit',label:'猜灯谜每日题数',t:'num'},

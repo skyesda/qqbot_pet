@@ -2068,7 +2068,9 @@ class PetParkPlugin(Star):
             elif re.match(r"^(踢出|移除成员|踢人)(\s|<@|$)", text):
                 reply = await self._cmd_kick(event, qq, group_id, text)
             else:
-                reply = await image_reply(self.dispatch, event, qq, group_id, text)
+                reply = await self._national_blessing_message(event, qq, group_id, text)
+                if reply is None:
+                    reply = await image_reply(self.dispatch, event, qq, group_id, text)
         except Exception as e:  # 保证插件不因单条消息崩溃
             logger.exception("[petpark] 处理指令出错")
             reply = f"灵契仙途处理出错：{e}"
@@ -2188,6 +2190,28 @@ class PetParkPlugin(Star):
     # =====================================================================
     # 网页端宠物对话入口（由玩家中心调用）
     # =====================================================================
+    async def _national_blessing_message(self, event, qq, group_id, text):
+        """Collect free-form blessings only during the National Day window and normal game gates."""
+        activity = getattr(self, 'moonfest', None)
+        pool = getattr(activity, 'national_pool', None)
+        if pool is None or not pool.blessing_time() or not self._is_group(group_id):
+            return None
+        tokens = text.strip().split(maxsplit=1)
+        if not tokens:
+            return None
+        explicit = tokens[0] == '祝福时刻' and len(tokens) > 1
+        if tokens[0] in KNOWN_COMMANDS and not explicit and tokens[0] != '国庆快乐':
+            return None
+        if not self._is_group_authorized(group_id) or not self.store.get_group(group_id).get('enabled', True):
+            return None
+        if self._is_banned(group_id, qq) and not self._is_admin_id(qq):
+            return None
+        if not self._is_admin(event):
+            if self._agreement_block(qq, '国庆快乐') or self._qq_bind_block(qq, '国庆快乐'):
+                return None
+        content = tokens[1] if explicit else text
+        return await pool.blessing_message(event, qq, group_id, content, explicit=explicit)
+
     WEB_BLOCKED_TIP = "🚫 该指令仅支持在 QQ 群内使用哦，请回群里发送。"
 
     async def web_dispatch(self, qq: str, group_id: str, text: str):
@@ -2204,7 +2228,9 @@ class PetParkPlugin(Star):
             return self.WEB_BLOCKED_TIP
         event = _WebEvent(qq)
         try:
-            reply = await image_reply(self.dispatch, event, qq, group_id, text)
+            reply = await self._national_blessing_message(event, qq, group_id, text)
+            if reply is None:
+                reply = await image_reply(self.dispatch, event, qq, group_id, text)
         except Exception as e:
             logger.exception("[petpark] 网页端指令执行出错")
             return f"灵契仙途处理出错：{e}"

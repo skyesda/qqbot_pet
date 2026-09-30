@@ -38,6 +38,7 @@ from . import moonphase as MP
 from . import puzzles
 from . import templates as T
 from .presentation import markdown_reply
+from .national_pool import NationalPool
 from .config import (
     ACTIVITY_KEY,
     ACTIVITY_NAME,
@@ -60,6 +61,7 @@ from .jev import (
 BJ = ZoneInfo("Asia/Shanghai")
 
 COMMANDS = {
+    "国庆快乐", "国庆奖池", "祝福时刻",
     "拜月", "华诞签到", "猜灯谜", "喂玉兔", "做月饼",
     "贺词", "点赞", "巡礼", "月华榜", "里程碑", "月华墙", "活动帮助",
     # 月饼重制挑战链（首次合成解锁后再次合成走挑战）
@@ -216,6 +218,7 @@ class MoonfestActivity:
         # Jev 单例（.jev.JEV）；开关与 API Key 均跟随配置
         self.jev = JEV
         self._sync_jev()
+        self.national_pool = NationalPool(self)
 
     def _sync_jev(self) -> None:
         """把配置里的 Jev 开关与 API Key 同步到 Jev 单例。
@@ -2366,6 +2369,13 @@ class MoonfestActivity:
                 label="双庆挑战",
                 value="今日已完成" if ap.get("double", {}).get("date") == self._bj_date()
                 else "今日可挑战（发「双庆」）"))
+        pool = self._data.get('national_pool')
+        if pool:
+            qq = str(ap.get('qq', ''))
+            out.append(T.MYINFO_LINE.format(label='国庆奖池', value=(
+                f'答题所得 {int((ap.get("national_round") or {}).get("earned", 0))} 月华'
+                f' · 有效祝福 {pool["counts"].get(qq, 0)} 条'
+                f' · 祝福开奖 {pool["allocations"].get(qq, 0)} 月华（发「国庆奖池」看详情）')))
         return out
 
     def _cmd_my_info(self, event, qq, group_id) -> str:
@@ -2458,6 +2468,10 @@ class MoonfestActivity:
         if cmd == "活动帮助" and bool(self.cfg.get("enabled", True)):
             return self._help_text()
 
+        if cmd in {'国庆快乐', '国庆奖池', '祝福时刻'}:
+            return self.national_pool.dispatch(event, qq, group_id, rest,
+                                               status_only=cmd != '国庆快乐')
+
         if not self._enabled():
             return T.NOT_OPEN
 
@@ -2527,9 +2541,11 @@ class MoonfestActivity:
                 break
             except Exception:
                 logger.exception("[moonfest] 后台循环异常")
-            await asyncio.sleep(30)
+            await asyncio.sleep(self.national_pool.tick_delay())
 
     async def _tick(self) -> None:
+        for notice in self.national_pool.tick():
+            self._push_all_groups(notice)
         # 活动彻底结束且未结算 → 自动结算；随后落盘
         if self._activity_over() and not self._is_settled():
             self._settle()
