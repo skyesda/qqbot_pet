@@ -71,6 +71,8 @@ class WebAdmin:
 
         app = web.Application(client_max_size=200 * 1024 * 1024)
         app.router.add_get("/admin", self._index)
+        app.router.add_get("/admin/player", self._player_page)
+        app.router.add_post("/api/admin/player", self._api_player_profile)
         app.router.add_get("/login", self._login_page)
         app.router.add_post("/login", self._login_submit)
         app.router.add_get("/logout", self._logout)
@@ -145,6 +147,7 @@ class WebAdmin:
             command_gateway=self._command_gateway,
         )
         portal.setup(app)
+        self._portal = portal
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -284,6 +287,39 @@ class WebAdmin:
         self._require(request)
         return web.Response(text=DASHBOARD_HTML, content_type="text/html")
 
+    async def _player_page(self, request):
+        from aiohttp import web
+        self._require(request)
+        return web.Response(text=DASHBOARD_HTML, content_type="text/html")
+
+    async def _api_player_profile(self, request):
+        """管理员档案复用玩家中心展示数据；所有计算在副本上进行。"""
+        self._require(request)
+        body = await request.json()
+        key = str(body.get("key", ""))
+        records = self.store._data.get("players", {})
+        if key not in records:
+            return self._json({"ok": False, "msg": "该修士档案不存在"})
+        player = copy.deepcopy(records[key])
+        group, _, qq = key.partition("\x1f")
+        group, qq = player.get("group", group), player.get("qq", qq)
+        role = self._portal._slot_role_summary(player, group, qq)
+        pets = player.get("pets") or ([player["pet"]] if player.get("pet") else [])
+        formatted = dict(player, pets=pets)
+        companions = [self._portal._format_pet(formatted, group, qq, i) for i in range(len(pets))]
+        from .adventure import content as advc
+        roles = []
+        for rk, rv in records.items():
+            rq = rv.get("qq") or rk.partition("\x1f")[2]
+            if str(rq) == str(qq):
+                adv = rv.get("adventure") or {}
+                roles.append({"key": rk, "name": adv.get("name") or "未创建修士",
+                              "group": rv.get("group") or rk.partition("\x1f")[0],
+                              "level": adv.get("level", 1), "pet_count": len(rv.get("pets") or [])})
+        return self._json({"ok": True, "value": records[key], "role": role,
+                           "pets": companions, "roles": roles,
+                           "realms": advc.REALMS, "professions": list(advc.PROFESSIONS)})
+
     # --------------------------- API ---------------------------
     @staticmethod
     def _table(name: str) -> str:
@@ -381,6 +417,7 @@ class WebAdmin:
                         merged_list.append(WebAdmin._merge_edits(bi, vi, e_list[i]))
                     else:
                         merged_list.append(vi)
+                merged_list.extend(copy.deepcopy(e_list[len(v):]))
                 result[k] = merged_list
             else:
                 result[k] = v  # 显式修改 → 管理员意图优先
@@ -397,6 +434,17 @@ class WebAdmin:
         if not isinstance(value, dict):
             return self._json({"ok": False, "msg": "记录内容必须是 JSON 对象"})
         existing = self.store._data.get(table, {}).get(key)
+        if body.get("require_exists") and existing is None:
+            return self._json({"ok": False, "msg": "该档案已被删除，请返回列表"})
+        if body.get("create_only") and existing is not None:
+            return self._json({"ok": False, "msg": "该玩家已存在，请打开已有档案"})
+        base = body.get("base")
+        if table == "players" and body.get("profile_edit") and isinstance(base, dict) and existing is not None:
+            old_pets, new_pets, live_pets = base.get("pets", []), value.get("pets", []), existing.get("pets", [])
+            if new_pets != old_pets and old_pets != live_pets:
+                identity = lambda p: (p.get("created_at"), p.get("species"))
+                if len(live_pets) < len(old_pets) or any(identity(a) != identity(b) for a, b in zip(old_pets, live_pets)):
+                    return self._json({"ok": False, "msg": "灵宠列表已变化，请重新加载后编辑"})
         # 3 路合并：编辑已有记录时，把管理员改动合并到最新实时数据上，
         # 既保证后台修改能保存，又避免旧快照整条覆盖玩家最新进度（回溯）。
         if existing is not None:
@@ -1725,7 +1773,7 @@ LOGIN_HTML = r"""<!doctype html>
 DASHBOARD_HTML = r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>灵契仙途 · 管理后台</title>
-<link rel="stylesheet" href="/webstatic/admin.css?v=20260924"></head><body class="admin-page">
+<link rel="stylesheet" href="/webstatic/admin.css?v=20261001-profile"><link rel="stylesheet" href="/webstatic/admin-player.css?v=20261001-profile"></head><body class="admin-page">
 <a class="skip-link" href="#workspace">跳到管理内容</a>
 <aside class="sidebar" id="sidebar">
  <a class="admin-brand" href="/"><span class="seal" aria-hidden="true">契</span><span>灵契仙途<small>运营管理</small></span></a>
@@ -1802,4 +1850,4 @@ DASHBOARD_HTML = r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-
 <button class="act ghost" onclick="closeFbModal()">关闭</button>
 </div>
 </div></div>
-<script src="/webstatic/admin.js?v=20260924" defer></script></body></html>"""
+<script src="/webstatic/admin.js?v=20261001-profile" defer></script><script src="/webstatic/admin-player.js?v=20261001-profile" defer></script></body></html>"""

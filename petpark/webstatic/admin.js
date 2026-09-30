@@ -25,7 +25,7 @@ function reportError(error){
  if(error?.name==='AbortError')return;
  const banner=g('request-error');if(!banner)return;
  banner.hidden=false;banner.textContent=error?.message||'加载失败，请检查连接后重试。';
- const retry=document.createElement('button');retry.className='act ghost';retry.textContent='重新加载';retry.onclick=()=>load().catch(reportError);banner.append(' ',retry);
+ const retry=document.createElement('button');retry.className='act ghost';retry.textContent='重新加载';retry.onclick=()=>location.pathname==='/admin/player'?profileReload().catch(reportError):load().catch(reportError);banner.append(' ',retry);
  g('load-state').textContent='加载失败';g('tablewrap').removeAttribute('aria-busy');
 }
 window.addEventListener('unhandledrejection',event=>{event.preventDefault();reportError(event.reason);});
@@ -1500,15 +1500,15 @@ function petEditInfo(v){
 function renderPlayers(){
  let rows='';
  for(const k of Object.keys(cache)){const v=cache[k];if(!match(k,v))continue;
-  const pi=petEditInfo(v);
-  const pet=(pi.idx>=0&&pi.pets[pi.idx])?`${esc(pi.pets[pi.idx].name||pi.pets[pi.idx].species||'宠物')}`:'—';
-  const lv=(pi.idx>=0&&pi.pets[pi.idx])?('Lv'+(pi.pets[pi.idx].level||1)):'—';
+  const adv=v.adventure||{};
+  const pet=esc(adv.name||'未创建修士')+`<small class="muted" style="display:block;margin-top:5px">${esc(adv.profession||'')} · 灵宠 ${(v.pets||[]).length} 只</small>`;
+  const lv=adv.name?('Lv'+esc(adv.level||1)):'—';
   rows+=`<tr>
    <td>${esc(v.group||'')}</td><td class="num">${esc(v.qq||'')}</td>
    <td>${pet}</td><td class="num">${lv}</td>
    <td class="num coin">${v.coin||0}</td><td class="num jifen">${v.jifen||0}</td><td class="num diamond">${v.diamond||0}</td>
    <td style="white-space:nowrap"><button class="act" onclick='editRow(${tj(k)})'>编辑</button> <button class="act del" onclick='delRow(${tj(k)})'>删除</button></td></tr>`;}
- shell('<th>群号</th><th>QQ号</th><th>宠物</th><th>等级</th><th>灵石</th><th>玄晶</th><th>天晶</th><th>操作</th>',rows);
+ shell('<th>群号</th><th>QQ号</th><th>修士 / 灵宠</th><th>修士等级</th><th>灵石</th><th>玄晶</th><th>天晶</th><th>操作</th>',rows);
 }
 function renderGroups(){
  let rows='';
@@ -1910,6 +1910,7 @@ function applyFields(v){
 }
 function g(id){return document.getElementById(id);}
 async function editRow(k){
+ if(cur==='players'){location.href='/admin/player?key='+encodeURIComponent(k);return;}
  // 编辑前先拉取最新数据，并记录原始快照供保存时做乐观锁校验
  const table=cur;
  const [r]=await Promise.all([api('/api/list',{table,key:k}),ensureMeta()]);
@@ -1918,7 +1919,7 @@ async function editRow(k){
  editSnapshot=JSON.parse(JSON.stringify(r.data[k]));
  openModal(k,JSON.parse(JSON.stringify(r.data[k])));
 }
-async function addRow(){const table=cur;await ensureMeta();if(cur!==table)return;editSnapshot=null;openModal('',{});}
+async function addRow(){if(cur==='players'){location.href='/admin/player?new=1';return;}const table=cur;await ensureMeta();if(cur!==table)return;editSnapshot=null;openModal('',{});}
 function keyLabel(){return cur==='players'?'玩家键（群号\x1fQQ号）':cur==='groups'?'群号':cur==='events'?'活动ID':'卡密码';}
 function openModal(k,v){
  editKey=k;
@@ -2528,5 +2529,8 @@ function eventCollectBossRewards(){
  return out;
 }
 
-updateHeading(cur);
-load().catch(reportError);
+if(location.pathname!=='/admin/player'){
+ updateHeading(cur);
+ const initialTab=new URLSearchParams(location.search).get('tab');
+ if(initialTab&&SECTION_INFO[initialTab])tab(initialTab);else load().catch(reportError);
+}
