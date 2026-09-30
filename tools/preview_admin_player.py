@@ -38,6 +38,11 @@ with tempfile.TemporaryDirectory() as temp:
     other['group'] = '88888'
     other['adventure'].update(name='长风', gender='男', level=40, realm=3)
     store._data['players'][store.make_key('88888', '100001')] = other
+    for i in range(12):
+        extra = copy.deepcopy(other)
+        extra['group'] = f'{i:032X}'
+        extra['adventure']['name'] = '测试长道号修士' * 4 if i == 0 else f'修士{i+1}'
+        store._data['players'][store.make_key(extra['group'], '100001')] = extra
     admin = WebAdmin(store, '127.0.0.1', 0, 'preview', 'preview')
     admin._tokens.add('preview-session')
     asyncio.run_coroutine_threadsafe(admin.start(), loop).result(30)
@@ -56,8 +61,15 @@ with tempfile.TemporaryDirectory() as temp:
             assert page.locator('.profile-gear').count() == 6
             assert page.locator('.profile-pet').count() == 3
             assert page.locator('#modal').is_hidden()
+            assert page.locator('.profile-roles').evaluate('(el)=>el.scrollWidth<=el.clientWidth')
+            assert page.locator('.profile-roles').evaluate('(el)=>el.getBoundingClientRect().height<=innerHeight-100')
+            assert page.locator('.profile-roles').evaluate('(el)=>el.scrollHeight>el.clientHeight')
+            assert page.locator('.profile-role small').evaluate_all('(els)=>els.every(el=>el.scrollWidth<=el.clientWidth)')
             page.screenshot(path=str(OUT/'desktop.png'), full_page=True)
             page.screenshot(path=str(OUT/'desktop-top.png'))
+            page.evaluate('window.scrollTo(0,350)')
+            assert page.locator('.profile-roles').evaluate('(el)=>Math.abs(el.getBoundingClientRect().top-84)<2')
+            page.evaluate('window.scrollTo(0,0)')
             page.locator('#fp_nickname').fill('临时修改')
             page.locator('#fp_nickname').fill('青岚')
             assert page.evaluate('profileDraft.pets[0].nickname') == '青岚'
@@ -90,6 +102,7 @@ with tempfile.TemporaryDirectory() as temp:
             page.screenshot(path=str(OUT/'mobile.png'), full_page=True)
             page.screenshot(path=str(OUT/'mobile-top.png'))
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            assert page.locator('.profile-roles').evaluate('(el)=>el.scrollWidth<=el.clientWidth && el.clientHeight<=320')
             assert not errors, errors
             print('PROFILE_BROWSER_CHECKS_OK: selection, saves, live merge, 95 bag entries, mobile overflow, JS errors')
             print(OUT)
