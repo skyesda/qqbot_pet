@@ -39,10 +39,11 @@ HUADAN_REPEAT = "🎆 你今日已为华诞签到过啦，明日再来共祝吧�
 # 猜灯谜
 # ---------------------------------------------------------------------------
 LANTERN_ASK = (
-    "🏮 灯谜来啦！\n\n"
-    "{question}\n\n"
-    "💡 提示：{hint}\n\n"
-    "回复「猜灯谜 你的答案」作答，{timeout} 秒内答对可得月华哦～"
+    "### 普通灯谜\n\n"
+    "> {question}\n\n"
+    "**提示**：{hint}\n\n"
+    "**作答时限：{timeout} 秒**\n\n"
+    "回复「猜灯谜 你的答案」作答，答对可得月华。"
 )
 
 LANTERN_ANSWER_FORMAT = "🏮 请这样作答：猜灯谜 你的答案"
@@ -82,7 +83,7 @@ CRAFT_DUPLICATE = "🥮 你又合成了【{name}】，收集册里已有这种�
 CRAFT_UNKNOWN = "🥮 抱歉，没有「{name}」这种配方哦。可选：{names}。"
 
 # 图鉴（做月饼 不带参数）
-CRAFT_DEX_HEADER = "🥮 月饼匠心 · 重制图鉴\n"   # 末尾的 \n 让表格前留出空行（照 RANK_HEADER）
+CRAFT_DEX_HEADER = "## 🥮 月饼匠心\n\n### 口味图鉴\n"
 CRAFT_DEX_TABLE_HEAD = "| 口味 | 星级 | 通关 |"
 CRAFT_DEX_TABLE_SEP = "|:--|:--:|--:|"
 CRAFT_DEX_ROW = "| {flavor} | {stars} | {clears} |"
@@ -100,13 +101,13 @@ CRAFT_REMAKE_ACTIVE = "🥮 你手上还有一次重制挑战没做完呢，先�
 CRAFT_REMAKE_LIMIT = "🥮 今日重制次数已用完（{limit} 次），明日再进作坊吧。"
 CRAFT_REMAKE_COOLDOWN = "🥮 刚出过炉，歇口气，{mins} 分钟后再开一炉吧。"
 CRAFT_REMAKE_START = (
-    "🥮 【{name}】重制开始 —— {stage} 阶段，共 {n} 题，每题 {t} 秒。\n\n"
-    "第 {i}/{n} 题：\n\n{q}\n\n💡 提示：{hint}\n\n"
+    "**【{name}】重制开始** · {stage} 阶段\n\n共 {n} 题 · 每题 {t} 秒\n\n"
+    "### 第 {i}/{n} 题\n\n> {q}\n\n**提示**：{hint}\n\n"
     "回复「重制 你的答案」作答，中途答错即本炉作废。"
 )
 CRAFT_REMAKE_STEP = (
     "✅ 第 {done} 题答对了！\n\n"
-    "第 {i}/{n} 题：\n\n{q}\n\n💡 提示：{hint}\n\n"
+    "### 第 {i}/{n} 题\n\n> {q}\n\n**提示**：{hint}\n\n"
     "回复「重制 你的答案」作答。"
 )
 CRAFT_REMAKE_WRONG = "❌ 第 {i} 题答错了，本轮重制作废。正确答案是「{answer}」。\n\n{penalty}"
@@ -150,14 +151,14 @@ BREW_GRADE_TIER = {"清酿": "无感", "醇酿": "喜欢", "酿王": "非常喜�
 # ---------------------------------------------------------------------------
 RABBIT_DAILY_LIMIT = "🐇 今日已经陪玉兔走过一趟啦（{limit} 局），明日再来。"
 RABBIT_ASK = (
-    "🐇 玉兔同行 · 第 {i}/{n} 站\n\n"
-    "玉兔吃下{thing}，蹦蹦跳跳地考你一道题：\n\n{q}\n\n💡 提示：{hint}\n\n"
+    "### 第 {i}/{n} 站\n\n"
+    "玉兔吃下{thing}，蹦蹦跳跳地考你一道题：\n\n> {q}\n\n**提示**：{hint}\n\n"
     "回复「玉兔同行 你的答案」作答（{timeout} 秒内）。"
 )
 # 第 3 站起：换难题池 + 撤掉提示，这是本玩法唯一的难度递增手段
 RABBIT_ASK_NO_HINT = (
-    "🐇 玉兔同行 · 第 {i}/{n} 站\n\n"
-    "玉兔吃下{thing}，这回它不出提示了，歪着头看你：\n\n{q}\n\n"
+    "### 第 {i}/{n} 站\n\n"
+    "玉兔吃下{thing}，这回它不出提示了，歪着头看你：\n\n> {q}\n\n"
     "回复「玉兔同行 你的答案」作答（{timeout} 秒内）。"
 )
 RABBIT_STEP_RIGHT = "🐇 第 {i} 站答对！玉兔眼睛亮晶晶，获得【月华 ×{amount}】。\n\n"
@@ -171,10 +172,11 @@ RABBIT_INTIMACY = "亲密度 Lv.{lv}（×{mult}）"
 # 猜灯谜做深：连对倍率 + 难题档
 # ---------------------------------------------------------------------------
 LANTERN_HARD_ASK = (
-    "🏮 难题灯谜，月华更厚！\n\n"
-    "{question}\n\n"
-    "💡 提示：{hint}\n\n"
-    "回复「猜灯谜 你的答案」作答，{timeout} 秒内答对可得月华（×{mult}）哦～"
+    "### 难题灯谜\n\n"
+    "> {question}\n\n"
+    "**提示**：{hint}\n\n"
+    "**作答时限：{timeout} 秒 · 月华倍率 ×{mult}**\n\n"
+    "回复「猜灯谜 你的答案」作答，答对可得月华。"
 )
 LANTERN_COMBO = "🔥 连续答对 {n} 题，灯谜月华加成中（×{rate}）！"
 LANTERN_HARD_LIMIT = "🏮 今日难题次数已用完（{limit} 题）。{hint}"
@@ -184,10 +186,10 @@ LANTERN_HARD_LIMIT_NORMAL_HINT = "\n\n普通灯谜还可以继续猜（今日还
 # 华诞巡礼做深：单题问答 → 多站路线闯关
 # ---------------------------------------------------------------------------
 QUIZ_ROUTE_ASK = (
-    "🎪 华诞巡礼 · {route}\n\n"
-    "第 {i}/{n} 站（{diff}）：\n\n"
-    "{question}\n\n"
-    "选项：{options}\n\n"
+    "**路线：{route}**\n\n"
+    "### 第 {i}/{n} 站 · {diff}\n\n"
+    "> {question}\n\n"
+    "**选项**：{options}\n\n"
     "回复「巡礼 你的答案」作答，{timeout} 秒内答对可得月华哦～"
 )
 QUIZ_ROUTE_PROGRESS = "\n\n🚩 已走过 {i}/{n} 站 · 本线失误 {wrong}/{max} 次"
@@ -201,8 +203,8 @@ QUIZ_ROUTE_ROUTES = ["红色圣地", "山河地理", "科技成就", "诗词华�
 # 献礼（国庆段新增：群协作进度轴，与月华里程碑正交）
 # ---------------------------------------------------------------------------
 OFFERING_QUERY = (
-    "🎁 本群献礼进度：{total} 点\n\n"
-    "下一档：{next} 点（全群参与者各 +{amount} 月华）\n\n"
+    "本群献礼进度：**{total} 点**\n\n"
+    "下一档：**{next} 点**（全群参与者各 +{amount} 月华）\n\n"
     "今日你贡献了 {mine} 点。巡礼答对、贺词上墙、点赞都能为群里加分。"
 )
 OFFERING_ALL_DONE = "🎁 本群献礼进度：{total} 点（全部档位已达成）\n\n今日你贡献了 {mine} 点。"
@@ -215,17 +217,17 @@ DOUBLE_NOT_TODAY = "🎊 「双庆」只在双节同庆日（{day}）开放，�
 DOUBLE_CLOSED_NONE = "🎊 本次两阶段开放时间没有重叠日，「双庆」暂不开放。"
 DOUBLE_DONE = "🎊 你今日的双庆挑战已经做过了，明天（若还在同庆日）再来。"
 DOUBLE_ASK = (
-    "🎊 双节同庆 · 特别挑战（第 {i}/{n} 题）\n\n"
+    "### 特别挑战 · 第 {i}/{n} 题\n\n"
     "中秋灯谜与国庆巡礼交替出题，你只有一次机会。\n\n"
-    "{q}\n\n"
+    "> {q}\n\n"
     "{extra}\n\n"
     "回复「双庆 你的答案」作答（{timeout} 秒内），答错即止；\n\n"
     "五题全中得【月华 ×{reward}】。"
 )
 DOUBLE_STEP = (
     "🎊 第 {done} 题答对！\n\n"
-    "第 {i}/{n} 题：\n\n"
-    "{q}\n\n"
+    "### 第 {i}/{n} 题\n\n"
+    "> {q}\n\n"
     "{extra}\n\n"
     "回复「双庆 你的答案」作答。"
 )
@@ -294,17 +296,16 @@ QUIZ_COMBO = "🔥 连续答对 {n} 题，本回合额外奖励翻倍中（×{ra
 # 记账口径：花费只扣「可用余额」（= 累计获得 − 已花费），**不减累计获得**，
 # 所以月华榜/群里程碑/结算的口径不变；卡加的次数**当天有效、跨天作废**。
 # ---------------------------------------------------------------------------
-SHOP_HEADER = "🌙 月华商店 · 上限次数卡\n\n可用月华 {balance} · 累计获得 {earned}\n\n"
+SHOP_HEADER = "## 🌙 月华商店\n\n可用月华 **{balance}** · 累计获得 **{earned}**\n\n### 今日次数卡\n\n"
 SHOP_ROW = (
-    "· {name} —— 下一张 **{price}** 月华\n\n"
-    "    多玩一次「{play}」约 {expect}~{top} 月华；今日已买 {bought}/{cap} 张，"
-    "买后当日上限 {base} → {after}\n\n"
+    "### {name}\n\n下一张 **{price} 月华**\n\n"
+    "多玩一次「{play}」约 {expect}~{top} 月华\n\n"
+    "今日已买 {bought}/{cap} 张 · 买后当日上限 {base} → {after}\n\n"
 )
 SHOP_ROW_OFF = "· {name} —— 属「{phase}」阶段，本阶段不售\n\n"
 SHOP_FOOTER = (
     "发「月华商店 购买 <卡名>」买一张（可加张数，如「买卡 灯谜卡 2」）。\n\n"
-    "卡的价**永远不高于「多玩一次最多能拿的月华」**，落在「大约能拿到多少」和"
-    "「打满能拿多少」之间 —— 打得比平时好就赚，手气差就亏。\n\n"
+    "**购卡须知**\n\n价格不高于该玩法单次最高月华收益；实际收益随表现而变。\n\n"
     "卡加的次数**仅当天有效**，跨天自动作废；价格当天恒定，重发指令不会变便宜。"
 )
 SHOP_DISABLED = "🌙 月华商店当前未开放。"
@@ -322,7 +323,7 @@ SHOP_BUY_OK = (
 # ---------------------------------------------------------------------------
 # 月华榜 / 里程碑 / 结算公告
 # ---------------------------------------------------------------------------
-RANK_HEADER = "🌙 月华榜（全服前 20）\n—— 月华为凭，共耀华诞 ——\n"
+RANK_HEADER = "## 🌙 月华榜\n\n全服前 20 · 月华为凭，共耀华诞\n"
 # 榜单/结算一律用 markdown 表格（照中元榜）。两条硬约束：
 # ① 列必须窄 —— QQ 渲染对超宽表格会退化成纯文本并拆行，所以不放 32 位群号之类；
 # ② 表头前必须留空行 —— 紧贴标题的表格会被 QQ 官方 Markdown 当成普通区块吞成
@@ -336,7 +337,7 @@ RANK_EMPTY = "🌙 月华榜还空着，快用你的月华点亮榜首吧！"
 MILESTONE_REACHED = "🏮 群里程碑达成！本群累计月华达到 {threshold}，全体参与者各获得【月华 ×{amount}】！"
 MILESTONE_QUERY = "🏮 本群累计月华 {total}，下一里程碑：{next}（每人 +{amount}）。"
 
-SETTLE_HEADER = "🎊 月耀华诞活动圆满结束！\n—— 全服月华总榜结算 ——\n"
+SETTLE_HEADER = "## 🎊 月耀华诞 · 圆满落幕\n\n活动圆满结束 · 全服月华总榜结算\n"
 SETTLE_TABLE_HEAD = "| 排名 | 玩家 | 累计月华 | 结算奖励 |"
 SETTLE_TABLE_SEP = "|:--:|:--:|--:|--:|"
 SETTLE_ROW = "| {rank} | {name} | {score} | +{reward} |"
@@ -346,9 +347,9 @@ SETTLE_ROW = "| {rank} | {name} | {score} | +{reward} |"
 # 排版约定：各段之间由 engine 用 \n\n 拼接，所以表格段天然与上一段隔开空行
 # （QQ 官方 Markdown 里紧贴标题的表格会被吞成一团）。
 # ---------------------------------------------------------------------------
-MYINFO_HEADER = "🌙 月华档案 · {name}"
-MYINFO_OVERVIEW = ("【总览】累计月华 {score} · 可用月华 {balance}（已花 {spent}） · 全服{rank}"
-                   " · 累计签到 {days} 天 · 上墙贺词 {posts} 条")
+MYINFO_HEADER = "## 🌙 月华档案\n\n{name}"
+MYINFO_OVERVIEW = ("### 月华总览\n\n累计月华 {score} · 可用月华 {balance}（已花 {spent}）\n\n"
+                   "全服{rank} · 累计签到 {days} 天 · 上墙贺词 {posts} 条")
 # 今日买卡带来的上限加成（没买卡时不显示这一行）
 MYINFO_SHOP_LINE = "· 今日购卡：{items}"
 # 名次文案自带单位，避免「全服第 未上榜 名」这种拼出来的病句
@@ -365,7 +366,7 @@ MYINFO_SIGN_DONE = "· 今日{label}：✅ 已完成"
 MYINFO_SIGN_TODO = "· 今日{label}：⭕ 未完成"
 MYINFO_LINE = "· {label}：{value}"
 
-MYINFO_CRAFT_TITLE = "🥮 月饼匠心"
+MYINFO_CRAFT_TITLE = "### 月饼匠心"
 MYINFO_CRAFT_INFO = ("· 阶段：{stage} · 累计重制 {count} 次 · 今日剩余 {left}/{limit} 次{cooldown}\n\n"
                      "· 下一炉：{n} 题 × {t} 秒")
 # 注意：这里是**独立段落**（由 \n\n 拼接），不要再带前导换行 —— 带了会多出空行
@@ -399,7 +400,7 @@ DOUBLE_NONE = "本次两阶段无重叠日，双庆不开放"
 HELP_DAILY_LINE = "· 每日开放时段：{open:02d}:00 ~ {close:02d}:00\n\n"
 
 HELP_TEXT = (
-    "🌙 月耀华诞 · 活动指令\n\n"
+    "## 🌙 月耀华诞 · 活动指令\n\n"
     "【活动时间】\n\n"
     "· 中秋·月耀：{window_mid}\n\n"
     "· 国庆·华诞：{window_nat}\n\n"

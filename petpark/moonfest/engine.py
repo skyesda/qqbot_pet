@@ -37,6 +37,7 @@ from . import challenges
 from . import moonphase as MP
 from . import puzzles
 from . import templates as T
+from .presentation import markdown_reply
 from .config import (
     ACTIVITY_KEY,
     ACTIVITY_NAME,
@@ -2440,7 +2441,8 @@ class MoonfestActivity:
         result = self._dispatch(event, qq, group_id, text)
         if result is not None:
             self._spawn(self.save())
-        return result
+        tokens = (text or '').strip().split()
+        return markdown_reply(tokens[0] if tokens else '', result)
 
     def _dispatch(self, event, qq, group_id, text: str) -> str | None:
         tokens = (text or "").strip().split()
@@ -2548,7 +2550,8 @@ class MoonfestActivity:
         公告全部静默失效，后台点「全群通报测试」毫无反应。
         """
         try:
-            await self.bot._send_group_text(str(group_id), text)
+            await self.bot._send_group_text(str(group_id), markdown_reply(
+                '献礼' if '献礼' in text else '里程碑', text))
         except Exception:  # noqa: BLE001 - 单群失败不影响其余群，但必须留原文
             logger.warning("[moonfest] 推送群 %s 失败", group_id, exc_info=True)
 
@@ -2571,7 +2574,7 @@ class MoonfestActivity:
             )
             return 0
         logger.info("[moonfest] 全群通报：%d 个已授权群", n)
-        self.bot._broadcast_to_authorized_groups(text)
+        self.bot._broadcast_to_authorized_groups(markdown_reply('', text))
         return n
 
     def start(self) -> None:

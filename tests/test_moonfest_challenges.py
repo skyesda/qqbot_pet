@@ -490,14 +490,14 @@ class RabbitRunTests(_EngineCase):
 
     def test_later_stations_drop_the_hint(self):
         first = self.say("玉兔同行")
-        self.assertIn("💡 提示", first)
+        self.assertIn("**提示**", first)
         self.assertFalse(self.ap()["rabbit"]["q"]["hard"], "第 1 站不该用难题")
         for _ in range(2):                      # 走完第 1、2 站
             q = self.ap()["rabbit"]["q"]
             self.say("玉兔同行 " + str(q["a"]))
         q3 = self.ap()["rabbit"]["q"]
         self.assertTrue(q3["hard"], "第 3 站起该换难题池")
-        self.assertNotIn("💡 提示", self.act._rabbit_ask(self.ap(), 60))
+        self.assertNotIn("**提示**", self.act._rabbit_ask(self.ap(), 60))
 
     def test_intimacy_multiplier_grows_with_feed_total(self):
         ap = self.ap()
@@ -865,10 +865,10 @@ class WallTests(_EngineCase):
 
     def test_greeting_image_uses_latest_wall_index_and_escapes_name(self):
         captures = []
-        self.act.bot._render_html_image = lambda html, *a, **k: captures.append(html) or 'image-result'
+        self.act.bot._render_html_image = lambda html, *a, **k: captures.append(html) or '![祝福 #720 #1000](https://example.test/greeting.jpg)'
         self.ap()['name'] = '<修士 & 祝福>'
         self._post('祝祖国繁荣昌盛')
-        self.assertEqual(self._post('愿祖国山河锦绣'), 'image-result')
+        self.assertEqual(self._post('愿祖国山河锦绣'), '![祝福 #720 #1000](https://example.test/greeting.jpg)')
         self.assertIn('&lt;修士 &amp; 祝福&gt;', captures[-1])
         self.assertIn('点赞 1', captures[-1])
         self.assertEqual(len(self.act._data['wall']), 2)
@@ -890,8 +890,8 @@ class WallTests(_EngineCase):
             self._post(f'祝福第{i}句祖国繁荣')
         self.act._data['wall'][0]['likes'] = 9
         captures = []
-        self.act.bot._render_html_image = lambda html, *a, **k: captures.append(html) or 'wall-image'
-        self.assertEqual(self.say('月华墙'), 'wall-image')
+        self.act.bot._render_html_image = lambda html, *a, **k: captures.append(html) or '![月华墙 #720 #2000](https://example.test/wall.jpg)'
+        self.assertEqual(self.say('月华墙'), '![月华墙 #720 #2000](https://example.test/wall.jpg)')
         html = captures[-1]
         hot, latest = html.split('新笺入卷 · 最新上墙')
         self.assertIn('class="number">3</div>', hot)
@@ -937,6 +937,36 @@ class GreetingReviewTests(_EngineCase):
                 ask.assert_called_once()
 
 
+class FestivalMarkdownTests(_EngineCase):
+    def test_all_registered_commands_have_markdown_replies(self):
+        from qqbot_pet.petpark.moonfest.presentation import TITLES
+        self.phase = 'both'
+        self.assertEqual(set(TITLES), COMMANDS)
+        for command in sorted(COMMANDS):
+            with self.subTest(command=command):
+                self.assertTrue(self.say(command).startswith('## '))
+
+    def test_table_rows_stay_contiguous_and_separate_from_prose(self):
+        from qqbot_pet.petpark.moonfest.presentation import markdown_reply
+        table = '| 玩家 | 月华 |\n|:--|--:|\n| 云栖 | 18 |'
+        result = markdown_reply('月华榜', '榜单\n' + table + '\n下一页')
+        self.assertIn('榜单\n\n' + table + '\n\n下一页', result)
+        self.assertNotIn('|\n\n|', result)
+
+    def test_image_jobs_and_image_markdown_are_unchanged(self):
+        from qqbot_pet.petpark.moonfest.presentation import markdown_reply
+        for result in ['__PETPARK_IMAGE_123__', '![贺词 #720 #1000](https://example.test/image.jpg)']:
+            self.assertEqual(markdown_reply('贺词', result), result)
+        self.assertIsNone(markdown_reply('贺词', None))
+
+    def test_formatter_is_idempotent_and_does_not_alter_game_values(self):
+        from qqbot_pet.petpark.moonfest.presentation import markdown_reply
+        result = markdown_reply('巡礼', '答对\n获得【月华 ×18】。\n已走过 3/5 站')
+        self.assertIn('**【月华 ×18】**', result)
+        self.assertIn('3/5', result)
+        self.assertEqual(markdown_reply('巡礼', result), result)
+
+
 # ---------------------------------------------------------------------------
 # 七、月华信息（只读，一条指令看全自己的活动状态）
 # ---------------------------------------------------------------------------
@@ -944,17 +974,17 @@ class MyInfoTests(_EngineCase):
     def test_phase_sections_follow_the_current_phase(self):
         self.phase = "midautumn"
         out = self.say("月华信息")
-        self.assertIn("【中秋·月耀】", out)
-        self.assertNotIn("【国庆·华诞】", out)
+        self.assertIn("### 中秋·月耀", out)
+        self.assertNotIn("### 国庆·华诞", out)
         self.phase = "national"
         out = self.say("月华信息")
-        self.assertIn("【国庆·华诞】", out)
-        self.assertNotIn("【中秋·月耀】", out)
+        self.assertIn("### 国庆·华诞", out)
+        self.assertNotIn("### 中秋·月耀", out)
         self.assertNotIn("月饼匠心", out)
         self.phase = "both"
         out = self.say("月华信息")
-        self.assertIn("【中秋·月耀】", out)
-        self.assertIn("【国庆·华诞】", out)
+        self.assertIn("### 中秋·月耀", out)
+        self.assertIn("### 国庆·华诞", out)
         self.assertIn("月饼匠心", out)
         self.assertIn("双庆挑战", out)          # 只有重叠日才提示双庆
 
@@ -963,9 +993,9 @@ class MyInfoTests(_EngineCase):
         self.say("拜月")
         self.say("猜灯谜")
         out = self.say("月华信息")
-        self.assertIn("· 今日拜月：✅ 已完成", out)
+        self.assertIn("- 今日拜月：✅ 已完成", out)
         self.assertIn("| 猜灯谜 | 1/20 |", out)
-        self.assertIn("· 今日华诞签到：⭕ 未完成", out)
+        self.assertIn("- 今日华诞签到：⭕ 未完成", out)
 
     def test_rank_and_wall_posts_come_from_real_data(self):
         self.phase = "both"
@@ -997,7 +1027,7 @@ class MyInfoTests(_EngineCase):
             out = self.say("月华信息")
             self.assertIn("月华档案", out)
             self.assertIn("全服", out)
-            self.assertIn("· 今日主题" if phase == "national" else "· 玉兔亲密度", out)
+            self.assertIn("- 今日主题" if phase == "national" else "- 玉兔亲密度", out)
 
     def test_unranked_player_says_so_without_a_dangling_number(self):
         """没上榜时名次文案必须自带单位，不能拼出「全服第 未上榜 名」。"""
@@ -1025,7 +1055,7 @@ class HelpTimeTests(_EngineCase):
         self.set_window("phase_national", bj_ts(2026, 10, 1), bj_ts(2026, 10, 7, 23, 59))
         out = self.say("活动帮助")
         for frag in ("2026-09-27 00:00", "2026-10-01 23:59", "2026-10-07 23:59",
-                     "2026-10-01 00:00", "【活动时间】"):
+                     "2026-10-01 00:00", "### 活动时间"):
             self.assertIn(frag, out, f"活动说明里没呈现配置的时间：{frag}")
 
     def test_help_follows_reconfigured_times(self):
@@ -1105,12 +1135,12 @@ class HelpTimeTests(_EngineCase):
         self.assertIn("2027-01-03 00:00", out)
         self.assertNotIn(T.NOT_OPEN, out)
         # 但真正玩不了：别的指令仍然是「未开启」
-        self.assertEqual(self.say("拜月"), T.NOT_OPEN)
+        self.assertIn(T.NOT_OPEN, self.say("拜月"))
 
     def test_help_is_silent_when_the_master_switch_is_off(self):
         """总开关关掉 = 活动下架，帮助也不再宣传它。"""
         self.act.cfg["enabled"] = False
-        self.assertEqual(self.say("活动帮助"), T.NOT_OPEN)
+        self.assertIn(T.NOT_OPEN, self.say("活动帮助"))
 
     def test_daily_hours_only_shown_when_restricted(self):
         self.act.cfg["daily"] = {"open_hour": 0, "close_hour": 24}
