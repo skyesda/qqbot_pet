@@ -72,6 +72,8 @@ class _EngineCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.act = MoonfestActivity(_FakeBot(), Path(self.tmp.name))
         self.act.jev.enabled = False
+        # Other gameplay tests assume approved submissions; review cases below exercise Jev separately.
+        self.act._firework_review = lambda text: (True, '')
         # 单元测试里没有事件循环，_spawn 留着只会刷 RuntimeWarning
         self.act._spawn = lambda coro: coro.close()
         self.phase = "midautumn"
@@ -860,6 +862,79 @@ class WallTests(_EngineCase):
 
     def test_empty_wall_is_handled(self):
         self.assertIn("还空着", self.say("月华墙"))
+
+    def test_greeting_image_uses_latest_wall_index_and_escapes_name(self):
+        captures = []
+        self.act.bot._render_html_image = lambda html, *a, **k: captures.append(html) or 'image-result'
+        self.ap()['name'] = '<修士 & 祝福>'
+        self._post('祝祖国繁荣昌盛')
+        self.assertEqual(self._post('愿祖国山河锦绣'), 'image-result')
+        self.assertIn('&lt;修士 &amp; 祝福&gt;', captures[-1])
+        self.assertIn('点赞 1', captures[-1])
+        self.assertEqual(len(self.act._data['wall']), 2)
+
+    def test_render_failure_does_not_repeat_reward_or_wall_write(self):
+        self.act._rand_int = lambda *a, **k: 5
+        self.act._theme_fit = lambda *a: False
+        def fail(*a, **k):
+            raise RuntimeError('simulated renderer failure')
+        self.act.bot._render_html_image = fail
+        before = self.earned()
+        out = self._post('祝祖国繁荣昌盛')
+        self.assertIn('登上月华墙', out)
+        self.assertEqual(self.earned() - before, 5)
+        self.assertEqual(len(self.act._data['wall']), 1)
+
+    def test_wall_image_keeps_like_indices_and_hot_order(self):
+        for i in range(1, 4):
+            self._post(f'祝福第{i}句祖国繁荣')
+        self.act._data['wall'][0]['likes'] = 9
+        captures = []
+        self.act.bot._render_html_image = lambda html, *a, **k: captures.append(html) or 'wall-image'
+        self.assertEqual(self.say('月华墙'), 'wall-image')
+        html = captures[-1]
+        hot, latest = html.split('新笺入卷 · 最新上墙')
+        self.assertIn('class="number">3</div>', hot)
+        self.assertLess(latest.index('祝福第3句'), latest.index('祝福第1句'))
+
+    def test_older_wall_page_keeps_global_indices(self):
+        for i in range(1, 24):
+            self._post(f'祝福第{i}句祖国繁荣')
+        out = self.say('月华墙 2')
+        self.assertIn('11. 祝福第13句', out)
+        self.assertIn('20. 祝福第4句', out)
+        self.assertNotIn('1. 祝福第23句', out)
+        self.assertIn('第 2/3 页', out)
+        self.assertIn('21. 祝福第3句', self.say('月华墙 3'))
+        self.assertIn('月华墙 页码', self.say('月华墙 错误'))
+
+
+class GreetingReviewTests(_EngineCase):
+    def setUp(self):
+        super().setUp()
+        self.phase = 'national'
+        del self.act._firework_review
+
+    def test_disabled_review_never_publishes_or_charges(self):
+        out = self.say('贺词 祝祖国繁荣昌盛')
+        self.assertIn('审核暂时不可用', out)
+        self.assertFalse(self.act._data.get('wall'))
+        self.assertEqual(self.earned(), 0)
+        self.assertEqual(self.ap()['daily'].get('firework', 0), 0)
+
+    def test_jev_decisions_and_timeout(self):
+        from unittest.mock import patch
+        self.act.jev.enabled = True
+        for response, accepted in [
+            ({'compliance': {'noul': .98}, 'theme': {'choice': '国庆祝福', 'confidence': .95}}, True),
+            ({'compliance': {'noul': .2}, 'theme': {'choice': '国庆祝福', 'confidence': .95}}, False),
+            ({'compliance': {'noul': .98}, 'theme': {'choice': '其他', 'confidence': .95}}, False),
+            ({'compliance': {'noul': .98}, 'theme': {'choice': '国庆祝福', 'confidence': .1}}, False),
+            (None, False),
+        ]:
+            with self.subTest(response=response), patch.object(self.act.jev, '_ask', return_value=response) as ask:
+                self.assertEqual(self.act._firework_review('祝祖国繁荣昌盛')[0], accepted)
+                ask.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

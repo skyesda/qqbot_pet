@@ -249,6 +249,8 @@ FIREWORK_ON_WALL = "🎆 你的贺词已通过审核，登上月华墙！\n「{t
 FIREWORK_REJECT = "🎇 很遗憾，你的贺词未通过审核（{reason}），请换一句祝福再来。"
 FIREWORK_REASON_SENSITIVE = "含敏感内容"
 FIREWORK_REASON_IRRELEVANT = "与节庆祝福无关"
+FIREWORK_REASON_REVIEW_UNAVAILABLE = "审核暂不可用"
+FIREWORK_REVIEW_UNAVAILABLE = "贺词审核暂时不可用，请稍后重试。此次未上墙、未扣投稿次数，也未发放月华。"
 FIREWORK_DAILY_LIMIT = "🎇 今日贺词投稿次数已用完（{limit} 条），明日再来吧。"
 FIREWORK_TOO_LONG = "🎇 贺词最长 {limit} 字，你这条太长了哦。"
 
@@ -424,7 +426,7 @@ HELP_TEXT = (
     "· 买卡 <卡名> [张数] —— 买某玩法的次数卡，每种每日限 3 张\n\n"
     "· 月华信息 —— 看自己的全部活动状态（月华/签到/次数/进度）\n\n"
     "· 月华榜 —— 全服排名\n\n"
-    "· 月华墙 —— 查看已上墙的贺词\n\n"
+    "· 月华墙 [页码] —— 图文查看祝福，每页 10 条，如：月华墙 2\n\n"
     "· 里程碑 —— 群里程碑进度\n\n"
     "· 活动帮助 —— 本说明"
 )
