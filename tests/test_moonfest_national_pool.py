@@ -182,7 +182,7 @@ class NationalPoolTests(_EngineCase):
             self.assertIn('不重复计入', out)
         with patch.object(self.pool, 'review_blessing', return_value='duplicate'):
             out = asyncio.run(self.pool.blessing_message(None, self.qq, self.gid, '愿祖国昌盛繁荣', explicit=True))
-            self.assertIn('重复改写', out)
+            self.assertIn('相似度达到 80%', out)
         self.assertEqual(self.pool.state()['counts'][self.qq], 1)
         self.now = DRAW
         asyncio.run(self.pool.blessing_message(None, self.qq, self.gid, '国庆快乐', explicit=True))
@@ -195,15 +195,26 @@ class NationalPoolTests(_EngineCase):
                 asyncio.run(self.pool.blessing_message(None, self.qq, self.gid, '测试消息', explicit=True))
         self.assertEqual(self.pool.state()['counts'], {})
 
-    def test_jev_review_compares_against_all_batches(self):
+    def test_jev_only_checks_suitability_not_semantic_novelty(self):
         self.act.jev.enabled = True
-        with patch.object(self.act.jev, 'available', return_value=True), patch.object(self.act.jev, '_ask', side_effect=[
-            {'original': {'noul': .98}, 'suitable': {'noul': .98}}, {'original': {'noul': .1}},
-        ]) as ask:
-            self.assertEqual(self.pool.review_blessing('愿祖国繁荣昌盛', [f'祝福{i}' for i in range(150)]), 'duplicate')
-            self.assertEqual(ask.call_count, 2)
-            self.assertEqual(len(ask.call_args_list[0].args[0]['既有有效祝福']), 100)
-            self.assertEqual(len(ask.call_args_list[1].args[0]['既有有效祝福']), 50)
+        with patch.object(self.act.jev, 'available', return_value=True), patch.object(self.act.jev, '_ask', return_value={
+            'original': {'noul': .1}, 'suitable': {'noul': .98},
+        }) as ask:
+            self.assertEqual(self.pool.review_blessing('愿祖国繁荣昌盛', [f'祝福{i}' for i in range(150)]), 'accepted')
+            self.assertEqual(ask.call_count, 1)
+            self.assertEqual(set(ask.call_args.args[1]), {'suitable'})
+            self.assertNotIn('既有有效祝福', ask.call_args.args[0])
+
+    def test_text_similarity_threshold_and_normalization(self):
+        from petpark.moonfest.national_pool import is_duplicate_blessing
+        self.assertTrue(is_duplicate_blessing('abcdefghij', ['abcdefghXY']))
+        self.assertFalse(is_duplicate_blessing('abcdefghij', ['abcdefgXYZ']))
+        self.assertTrue(is_duplicate_blessing('祝 祖国繁荣昌盛！', ['祝祖国繁荣昌盛。']))
+        self.assertFalse(is_duplicate_blessing('祝祖国繁荣昌盛', ['愿华夏山河锦绣，百姓安居乐业']))
+        self.assertTrue(is_duplicate_blessing('abcdefghij', ['无关内容']*150+['abcdefghXY']))
+        with patch.object(self.act.jev, '_ask') as ask:
+            self.assertEqual(self.pool.review_blessing('abcdefghij', ['abcdefghXY']), 'duplicate')
+            ask.assert_not_called()
 
     def test_two_simultaneous_identical_blessings_count_once(self):
         self.now = END
