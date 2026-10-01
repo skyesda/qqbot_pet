@@ -61,7 +61,7 @@ from .jev import (
 BJ = ZoneInfo("Asia/Shanghai")
 
 COMMANDS = {
-    "国庆快乐", "国庆奖池", "祝福时刻",
+    "国庆快乐", "国庆奖池", "祝福时刻", "国庆词云", "祝福词云", "国庆瓜分",
     "拜月", "华诞签到", "猜灯谜", "喂玉兔", "做月饼",
     "贺词", "点赞", "巡礼", "月华榜", "里程碑", "月华墙", "活动帮助",
     # 月饼重制挑战链（首次合成解锁后再次合成走挑战）
@@ -2468,6 +2468,10 @@ class MoonfestActivity:
         if cmd == "活动帮助" and bool(self.cfg.get("enabled", True)):
             return self._help_text()
 
+        if cmd in {'国庆词云', '祝福词云'}:
+            return self.national_pool.wordcloud()
+        if cmd == '国庆瓜分':
+            return self.national_pool.results(rest)
         if cmd in {'国庆快乐', '国庆奖池', '祝福时刻'}:
             return self.national_pool.dispatch(event, qq, group_id, rest,
                                                status_only=cmd != '国庆快乐')

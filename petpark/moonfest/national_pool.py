@@ -58,6 +58,12 @@ def weighted_shares(amount, counts):
     return shares
 
 
+def settlement_budget(remaining, counts):
+    people = sum(int(value) > 0 for value in counts.values())
+    deduction = min(remaining, max(0, 10 - people) * 5000)
+    return people, deduction, max(0, remaining - deduction)
+
+
 class NationalPool:
     def __init__(self, engine):
         self.engine = engine
@@ -103,26 +109,74 @@ class NationalPool:
     def status(self, qq=None):
         state = self.state()
         now = self.engine._now()
-        balance = TOTAL - sum(state['spent']) - sum(state['allocations'].values())
+        balance = max(0, TOTAL - sum(state['spent']) - sum(state['allocations'].values()))
         lines = ['## 🎆 国庆快乐 · 十万月华',
                  f'**{DATE} · 北京时间**',
                  '**08:00～18:00**：十个小时奖池，每小时初始 10,000 月华。',
                  '发送「国庆快乐」抽题，选一个选项作答，例如「国庆快乐 A」。',
                  '**30 秒作答 · 无冷却 · 答对随机 1～100 月华**；不足 100 时以实际余额为限。',
                  '每小时未发完的额度均分到后续小时；整数余数依时段先后补入。',
-                 f'答题累计已发 **{sum(state["spent"]):,}** · 尚未分配 **{balance:,}** 月华。']
+                 (f'答题累计已发 **{sum(state["spent"]):,}** · 瓜分已发 **{sum(state["allocations"].values()):,}** 月华。' if state['settled'] else
+                  f'答题累计已发 **{sum(state["spent"]):,}** · 尚未分配 **{balance:,}** 月华。')]
         if START <= now < END:
             index = (now - START) // 3600
             lines.append(f'当前 **{8+index:02}:00～{9+index:02}:00** · 本时段余额 **{state["budgets"][index]-state["spent"][index]:,}**。')
         lines += ['### 祝福时刻 · 18:00～21:00',
                   '在群里发送祝福国庆或祖国的话，也可发「祝福时刻 祝福内容」。',
                   '**Jev 审核内容合适后计入**；忽略标点和空格后，文字相似度达到 **80%** 才按重复处理。',
-                  '**21:00 开奖**：答题余款按每人有效祝福数量占比分配，祝福越多份额越多。']
+                  '**21:00 开奖**：满 **10 人**可瓜分全部答题余款；最终奖池按有效参与人数确定，按有效祝福数量占比分配。',
+                  '发送「国庆瓜分」查看完整结果，发送「国庆词云」随时查看祝福词云。']
         if qq:
             lines.append(f'你的有效祝福：**{state["counts"].get(str(qq), 0)} 条**。')
         if state['settled']:
             lines.append(f'本次已开奖，你分得 **{state["allocations"].get(str(qq), 0):,} 月华**。' if qq else '本次已开奖。')
         return '\n\n'.join(lines)
+
+    def results(self, rest=''):
+        state = self.state()
+        if not state['settled']:
+            people, deduction, amount = settlement_budget(TOTAL - sum(state['spent']), state['counts'])
+            return f'## 🎆 国庆瓜分 · 等待开奖\n\n**21:00 开奖**。目前有效参与 **{people} 人**。\n\n满10人可瓜分全部答题余款，最终奖池按有效参与人数确定。发送「国庆词云」查看祝福。'
+        rows = sorted(state['allocations'].items(), key=lambda item: (-item[1], item[0]))
+        pages = max(1, math.ceil(len(rows) / 10))
+        try:
+            page = max(1, min(pages, int(rest or 1)))
+        except ValueError:
+            return '发送「国庆瓜分」或「国庆瓜分 2」查看结果。'
+        remaining = TOTAL - sum(state['spent'])
+        paid = sum(state['allocations'].values())
+        lines = ['## 🎆 祝福时刻 · 21:00 开奖结果',
+                 f'有效参与 **{sum(int(v)>0 for v in state["counts"].values())} 人** · 有效祝福 **{sum(state["counts"].values())} 条**',
+                 f'本次瓜分 **{paid:,} 月华**',
+                 '奖励已到账；每人按有效祝福数量占比分配。',
+                 '| 修士 | 有效祝福 | 获得月华 |', '|:--|--:|--:|']
+        for qq, amount in rows[(page-1)*10:page*10]:
+            name = str(state['participants'].get(qq, {}).get('name') or qq)
+            name = re.sub(r'[\r\n|*`<>\[\]\\]', '', name)[:30]
+            lines.append(f'| {name} | {state["counts"].get(qq, 0)} | {amount:,} |')
+        if not rows:
+            lines.append('| 无有效参与者 | 0 | 0 |')
+        lines.append(f'第 **{page}/{pages} 页** · 发送「国庆瓜分 页码」查看全部结果；「国庆词云」查看祝福词云。')
+        return '\n\n'.join(lines[:4]) + '\n\n' + '\n'.join(lines[4:-1]) + '\n\n' + lines[-1]
+
+    def wordcloud(self):
+        state = self.engine._data.get('national_pool') or {}
+        texts = [entry['text'] for entry in (state.get('blessings') or {}).values()]
+        people = sum(int(v)>0 for v in (state.get('counts') or {}).values())
+        from .wordcloud import keyword_counts, wordcloud_html
+        counts = keyword_counts(texts)
+        fallback = '## 🇨🇳 国庆祝福词云\n\n' + f'有效参与 **{people} 人** · 已收录 **{len(texts)} 条祝福**\n\n' + (' · '.join(f'{w} ×{n}' for w,n in list(counts.items())[:24]) or '尚未收录祝福，静候第一声祝愿。')
+        render = getattr(self.engine.bot, '_render_html_image', None)
+        if not callable(render):
+            return fallback
+        try:
+            from ..card_theme import crop_canvas
+            html = wordcloud_html(texts, people, state.get('settled', False), sum(state.get('allocations', {}).values()))
+            return render(html, 'national_wordcloud', 720, crop=crop_canvas, win_w=720, win_h=1000) or fallback
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning('国庆词云渲染失败，回退文字', exc_info=True)
+            return fallback
 
     def dispatch(self, event, qq, group_id, rest='', status_only=False):
         if not self.enabled():
@@ -235,28 +289,32 @@ class NationalPool:
         messages = []
         if now >= DRAW and not state['settled']:
             remaining = TOTAL - sum(state['spent'])
-            shares = weighted_shares(remaining, state['counts'])
+            people, deduction, available = settlement_budget(remaining, state['counts'])
+            shares = weighted_shares(available, state['counts'])
             for qq, amount in shares.items():
                 participant = state['participants'][qq]
                 ap = self.engine._get_player(participant['group'], qq)
                 self.engine._add_yuehua(ap, amount)
             state['allocations'] = shares
+            state['deduction'] = deduction
+            state['draw_remaining'] = remaining
+            state['qualified_people'] = people
+            state['distributable'] = available
             state['settled'] = True
-            message = (f'## 🎆 祝福时刻 · 开奖\n\n答题已发 **{sum(state["spent"]):,} 月华**。\n\n'
-                       f'有效祝福 **{sum(state["counts"].values())} 条** · 参与 **{len(shares)} 人**\n\n'
-                       f'本次分配 **{sum(shares.values()):,} 月华**，已存入玩家月华。\n\n发送「国庆奖池」查看自己的份额。')
-            if not shares:
-                message += '\n\n无人提交有效祝福，余款保留，不向未参与者发放。'
-            messages.append(message)
+            messages.append(self.results())
         elif START <= now < END and 'quiz' not in state['announced']:
             state['announced'].append('quiz')
             messages.append(self.status())
         elif END <= now < DRAW and 'blessing' not in state['announced']:
             state['announced'].append('blessing')
-            messages.append(f'## 🎆 祝福时刻开启\n\n答题余款 **{TOTAL-sum(state["spent"]):,} 月华**。\n\n群内发送祝福国庆或祖国的话，Jev 审核且不重复后计入。\n\n有效祝福越多份额越多，**21:00 开奖**。')
+            messages.append(f'## 🎆 祝福时刻开启\n\n答题余款 **{TOTAL-sum(state["spent"]):,} 月华**。\n\n群内发送祝福国庆或祖国的话，Jev 审核且不重复后计入。\n\n满 **10 人**可瓜分全部余款，最终奖池按有效参与人数确定。有效祝福越多份额越多，**21:00 开奖**。\n\n发送「国庆词云」随时查看词云。')
         if self.engine._data == before:
             return messages
-        return messages if self.commit(before) else []
+        if not self.commit(before):
+            return []
+        if state['settled'] and not (before.get('national_pool') or {}).get('settled'):
+            messages.append(self.wordcloud())
+        return messages
 
     def tick_delay(self):
         now = self.engine._now()

@@ -34,7 +34,7 @@ if __name__ == '__main__':
         act._now = lambda: DRAW
         samples['开奖公告'] = act.national_pool.tick()[0]
         samples['我的开奖'] = act.dispatch(None, '20001', '10001', '国庆奖池')
-        assert state['allocations'] == {'20001': 66000, '20002': 33000}
+        assert state['allocations'] == {'20001': 39333, '20002': 19667}
     css = '''*{box-sizing:border-box}body{margin:0;background:#f5f0e4;color:#173b35;font:21px/1.8 "KaiTi","Noto Serif CJK SC",serif}
     .card{width:720px;padding:32px 42px;border-top:5px solid #a74432}h2{font-size:32px;color:#a74432;margin-top:0}
     h3{font-size:25px;border-bottom:1px solid #d5c8a9;padding-bottom:10px}p{margin:15px 0}strong{color:#a74432}

@@ -141,8 +141,13 @@ class NationalPoolTests(_EngineCase):
         self.now = DRAW
         messages = self.pool.tick()
         self.assertIn('开奖', messages[0])
-        self.assertEqual(state['allocations'], {'20001': 24975, '20002': 74925})
-        self.assertEqual(sum(state['spent'])+sum(state['allocations'].values()), TOTAL)
+        self.assertEqual(state['allocations'], {'20001': 14975, '20002': 44925})
+        self.assertEqual(state['deduction'], 40000)
+        self.assertEqual(sum(state['spent'])+sum(state['allocations'].values())+state['deduction'], TOTAL)
+        self.assertIn('词云', messages[1])
+        self.assertIn('| 修士 | 有效祝福 | 获得月华 |',messages[0])
+        self.assertNotIn('扣',messages[0])
+        self.assertNotIn('未发放',messages[0])
         earned = self.earned()
         self.assertEqual(self.pool.tick(), [])
         self.assertEqual(self.earned(), earned)
@@ -238,8 +243,51 @@ class NationalPoolTests(_EngineCase):
         state['participants'] = {self.qq: {'group': self.gid}}
         self.now = DRAW
         self.pool.tick()
-        self.assertEqual(self.earned(), TOTAL)
-        self.assertIn('尚未分配 **0**', self.pool.status(self.qq))
+        self.assertEqual(self.earned(), TOTAL-45000)
+        self.assertIn('瓜分已发 **48,000**', self.pool.status(self.qq))
+        self.assertNotIn('尚未分配', self.pool.status(self.qq))
+
+    def test_ten_people_unlock_full_remaining_and_nine_deduct_5000(self):
+        from qqbot_pet.petpark.moonfest.national_pool import settlement_budget
+        for people, expected in [(0,50000),(1,45000),(9,5000),(10,0),(11,0)]:
+            counts={str(i):1 for i in range(people)}
+            actual,deduction,amount=settlement_budget(100000,counts)
+            self.assertEqual((actual,deduction,amount),(people,expected,100000-expected))
+        self.assertEqual(settlement_budget(1000,{'a':1}),(1,1000,0))
+        self.assertEqual(settlement_budget(100000,{'a':0,'b':2}),(1,45000,55000))
+
+    def test_full_participation_results_pages_and_read_only_cloud(self):
+        state=self.pool.state()
+        state['counts']={str(i):i+1 for i in range(12)}
+        state['participants']={str(i):{'group':self.gid,'name':f'修士{i}'} for i in range(12)}
+        state['blessings']={'one':{'text':'祝祖国繁荣昌盛，国泰民安'}}
+        self.now=DRAW
+        self.pool.tick()
+        self.assertEqual(state['deduction'],0)
+        self.assertEqual(sum(state['allocations'].values()),TOTAL)
+        self.assertIn('第 **2/2 页**',self.pool.results('2'))
+        snapshot=copy.deepcopy(self.act._data)
+        self.phase='closed'
+        self.assertIn('词云',self.say('国庆词云'))
+        self.assertIn('词云',self.say('祝福词云'))
+        self.assertEqual(snapshot,self.act._data)
+
+    def test_render_failure_does_not_repeat_draw_and_commit_failure_never_renders(self):
+        state=self.pool.state()
+        state['counts']={self.qq:1}
+        state['participants']={self.qq:{'group':self.gid}}
+        self.now=DRAW
+        before=copy.deepcopy(self.act._data)
+        with patch.object(Path,'replace',side_effect=OSError('simulated draw save failure')), patch.object(self.pool,'wordcloud') as cloud:
+            self.assertEqual(self.pool.tick(),[])
+            cloud.assert_not_called()
+        self.assertEqual(self.act._data,before)
+        self.act._data=before
+        self.act.bot._render_html_image=lambda *a,**k:None
+        self.pool.tick()
+        earned=self.earned()
+        self.assertEqual(self.pool.tick(),[])
+        self.assertEqual(self.earned(),earned)
 
 
 class NationalBlessingRouteTests(unittest.IsolatedAsyncioTestCase):
