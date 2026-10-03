@@ -8,7 +8,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from petpark.raster_cards import render_card, card_kind
+from petpark.faithful_cards import render_game_card as render_card
+from petpark.raster_cards import card_kind
 from card_samples import samples
 
 

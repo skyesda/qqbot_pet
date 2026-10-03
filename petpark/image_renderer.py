@@ -101,8 +101,10 @@ class ImageRenderer:
     def _warmup(self):
         try:
             from .raster_cards import asset
-            from .pet_card_pillow import font
-            font(18)
+            from .raster_cards import body_font, bold_font, stationery_font
+            body_font(18)
+            bold_font(18)
+            stationery_font(38)
             asset('celestial-clouds.webp')
         except Exception as exc:
             log.warning('[petpark] 图片字体/素材预热失败: %s', exc)
@@ -169,7 +171,7 @@ class ImageRenderer:
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name('.' + target.name + '.' + uuid.uuid4().hex + '.tmp.png')
         try:
-            from .raster_cards import render_card
+            from .faithful_cards import render_game_card as render_card
             output = None
             backend = 'persistent'
             try:

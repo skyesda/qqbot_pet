@@ -10,7 +10,8 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tools'))
 from card_samples import samples
-from petpark.raster_cards import render_card, card_kind, CardParser, Node, children, content
+from petpark.faithful_cards import render_game_card as render_card
+from petpark.raster_cards import card_kind, CardParser, Node, children, content
 from petpark.image_renderer import ImageRenderer
 
 

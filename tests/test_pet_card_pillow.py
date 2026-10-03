@@ -67,7 +67,7 @@ class PetCardPillowTests(unittest.TestCase):
             renderer=ImageRenderer();raw=io.BytesIO()
             Image.effect_noise((120,180),60).convert('RGB').save(raw,'PNG')
             try:
-                with patch('petpark.raster_cards.render_card',side_effect=RuntimeError('font missing')):
+                with patch('petpark.faithful_cards.render_game_card',side_effect=RuntimeError('font missing')):
                     with patch.object(renderer,'_capture',return_value=raw.getvalue()) as capture:
                         self.assertTrue(renderer.write(snapshot(),Path(directory)/'fallback.jpg',None,900,5200))
                         capture.assert_called_once()
