@@ -3,3 +3,6 @@ aiohttp
 
 # 常驻浏览器截图（优先复用系统 Chrome，否则安装 playwright install chromium）
 playwright>=1.40,<2
+
+# 原生 JSON 编码，减少全量玩家存档的 CPU 占用；未安装时自动退回标准库。
+orjson>=3.10,<4

@@ -33,6 +33,11 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+try:
+    import orjson as _fast_json
+except ImportError:
+    _fast_json = None
+
 from . import images
 
 from . import data
@@ -658,7 +663,7 @@ class PetStore:
         popped = [(pl, pl.pop("pet", absent)) for pl in self._data["players"].values()]
         try:
             # Whitespace is not game data. Compact JSON reduces encoding and disk I/O.
-            payload = json.dumps(self._data, ensure_ascii=False, separators=(",", ":"))
+            raw = self._encode_snapshot(self._data)
         finally:
             # 无论如何都要恢复运行时引用
             for pl, ref in popped:
@@ -672,7 +677,6 @@ class PetStore:
         # 校验只比对字节数——json.dumps 的产物必然是合法 JSON，旧实现「读回整档再
         # json.loads 一遍」是纯浪费：多读 4.5MB + 全量解析（曾占单次保存约 1/3 CPU），
         # 而它唯一防的「写截断」由字节数比对同样覆盖，成本 O(1)。
-        raw = payload.encode("utf-8")
         tmp = self.path.with_suffix(".tmp")
         tmp.write_bytes(raw)
         self._verify_written(tmp, len(raw))
@@ -692,6 +696,32 @@ class PetStore:
             except OSError:
                 pass
         tmp.replace(self.path)
+
+    @staticmethod
+    def _encode_snapshot(snapshot: Any) -> bytes:
+        """Encode on the owning thread: live dictionaries must not race a worker.
+
+        Native encoding avoids the Python traversal. Split only branches with
+        out-of-range integers, preserving their exact decimal representation.
+        Audit hashes deliberately keep their old encoder.
+        """
+        if _fast_json is not None:
+            try:
+                return _fast_json.dumps(snapshot, option=_fast_json.OPT_NON_STR_KEYS)
+            except TypeError as exc:
+                # Do not walk all 250k nodes in Python to find a few large ints.
+                # Native encoding identifies affected branches; valid siblings
+                # remain native fragments, never quoted strings or float casts.
+                if "Integer exceeds 64-bit range" in str(exc):
+                    if isinstance(snapshot, dict):
+                        return _fast_json.dumps(
+                            {k: _fast_json.Fragment(PetStore._encode_snapshot(v))
+                             for k, v in snapshot.items()},
+                            option=_fast_json.OPT_NON_STR_KEYS)
+                    if isinstance(snapshot, (list, tuple)):
+                        return _fast_json.dumps(
+                            [_fast_json.Fragment(PetStore._encode_snapshot(v)) for v in snapshot])
+        return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
     def _verify_written(self, tmp: Path, expected: int) -> None:
         """写后校验：字节数一致即认为完整（磁盘满/截断会短于预期）。
