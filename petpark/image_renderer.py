@@ -148,21 +148,31 @@ class ImageRenderer:
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name('.' + target.name + '.' + uuid.uuid4().hex + '.tmp.png')
         try:
-            raw = self._capture(html, width, height,
-                                getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu', 'crop_canvas'))
-            if raw is None:
-                return False
-            with Image.open(io.BytesIO(raw)) as image:
-                rgb = image.convert('RGB')
-            output = crop(rgb) if crop else rgb
+            from .pet_card_pillow import render_pet_card
+            output = None
+            backend = 'persistent'
+            try:
+                output = render_pet_card(html, width)
+            except Exception:
+                log.warning('[petpark] Pillow 宠物卡回退浏览器', exc_info=True)
+            if output is not None:
+                backend = 'pillow'
+            else:
+                raw = self._capture(html, width, height,
+                                    getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu', 'crop_canvas'))
+                if raw is None:
+                    return False
+                with Image.open(io.BytesIO(raw)) as image:
+                    rgb = image.convert('RGB')
+                output = crop(rgb) if crop else rgb
             # 卡片图走有损 JPEG 大幅压缩体积（QQ 需从公网下载，PNG 无损体积达 2MB+，
             # 上传/拉图是「发送到 QQ 慢」的主因）；质量 88 文字仍清晰，体积降 80%+。
             output.save(temp, 'JPEG', quality=88, optimize=True)
             if temp.stat().st_size < 1000:
                 return False
             os.replace(temp, target)
-            log.info('[petpark] image_render backend=persistent elapsed_ms=%.1f bytes=%d',
-                     (time.perf_counter() - started) * 1000, target.stat().st_size)
+            log.info('[petpark] image_render backend=%s elapsed_ms=%.1f bytes=%d',
+                     backend, (time.perf_counter() - started) * 1000, target.stat().st_size)
             return True
         except Exception:
             log.exception('[petpark] 图片渲染失败')

@@ -9234,7 +9234,8 @@ class PetParkPlugin(Star):
             return marker
         started = time.perf_counter()
         html = card_theme.finish_html(html)
-        layout = f"renderer-v2:{win_w}:{win_h}:{getattr(crop, '__name__', 'none')}:"
+        revision = 'renderer-v3-pet' if 'class="pet-layout"' in html else 'renderer-v2'
+        layout = f"{revision}:{win_w}:{win_h}:{getattr(crop, '__name__', 'none')}:"
         key = hashlib.sha256((layout + html).encode("utf-8")).hexdigest()[:24]
         fname = f"{tag}_{key}.jpg"
         target = Path(self.store.custom_images_dir) / fname
