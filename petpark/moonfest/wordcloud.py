@@ -32,7 +32,7 @@ def keyword_counts(texts):
 
 @lru_cache(maxsize=32)
 def _font(size):
-    for path in ['C:/Windows/Fonts/simkai.ttf', '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc',
+    for path in [Path(__file__).parents[1] / 'assets/fonts/PetparkSerif-Regular.otf', 'C:/Windows/Fonts/simkai.ttf', '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc',
                  '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc']:
         if Path(path).is_file():
             return ImageFont.truetype(path, size)
