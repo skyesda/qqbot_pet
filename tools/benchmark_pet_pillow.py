@@ -19,7 +19,7 @@ def main():
     result=[]
     for _ in range(3):
         wall,cpu=time.perf_counter(),time.process_time()
-        image=render_pet_card(html)
+        image=render_pet_card(html,760)
         if image is None:
             raise ValueError('Not a supported pet snapshot')
         buffer=io.BytesIO()

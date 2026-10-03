@@ -40,6 +40,7 @@ class PetCardPillowTests(unittest.TestCase):
         self.assertEqual(p.root.find('name')[0].text(),'云栖 & 青岚')
         self.assertEqual(len(p.root.find('abilities')[0].find('row')),3)
         self.assertIsNotNone(render_pet_card(snapshot(portrait=False)))
+        self.assertEqual(render_pet_card(snapshot(),760).width,760)
 
     def test_unknown_or_remote_image_layout_falls_back(self):
         self.assertIsNone(render_pet_card('<div>其他卡片</div>'))
@@ -53,7 +54,7 @@ class PetCardPillowTests(unittest.TestCase):
             try:
                 target=Path(directory)/'pet.jpg'
                 with patch.object(renderer,'_capture',side_effect=AssertionError('browser launched')):
-                    self.assertTrue(renderer.write(snapshot(),target,None,900,5200))
+                    self.assertTrue(renderer.write(snapshot(),target,None,760,4200))
                 with Image.open(target) as result:
                     self.assertEqual(result.format,'JPEG')
                 self.assertFalse(list(Path(directory).glob('.*.tmp.png')))

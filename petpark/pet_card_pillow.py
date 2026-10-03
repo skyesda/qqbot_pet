@@ -77,8 +77,10 @@ def background():
 def render_pet_card(html, width=900):
     if 'class="pet-layout"' not in html or '宠物灵鉴' not in html:
         return None
-    if width != 900:
+    if width not in {760, 900}:
         return None
+    output_width = width
+    width = 900
     parser = CardParser()
     parser.feed(html)
     root = parser.root
@@ -230,4 +232,6 @@ def render_pet_card(html, width=900):
     fields=[c.text() for c in one('foot').children if isinstance(c,Node)]
     text(left+14,y+12,fields[0],15,'#f8ebc9')
     text(width-left-14-font(15).getlength(fields[-1]),y+12,fields[-1],15,'#f8ebc9')
+    if output_width != width:
+        return canvas.resize((output_width, round(height*output_width/width)), Image.Resampling.LANCZOS)
     return canvas
