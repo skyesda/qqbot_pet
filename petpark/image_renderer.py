@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -32,7 +33,15 @@ async def image_reply(builder, *args, **kwargs):
     if not jobs:
         return reply
     for marker, render in jobs:
-        result = await asyncio.to_thread(render)
+        # Skip queued work that the final game reply no longer uses.
+        parts = reply if isinstance(reply, tuple) else (reply,)
+        if not any(isinstance(part, str) and marker in part for part in parts):
+            continue
+        try:
+            result = await asyncio.to_thread(render)
+        except Exception:
+            log.exception('[petpark] 延迟图片生成失败，保留游戏结果')
+            result = None
         replacement = result or '图片暂时生成失败，请稍后重试。'
         if isinstance(reply, tuple):
             reply = tuple(part.replace(marker, replacement) if isinstance(part, str) else part
@@ -125,7 +134,10 @@ class ImageRenderer:
             if panel.count() == 1:
                 box = panel.bounding_box()
                 if box and box['width'] > 0 and box['height'] > 0:
-                    options['clip'] = box
+                    options['clip'] = { 'x': max(0, math.floor(box['x'])),
+                                        'y': max(0, math.floor(box['y'])),
+                                        'width': math.ceil(box['width']),
+                                        'height': math.ceil(box['height']) }
         return page.screenshot(type='png', animations='disabled', timeout=15000, **options)
 
     def _write(self, html, target, crop, width, height):
@@ -137,7 +149,7 @@ class ImageRenderer:
         temp = target.with_name('.' + target.name + '.' + uuid.uuid4().hex + '.tmp.png')
         try:
             raw = self._capture(html, width, height,
-                                getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu'))
+                                getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu', 'crop_canvas'))
             if raw is None:
                 return False
             with Image.open(io.BytesIO(raw)) as image:
@@ -163,11 +175,16 @@ class ImageRenderer:
         绝不在这台内存吃紧的机器上「每请求冷启一个独立 Chrome」——那是
         p90 11s / max 79s 名单外的根源。仅在显式开启 PETPARK_CLI_FALLBACK 时
         才允许一次性 CLI 兜底，且用锁保证最多 1 个 CLI 并发。"""
-        try:
-            return self._screenshot(html, width, height, clip_panel)
-        except Exception as exc:
-            log.warning('[petpark] 常驻浏览器渲染失败，重置自愈: %s', exc)
-            self._reset()
+        for attempt in range(2):
+            try:
+                return self._screenshot(html, width, height, clip_panel)
+            except Exception as exc:
+                log.warning('[petpark] 常驻浏览器渲染失败 attempt=%d: %s', attempt+1, exc)
+                self._reset()
+                # Retry a closed/crashed browser once, not a slow asset timeout.
+                message = str(exc).lower()
+                if attempt or not any(word in message for word in ('closed', 'crash', 'disconnected')):
+                    break
         if os.environ.get('PETPARK_CLI_FALLBACK'):
             with self._cli_lock:
                 try:

@@ -9156,15 +9156,22 @@ class PetParkPlugin(Star):
         raw = farm.render(sha, html, win_w, win_h, clip)
         if not raw:
             return False
+        temp = Path(target).with_name('.' + Path(target).name + '.' + uuid.uuid4().hex + '.farm.tmp')
         try:
             with Image.open(io.BytesIO(raw)) as im:
                 rgb = im.convert("RGB")
             output = crop(rgb) if crop else rgb
-            output.save(target, "JPEG", quality=88, optimize=True)
-            return self._html_png_ok(target)
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
+            output.save(temp, "JPEG", quality=88, optimize=True)
+            if not self._html_png_ok(temp):
+                return False
+            _os.replace(temp, target)
+            return True
         except Exception:
             logger.warning("[petpark] 农场返回图片无法解析，回退本地渲染")
             return False
+        finally:
+            temp.unlink(missing_ok=True)
 
     def _write_html_via_farm_or_local(self, html: str, key: str, target, crop=None,
                                       win_w: int = 900, win_h: int = 5200) -> bool:
@@ -9177,10 +9184,9 @@ class PetParkPlugin(Star):
         失败方照常跑完也无妨：同一 sha 结果会写好，缓存命中即秒回。
         """
         farm = getattr(self, "_render_farm", None)
-        use_farm = farm is not None and farm.any_worker()
         local = _render_race_pool.submit(self._write_html_png, html, key, target,
                                          crop=crop, win_w=win_w, win_h=win_h)
-        if not use_farm:
+        if farm is None:
             return bool(local.result())
         # 快车道窗口：本地够快就直接赢，不惊动农场。
         done, _ = wait([local], timeout=0.30)
@@ -9192,6 +9198,8 @@ class PetParkPlugin(Star):
                 pass          # 本地够快但崩了 → 不能判负，落下去拉农场对冲
             # 本地快但失败/产出过小：同样落到农场竞速兜底
         # 本地慢/失败：农场加入竞速，取最先成功者。
+        if not farm.any_worker():
+            return bool(local.result())
         fr = _render_race_pool.submit(self._render_via_farm, key, html, crop, target,
                                       win_w, win_h)
         done, pending = wait([local, fr], return_when=FIRST_COMPLETED)

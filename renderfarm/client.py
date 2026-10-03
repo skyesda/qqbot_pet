@@ -22,13 +22,13 @@ class FarmClient:
         self._last_health = 0.0
         self._last_workers = 0
 
-    def _request(self, path, payload=None, method=None):
+    def _request(self, path, payload=None, method=None, timeout=None):
         url = f"{self.base}{path}?token={urllib.parse.quote(self.token)}"
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         req = urllib.request.Request(url, data=data,
                                      method=method or ("POST" if data else "GET"))
         req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout if timeout is None else timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def any_worker(self) -> bool:
@@ -37,7 +37,7 @@ class FarmClient:
         if now - self._last_health < self.health_cache:
             return self._last_workers > 0
         try:
-            h = self._request("/mine/health")
+            h = self._request("/mine/health", timeout=min(.5, self.timeout))
             self._last_workers = int(h.get("workers", 0))
         except Exception:
             self._last_workers = 0
