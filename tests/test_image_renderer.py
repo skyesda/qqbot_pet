@@ -33,7 +33,7 @@ def pipeline(directory):
                uuid=uuid, time=time, hashlib=hashlib, card_theme=card_theme,
                logger=logging.getLogger(__name__))
     env.update(io=io, _os=os, wait=wait, FIRST_COMPLETED=FIRST_COMPLETED,
-               _render_race_pool=ThreadPoolExecutor(max_workers=4))
+               _render_race_pool=ThreadPoolExecutor(max_workers=4), __package__='qqbot_pet')
     exec(compile(ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[])), '<pipeline>', 'exec'), env)
     obj = env['Pipeline']()
     obj.store = SimpleNamespace(custom_images_dir=Path(directory))

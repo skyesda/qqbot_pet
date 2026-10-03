@@ -40,7 +40,8 @@ class PetCardPillowTests(unittest.TestCase):
         self.assertEqual(p.root.find('name')[0].text(),'云栖 & 青岚')
         self.assertEqual(len(p.root.find('abilities')[0].find('row')),3)
         self.assertIsNotNone(render_pet_card(snapshot(portrait=False)))
-        self.assertEqual(render_pet_card(snapshot(),760).width,760)
+        from petpark.raster_cards import render_card
+        self.assertEqual(render_card(snapshot(),760).width,760)
 
     def test_unknown_or_remote_image_layout_falls_back(self):
         self.assertIsNone(render_pet_card('<div>其他卡片</div>'))
@@ -66,7 +67,7 @@ class PetCardPillowTests(unittest.TestCase):
             renderer=ImageRenderer();raw=io.BytesIO()
             Image.effect_noise((120,180),60).convert('RGB').save(raw,'PNG')
             try:
-                with patch('petpark.pet_card_pillow.render_pet_card',side_effect=RuntimeError('font missing')):
+                with patch('petpark.raster_cards.render_card',side_effect=RuntimeError('font missing')):
                     with patch.object(renderer,'_capture',return_value=raw.getvalue()) as capture:
                         self.assertTrue(renderer.write(snapshot(),Path(directory)/'fallback.jpg',None,900,5200))
                         capture.assert_called_once()

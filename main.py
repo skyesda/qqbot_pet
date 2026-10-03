@@ -9183,6 +9183,10 @@ class PetParkPlugin(Star):
         - 本地偏慢/崩溃 → 同时启动农场竞速，谁先成功用谁（真正的「取最快」）。
         失败方照常跑完也无妨：同一 sha 结果会写好，缓存命中即秒回。
         """
+        from .petpark.raster_cards import card_kind
+        if card_kind(html) is not None:
+            # Built-in cards never need a competing cold Chrome on a miner.
+            return self._write_html_png(html, key, target, crop, win_w, win_h)
         farm = getattr(self, "_render_farm", None)
         local = _render_race_pool.submit(self._write_html_png, html, key, target,
                                          crop=crop, win_w=win_w, win_h=win_h)
@@ -9234,7 +9238,7 @@ class PetParkPlugin(Star):
             return marker
         started = time.perf_counter()
         html = card_theme.finish_html(html)
-        revision = 'renderer-v3-pet' if 'class="pet-layout"' in html else 'renderer-v2'
+        revision = 'renderer-v4-raster'
         layout = f"{revision}:{win_w}:{win_h}:{getattr(crop, '__name__', 'none')}:"
         key = hashlib.sha256((layout + html).encode("utf-8")).hexdigest()[:24]
         fname = f"{tag}_{key}.jpg"

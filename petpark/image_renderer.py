@@ -71,21 +71,41 @@ class ImageRenderer:
 
     def __init__(self):
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='petpark-chrome')
+        self._native_worker = ThreadPoolExecutor(max_workers=2, thread_name_prefix='petpark-pillow')
+        self._pending_lock = threading.Lock()
+        self._pending_writes = {}
         self._cli_lock = threading.Lock()
         self._playwright = self._browser = self._page = None
 
     def write(self, html, target, crop, width, height):
-        return self._worker.submit(self._write, html, Path(target), crop, width, height).result()
+        from .raster_cards import card_kind
+        target = Path(target)
+        pool = self._native_worker if card_kind(html) else self._worker
+        # Deduplicate before submission, including concurrent identical native cards.
+        key = str(target.resolve())
+        with self._pending_lock:
+            future = self._pending_writes.get(key)
+            if future is None:
+                future = pool.submit(self._write, html, target, crop, width, height)
+                self._pending_writes[key] = future
+        try:
+            return future.result()
+        finally:
+            with self._pending_lock:
+                if self._pending_writes.get(key) is future:
+                    self._pending_writes.pop(key, None)
 
     def warmup(self):
         self._worker.submit(self._warmup)
 
     def _warmup(self):
         try:
-            self._screenshot('<html><body></body></html>', 32, 32)
+            from .raster_cards import asset
+            from .pet_card_pillow import font
+            font(18)
+            asset('celestial-clouds.webp')
         except Exception as exc:
-            log.warning('[petpark] 图片浏览器预热失败: %s', exc)
-            self._reset()
+            log.warning('[petpark] 图片字体/素材预热失败: %s', exc)
 
     def _reset(self):
         for obj, method in ((self._browser, 'close'), (self._playwright, 'stop')):
@@ -97,6 +117,7 @@ class ImageRenderer:
         self._playwright = self._browser = self._page = None
 
     def close(self):
+        self._native_worker.shutdown(wait=True)
         self._worker.submit(self._reset).result()
         self._worker.shutdown(wait=True)
 
@@ -148,18 +169,24 @@ class ImageRenderer:
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name('.' + target.name + '.' + uuid.uuid4().hex + '.tmp.png')
         try:
-            from .pet_card_pillow import render_pet_card
+            from .raster_cards import render_card
             output = None
             backend = 'persistent'
             try:
-                output = render_pet_card(html, width)
+                output = render_card(html, width)
             except Exception:
-                log.warning('[petpark] Pillow 宠物卡回退浏览器', exc_info=True)
+                log.warning('[petpark] Pillow 图片回退浏览器', exc_info=True)
             if output is not None:
                 backend = 'pillow'
             else:
-                raw = self._capture(html, width, height,
-                                    getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu', 'crop_canvas'))
+                args = (html, width, height,
+                        getattr(crop, '__name__', '') in ('_card_crop', '_crop_menu', 'crop_canvas'))
+                # Playwright objects must stay on their owner thread even when a
+                # native job fails and requests the compatibility fallback.
+                if threading.current_thread().name.startswith('petpark-pillow'):
+                    raw = self._worker.submit(self._capture, *args).result()
+                else:
+                    raw = self._capture(*args)
                 if raw is None:
                     return False
                 with Image.open(io.BytesIO(raw)) as image:

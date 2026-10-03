@@ -15,8 +15,11 @@ THEMES = {
 @lru_cache(maxsize=3)
 def background(action):
     name = THEMES[action][0]
-    path = Path(__file__).parent / 'assets' / 'ui' / f'{name}-ritual.png'
-    return 'data:image/png;base64,' + base64.b64encode(path.read_bytes()).decode('ascii')
+    folder = Path(__file__).parent / 'assets' / 'ui'
+    webp = folder / f'{name}-ritual.webp'
+    path = webp if webp.is_file() else folder / f'{name}-ritual.png'
+    mime = 'image/webp' if path == webp else 'image/png'
+    return f'data:{mime};base64,' + base64.b64encode(path.read_bytes()).decode('ascii')
 
 
 def card_html(pet, action, previous_stage, success, message, portrait_uri):
