@@ -64,6 +64,34 @@ class _FakeBot:
         return 0
 
 
+class _FakeStore:
+    """主游戏 store 桩：只实现结算特供发货用到的四个方法。"""
+
+    def __init__(self):
+        self.players = {}
+        self.saves = 0
+
+    def get_player(self, qq, group_id, create=True):
+        key = (str(qq), str(group_id))
+        if key not in self.players and create:
+            self.players[key] = {"qq": str(qq), "group": str(group_id),
+                                 "coin": 0, "jifen": 0, "diamond": 0, "bag": {}}
+        return self.players.get(key)
+
+    @staticmethod
+    def add_currency(player, currency, amount):
+        key = {"灵石": "coin", "玄晶": "jifen", "天晶": "diamond"}[currency]
+        player[key] = player.get(key, 0) + amount
+
+    @staticmethod
+    def add_item(player, name, count=1):
+        bag = player.setdefault("bag", {})
+        bag[name] = bag.get(name, 0) + count
+
+    async def save(self):
+        self.saves += 1
+
+
 class _EngineCase(unittest.TestCase):
     """起一个离线引擎：关掉 Jev（线上没 Key，兜底路径就是主路径）。"""
 
@@ -76,6 +104,12 @@ class _EngineCase(unittest.TestCase):
         self.act._firework_review = lambda text: (True, '')
         # 单元测试里没有事件循环，_spawn 留着只会刷 RuntimeWarning
         self.act._spawn = lambda coro: coro.close()
+        # 默认配置 10-07 落幕后会开「结算兑换窗」，把月华商店整个货架换掉 ——
+        # 不把两阶段窗口钉在未来，今晚之后所有商店/阶段用例都会撞上新货架。
+        # 依赖落幕态的测试（FinalShopTests）自行把 end_at 改回过去。
+        _fut = self.act._now() + 365 * 86400
+        self.act.cfg["phase_midautumn"]["end_at"] = _fut
+        self.act.cfg["phase_national"]["end_at"] = _fut
         self.phase = "midautumn"
         self.act._phase = lambda: self.phase
         self.gid, self.qq = "10001", "20001"
@@ -1501,6 +1535,178 @@ class ShopTests(_EngineCase):
         for k in _DAILY_KEYS:
             self.assertEqual(ap["daily"][k], 0)
         self.assertEqual(ap["shop_daily"]["caps"]["lantern"], 1)   # 由 _shop_daily 自己换新
+
+
+# ---------------------------------------------------------------------------
+# 十一、结算特供（活动落幕后的硬通货兑换窗）
+# 三条铁律：① 没落幕不开窗、落幕 + shop_final_days 天准点关；② 窗内上限次数卡
+# **全部下架**，货架只剩 4 种硬通货；③ 发货失败**一分不扣**，成功只写
+# yuehua_spent（earned 永不动）—— 「月华只进不出」在累计口径上依然成立。
+# ---------------------------------------------------------------------------
+class FinalShopTests(_EngineCase):
+    def setUp(self):
+        super().setUp()
+        self.phase = None              # 落幕后 _phase() 为 None
+        self.act._phase = lambda: None
+        self.act.bot.store = _FakeStore()
+        self._end_activity(days_ago=1)  # 默认：昨天落幕 → 兑换窗内
+
+    def _end_activity(self, days_ago=1, days=None):
+        """把两阶段 end_at 拨到 days_ago 天前（= 活动已落幕），窗长按 shop_final_days。"""
+        end = self.act._now() - int(days_ago * 86400)
+        self.act.cfg["phase_midautumn"]["end_at"] = end
+        self.act.cfg["phase_national"]["end_at"] = end
+        if days is not None:
+            self.act.cfg["shop_final_days"] = days
+
+    def give(self, n):
+        ap = self.ap()
+        ap["yuehua_earned"] = int(ap.get("yuehua_earned", 0) or 0) + int(n)
+        return ap
+
+    def player(self):
+        return self.act.bot.store.get_player(self.qq, self.gid)
+
+    # ---- 开窗/关窗 ----
+    def test_window_opens_only_after_both_phases_end(self):
+        self._end_activity(days_ago=0.0001)        # 刚落幕几秒内也算
+        self.assertTrue(self.act._final_shop_open())
+        self.act.cfg["phase_national"]["end_at"] = self.act._now() + 3600  # 还有一段没结束
+        self.assertFalse(self.act._final_shop_open(),
+                         "国庆段还没结束就开兑换窗了")
+
+    def test_window_closes_exactly_after_shop_final_days(self):
+        self._end_activity(days_ago=6.99, days=7)
+        self.assertTrue(self.act._final_shop_open())
+        self._end_activity(days_ago=7.01, days=7)
+        self.assertFalse(self.act._final_shop_open(), "过了 7 天窗还开着")
+
+    def test_window_switches_and_master_switch_respected(self):
+        self.act.cfg["shop_final_days"] = 0
+        self.assertFalse(self.act._final_shop_open(), "窗长配 0 应直接不開")
+        self.act.cfg["shop_final_days"] = 7
+        self.act.cfg["shop_final_enabled"] = False
+        self.assertFalse(self.act._final_shop_open())
+        self.act.cfg["shop_final_enabled"] = True
+        self.act.cfg["enabled"] = False             # 主开关是总闸
+        self.assertFalse(self.act._final_shop_open())
+
+    def test_end_at_zero_keeps_the_window_closed(self):
+        # 有阶段「不限结束」→ 活动不会整体落幕 → 永远不开兑换窗
+        self.act.cfg["phase_national"]["end_at"] = 0
+        self.assertFalse(self.act._final_shop_open())
+
+    # ---- dispatch 门禁 ----
+    def test_only_shop_and_balance_commands_pass_after_the_end(self):
+        self.give(5000)
+        self.assertIn("结算特供", self.say("月华商店"))
+        self.assertIn("结算特供", self.say("买卡"))
+        self.assertIn("月华档案", self.say("月华信息"))   # 余额自查必须放行
+        # 玩法 / 榜单一律挡回
+        for cmd in ("猜灯谜", "拜月", "华诞签到", "巡礼", "月华榜", "月华墙"):
+            self.assertIn("未开启", self.say(cmd), f"{cmd} 不该在落幕窗内还开着")
+
+    def test_shop_still_closed_when_the_activity_never_ended(self):
+        self.act.cfg["phase_national"]["end_at"] = self.act._now() + 86400
+        self.assertIn("未开启", self.say("月华商店"),
+                      "活动没结束时，兑换窗不该顶替常规商店")
+
+    # ---- 货架 ----
+    def test_shelf_lists_four_goods_and_no_cards(self):
+        self.give(99999)
+        out = self.say("月华商店")
+        for frag in ("自动助手卡", "100天晶", "2000玄晶", "2000灵石",
+                     "1000 月华", "100 月华", "结算特供", "兑换"):
+            self.assertIn(frag, out, f"结算特供货架缺「{frag}」")
+        for card in _SHOP_CARDS:                       # 旧次数卡必须全部消失
+            self.assertNotIn(card[1], out, f"落幕了还在卖{card[1]}")
+
+    def test_old_card_names_say_cards_are_gone(self):
+        self.give(99999)
+        for name in ("灯谜卡", "巡礼", "点赞"):
+            self.assertIn("下架", self.say(f"买卡 {name}"))
+
+    def test_unknown_good_is_rejected(self):
+        self.give(99999)
+        self.assertIn("没有", self.say("买卡 不存在的商品"))
+
+    # ---- 兑换记账与发货 ----
+    def test_exchange_delivers_currency_and_spends_only_spent(self):
+        ap = self.give(500)
+        out = self.say("买卡 天晶")
+        self.assertIn("兑换成功", out)
+        self.assertEqual(self.player()["diamond"], 100, "天晶没进主钱包")
+        self.assertEqual(int(ap["yuehua_spent"]), 100)
+        self.assertEqual(int(ap["yuehua_earned"]), 500, "累计获得被扣了")
+        self.assertEqual(self.act._balance(ap), 400)
+
+    def test_exchange_pays_the_configured_price(self):
+        self.act.cfg["shop_final_cards"]["diamond"]["price"] = 40
+        ap = self.give(500)
+        self.assertIn("兑换成功", self.say("买卡 天晶"))
+        self.assertEqual(int(ap["yuehua_spent"]), 40)
+
+    def test_assistant_card_lands_in_the_bag(self):
+        self.give(2000)
+        self.assertIn("兑换成功", self.say("买卡 助手卡"))
+        self.assertEqual(self.player()["bag"].get("自动助手卡"), 1)
+        self.assertEqual(int(self.ap()["yuehua_spent"]), 1000)
+
+    def test_multi_buy_multiplies_everything(self):
+        ap = self.give(10000)
+        self.assertIn("兑换成功", self.say("买卡 灵石 3"))
+        self.assertEqual(self.player()["coin"], 6000)
+        self.assertEqual(int(ap["yuehua_spent"]), 300)
+
+    def test_no_daily_cap_in_the_final_window(self):
+        """落幕窗不限购：连买 5 次都该成功（常规卡店第 4 次就被限购挡了）。"""
+        self.give(100000)
+        for _ in range(5):
+            self.assertIn("兑换成功", self.say("买卡 天晶"))
+        self.assertEqual(self.player()["diamond"], 500)
+        self.assertEqual(int(self.ap()["yuehua_spent"]), 500)
+
+    def test_insufficient_balance_neither_delivers_nor_charges(self):
+        self.give(50)
+        out = self.say("买卡 助手卡")
+        self.assertIn("不足", out)
+        self.assertEqual(self.player()["diamond"] + self.player()["coin"]
+                         + self.player()["jifen"], 0)
+        self.assertNotIn("自动助手卡", self.player()["bag"])
+        self.assertEqual(int(self.ap().get("yuehua_spent", 0)), 0)
+
+    def test_delivery_failure_charges_nothing(self):
+        """主 store 不可用 → 明确报错且一分不扣（先发货、后落账）。"""
+        self.give(1000)
+        self.act.bot.store = None
+        out = self.say("买卡 天晶")
+        self.assertIn("未扣月华", out)
+        self.assertEqual(int(self.ap().get("yuehua_spent", 0)), 0)
+
+    def test_exchange_never_decreases_earned(self):
+        """兜底：最坏方式连打一串兑换指令，累计月华一步都不许退。"""
+        self.give(3000)
+        worst = ["买卡 天晶", "买卡 天晶 9", "买卡 助手卡 9", "买卡 不存在",
+                 "买卡 灯谜卡", "月华商店 购买 玄晶", "月华商店 购买", "买卡 灵石 0"]
+        for text in worst:
+            before = self.earned()
+            self.say(text)
+            self.assertGreaterEqual(self.earned(), before, f"「{text}」让月华变少了")
+
+    def test_backend_can_retire_a_good(self):
+        self.act.cfg["shop_final_cards"]["jifen"]["enabled"] = False
+        self.give(99999)
+        self.assertNotIn("2000玄晶", self.say("月华商店"))
+        self.assertIn("已下架", self.say("买卡 玄晶"))
+
+    def test_help_mentions_the_final_window(self):
+        out = self.say("活动帮助")
+        self.assertIn("结算特供", out)
+        self.assertIn("硬通货", out)
+
+    def test_card_shop_returns_when_the_window_closes(self):
+        self._end_activity(days_ago=8, days=7)      # 窗已关
+        self.assertIn("未开启", self.say("月华商店"))
 
 
 if __name__ == "__main__":

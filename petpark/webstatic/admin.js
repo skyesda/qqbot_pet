@@ -743,10 +743,12 @@ const MF_FIELDS=[
  {sec:'国庆·华诞',k:'double_festival_timeout_sec',label:'双庆每题超时(秒)',t:'num'},
  {sec:'国庆·华诞',k:'double_festival_reward',label:'双庆全中奖励',t:'num'},
  // ---- 月华商店（上限次数卡）----
- {sec:'月华商店（上限次数卡）',k:'shop_enabled',label:'商店总开关',t:'bool'},
+ {sec:'月华商店（上限次数卡）',k:'shop_enabled',label:'商店总开关（管常规次数卡店与结算后兑换窗）',t:'bool'},
  {sec:'月华商店（上限次数卡）',k:'shop_daily_cap',label:'每种卡每人每日限购(张)',t:'num'},
  {sec:'月华商店（上限次数卡）',k:'shop_price_ratio',label:'价格下限 = 期望产出 × 本系数（1.0=平均打平；调高→更保守；调低→便宜好卖但有通胀）',t:'num'},
  {sec:'月华商店（上限次数卡）',k:'rank_by_balance',label:'排行榜/结算改按「可用余额」算(关=仍按累计获得，花钱不掉名次)',t:'bool'},
+ {sec:'月华商店 · 结算兑换窗',k:'shop_final_enabled',label:'结算兑换窗开关（活动落幕后的硬通货兑换；上限次数卡届时全部下架）',t:'bool'},
+ {sec:'月华商店 · 结算兑换窗',k:'shop_final_days',label:'兑换窗维持天数（从两阶段最晚结束时间起算，0=不开）',t:'num'},
 ];
 // 阶梯 / 曲线 / 主题表这类结构走 JSON 文本框；label 里带上所属分节，便于定位。
 const MF_JSON=[
@@ -763,6 +765,7 @@ const MF_JSON=[
  {k:'milestones',rows:5,label:'通用 · 群里程碑（群累计月华达标 → 全群参与者各得月华，JSON：threshold / gongde）'},
  {k:'end_rewards',rows:5,label:'通用 · 活动结束排行榜奖励（全服总榜前 20 名，JSON：min / max / yuehua）'},
  {k:'shop_cards',rows:20,label:'月华商店 · 各卡上架与价格区间（JSON 对象：卡 ID → {"enabled": 是否上架, "price_min": 最低价, "price_max": 最高价}）。卡 ID 与「加哪个玩法的次数」的对应关系写死在代码里，**不要增删卡 ID、不要改名**，只能开关与调价。价格会被引擎夹进 [该玩法「多玩一次」的期望产出 × shop_price_ratio, 满档产出]：**永远不会比「多玩一次最多能拿的月华」更贵**（贵了没人买），也压不到期望产出以下（低了人人买满）。区间配反会自动夹回。'},
+ {k:'shop_final_cards',rows:16,label:'月华商店 · 结算兑换窗商品（JSON 对象：商品 ID → {"enabled": 是否上架, "price": 月华单价}）。**发货内容写死在代码里、不可改**：assistant_card=自动助手卡 1 张、diamond=100 天晶、jifen=2000 玄晶、coin=2000 灵石；这里只能开关与调价（配 0 = 白送）。活动落幕后的 7 天（shop_final_days）上限次数卡全部下架、改卖这 4 种硬通货，商品直发主游戏钱包/背包 —— 活动结束后月华不再产出，余额有限、无刷入口。'},
 ];
 let MF_CFG=null;
 function mfGet(obj,path){return path.split('.').reduce((o,k)=>(o&&o[k]!==undefined)?o[k]:undefined,obj);}
@@ -806,7 +809,7 @@ function moonfestCardHtml(){
   <div style="background:#faf8f1;border:1px solid #d8d7c9;border-radius:6px;padding:22px;margin-top:20px">
    <h3 style="margin:0 0 16px"> 月耀华诞 · 中秋 × 国庆 <span class="muted" style="font-weight:400">（独立模块配置，保存即时生效）</span></h3>
    ${MF_CFG?'':'<div class="muted" style="margin-bottom:12px;color:#c0392b">月耀华诞模块未加载（petpark/moonfest 导入失败），以下配置不生效，请查框架日志。</div>'}
-   <div class="muted" style="margin-bottom:12px">月华是全场唯一奖励与排行积分：<b>累计</b>月华只进不出（月华榜 / 群里程碑 / 结算默认按它算，老玩家名次不受花钱影响）。唯一的“花销”出口是<b>月华商店</b>的上限次数卡 —— 它从「可用余额 = 累计获得 − 累计花费」里扣，只加次数上限、当天有效。卡的价被夹在「多玩一次大约能拿多少」和「打满最多能拿多少」之间：<b>永远不比多玩一次拿到的月华还贵</b>，也不会便宜到低于期望产出；所以打得比平时好才小赚，手气差就亏，平均≈打平，配合每卡每日限购封顶。排行榜奖励在<b>整个活动结束</b>（两阶段结束时间均已过）后统一结算一次。JSON 结构（阶段曲线 / 阶梯 / 主题表 / 商店卡表）改动时请保持数组长度一致，保存失败会提示具体哪一项。</div>
+   <div class="muted" style="margin-bottom:12px">月华是全场唯一奖励与排行积分：<b>累计</b>月华只进不出（月华榜 / 群里程碑 / 结算默认按它算，老玩家名次不受花钱影响）。唯一的“花销”出口是<b>月华商店</b> —— 活动进行中卖上限次数卡（从「可用余额 = 累计获得 − 累计花费」里扣，只加次数上限、当天有效，价被夹在「多玩一次大约能拿多少」和「打满最多能拿多少」之间，配合每卡每日限购封顶）；<b>活动落幕后的 7 天</b>切换为<b>结算兑换窗</b>：次数卡全部下架，余额改换硬通货（自动助手卡 / 天晶 / 玄晶 / 灵石，直发主游戏）。排行榜奖励在<b>整个活动结束</b>（两阶段结束时间均已过）后统一结算一次。JSON 结构（阶段曲线 / 阶梯 / 主题表 / 商店卡表）改动时请保持数组长度一致，保存失败会提示具体哪一项。</div>
    ${mfFieldsHtml()}
    ${mfJsonHtml()}
    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">

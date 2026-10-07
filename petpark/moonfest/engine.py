@@ -9,6 +9,10 @@
   商店（`月华商店`/`买卡`）是**唯一**花销出口，但它只写独立的 `yuehua_spent`
   （可用余额 = earned − spent），**永不减** `yuehua_earned` —— 所以榜/里程碑/
   结算的累计口径与老玩家名次不受影响；后台 `rank_by_balance` 可改成按余额算；
+- **结算兑换窗是「不碰主经济」的唯一例外**：活动落幕后的 `shop_final_days` 天
+  （默认 7），次数卡全部下架、月华余额改换硬通货（自动助手卡/天晶/玄晶/灵石），
+  商品直发 store 三币钱包与背包（见 `_FINAL_GOODS`，发货内容写死在代码里）——
+  这是攒了整个活动的月华余额唯一的真出口，此前月华只能攒不能花；
 - **活动结束一次性结算**：两阶段 end_at 均过后 `_settle()` 发全服总榜前 20 名
   纯月华（写回 players 桶），`meta.settled` 幂等，不调 store.add_item。
 
@@ -198,6 +202,38 @@ _CARD_BY_COUNTER = {_c[3]: _c for _c in _SHOP_CARDS}
 
 # 一次买入的张数上限（纯防御：防止有人发「买卡 灯谜 999999」把价格和文案算爆）
 _SHOP_BUY_MAX = 10
+
+# ---------------------------------------------------------------------------
+# 结算特供（活动落幕后的硬通货兑换窗）：两阶段都结束后，上限次数卡全部下架，
+# 改卖 4 种硬通货，窗口 = 两阶段最晚 end_at + shop_final_days 天。
+#
+# **这是「月华不碰主经济」铁律的唯一例外**（用户拍板的活动收官出口）：商品直发
+# 主游戏数据（store 的三币钱包 / 背包），是攒了 11 天的月华余额唯一的真去处。
+# 与 _SHOP_CARDS 同一哲学：**发什么写死在代码里**（ID / 发货类型 / 到账数量），
+# 后台只能开关与调价 —— 让运营把「100 天晶」配成「10000 天晶」，一晚上就能把
+# 主经济打穿，这个口子不给开。活动结束后月华不再产出 → 余额有限、无刷入口，
+# 价格纯属「存量余额的购买力」，配 0 = 白送也由运营自决。
+# ---------------------------------------------------------------------------
+_FINAL_GOODS = (
+    # (商品 ID, 货架名, 别名…, 发货类型, 发货参数, 货架说明, 代码默认价)
+    # 发货类型 "item" → store.add_item(玩家, 物品, 张数)；
+    # 发货类型 "currency" → store.add_currency(玩家, 货币, 数量)
+    # 默认价与 config.DEFAULT_CONFIG 的 shop_final_cards 同值（双保险：后台 JSON
+    # 缺键时回退这里，不回退成 0 白送）。
+    ("assistant_card", "自动助手卡", ("助手卡",), "item",
+     ("自动助手卡", 1), "1 张『自动助手卡』进背包，发「使用 自动助手卡」充自动助手执行额度",
+     1000),
+    ("diamond", "100天晶", ("天晶",), "currency",
+     ("天晶", 100), "到账 100 天晶（本群角色）", 100),
+    ("jifen", "2000玄晶", ("玄晶",), "currency",
+     ("玄晶", 2000), "到账 2000 玄晶（本群角色）", 100),
+    ("coin", "2000灵石", ("灵石",), "currency",
+     ("灵石", 2000), "到账 2000 灵石（本群角色）", 100),
+)
+
+# 结算窗口内放行的指令：商店本体 + 余额自查（商店文案三处引导玩家去看
+# 「月华信息」，不放行等于让人对着拒绝提示干瞪眼）。玩法 / 榜单 / 墙一律不放行。
+_FINAL_SHOP_CMDS = frozenset({"月华商店", "买卡", "月华信息", "我的月华", "月华档案"})
 
 
 class MoonfestActivity:
@@ -454,12 +490,16 @@ class MoonfestActivity:
         # 不写这一行，免得每条说明都拖一句没信息量的「00:00 ~ 24:00」。
         full_day = open_h >= close_h or (open_h <= 0 and close_h >= 24)
         daily_line = "" if full_day else T.HELP_DAILY_LINE.format(open=open_h, close=close_h)
-        return T.HELP_TEXT.format(
+        text = T.HELP_TEXT.format(
             window_mid=self._phase_window_text("phase_midautumn"),
             window_nat=self._phase_window_text("phase_national"),
             window_double=self._double_day_text(),
             daily_line=daily_line,
         )
+        if self._final_shop_open():
+            # 活动帮助在落幕窗口内照常可读 —— 玩家最需要知道的就是「余额还能花」
+            text += T.HELP_FINAL_SHOP.format(deadline=self._fmt_ts(self._final_shop_end()))
+        return text
 
     def _meta(self) -> dict:
         return self._data.setdefault("meta", {})
@@ -874,7 +914,17 @@ class MoonfestActivity:
 
     def _cmd_shop(self, event, qq, group_id, rest: str) -> str:
         if not bool(self.cfg.get("shop_enabled", True)):
-            return T.SHOP_DISABLED
+            return T.SHOP_DISABLED       # 商店总开关：常规卡店与结算兑换窗一并管
+        # 结算兑换窗优先于常规卡店：整个货架都换掉（上限卡全下架），不走阶段/限购
+        if self._final_shop_open():
+            ap = self._get_player(group_id, qq, event=event)
+            tokens = (rest or "").split()
+            if tokens and tokens[0] in ("购买", "买", "换"):
+                tokens = tokens[1:]
+            if not tokens:
+                return self._final_shop_list(ap, group_id)
+            return self._final_shop_buy(
+                ap, group_id, qq, tokens[0], tokens[1] if len(tokens) > 1 else "")
         ap = self._get_player(group_id, qq, event=event)
         self._daily_reset(ap)
         tokens = (rest or "").split()
@@ -946,6 +996,131 @@ class MoonfestActivity:
         return T.SHOP_BUY_OK.format(
             name=label, count=count, cost=cost, balance=self._balance(ap), play=play,
             base=base + bought, after=base + bought + count)
+
+    # ------------------------------------------------------------------
+    # 结算特供（活动落幕后的硬通货兑换窗，7 天）
+    # ------------------------------------------------------------------
+    def _final_shop_end(self) -> int:
+        """兑换窗截止时间戳 = 两阶段最晚 end_at + shop_final_days 天；0 = 不开。"""
+        if not bool(self.cfg.get("shop_final_enabled", True)):
+            return 0
+        days = max(0, self._int_cfg("shop_final_days", 7))
+        if days <= 0:
+            return 0
+        ends = []
+        for key in ("phase_midautumn", "phase_national"):
+            p = self.cfg.get(key) or {}
+            e = int(p.get("end_at", 0) or 0)
+            if not e:
+                return 0  # 有阶段不限结束 → 活动不会整体落幕，谈不上兑换窗
+            ends.append(e)
+        return max(ends) + days * 86400
+
+    def _final_shop_open(self) -> bool:
+        """活动已落幕（两阶段 end_at 均过）且未过兑换窗。"""
+        if not bool(self.cfg.get("enabled", True)):
+            return False  # 主开关是所有出口的总闸，关掉它兑换窗一并关死
+        if not self._activity_over():
+            return False
+        end = self._final_shop_end()
+        return end > 0 and self._now() <= end
+
+    def _final_good_match(self, name):
+        """商品匹配：商品 ID / 货架名 / 短别名都认（「天晶」「100天晶」「diamond」）。"""
+        want = str(name or "").strip()
+        if not want:
+            return None
+        for g in _FINAL_GOODS:
+            if want.lower() == g[0].lower() or want == g[1] or want in g[2]:
+                return g
+        return None
+
+    @staticmethod
+    def _final_price(good, cards) -> int:
+        """商品价格：后台 `shop_final_cards[ID].price`，缺键回退代码默认价。
+
+        刻意允许配 0（白送）—— 活动已落幕、月华不再产出，这里没有刷的入口，
+        价格纯粹是「存量余额的购买力」，由运营自决。
+        """
+        gid = good[0]
+        card = (cards or {}).get(gid)
+        if isinstance(card, dict) and "price" in card:
+            try:
+                return max(0, int(card.get("price")))
+            except (TypeError, ValueError):
+                return good[6]
+        return good[6]
+
+    def _final_deliver(self, qq, group_id, good, count) -> str | None:
+        """把商品发进**主游戏**数据（store 三币钱包 / 背包）。
+
+        成功返回 None；失败返回原因（调用方据此**不扣月华**——先发货、后落账，
+        发货抛异常时玩家一个子儿都不损失）。这是「月华不碰主经济」的唯一例外。
+        """
+        store = getattr(self.bot, "store", None)
+        if store is None:
+            return "主游戏数据未就绪"
+        try:
+            pl = store.get_player(str(qq), str(group_id))
+            if pl is None:
+                return "找不到本群角色"
+            kind, (target, unit) = good[3], good[4]
+            if kind == "currency":
+                store.add_currency(pl, target, unit * count)
+            else:
+                store.add_item(pl, target, count)
+            self._spawn(store.save())
+            return None
+        except Exception:  # noqa: BLE001 - 发货失败必须转化为「不扣钱」的回执
+            logger.exception("[moonfest] 结算特供发货失败 good=%s x%d", good[0], count)
+            return "发货失败，请稍后再试"
+
+    def _final_shop_list(self, ap, group_id) -> str:
+        cards = self.cfg.get("shop_final_cards")
+        deadline = self._fmt_ts(self._final_shop_end())
+        parts = [T.FINAL_SHOP_HEADER.format(
+            balance=self._balance(ap),
+            earned=max(0, int(ap.get("yuehua_earned", 0) or 0)),
+            deadline=deadline)]
+        for g in _FINAL_GOODS:
+            card = (cards or {}).get(g[0])
+            if isinstance(card, dict) and not bool(card.get("enabled", True)):
+                continue
+            parts.append(T.FINAL_SHOP_ROW.format(
+                name=g[1], price=self._final_price(g, cards), desc=g[5]))
+        parts.append(T.FINAL_SHOP_FOOTER.format(deadline=deadline))
+        return "".join(parts)
+
+    def _final_shop_buy(self, ap, group_id, qq, name, count_raw) -> str:
+        good = self._final_good_match(name)
+        if good is None:
+            # 玩家多半还惦记着次数卡：给明确的「已下架」而不是笼统的「没这商品」
+            if self._card_match(name):
+                return T.FINAL_CARDS_GONE
+            return T.FINAL_SHOP_NO_GOOD.format(name=str(name or "").strip())
+        gid, label = good[0], good[1]
+        cards = self.cfg.get("shop_final_cards")
+        card = (cards or {}).get(gid)
+        if isinstance(card, dict) and not bool(card.get("enabled", True)):
+            return T.SHOP_CARD_OFF.format(name=label)
+        price = self._final_price(good, cards)
+        count = max(1, min(self._as_int(str(count_raw).strip() or 1, 1), _SHOP_BUY_MAX))
+        cost = price * count
+        balance = self._balance(ap)
+        if cost > balance:
+            return T.SHOP_NOT_ENOUGH.format(
+                name=label, count=count, cost=cost, balance=balance)
+        # 先发货、后落账：发货失败一分不扣；成功后只写 yuehua_spent（earned 永不动）
+        reason = self._final_deliver(qq, group_id, good, count)
+        if reason is not None:
+            return T.FINAL_DELIVER_FAIL.format(reason=reason)
+        ap["yuehua_spent"] = int(ap.get("yuehua_spent", 0) or 0) + cost
+        kind, (target, unit) = good[3], good[4]
+        deliver = (f"已到账 {target} ×{unit * count}（本群角色）" if kind == "currency"
+                   else f"已入背包 {target} ×{count}，{good[5]}")
+        return T.FINAL_BUY_OK.format(
+            name=label, count=count, cost=cost,
+            balance=self._balance(ap), deliver=deliver)
 
     # ------------------------------------------------------------------
     # 管理权限
@@ -2477,7 +2652,10 @@ class MoonfestActivity:
                                                status_only=cmd != '国庆快乐')
 
         if not self._enabled():
-            return T.NOT_OPEN
+            # 结算兑换窗（落幕 +7 天）：玩法全关，但商店与余额自查继续放行 ——
+            # 这是月华余额唯一的出口，窗口关掉后再关商店等于让人看着余额发呆。
+            if not (self._final_shop_open() and cmd in _FINAL_SHOP_CMDS):
+                return T.NOT_OPEN
 
         phase = self._phase()
         # 只读指令：活动开放期间随时可用
