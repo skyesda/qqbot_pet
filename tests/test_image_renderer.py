@@ -12,13 +12,16 @@ import unittest
 import uuid
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'petbot_framework/compat'))
-from qqbot_pet.petpark import card_theme
-from qqbot_pet.petpark.image_renderer import ImageRenderer, image_reply, pending_images
+test_package = ModuleType('render_test_plugin')
+test_package.__path__ = [str(Path(__file__).resolve().parents[1])]
+sys.modules['render_test_plugin'] = test_package
+from render_test_plugin.petpark import card_theme
+from render_test_plugin.petpark.image_renderer import ImageRenderer, image_reply, pending_images
 
 
 def pipeline(directory):
@@ -33,10 +36,11 @@ def pipeline(directory):
                uuid=uuid, time=time, hashlib=hashlib, card_theme=card_theme,
                logger=logging.getLogger(__name__))
     env.update(io=io, _os=os, wait=wait, FIRST_COMPLETED=FIRST_COMPLETED,
-               _render_race_pool=ThreadPoolExecutor(max_workers=4), __package__='qqbot_pet')
+               _render_race_pool=ThreadPoolExecutor(max_workers=4), __package__='render_test_plugin')
     exec(compile(ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[])), '<pipeline>', 'exec'), env)
     obj = env['Pipeline']()
     obj.store = SimpleNamespace(custom_images_dir=Path(directory))
+    obj.config = {'image_publish_dir': ''}
     obj._tomb_image_url = lambda name: 'https://example.test/custom_images/' + name
     obj._image_renderer = ImageRenderer()
     obj._race_pool = env['_render_race_pool']
@@ -84,6 +88,7 @@ class ImagePipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(await image_reply(build, 'first', 500), a)
             self.assertEqual(shot.call_count, 3)
             self.assertNotIn('__PETPARK_IMAGE_', a)
+            self.assertIn('#400px #300px', a)
 
     async def test_tuple_and_failure_never_leak_placeholders(self):
         with patch.object(self.p._image_renderer, 'write', return_value=False):

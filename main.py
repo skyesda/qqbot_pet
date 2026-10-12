@@ -9055,16 +9055,18 @@ class PetParkPlugin(Star):
 
     # ---- 通用 HTML -> PNG 渲染管线（菜单 / 宠物卡 / 背包卡共用） ----
     def _prune_images(self, prefix: str, keep: int = 5) -> None:
-        """保留至少 256 张/类；24 小时内图片不删除，避免 QQ 延迟拉图失效。"""
+        """保留至少 256 张/类和七天内图片，兼顾延迟拉图与磁盘占用。"""
+        from .petpark.image_delivery import unpublish_image
         try:
             d = self.store.custom_images_dir
             rows = sorted(list(d.glob(f"{prefix}_*.png")) + list(d.glob(f"{prefix}_*.jpg")),
                           key=lambda p: p.stat().st_mtime, reverse=True)
             for p in rows[max(keep, 256):]:
                 try:
-                    if time.time() - p.stat().st_mtime < 86400:
+                    if time.time() - p.stat().st_mtime < 7 * 86400:
                         continue
                     p.unlink()
+                    unpublish_image(p.name, self.config)
                 except OSError:
                     pass
         except OSError:
@@ -9260,7 +9262,7 @@ class PetParkPlugin(Star):
         w, h = self._image_dims(target, disp_w)
         logger.info("[petpark] image_ready tag=%s cache_hit=%s elapsed_ms=%.1f",
                     tag, cache_hit, (time.perf_counter() - started) * 1000)
-        return f"![{tag} #{w} #{h}]({self._tomb_image_url(fname)})"
+        return f"![{tag} #{w}px #{h}px]({self._tomb_image_url(fname)})"
 
     def _render_menu_image(self) -> str | None:
         """渲染并返回菜单图片 Markdown；任何失败回退 None。"""
@@ -9551,7 +9553,7 @@ class PetParkPlugin(Star):
             url = self._tomb_image_url(cf)
             try:
                 w, h = self._image_dims(Path(self.store.custom_images_dir) / cf, disp_w)
-                return f"![{name} #{w} #{h}]({url})"
+                return f"![{name} #{w}px #{h}px]({url})"
             except Exception:
                 return f"![{name}]({url})"
         url = self._mount_gif_url(name)
@@ -9562,7 +9564,7 @@ class PetParkPlugin(Star):
             w, h = self._image_dims(target, disp_w)
         except Exception:
             return f"![{name}]({url})"
-        return f"![{name} #{w} #{h}]({url})"
+        return f"![{name} #{w}px #{h}px]({url})"
 
     def _mount_value(self, name: str, player: dict | None = None) -> int:
         """坐骑价值：实例 > 官方配置；定制坐骑缺省时按最高档 2 亿。"""
@@ -10431,11 +10433,7 @@ class PetParkPlugin(Star):
         filename = pet.get("custom_image")
         if not filename:
             return None
-        host = str(self.config.get("web_host", "103.38.83.146"))
-        if host in ("0.0.0.0", "127.0.0.1", "localhost"):
-            host = "103.38.83.146"
-        port = int(self.config.get("web_port", 7799))
-        url = f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
+        url = self._tomb_image_url(filename)
         return f"![定制形象 #{images._IMG_DISPLAY} #{images._IMG_DISPLAY}]({url})"
 
     def _my_pet(self, player: dict):
@@ -16178,12 +16176,10 @@ class PetParkPlugin(Star):
         return filename
 
     def _tomb_image_url(self, filename: str) -> str:
-        """返回图片的完整 HTTP URL。"""
-        host = str(self.config.get("web_host", "103.38.83.146"))
-        if host in ("0.0.0.0", "127.0.0.1", "localhost"):
-            host = "103.38.83.146"
-        port = int(self.config.get("web_port", 7799))
-        return f"http://{host}:{port}/custom_images/{urllib.parse.quote(filename)}"
+        """统一 HTTPS 地址；公开图片发布到 Nginx 目录，下载不占游戏进程。"""
+        from .petpark.image_delivery import image_url, publish_image
+        publish_image(Path(self.store.custom_images_dir) / filename, self.config)
+        return image_url(filename, self.config)
 
     def _tomb_image_md(self, filename: str) -> str:
         """返回与宠物图片一致的 Markdown 图片语法，带尺寸标记，确保手机端可渲染。"""

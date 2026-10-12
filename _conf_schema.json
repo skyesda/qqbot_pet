@@ -167,6 +167,18 @@
     "type": "int",
     "default": 7799
   },
+  "image_public_base_url": {
+    "description": "QQ 图片公网地址",
+    "hint": "图片下载使用的 HTTP(S) 网站地址，不包含 /custom_images。默认使用已有 HTTPS 网站，需在 QQ 开放平台配置该域名。",
+    "type": "string",
+    "default": "https://bot.flyyye.cn"
+  },
+  "image_publish_dir": {
+    "description": "QQ 图片静态发布目录",
+    "hint": "Linux 默认 /var/www/petpark/qq_images/custom_images，配合 Nginx 静态图片路由。同一文件系统使用硬链接，不额外复制空间；不同文件系统回退复制。留空禁用静态发布。",
+    "type": "string",
+    "default": "/var/www/petpark/qq_images/custom_images"
+  },
   "web_user": {
     "description": "管理网站登录账号",
     "hint": "登录管理后台的用户名。",
