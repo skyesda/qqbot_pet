@@ -16983,8 +16983,11 @@ class PetParkPlugin(Star):
                     mult_str = f"×{data.homestead_dispatch_multiplier(disp_info, name)}"
                     parts.append(f"🐾 {self._display_uid(disp_qq)}({mult_str})")
                 else:
-                    next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
-                    parts.append(f"⬆️{next_cost}灵石")
+                    if lv >= data.HOMESTEAD_BUILDING_MAX_LEVEL:
+                        parts.append("⬆️MAX")
+                    else:
+                        next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
+                        parts.append(f"⬆️{next_cost}灵石")
                 lines.append("　".join(parts))
         lines.append("")
         summary_parts = []
@@ -17079,6 +17082,8 @@ class PetParkPlugin(Star):
         cfg = data.HOMESTEAD_BUILDINGS.get(name, {})
         b = hs["buildings"][name]
         current_lv = b["level"]
+        if current_lv >= data.HOMESTEAD_BUILDING_MAX_LEVEL:
+            return f"🏯 {cfg.get('icon', '')}**{name}** 已达最高等级 Lv{data.HOMESTEAD_BUILDING_MAX_LEVEL}，无法继续升级。"
         cost = data.homestead_upgrade_cost(current_lv, cfg.get("build_cost", 500))
         if player.get("coin", 0) < cost:
             return f"灵石不足，升级{name}到 Lv{current_lv + 1} 需要 **{cost}** 灵石，当前仅有 {player['coin']}。"
@@ -17309,13 +17314,16 @@ class PetParkPlugin(Star):
                 b = built[name]
                 lv = b["level"]
                 prod_text = self._homestead_prod_text(name, lv)
-                next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
                 lines.append(f"{icon} **{name}** Lv{lv}（已建造）")
                 lines.append(f"　产量：{prod_text}")
                 if disp_info:
                     mult = data.homestead_dispatch_multiplier(disp_info, name)
                     lines.append(f"　🐾 派遣：{self._display_uid(disp_info.get('qq','?'))} ×{mult}")
-                lines.append(f"　⬆️ 升级 Lv{lv + 1} 需 {next_cost} 灵石")
+                if lv >= data.HOMESTEAD_BUILDING_MAX_LEVEL:
+                    lines.append(f"　⬆️ 已满级（MAX Lv{data.HOMESTEAD_BUILDING_MAX_LEVEL}）")
+                else:
+                    next_cost = data.homestead_upgrade_cost(lv, cfg.get("build_cost", 500))
+                    lines.append(f"　⬆️ 升级 Lv{lv + 1} 需 {next_cost} 灵石")
             else:
                 req_lv = cfg.get("unlock_pet_level", 0)
                 if req_lv and pet_level < req_lv:

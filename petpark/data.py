@@ -2240,6 +2240,9 @@ def homestead_exp_to_next(level: int) -> int:
     return 200 + level * 300
 
 
+HOMESTEAD_BUILDING_MAX_LEVEL = 999  # 家园建筑等级上限（全建筑统一；存量超出的由 store 迁移钳到该值）
+
+
 def homestead_upgrade_cost(level: int, base: int = 500) -> int:
     """建筑升级到指定等级所需金币（升级=level N→N+1，传入当前等级）。"""
     return int(base * (level + 1) * (1.0 + (level + 1) * 0.3))

@@ -147,6 +147,7 @@ class PetStore:
         self._migrate_sect_v2()
         self._migrate_unified_v1()
         self._migrate_homestead_building_names()
+        self._migrate_homestead_level_cap_v1()
         self._migrate_economy_v1()
         self._migrate_bank_overflow()
         self._migrate_assistant_v1()
@@ -349,6 +350,66 @@ class PetStore:
                 for key in ("homestead", "homestead_state"):
                     if isinstance(pl.get(key), dict):
                         rekey(pl[key])
+
+    def _migrate_homestead_level_cap_v1(self) -> None:
+        """家园建筑等级封顶迁移（一次性，幂等）。
+
+        建筑等级统一上限 data.HOMESTEAD_BUILDING_MAX_LEVEL（999）。超过上限的存量
+        建筑等级钳到上限值，建筑本身与派遣/累计产出等其余字段不动；只向下封顶、
+        不向上提升（本就是高等级的一律不动）。覆盖三处存储路径：homestead_players
+        （官方共享键 + 无限服隔离键）、玩家对象上的 _homestead_fallback、旧字段
+        homestead/homestead_state。
+        """
+        if self._data.get("homestead_level_cap_v1"):
+            return
+        self._data["homestead_level_cap_v1"] = True
+        try:
+            if self.path.exists():
+                bak = self.path.with_name(self.path.name + ".pre_homestead_level_cap.bak")
+                if not bak.exists():
+                    bak.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError as exc:
+            logging.getLogger(__name__).warning("[petpark] 家园等级封顶迁移备份失败：%s", exc)
+
+        cap = int(data.HOMESTEAD_BUILDING_MAX_LEVEL)
+        n_states = 0
+        n_buildings = 0
+
+        def clamp(state) -> None:
+            nonlocal n_states, n_buildings
+            if not isinstance(state, dict):
+                return
+            buildings = state.get("buildings")
+            if not isinstance(buildings, dict):
+                return
+            fixed = 0
+            for b in buildings.values():
+                if not isinstance(b, dict):
+                    continue
+                try:
+                    lv = int(b.get("level", 1) or 1)
+                except (TypeError, ValueError):
+                    continue
+                if lv > cap:
+                    b["level"] = cap
+                    fixed += 1
+            if fixed:
+                n_states += 1
+                n_buildings += fixed
+
+        for state in self._data.get("homestead_players", {}).values():
+            clamp(state)
+        for pl in self._data.get("players", {}).values():
+            if isinstance(pl, dict):
+                clamp(pl.get("_homestead_fallback"))
+                # 兼容旧字段路径：部分玩家把家园键直接挂在玩家对象下
+                for key in ("homestead", "homestead_state"):
+                    clamp(pl.get(key))
+        if n_states:
+            logging.getLogger(__name__).info(
+                "[petpark] 家园建筑等级封顶 %d：%d 份家园、%d 栋建筑被钳制",
+                cap, n_states, n_buildings,
+            )
 
     def _migrate_unified_v1(self) -> None:
         """统一经济 v1：仅打幂等标记，为后续「双键货币/仙途战力」迁移预留钩子。
