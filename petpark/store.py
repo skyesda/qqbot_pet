@@ -1554,21 +1554,6 @@ class PetStore:
         end = player.get("cooldowns", {}).get(key, 0)
         return max(0, int(end) - int(time.time()))
 
-    @staticmethod
-    def set_pet_cooldown(pet: dict, key: str, seconds: int) -> None:
-        """在指定宠物上设置冷却（用于按宠物隔离的自动修炼等后台动作）。"""
-        if not isinstance(pet, dict):
-            return
-        pet.setdefault("cooldowns", {})[key] = int(time.time()) + int(seconds)
-
-    @staticmethod
-    def pet_cooldown_remaining(pet: dict, key: str) -> int:
-        """查询指定宠物的冷却剩余。"""
-        if not isinstance(pet, dict):
-            return 0
-        end = pet.get("cooldowns", {}).get(key, 0)
-        return max(0, int(end) - int(time.time()))
-
     # ----------------------------- 活动 -----------------------------
     def events(self) -> dict:
         return self._data.setdefault("events", {})
@@ -3224,9 +3209,6 @@ class PetStore:
             "plays": 0,
             "best_time": {},
             "pending_pet_exp": 0,
-            "daily_date": "",
-            "daily_plays": 0,
-            "daily_exp": 0,
         }
 
     def ms_state(self, qq: str) -> dict:
@@ -3271,34 +3253,6 @@ class PetStore:
             if str(entry.get("qq", "")) == str(invitee_qq):
                 return True
         return False
-
-    # ---- 邀请奖励全服唯一（防跨群重复领奖） ----
-    def invite_global(self) -> dict:
-        """全服邀请记录：invitees[被邀请QQ]=关系；pairs=已发奖的关系列表。"""
-        return self._data.setdefault("invite_global", {"invitees": {}, "pairs": []})
-
-    def check_invite_global(self, inviter_qq: str, invitee_qq: str) -> tuple[bool, str]:
-        """跨群校验：被邀请人是否已在别处领过邀请奖，或该对关系是否已发奖。"""
-        g = self.invite_global()
-        inviter_qq, invitee_qq = str(inviter_qq), str(invitee_qq)
-        prev = g.get("invitees", {}).get(invitee_qq)
-        if prev:
-            return False, f"该用户已在群 {prev.get('group', '?')} 接受过邀请（邀请奖励全服唯一）。"
-        pair = f"{inviter_qq}\x1f{invitee_qq}"
-        if pair in set(g.get("pairs", [])):
-            return False, "该邀请关系已领取过奖励。"
-        return True, ""
-
-    def record_invite_global(self, inviter_qq: str, invitee_qq: str, group_id: str) -> None:
-        g = self.invite_global()
-        inviter_qq, invitee_qq = str(inviter_qq), str(invitee_qq)
-        g.setdefault("invitees", {})[invitee_qq] = {
-            "inviter": inviter_qq, "group": str(group_id), "at": int(time.time())
-        }
-        pairs = g.setdefault("pairs", [])
-        pairs.append(f"{inviter_qq}\x1f{invitee_qq}")
-        if len(pairs) > 20000:
-            del pairs[:len(pairs) - 20000]
 
     # ----------------------------- 宠物家园（放置建造 · 数据隔离） -----------------------------
     @staticmethod

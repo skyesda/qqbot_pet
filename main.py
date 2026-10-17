@@ -863,75 +863,16 @@ class PetParkPlugin(Star):
                 break
 
     def _bank_interest_tick(self) -> None:
-        """单次银行结算：
-        ① 每日一次：对逾期贷款做全服强制扣款（存款优先，其次该 QQ 各群钱包），
-           防「贷满→分散藏钱→不触发银行动作」逃废；
-        ② 每周一：为所有账户计息（含贷款复利）并保存。
-        """
+        """单次利息检查：如果是周一且本周尚未计息，则为所有账户计息并保存。"""
         now = self._bj_localtime()
         weekday = now.tm_wday  # 0=周一
-        today_key = time.strftime("%Y-%m-%d")
+        if weekday != 0:
+            return
         week_key = time.strftime("%Y-W%W")
         bank_players = self.store._data.get("bank_players", {})
         any_changed = False
-        all_players = None
         for qq, bk in list(bank_players.items()):
             if not isinstance(bk, dict):
-                continue
-            # ---- 每日逾期强制扣款（每账户每天一次）----
-            if bk.get("last_overdue_tick") != today_key:
-                bk["last_overdue_tick"] = today_key
-                overdue_hit = False
-                for cur, key_due, key_loan, dep_key, wallet_key in (
-                    ("灵石", "loan_coin_due", "loan_coin", "deposit_coin", "coin"),
-                    ("玄晶", "loan_jifen_due", "loan_jifen", "deposit_jifen", "jifen"),
-                ):
-                    loan = int(bk.get(key_loan, 0) or 0)
-                    due_str = bk.get(key_due, "")
-                    if loan <= 0 or not due_str:
-                        continue
-                    try:
-                        due_ts = int(time.mktime(time.strptime(due_str, "%Y-%m-%d")))
-                        days_overdue = max(0, (int(time.time()) - due_ts) // 86400)
-                    except ValueError:
-                        continue
-                    if days_overdue < data.BANK_OVERDUE_FREEZE_DAYS:
-                        continue
-                    overdue_hit = True
-                    # 存款优先抵扣（存款与该账户绑定，无法藏匿）
-                    dep = int(bk.get(dep_key, 0) or 0)
-                    if dep > 0 and loan > 0:
-                        pay = min(dep, loan)
-                        bk[dep_key] = dep - pay
-                        loan -= pay
-                        bk["total_repaid"] = bk.get("total_repaid", 0) + pay
-                    # 其次遍历该 QQ 所有群钱包
-                    if loan > 0:
-                        if all_players is None:
-                            all_players = list(self.store.all_players().values())
-                        for pl in all_players:
-                            if loan <= 0:
-                                break
-                            if str(pl.get("qq", "")) != str(qq):
-                                continue
-                            have = int(pl.get(wallet_key, 0) or 0)
-                            if have <= 0:
-                                continue
-                            pay = min(have, loan)
-                            pl[wallet_key] = have - pay
-                            loan -= pay
-                            bk["total_repaid"] = bk.get("total_repaid", 0) + pay
-                    bk[key_loan] = loan
-                    if loan <= 0:
-                        bk.pop(key_due, None)
-                        cd_key = "loan_coin_repaid_at" if cur in ("金币", "灵石") else "loan_jifen_repaid_at"
-                        bk[cd_key] = int(time.time())
-                        old_credit = bk.get("credit_score", data.BANK_CREDIT_INITIAL)
-                        bk["credit_score"] = max(0, old_credit + random.randint(*data.BANK_CREDIT_OVERDUE))
-                    any_changed = True
-                if overdue_hit:
-                    any_changed = True
-            if weekday != 0:
                 continue
             if bk.get("last_interest_week") == week_key:
                 continue
@@ -3596,17 +3537,11 @@ class PetParkPlugin(Star):
             )
         if not p.get("rebirth_gem"):
             return "你还没有重生宝石，请先 `购买重生宝石`（1万天晶 + 10万玄晶）。"
-        # 重生次数上限：防无限次属性复利滚雪球
-        done_count = int(p.get("rebirth_count", 0))
-        if data.REBIRTH_MAX_COUNT and done_count >= data.REBIRTH_MAX_COUNT:
-            return f"该灵宠已完成 {done_count} 次重生，已达上限（{data.REBIRTH_MAX_COUNT} 次），无法再次重生。"
         # 收集一生回顾（在修改宠物数据之前）
         review_text = self._rebirth_review(player, p)
-        # 计算最终倍率（重生次数越多，本次倍率被摊薄，抑制复利）
+        # 计算最终倍率
         sacrifice_pts = p.get("rebirth_sacrifice", 0)
         multiplier = data.rebirth_roll_multiplier(sacrifice_pts)
-        if data.REBIRTH_DIMINISH and done_count > 0:
-            multiplier = round(1 + (multiplier - 1) / (done_count + 1), 2)
         # 执行重生
         old_atk = p.get("atk", 0)
         old_def = p.get("def", 0)
@@ -3642,7 +3577,6 @@ class PetParkPlugin(Star):
         # 清除重生相关标记
         p.pop("rebirth_gem", None)
         p.pop("rebirth_sacrifice", None)
-        p["rebirth_count"] = done_count + 1
         # 重生后清空剧情任务记录（已完成 + 进行中），任务可重新完成
         quest_cleared = len(player.get("quest_done", [])) + len(player.get("quests", {}))
         player.pop("quest_done", None)
@@ -5448,17 +5382,9 @@ class PetParkPlugin(Star):
             hm = pool.get("start_time") or "07:00"
             return f"🎂 瓜分奖池将于 **{hm}** 开启，敬请期待！"
         carnival = self._in_carnival(cel, now)
-        # 无冷却开关（后台 pool 可配，默认关闭）：开启时每次瓜分不设冷却，可连续点击
-        no_cd = bool(pool.get("no_cd", data.CELEBRATE_POOL_DEFAULT_NO_CD))
+        # 无冷却开关（后台 pool 可配，默认开启）：开启时每次瓜分不设冷却，可连续点击
+        no_cd = bool(pool.get("no_cd", True))
         ppl = cel.setdefault("players", {}).setdefault(qq, {})
-        # 每人每日瓜分次数上限：无论是否免冷却，都防脚本一天掏空奖池
-        today = time.strftime("%Y-%m-%d")
-        if ppl.get("grab_date") != today:
-            ppl["grab_date"] = today
-            ppl["grab_count"] = 0
-        per_day_cap = int(pool.get("per_day_cap") or data.CELEBRATE_POOL_PER_DAY_CAP)
-        if per_day_cap > 0 and int(ppl.get("grab_count", 0)) >= per_day_cap:
-            return f"🎂 你今日瓜分次数已达上限（{per_day_cap} 次），明天再来。"
         if not no_cd:
             if carnival:
                 cd_sec = int(cel.get("carnival_cooldown_sec") or self.CARNIVAL_COOLDOWN_SEC)
@@ -5497,7 +5423,6 @@ class PetParkPlugin(Star):
             (cel.setdefault("carnival", {}).setdefault("participants", {}))[qq] = player.get("group") or ""
         ppl["pool_ts"] = now
         ppl["pool_next"] = now if no_cd else now + cd_sec
-        ppl["grab_count"] = int(ppl.get("grab_count", 0)) + 1
         lines = ["## 🎂 瓜分成功！你获得："]
         for name, share in gained:
             lines.append(f"- {_cur_disp(name)} × **{share:,}**")
@@ -7902,13 +7827,8 @@ class PetParkPlugin(Star):
             return "❌ 你已经接受过他人邀请，无法重复接受。"
         if self.store.is_already_invited_by(inviter, invitee_qq):
             return f"❌ 用户 `{self._display_uid(inviter_qq)}` 已经邀请过你啦。"
-        # 全服唯一：被邀请人只能领一次邀请奖（防跨群重复刷）
-        ok, why = self.store.check_invite_global(inviter_qq, invitee_qq)
-        if not ok:
-            return f"❌ {why}"
         # 记录邀请关系并发放奖励
         self.store.record_invite(inviter, player)
-        self.store.record_invite_global(inviter_qq, invitee_qq, group_id)
         rewards = [
             ("灵石", self.invite_coin),
             ("玄晶", self.invite_jifen),
@@ -9691,10 +9611,7 @@ class PetParkPlugin(Star):
             f"价值：{value}",
         ]
         if reward is not None:
-            if reward > 0:
-                lines.append(f"入场奖励：**+{self._short_num(reward)} 玄晶（已到账）**")
-            else:
-                lines.append(f"入场奖励：**今日已达领取上限（{data.MOUNT_ENTER_REWARD_DAILY_CAP} 次/天）**")
+            lines.append(f"入场奖励：**+{self._short_num(reward)} 玄晶（已到账）**")
         elif kind in ("enter", "leave"):
             lines.append(f"奖励：{self._short_num(rmin)}~{self._short_num(rmax)} 玄晶")
         else:
@@ -9813,19 +9730,9 @@ class PetParkPlugin(Star):
         player["active_mount"] = chosen
         player["mount_group"] = group_id
         player["mount_enter_ts"] = now
-        # 入场奖励每日上限：防「召出→30分钟自动收起→再召出」无限刷玄晶
-        today = time.strftime("%Y-%m-%d")
-        if player.get("mount_reward_date") != today:
-            player["mount_reward_date"] = today
-            player["mount_reward_count"] = 0
-        if int(player.get("mount_reward_count", 0)) >= data.MOUNT_ENTER_REWARD_DAILY_CAP:
-            reward = 0
-        else:
-            rmin, rmax = self._mount_reward_range(chosen, player)
-            reward = random.randint(rmin, rmax)
-            if reward > 0:
-                player["mount_reward_count"] = int(player.get("mount_reward_count", 0)) + 1
-                self.store.add_currency(player, "玄晶", reward)
+        rmin, rmax = self._mount_reward_range(chosen, player)
+        reward = random.randint(rmin, rmax)
+        self.store.add_currency(player, "玄晶", reward)
         await self.store.save()
         if player.get("mount_enter_notify", True):
             await self._send_group_text(group_id, await image_reply(self._mount_full_message, chosen, player, "enter", reward=reward))
@@ -10862,8 +10769,6 @@ class PetParkPlugin(Star):
         if diamond < cost:
             return f"升级『{name}』需 {cost} 天晶，天晶不足（当前 {diamond}）。"
         inst = mounts[name]
-        if int(inst.get("level", 1)) >= data.MOUNT_UPGRADE_MAX_LEVEL:
-            return f"『{name}』已达升级上限 Lv.{data.MOUNT_UPGRADE_MAX_LEVEL}，无法继续升级。"
         gain = random.randint(data.MOUNT_UPGRADE_POWER_MIN, data.MOUNT_UPGRADE_POWER_MAX)
         inst["level"] = inst.get("level", 1) + 1
         inst["power"] = inst.get("power", cfg.get("base_power", 300000)) + gain
@@ -11245,12 +11150,8 @@ class PetParkPlugin(Star):
     # =====================================================================
     @staticmethod
     def _parse_count(tokens: list[str], idx: int) -> int:
-        # isdigit() 会对全角/上标等 Unicode 数字返回 True，但 int() 可能抛 ValueError；
-        # 限定 ASCII 数字并封顶位数，避免崩溃与天量输入。
-        if idx < len(tokens):
-            raw = tokens[idx]
-            if raw.isascii() and raw.isdigit() and len(raw) <= 9:
-                return max(1, int(raw))
+        if idx < len(tokens) and tokens[idx].isdigit():
+            return max(1, int(tokens[idx]))
         return 1
 
     def _buy_item(self, player: dict, tokens: list[str]) -> str:
@@ -11624,32 +11525,22 @@ class PetParkPlugin(Star):
             petmod.add_exp(p, eff["add_exp"])
             return f"经验 +{eff['add_exp']}，当前 {p['exp']}。"
         if "add_hp_max" in eff:
-            amt, cut = self._capped_gain(p, "hp_max", int(eff["add_hp_max"]))
-            p["hp_max"] += amt
+            p["hp_max"] += eff["add_hp_max"]
             p["hp"] = p["hp_max"]
-            tail = "（已达道具加成上限，超出部分未生效）" if cut else ""
-            return f"血量上限 +{amt} 并回满，当前上限 {p['hp_max']}。{tail}"
+            return f"血量上限 +{eff['add_hp_max']} 并回满，当前上限 {p['hp_max']}。"
         if "add_energy_max" in eff:
-            amt, cut = self._capped_gain(p, "energy_max", int(eff["add_energy_max"]))
-            p["energy_max"] = p.get("energy_max", 100) + amt
+            p["energy_max"] = p.get("energy_max", 100) + eff["add_energy_max"]
             p["energy"] = p["energy_max"]
-            tail = "（已达道具加成上限，超出部分未生效）" if cut else ""
-            return f"精力上限 +{amt} 并回满，当前上限 {p['energy_max']}。{tail}"
+            return f"精力上限 +{eff['add_energy_max']} 并回满，当前上限 {p['energy_max']}。"
         if "add_atk" in eff:
-            amt, cut = self._capped_gain(p, "atk", int(eff["add_atk"]))
-            p["atk"] += amt
-            tail = "（已达道具加成上限，超出部分未生效）" if cut else ""
-            return f"攻击 +{amt}，当前攻击 {self._short_num(p['atk'])}。{tail}"
+            p["atk"] += eff["add_atk"]
+            return f"攻击 +{eff['add_atk']}，当前攻击 {self._short_num(p['atk'])}。"
         if "add_def" in eff:
-            amt, cut = self._capped_gain(p, "def", int(eff["add_def"]))
-            p["def"] += amt
-            tail = "（已达道具加成上限，超出部分未生效）" if cut else ""
-            return f"防御 +{amt}，当前防御 {self._short_num(p['def'])}。{tail}"
+            p["def"] += eff["add_def"]
+            return f"防御 +{eff['add_def']}，当前防御 {self._short_num(p['def'])}。"
         if "add_intel" in eff:
-            amt, cut = self._capped_gain(p, "intel", int(eff["add_intel"]))
-            p["intel"] += amt
-            tail = "（已达道具加成上限，超出部分未生效）" if cut else ""
-            return f"智力 +{amt}，当前智力 {self._short_num(p['intel'])}。{tail}"
+            p["intel"] += eff["add_intel"]
+            return f"智力 +{eff['add_intel']}，当前智力 {self._short_num(p['intel'])}。"
         if "mood" in eff:
             p["mood"] = max(1, min(5, eff["mood"]))
             return f"心情已恢复到 {p['mood']} 颗星！"
@@ -11675,9 +11566,6 @@ class PetParkPlugin(Star):
         # 丹药类（药品/仙丹）禁止售卖
         if it.get("category") in ("药品", "仙丹"):
             return f"『{name}』属于丹药类物品，无法出售。"
-        # 防套利：家园商人以灵石低价卖、道具表以玄晶计价，买低卖高会凭空转换货币
-        if name in getattr(data, "RESALE_BLOCK_ITEMS", ()):
-            return f"『{name}』不可回收（防止低价买入、高价回收套利）。"
         gain = int(it["price"] * 0.2) * count
         self.store.remove_item(player, name, count)
         self.store.add_currency(player, it["currency"], gain)
@@ -11742,7 +11630,7 @@ class PetParkPlugin(Star):
         target = self._arg(tokens, 1)
         if not target:
             return f"用法：{cmd} 用户ID 数量"
-        if not tokens[2].isascii() or not tokens[2].isdigit() or len(tokens[2]) > 9:
+        if not tokens[2].isdigit():
             return "数量必须为正整数。"
         count = max(1, int(tokens[2]))
         tp, err = self._find_target(group_id, target)
@@ -11829,20 +11717,14 @@ class PetParkPlugin(Star):
             return "『道侣双修』需与道侣缔结婚约才行，先通过『求婚 / 同意求婚』结为道侣吧（未缔结可用『灵宠修行』）。"
         if action == "修炼" and p.get("love_state") == "已婚":
             return "你已缔结婚约，解锁了更高效的『道侣双修』，请以之代替『灵宠修行』。"
-        # 打工/探险产出账号级资源（玄晶/道具/经验），冷却记在玩家级，防切换宠物绕过冷却重复刷
-        player_scope = action in getattr(data, "DAILY_PLAYER_SCOPE_ACTIONS", ())
-        cd = self._cooldown_block(
-            player, f"日常:{action}", action, scope="player" if player_scope else "pet"
-        )
+        cd = self._cooldown_block(player, f"日常:{action}", action)
         if cd:
             return cd
         p["energy"] -= conf["energy"]
         note = self._energy_note(p, conf["energy"])
-        cd_seconds = random.randint(*data.DAILY_COOLDOWN_RANGE)
-        if player_scope:
-            self.store.set_player_cooldown(player, f"日常:{action}", cd_seconds)
-        else:
-            self.store.set_cooldown(player, f"日常:{action}", cd_seconds)
+        self.store.set_cooldown(
+            player, f"日常:{action}", random.randint(*data.DAILY_COOLDOWN_RANGE)
+        )
 
         if action == "约会":
             gain = 5 + p["level"] // 5
@@ -12498,38 +12380,28 @@ class PetParkPlugin(Star):
         ):
             return "对方宠物拥有『不死之体』，死亡丹无效。"
         msg = ""
-        used = 0
-        capped = False
         for _ in range(count):
-            msg, ok = self._apply_elixir(tpet, name)
-            if not ok:
-                capped = True
-                break
-            used += 1
-        if used <= 0:
-            return f"未能使用『{name}』：{msg}"
-        self.store.remove_item(player, name, used)
-        tail = f"（剩余 {count - used} 枚因达到加成上限未使用，退回背包）" if capped else ""
-        return f"对 `{self._display_uid(target)}` 的宠物使用『{name}』×{used}：{msg}{tail}"
+            msg = self._apply_elixir(tpet, name)
+        self.store.remove_item(player, name, count)
+        return f"对 `{self._display_uid(target)}` 的宠物使用『{name}』×{count}：{msg}"
 
-    def _apply_elixir(self, p: dict, name: str) -> tuple[str, bool]:
-        """应用仙丹效果。返回（消息, 是否生效）；达单宠累计上限时返回 (消息, False) 以便退回丹药。"""
+    def _apply_elixir(self, p: dict, name: str) -> str:
         eff = data.ELIXIRS[name]["effect"]
         if "freeze_hours" in eff:
             p["frozen_until"] = int(time.time()) + eff["freeze_hours"] * 3600
-            return f"进入假死/惊魂，{eff['freeze_hours']} 小时内无法操作。", True
+            return f"进入假死/惊魂，{eff['freeze_hours']} 小时内无法操作。"
         if eff.get("cure_all"):
             p["status"] = "正常"
             p["frozen_until"] = 0
-            return "解除了一切限制与异常。", True
+            return "解除了一切限制与异常。"
         if eff.get("kill"):
             p["status"] = "死亡"
             p["hp"] = 0
             p["mood"] = 1
-            return "宠物立即死亡。", True
+            return "宠物立即死亡。"
         if eff.get("forget_skill"):
             p["skills"] = []
-            return "遗忘了全部秘技。", True
+            return "遗忘了全部秘技。"
         for k, label in (
             ("atk", "攻击"),
             ("def", "防御"),
@@ -12537,34 +12409,12 @@ class PetParkPlugin(Star):
             ("exp", "经验"),
         ):
             if k in eff:
-                delta = int(eff[k])
-                if k in data.ELIXIR_STAT_CAP and delta > 0:
-                    used = int(p.setdefault("elixir_gain", {}).get(k, 0))
-                    cap = data.ELIXIR_STAT_CAP[k]
-                    room = max(0, cap - used)
-                    if room <= 0:
-                        return f"{label}已达仙丹加成上限（{cap:,}），本次未生效。", False
-                    delta = min(delta, room)
-                    p["elixir_gain"][k] = used + delta
-                p[k] = max(0, p.get(k, 0) + delta)
+                p[k] = max(0, p.get(k, 0) + eff[k])
                 if k == "hp_max":
                     p["hp"] = min(p["hp"], p["hp_max"])
-                sign = "+" if delta >= 0 else ""
-                return f"{label} {sign}{delta}。", True
-        return "已使用。", True
-
-    def _capped_gain(self, p: dict, key: str, amount: int) -> tuple[int, bool]:
-        """道具/符箓对宠物的累计永久加成封顶：返回（实际生效值, 是否被上限截断）。"""
-        cap = data.RUNE_STAT_CAP.get(key)
-        if cap is None or amount <= 0:
-            return amount, False
-        used = int(p.setdefault("rune_gain", {}).get(key, 0))
-        room = max(0, cap - used)
-        if amount <= room:
-            p["rune_gain"][key] = used + amount
-            return amount, False
-        p["rune_gain"][key] = cap
-        return room, True
+                sign = "+" if eff[k] >= 0 else ""
+                return f"{label} {sign}{eff[k]}。"
+        return "已使用。"
 
     # =====================================================================
     # 天赋触发指令：治愈 / 复活 / 精力转移
@@ -12860,14 +12710,14 @@ class PetParkPlugin(Star):
         tpet = tp["pet"]
         if petmod.is_dead(tpet):
             return "对方灵宠已死亡。"
-        cd = self._cooldown_block(player, "对战", "协同出战", scope="player")
+        cd = self._cooldown_block(player, "对战", "协同出战")
         if cd:
             return cd
         petmod.refresh_energy(p)
         if p["energy"] < self.attack_energy:
             return f"协同出战需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
         p["energy"] -= self.attack_energy
-        self.store.set_player_cooldown(
+        self.store.set_cooldown(
             player, "对战", random.randint(*data.BATTLE_COOLDOWN_RANGE)
         )
         return self._battle(p, tpet, player, tp) + self._energy_note(p, self.attack_energy)
@@ -12889,8 +12739,6 @@ class PetParkPlugin(Star):
             target_group = str(tokens[1])
             if self._group_is_infinite(target_group):
                 return f"⚠️ 群 `{target_group}` 是无限服，无法被跨群挑战。"
-            if not self.store.get_group(target_group).get("cross", True):
-                return f"⚠️ 群 `{target_group}` 未开启宠物跨群功能，无法挑战。"
             target_player = self.store.get_player(
                 tokens[2], tokens[1], create=False
             )
@@ -12905,8 +12753,6 @@ class PetParkPlugin(Star):
                 if pl.get("pet")
                 and k != self_key
                 and self.store.resolve_group(str(pl.get("group", ""))) not in inf
-                and pl.get("group")
-                and self.store.get_group(str(pl.get("group"))).get("cross", True)
                 and not petmod.is_dead(pl["pet"])
             ]
             if not candidates:
@@ -12914,14 +12760,14 @@ class PetParkPlugin(Star):
             target_player = random.choice(candidates)
         if not target_player or not target_player.get("pet"):
             return "目标没有宠物。"
-        cd = self._cooldown_block(player, "对战", "跨群挑战宠物", scope="player")
+        cd = self._cooldown_block(player, "对战", "跨群挑战宠物")
         if cd:
             return cd
         petmod.refresh_energy(p)
         if p["energy"] < self.attack_energy:
             return f"发起挑战需要 {self.attack_energy} 点精力（当前 {p['energy']}）。"
         p["energy"] -= self.attack_energy
-        self.store.set_player_cooldown(
+        self.store.set_cooldown(
             player, "对战", random.randint(*data.BATTLE_COOLDOWN_RANGE)
         )
         return self._battle(p, target_player["pet"], player, target_player) + self._energy_note(p, self.attack_energy)
@@ -13098,19 +12944,12 @@ class PetParkPlugin(Star):
         ) + self._pet_to_cultivation(player, p, gained, "自动成长") + self._grant_level60_reward(player, p, before) + prep_msg
 
     def _grant_level60_reward(self, player: dict, p: dict, before_level: int) -> str:
-        """宠物升级跨过 60 级倍数时赠 1 张『史诗卡』（每跨过一个新里程碑 1 张）。
-
-        里程碑终身只领一次：重生/进化会把等级重置回 Lv1，旧逻辑重练回 60 级
-        会反复触发奖励，这里记录该宠物已领取的最高里程碑，等级重置不再重领。
-        """
-        after_level = int(p.get("level", 1))
-        milestone = after_level // 60
-        granted = int(p.get("level60_granted", 0))
-        if milestone <= granted:
-            return ""
-        p["level60_granted"] = milestone
-        self.store.add_item(player, "史诗卡", 1)
-        return "\n🎁 宠物等级突破 **60 级**，获得 **史诗卡** ×1（背包查看，可使用提升品质至史诗）！"
+        """宠物本次升级若跨过 60 级倍数，赠送 1 张『史诗卡』放入背包。返回提示文本。"""
+        after_level = p.get("level", 1)
+        if before_level // 60 < after_level // 60:
+            self.store.add_item(player, "史诗卡", 1)
+            return "\n🎁 宠物等级突破 **60 级**，获得 **史诗卡** ×1（背包查看，可使用提升品质至史诗）！"
+        return ""
 
     def _enter_dungeon(self, player: dict, tokens: list[str]) -> str:
         p = self._need_pet(player)
@@ -13925,28 +13764,13 @@ class PetParkPlugin(Star):
             self._tomb_sessions, self._tomb_coop_teams, self._tomb_coop_index
         )
 
-    def _tomb_active_anywhere(self, qq: str) -> bool:
-        """该 QQ 是否在任意群有进行中的摸金（存在 session 或已开局的 coop）。
-
-        摸金状态全局按 QQ 共享，必须全群唯一：否则同 QQ 跨群并发两局，
-        两局各持一份装备背包快照，结算时互相覆盖写回 → 道具复制/凭空恢复。
-        """
-        qq = str(qq)
-        for k in self._tomb_sessions:
-            if k.rsplit("\x1f", 1)[-1] == qq:
-                return True
-        for coop in self._tomb_coop_teams.values():
-            if coop.get("active") and qq in coop.get("players", {}):
-                return True
-        return False
-
     def _tomb_in_raid(self, player: dict) -> bool:
-        """检查玩家是否正在进行活跃的摸金探险（全群范围锁定）。
-
-        摸金背包是全局资源，任一局进行中都不允许在任意群调整背包/购买/装备，
-        防止「A 局快照旧背包 → B 群把道具转走 → A 局结算写回」的复制漏洞。
-        """
-        return self._tomb_active_anywhere(str(player.get("qq", "")))
+        """检查玩家是否正在进行活跃的摸金探险（单人或已开局的 coop）。"""
+        key = self._tomb_key(player.get("group", ""), player.get("qq", ""))
+        if key in self._tomb_sessions:
+            return True
+        coop = self._tomb_get_coop(player)
+        return coop is not None and coop.get("active", False)
 
     # ---- 命运卡牌 ----
     def _tomb_draw_cards(self) -> list[str]:
@@ -14333,8 +14157,6 @@ class PetParkPlugin(Star):
             err = self._tomb_team_validate_leader(player, "开始探险")
             if err:
                 return err, None
-            if self._tomb_active_anywhere(my_qq):
-                return "你已经在一次摸金探险中（摸金状态全群共享），无法重复进入。", None
             if len(coop.get("ready", set())) < 2:
                 return "双方都发送「摸金准备」后才能开始。", None
             teammate_qq = self._tomb_teammate_qq(player, coop)
@@ -14351,8 +14173,8 @@ class PetParkPlugin(Star):
             key = self._tomb_key(group_id, my_qq)
         else:
             key = self._tomb_key(group_id, my_qq)
-            if self._tomb_active_anywhere(my_qq):
-                return "你已经在一次摸金探险中（摸金状态全群共享），发送『摸态』查看，或先『摸撤/摸弃』。", None
+            if key in self._tomb_sessions:
+                return "你已经在一次摸金探险中，发送『摸态』查看。", None
 
         # 难度解析
         name_to_diff = {cfg["name"]: d for d, cfg in data.TOMB_DIFFICULTIES.items()}
@@ -14630,7 +14452,10 @@ class PetParkPlugin(Star):
 
     def _tomb_coop_pass_checks(self, player: dict, qq: str, group_id: str) -> bool:
         """快速检查队友是否满足基本条件（不消耗资源），用于双排入场前验证。"""
-        return not self._tomb_active_anywhere(qq)
+        key = self._tomb_key(group_id, qq)
+        if key in self._tomb_sessions:
+            return False
+        return True
 
     def _tomb_move(self, player: dict, tokens: list[str]) -> tuple[str, str] | str:
         p = self._need_pet(player)
@@ -16675,10 +16500,6 @@ class PetParkPlugin(Star):
                 return "用法：开始扫雷 难度（1-4），如：开始扫雷2"
         if diff not in data.MS_DIFFICULTIES:
             return "难度只有 1-4：1简单 / 2普通 / 3困难 / 4地狱。"
-        # 每日局数上限（按 QQ 全服共享）：防脚本长时间刷小局
-        st = self.store.ms_state(qq)
-        if st.get("daily_date") == time.strftime("%Y-%m-%d") and int(st.get("daily_plays", 0)) >= data.MS_MAX_PLAYS_PER_DAY:
-            return f"今日扫雷局数已达上限（{data.MS_MAX_PLAYS_PER_DAY} 局），明日再来。"
         cfg = data.MS_DIFFICULTIES[diff]
         w, h = cfg["size"]
         now = int(time.time())
@@ -16811,50 +16632,34 @@ class PetParkPlugin(Star):
         cfg = data.MS_DIFFICULTIES[session["difficulty"]]
         st = self.store.ms_state(qq)
         st["plays"] = st.get("plays", 0) + 1
-        # 每日额度（按 QQ 全服共享）：按天重置局数与经验额度，防脚本无限刷
-        today = time.strftime("%Y-%m-%d")
-        if st.get("daily_date") != today:
-            st["daily_date"] = today
-            st["daily_plays"] = 0
-            st["daily_exp"] = 0
-        st["daily_plays"] = int(st.get("daily_plays", 0)) + 1
-        daily_room = max(0, data.MS_DAILY_EXP_CAP - int(st.get("daily_exp", 0)))
-        elapsed = int(time.time()) - session["started_at"]
         total_safe = session["w"] * session["h"] - session["mines_total"]
         opened_ratio = len(session["opened"]) / max(1, total_safe)
         self._ms_sessions.pop(qq, None)
 
         if reason == "win":
+            elapsed = int(time.time()) - session["started_at"]
             st["wins"] = st.get("wins", 0) + 1
             st["score"] = st.get("score", 0) + cfg["score"]
             best = st.setdefault("best_time", {})
             key = str(session["difficulty"])
             if key not in best or elapsed < best[key]:
                 best[key] = elapsed
-            exp = min(random.randint(*cfg["exp"]), daily_room)
-            if exp > 0:
-                st["daily_exp"] = int(st.get("daily_exp", 0)) + exp
-                self.store.add_ms_pending_pet_exp(qq, exp)
-                exp_line = f"- 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）"
-            else:
-                exp_line = f"- 今日扫雷经验额度（{data.MS_DAILY_EXP_CAP}）已用完，本局不再发放经验"
+            exp = random.randint(*cfg["exp"])
+            self.store.add_ms_pending_pet_exp(qq, exp)
             if session["mines"] is None:
                 session["mines"] = set()
             return (
                 f"🎉 扫雷成功！难度{session['difficulty']} {cfg['name']}，"
                 f"用时 {elapsed // 60}:{elapsed % 60:02d}。\n"
                 f"- 扫雷积分 +{cfg['score']}（累计 {st['score']}）\n"
-                f"{exp_line}",
+                f"- 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）",
                 self._ms_board_md(session, reveal=True),
             )
 
-        # 失败：按进度给安慰经验；单局不足 MS_MIN_PLAY_SECONDS 不计，防「秒开秒弃」刷经验
-        exp = 0
-        if elapsed >= data.MS_MIN_PLAY_SECONDS:
-            exp = min(int(cfg["exp"][0] * opened_ratio * data.MS_FAIL_EXP_RATIO), daily_room)
+        # 失败：按进度给安慰经验
+        exp = int(cfg["exp"][0] * opened_ratio * data.MS_FAIL_EXP_RATIO)
         exp_text = ""
         if exp > 0:
-            st["daily_exp"] = int(st.get("daily_exp", 0)) + exp
             self.store.add_ms_pending_pet_exp(qq, exp)
             exp_text = f"\n- 宠物经验 +{exp}（已暂存，发送「扫雷兑换」可发放到当前群宠物）"
         if session["mines"] is None:
@@ -17751,31 +17556,13 @@ class PetParkPlugin(Star):
         hs["steal_targets"] = steal_targets
         if random.random() < success_rate:
             ratio = random.uniform(data.HOMESTEAD_STEAL_RATIO_MIN, data.HOMESTEAD_STEAL_RATIO_MAX)
-            # 守恒：只从目标「建筑未收产出」里拿走一部分，并把对应时间从 last_collect 前移，
-            # 攻击方所得 == 目标实际损失；不再凭空造币、也不动目标钱包余额。
-            stolen_coin = 0
-            stolen_jifen = 0
-            for name, b in tbuildings.items():
-                elapsed = min(now - b.get("last_collect", now), t_max_acc)
-                if elapsed < 300:
-                    continue
-                stolen_seconds = int(elapsed * ratio)
-                if stolen_seconds < 1:
-                    continue
-                prod = data.homestead_production(name, b.get("level", 1))
-                stolen_coin += int(prod.get("coin", 0) * stolen_seconds / 3600)
-                stolen_jifen += int(prod.get("jifen", 0) * stolen_seconds / 3600)
-                b["last_collect"] = b.get("last_collect", now) + stolen_seconds
+            stolen_coin = int(t_coin * ratio)
+            stolen_jifen = int(t_jifen * ratio)
+            player["coin"] = player.get("coin", 0) + stolen_coin
+            player["jifen"] = player.get("jifen", 0) + stolen_jifen
+            tp["coin"] = max(0, tp.get("coin", 0) - stolen_coin // 2)  # 目标损失一半
+            tp["jifen"] = max(0, tp.get("jifen", 0) - stolen_jifen // 2)
             ths["be_stolen_today"] = ths.get("be_stolen_today", 0) + 1
-            if stolen_coin <= 0 and stolen_jifen <= 0:
-                return (
-                    f"🌫 **空手而归**（成功率 {success_rate:.0%}）："
-                    f"{self._display_uid(target_qq)} 家可偷的产出太少，什么都没拿到。"
-                )
-            if stolen_coin:
-                self.store.add_currency(player, "灵石", stolen_coin)
-            if stolen_jifen:
-                self.store.add_currency(player, "玄晶", stolen_jifen)
             return (
                 f"💀 **偷菜成功！**（成功率 {success_rate:.0%}）\n"
                 f"- 偷得 {self._display_uid(target_qq)} 的 💰{stolen_coin} 灵石 + 💎{stolen_jifen} 玄晶\n"
@@ -17836,11 +17623,9 @@ class PetParkPlugin(Star):
         # 处理效果类物品
         effect = item.get("effect")
         if effect == "speed_2h":
-            # 建筑加速：在各自已累积时间的基础上再多积 2 小时（不吞掉已累计的产出）
-            now_ts = int(time.time())
+            # 建筑加速：所有建筑 last_collect 往前推 2 小时
             for b in hs.get("buildings", {}).values():
-                base = b.get("last_collect") or now_ts
-                b["last_collect"] = base - 7200
+                b["last_collect"] = max(b.get("last_collect", 0), int(time.time())) - 7200
             return f"⚡ 使用**建筑加速券**！所有建筑累积时间 +2 小时，快去收取！"
         if effect == "shield_12h":
             hs["shield_until"] = int(time.time()) + 43200

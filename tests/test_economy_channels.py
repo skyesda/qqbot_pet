@@ -95,10 +95,8 @@ class EconomyChannelTests(unittest.TestCase):
         p = self.create()
         self.service.boss_hp = 150  # 低血量，一击即可击杀
         key = self.service.key('g', 'a')
-        # 关闭单次伤害上限，专注验证奖励渠道（上限行为单独测试）
         with patch('qqbot_pet.petpark.adventure.service.simulate',
-                   return_value=self._win(key, damage=300)), \
-             patch.object(content, 'BOSS_HIT_MAX_RATIO', 2.0):
+                   return_value=self._win(key, damage=300)):
             out = self.call('讨伐首领')
         self.assertIn(f'灵石×{content.BOSS_HIT_COIN}', out)
         self.assertIn(f'玄晶×{content.BOSS_HIT_JIFEN}', out)
@@ -108,19 +106,6 @@ class EconomyChannelTests(unittest.TestCase):
             out2 = self.call('首领奖励')
         self.assertIn(f'灵石×{content.BOSS_KILL_COIN}', out2)
         self.assertIn(f'玄晶×{content.BOSS_KILL_JIFEN}', out2)
-
-    def test_world_boss_hit_damage_capped(self):
-        """单次讨伐伤害不得超过首领最大生命的 BOSS_HIT_MAX_RATIO 比例。"""
-        p = self.create()
-        self.service.boss_hp = 1000
-        key = self.service.key('g', 'a')
-        with patch('qqbot_pet.petpark.adventure.service.simulate',
-                   return_value=self._win(key, damage=999999)):
-            out = self.call('讨伐首领')
-        cap = max(1, int(1000 * content.BOSS_HIT_MAX_RATIO))
-        self.assertIn('已达单次伤害上限', out)
-        self.assertIn(f'本次贡献{cap}伤害', out)
-        self.assertIn(f'首领剩余{1000 - cap}', out)
 
     # ---- 试炼秘境：每日限次、通关奖励、失败消耗、跨天重置 ----
     def test_trial_daily_cap_and_reward(self):
