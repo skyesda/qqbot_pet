@@ -309,6 +309,7 @@ BOSS_HIT_JIFEN = 5     # 每次讨伐额外玄晶
 BOSS_HIT_FRAGMENT_RATE = 0.20  # 每次讨伐掉材料碎片概率
 BOSS_KILL_COIN = 120   # 击杀后共同奖励灵石
 BOSS_KILL_JIFEN = 40   # 击杀后共同奖励玄晶
+BOSS_HIT_MAX_RATIO = 0.12  # 单次讨伐伤害上限（占首领最大生命比例）：防高战玩家一击清空、后来者无份
 
 # —— 试炼秘境（每日限次玩法，额外灵石/玄晶 + 高碎片率，平衡可调）——
 TRIAL_DAILY = 2               # 每日可挑战次数

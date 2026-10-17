@@ -488,20 +488,26 @@ class AdventureService:
         if cmd == "悟性加点":
             self.can_edit(key)
             stat_map = {"攻": "atk", "防": "def", "血": "hp", "速": "speed"}
+            cap = min(c.INSIGHT_CAP_MAX, c.INSIGHT_CAP_BASE + a["realm"] * c.INSIGHT_CAP_PER_REALM)
             if not arg:
-                cap = min(c.INSIGHT_CAP_MAX, c.INSIGHT_CAP_BASE + a["realm"] * c.INSIGHT_CAP_PER_REALM)
-                return (f"悟性点池 {a.get('insight', 0)}（上限{cap}）。\n"
+                return (f"悟性点池 {a.get('insight', 0)}（单属性上限{cap}）。\n"
                         f"用法：悟性加点 攻/防/血/速 数量。1点=+1对应属性。")
             stat = stat_map.get(arg)
             self.require(stat, "悟性加点 攻 / 防 / 血 / 速 数量")
             n = 1
             if args and len(args) > 1 and args[1].isdigit():
                 n = max(1, int(args[1]))
+            # 单属性累计加点封顶：min(INSIGHT_CAP_MAX, 10 + 境界×5)，防无脑堆一项超模
+            bonus = a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})
+            used = int(bonus.get(stat, 0))
+            room = max(0, cap - used)
+            self.require(room > 0, f"【{stat}】加点已达上限（{cap}），请提升境界后再加。")
             have = int(a.get("insight", 0))
             self.require(have >= n, f"悟性点不足，当前 {have}，需 {n}。")
+            self.require(n <= room, f"【{stat}】单属性最多还能加 {room} 点（上限 {cap}），请减少数量或提升境界。")
             a["insight"] = have - n
-            a.setdefault("bonus", {"atk": 0, "def": 0, "hp": 0, "speed": 0})[stat] += n
-            return f"已给【{stat}】+{n}（剩余悟性点 {a['insight']}）。"
+            bonus[stat] = used + n
+            return f"已给【{stat}】+{n}（累计 {bonus[stat]}/{cap}，剩余悟性点 {a['insight']}）。"
         if cmd in ("我的体力", "修士体力"):
             from .sect import _roll_stamina
             _roll_stamina(self, a)
@@ -657,7 +663,11 @@ class AdventureService:
             self.require(a['world_hits'] < 3, "今日首领挑战已完成，明日再来。")
             enc = self.encounter(dict(boss=b['name'],scale=1+c.HEAVENS[a['heaven']]['level']*.16,mechanic=b['mechanic']),a['heaven'])
             result = simulate(build_party(p,key), enemies(enc, scale_factor=self._power_scale_factor(p, key)), random.randrange(2**32),max_rounds=12)
-            damage = min(b['hp'],sum(v['damage'] for k,v in result['metrics'].items() if k==key))
+            raw_damage = sum(v['damage'] for k,v in result['metrics'].items() if k==key)
+            # 单次伤害上限：防高战玩家一击清空首领导致后来者当天无份（至少需多人多次合力）
+            hit_cap = max(1, int(b['max_hp'] * c.BOSS_HIT_MAX_RATIO))
+            damage = min(b['hp'], raw_damage, hit_cap)
+            capped_note = "（已达单次伤害上限）" if raw_damage > hit_cap else ""
             b['hp'] -= damage
             b['contributions'][key] = b['contributions'].get(key,0)+damage
             a['world_hits'] += 1
@@ -670,7 +680,7 @@ class AdventureService:
                 count = random.randint(*c.ADV_FRAGMENT_BUNDLE)
                 self.store.add_item(p, frag, count)
                 hit_pay += f"，『{frag}』×{count}"
-            return self.record(a,result,b['name']) + f"\n本次贡献{damage}伤害，获得3灵材{hit_pay}。首领剩余{b['hp']}。" + ("\n首领已被击败！参与者可发送「首领奖励」。" if not b['hp'] else "")
+            return self.record(a,result,b['name']) + f"\n本次贡献{damage}伤害{capped_note}，获得3灵材{hit_pay}。首领剩余{b['hp']}。" + ("\n首领已被击败！参与者可发送「首领奖励」。" if not b['hp'] else "")
         if cmd == "首领奖励":
             b = self.world(group)
             self.require(b['hp']==0 and b['contributions'].get(key,0)>0, "需要参与并击败今日首领。")
@@ -837,11 +847,14 @@ class AdventureService:
         self.require_alive(a)
         if cmd=='仙途切磋':
             self.require_alive(a)
+            # 邀请冷却：防无限刷战报探测对手配置（60 秒/次）
+            self.require(self.clock() >= a.get('duel_invite_cd', 0), '切磋邀请冷却中，请稍后再发起。')
             target=self.key(group,arg)
             self.require(target!=key,'不能与自己切磋。')
             self.player(target)
             self.require(target not in duels,'对方已有邀请，请稍后。')
             duels[target]={'challenger':key,'expires':self.clock()+300}
+            a['duel_invite_cd'] = int(self.clock()) + 60
             return '已发起无损切磋邀请，5分钟内由对方发送「接受切磋」或「拒绝切磋」。无资源消耗和奖励。'
         invite=duels.pop(key,None)
         self.require(invite,'没有有效切磋邀请。')

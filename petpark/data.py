@@ -2437,6 +2437,10 @@ HOMESTEAD_MERCHANT_ITEMS = [
     {"name": "双倍券", "price_type": "coin", "price": 5000, "desc": "下次收取产量翻倍", "effect": "double_next"},
 ]
 
+# 防套利：以下道具被家园流浪商人以「灵石」低价出售，但 ITEMS 表以「玄晶」计价，
+# 买低→回收（价 20%）即凭空把灵石换成玄晶，禁止回收。
+RESALE_BLOCK_ITEMS = {"进化神石", "万能宝石", "神器图纸", "史诗卡", "相思豆"}
+
 
 # ============================================================================
 # 家园收取随机事件（扩容版）
@@ -2696,3 +2700,27 @@ def rebirth_roll_multiplier(sacrifice_points: int = 0) -> int:
 PET_SLOTS_DEFAULT = 2          # 默认宠物席位
 PET_SLOTS_MAX = 10             # 最大宠物席位
 PET_SLOT_CARD_NAME = "宠物席位卡"  # 席位卡道具名
+
+# ============================================================================
+# 平衡补丁（防刷 / 封顶 / 守恒）
+# ============================================================================
+# 坐骑入场奖励：每人每群每日可领次数上限（防「召出→30分钟自动收起→再召出」无限刷玄晶）
+MOUNT_ENTER_REWARD_DAILY_CAP = 3
+# 坐骑升级等级上限（战力无上限会让高战坐骑一击碾压对战胜负）
+MOUNT_UPGRADE_MAX_LEVEL = 50
+# 生辰盛典奖池：默认是否允许无视冷却连续瓜分（默认关闭），以及每人每日瓜分次数上限
+CELEBRATE_POOL_DEFAULT_NO_CD = False
+CELEBRATE_POOL_PER_DAY_CAP = 20
+# 以下日常动作产出账号级资源（玄晶/道具/经验），冷却记在玩家级，防止切换宠物绕过冷却重复刷
+DAILY_PLAYER_SCOPE_ACTIONS = ("打工", "探险")
+# 重生次数上限与递减：第 4 次起拒绝；已重生次数越多，本次暴击倍率越被摊薄
+REBIRTH_MAX_COUNT = 3
+REBIRTH_DIMINISH = True
+# 仙丹对单只宠物的累计永久加成上限（达到后不再生效，未用丹药退回背包）
+ELIXIR_STAT_CAP = {"atk": 10000, "def": 10000, "hp_max": 100000}
+# 符箓/道具对单只宠物的累计永久加成上限（超出部分不生效）
+RUNE_STAT_CAP = {"atk": 5000, "def": 5000, "intel": 5000, "hp_max": 50000, "energy_max": 500}
+# 扫雷防刷：每日结算局数上限 / 每日转存宠物经验上限 / 单局最短计时（秒，低于此值的失败不发安慰经验）
+MS_MAX_PLAYS_PER_DAY = 30
+MS_DAILY_EXP_CAP = 30000
+MS_MIN_PLAY_SECONDS = 20
